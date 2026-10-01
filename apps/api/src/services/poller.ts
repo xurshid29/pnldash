@@ -36,6 +36,10 @@ import { getContinuationCandidates, type ContinuationCandidate } from './continu
 import { classifyByRules, type Classification, type ClassifierInput } from './catalyst-rules.js';
 import { recordTierEvent } from './tier-events.js';
 import { MomentumGrader, type MomentumGrade } from './momentum-grade.js';
+import {
+  OpportunityAlerts, phoneKinds, normTitle,
+  type OpportunityAlert, type OpportunityKind, type OpportunityNewsItem,
+} from './opportunity-alerts.js';
 import type { VwapEvent, VwapSnapshot, VwapAnchor } from './vwap-reclaim.js';
 import { classifyByClaude, llmEnabled } from './catalyst-claude.js';
 import { fetchAndStoreTickerNews } from './ticker-news.js';
@@ -590,6 +594,9 @@ export interface CyclePayload {
     fresh_news: string[];
   };
   fresh_news: NewsHeadline[];
+  // Opportunity alerts from the last hour, newest first (opportunity-alerts.ts)
+  // — the dashboard plays/notifies each unseen id; Telegram got the same set.
+  alerts: OpportunityAlert[];
   ignition: IgnitionRow[];
   swing: SwingRow[];
   continuation: ContinuationCandidate[];
@@ -886,6 +893,11 @@ class PollerService {
   // Resets to false on restart by design (no persistence — the dashboard +
   // sidebar still surface everything, this only quiets the push channel).
   private alertsMuted = false;
+  // Opportunity alerts (A+ / fast move / fresh news) — see opportunity-alerts.ts.
+  // `opportunitySeeded` false = boot seeding failed: deliver nothing on the
+  // first cycle rather than re-ping the whole day.
+  private opportunity = new OpportunityAlerts();
+  private opportunitySeeded = false;
 
   // Last full payload, served by /api/screener/latest for new clients.
   private lastPayload: CyclePayload | null = null;
@@ -1886,6 +1898,7 @@ class PollerService {
     if (componentEnabled('ignition')) await this.seedIgnitionState();
     await this.seedRadarHistory();
     await this.seedTierState();
+    await this.seedOpportunityState();
     console.log(`[poller] starting (every ${this.config.interval_sec}s)`);
     void this.tick();
     this.timer = setInterval(() => void this.tick(), this.config.interval_sec * 1000);
@@ -1932,6 +1945,7 @@ class PollerService {
     }
     if (todayEt !== this.lastEtDate) {
       this.alertedUrls.clear();
+      this.opportunity.resetDay();
       this.alertedIgnition.clear();
       this.alertedSwing.clear();
       this.alertedDualSignal.clear();
@@ -2115,6 +2129,25 @@ class PollerService {
       fetchEdgarFilings(new Set(tickers), this.secWatermark).catch(() => null),
       fetchHalts(this.haltWatermark, newsDayEt).catch(() => null),
     ]);
+
+    // Every item the five sources returned, for the 📰 opportunity alert —
+    // all of them, not just the per-ticker winner the precedence map keeps.
+    const opportunityNews: OpportunityNewsItem[] = [
+      ...finvizNews.map((n) => {
+        const iso = parseEtNaiveAsIso(n.date);
+        return { ticker: n.ticker, source: 'finviz' as const, title: n.title, url: n.url, published_at: iso ? new Date(iso) : null };
+      }),
+      ...yahooNews.map((n) => ({ ticker: n.ticker, source: 'yahoo' as const, title: n.title, url: n.url, published_at: n.published_at })),
+      ...(bzDelta?.articles ?? []).flatMap((a) => a.tickers.map((tk) => ({
+        ticker: tk, source: 'benzinga' as const, title: a.title, url: a.url, published_at: a.published_at,
+      }))),
+      ...(edgarDelta?.filings ?? []).map((f) => ({
+        ticker: f.ticker, source: 'sec' as const, title: f.title, url: f.url, published_at: f.published_at, secForm: f.form,
+      })),
+      ...(haltDelta?.halts ?? []).map((h) => ({
+        ticker: h.ticker, source: 'halt' as const, title: h.title, url: h.url, published_at: h.haltedAt, haltReason: h.reasonCode,
+      })),
+    ];
 
     // Build per-cycle ticker → headline map. Precedence, low → high:
     //   Finviz < Yahoo < Benzinga < SEC filing < trade halt.
@@ -3219,6 +3252,35 @@ class PollerService {
         || (Date.parse(b.state_at ?? b.qualified_at) - Date.parse(a.state_at ?? a.qualified_at)))
       .slice(0, MACD_MOMO.max_display);
 
+    // Opportunity alerts — on the Momentum rows exactly as displayed (AH
+    // volume gate applied, grade included) plus every news item this cycle.
+    const opportunityAlerts = this.opportunity.evaluate(
+      momentumRows.map((r) => ({
+        ticker: r.ticker, price: r.price, change_pct: r.change_pct, grade: r.grade,
+        float_m: r.float_m, rel_vol_1min: r.rel_vol_1min, first_seen_at: r.first_seen_at,
+      })),
+      opportunityNews,
+      nowSec,
+    );
+    for (const a of opportunityAlerts) {
+      // One durable row per kind: boot seeding (no re-pings after a deploy)
+      // and later grading of each trigger against what happened next.
+      for (const k of a.kinds) {
+        recordTierEvent('alert', k, a.ticker, {
+          price: a.price, chg: a.change_pct, grade: a.grade, prev_grade: a.prev_grade,
+          new_on_screen: a.new_on_screen, move_pct: a.move_pct, rv1: a.rel_vol_1min, float_m: a.float_m,
+          news_title: a.news?.title ?? null, news_score: a.news?.score ?? null,
+          news_dir: a.news?.direction ?? null, news_source: a.news?.source ?? null, news_url: a.news?.url ?? null,
+        });
+      }
+      console.log(
+        `[alerts] ${a.kinds.join('+')} ${a.ticker} $${a.price ?? '?'} ${a.change_pct ?? '?'}% grade ${a.grade ?? '?'}` +
+        (a.kinds.includes('grade_aplus') ? (a.new_on_screen ? ' · new on screen' : ` · was ${a.prev_grade ?? '?'}`) : '') +
+        (a.move_pct != null ? ` · +${a.move_pct}%/60s` : '') +
+        (a.news ? ` · 📰 ${a.news.score} ${a.news.title.slice(0, 80)}` : ''),
+      );
+    }
+
     const payload: CyclePayload = {
       cycle_id: cycleId,
       polled_at: new Date().toISOString(),
@@ -3236,6 +3298,7 @@ class PollerService {
       macd_momo: components.momo ? macdMomoDisplay : [],
       momo_setups: components.setups ? momoSetupDisplay : [],
       banners: { new_with_catalyst: newWithCatalyst, fresh_news: freshList },
+      alerts: this.opportunity.recentAlerts(Date.now()),
       fresh_news: enriched
         .filter((r) => r.is_fresh_news && r.news_title)
         .map((r) => ({
@@ -3254,6 +3317,11 @@ class PollerService {
     console.log(
       `[poller] ${nowHms()} — ${enriched.length} rows, ${ignition.length} ignition${ignitionHiccup ? ' (reused)' : ''}, ${scoredSwing.length} swing${swingFreshlyScored ? ' (refreshed)' : ''}, ${this.lastContinuation.length} continuation${shouldRefreshContinuation ? ' (refreshed)' : ''}, ${newWithCatalyst.length} new+catalyst, ${freshList.length} fresh`,
     );
+
+    // Opportunity alerts → phone. Same set the dashboard just received in
+    // payload.alerts. Dedup/cooldowns live in the engine and are DB-seeded on
+    // boot, so a deploy's first cycle is safe — unless seeding failed.
+    if (this.opportunitySeeded || !wasFirstPoll) this.pushOpportunityAlerts(opportunityAlerts);
 
     // Telegram alerts — fresh high-impact rows + Ignition runner-score hits.
     // Skipped on the first poll so a restart's news backfill and cold-start
@@ -3775,6 +3843,46 @@ class PollerService {
 
   setMomoSetupSnapshotSource(fn: PollerService['momoSetupSnapshotFn']): void {
     this.momoSetupSnapshotFn = fn;
+  }
+
+  // Rebuild opportunity-alert dedup state so a deploy neither re-pings
+  // today's alerts nor treats stored headlines as new: today's alert rows
+  // (tier='alert'), article URLs fetched in the last 24h, and today's
+  // (ticker, title) pairs. On failure the first cycle delivers nothing.
+  private async seedOpportunityState() {
+    try {
+      const db = getDb();
+      const today = sql<boolean>`(at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`;
+      const alerts = await db.selectFrom('tier_events').select(['event', 'ticker', 'at'])
+        .where('tier', '=', 'alert').where(today).execute();
+      const urls = await db.selectFrom('news_articles').select('url')
+        .where(sql<boolean>`fetched_at > now() - interval '24 hours'`).execute();
+      const titles = await db.selectFrom('news_articles as a')
+        .innerJoin('news_ticker_links as l', 'l.article_id', 'a.id')
+        .select(['l.ticker', 'a.title'])
+        .where(sql<boolean>`(a.fetched_at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`)
+        .execute();
+      this.opportunity.seed({
+        aplus: alerts.filter((r) => r.event === 'grade_aplus').map((r) => r.ticker),
+        fast: alerts.filter((r) => r.event === 'fast_move').map((r) => [r.ticker, Math.floor(new Date(r.at).getTime() / 1000)] as [string, number]),
+        urls: urls.map((r) => r.url),
+        titles: titles.map((r) => `${r.ticker}|${normTitle(r.title)}`),
+      });
+      this.opportunitySeeded = true;
+      console.log(`[alerts] seeded — ${alerts.length} alert rows today, ${urls.length} recent URLs, ${titles.length} title keys`);
+    } catch (err) {
+      console.error('[alerts] seeding failed — first cycle will not deliver:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Phone delivery for opportunity alerts. Per-kind mutes via ALERTS_DISABLED
+  // (grade_aplus / fast_move / news); news-only alerts need catalyst ≥40.
+  private pushOpportunityAlerts(alerts: OpportunityAlert[]) {
+    if (!telegramEnabled() || this.alertsMuted) return;
+    for (const a of alerts) {
+      const kinds = phoneKinds(a, (k) => alertDisabled(k));
+      if (kinds.length > 0) void sendTelegram(formatOpportunityAlert(a, kinds));
+    }
   }
 
   // Momentum-grade catalyst input: per ticker, the best NON-bearish classified
@@ -4318,6 +4426,33 @@ function formatVwapReclaimAlert(ticker: string, e: VwapEvent, dayChg: number | n
     `<a href="${finviz}">Finviz</a> · <a href="${tv}">TradingView</a>`,
   ];
   return lines.join('\n');
+}
+
+// Opportunity alert — one message per ticker per cycle, headed by what fired.
+function formatOpportunityAlert(a: OpportunityAlert, kinds: OpportunityKind[]): string {
+  const finviz = `https://finviz.com/quote.ashx?t=${encodeURIComponent(a.ticker)}`;
+  const tv = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSymbol(a.ticker))}`;
+  const price = a.price == null ? '' : `$${a.price < 1 ? a.price.toFixed(4) : a.price.toFixed(2)}`;
+  const chg = a.change_pct == null ? '' : `${a.change_pct >= 0 ? '+' : ''}${a.change_pct.toFixed(1)}%`;
+  const what: string[] = [];
+  if (kinds.includes('grade_aplus')) what.push(a.new_on_screen ? '🅰️ <b>NEW A+</b>' : `🅰️ <b>A+</b> (was ${escapeHtml(a.prev_grade ?? '—')})`);
+  if (kinds.includes('fast_move')) what.push(`⚡ <b>+${a.move_pct}% in 60s</b>`);
+  if (kinds.includes('news')) what.push('📰 <b>NEWS</b>');
+  const meta: string[] = [];
+  if (a.grade) meta.push(`grade ${escapeHtml(a.grade)}`);
+  if (a.float_m != null) meta.push(`float ${a.float_m.toFixed(1)}M`);
+  if (a.rel_vol_1min != null) meta.push(`RVol1m ${Math.round(a.rel_vol_1min).toLocaleString('en-US')}%`);
+  const lines = [
+    `<b>${escapeHtml(a.ticker)}</b>  ${price}  ${chg}`.trimEnd(),
+    what.join(' · '),
+    meta.join(' · '),
+  ];
+  if (kinds.includes('news') && a.news) {
+    const bear = a.news.direction === 'bearish' ? '⚠️ bearish · ' : '';
+    lines.push(`${bear}🔥${a.news.score} ${escapeHtml(a.news.type)} — ${escapeHtml(a.news.title.slice(0, 160))} <i>(${escapeHtml(a.news.source)})</i>`);
+  }
+  lines.push(`<a href="${finviz}">Finviz</a> · <a href="${tv}">TradingView</a>`);
+  return lines.filter(Boolean).join('\n');
 }
 
 function formatTickWatchAlert(e: TickEvent): string {

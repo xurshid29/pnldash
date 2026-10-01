@@ -320,6 +320,28 @@ export interface TickCatch {
   watch_change_pct: number | null;
 }
 
+// Opportunity alert (server: opportunity-alerts.ts) — the same set the phone
+// receives. One per ticker per cycle; `kinds` says what fired.
+export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news';
+export interface OpportunityAlert {
+  id: string;
+  ticker: string;
+  kinds: OpportunityKind[];
+  at: string;
+  price: number | null;
+  change_pct: number | null;
+  grade: string | null;
+  prev_grade: string | null;
+  new_on_screen: boolean;
+  move_pct: number | null;
+  rel_vol_1min: number | null;
+  float_m: number | null;
+  news: {
+    source: string; title: string; url: string; published_at: string | null;
+    score: number; direction: string; type: string;
+  } | null;
+}
+
 // ↑ VWAP reclaim — a LIVE TICKS sub-list (2026-08-21): a session mover that
 // closed a 1m candle back over session VWAP (reclaimed), then held/extended on
 // a later close (confirmed), or closed back under (lost — lingers grey).
@@ -493,6 +515,9 @@ export interface CyclePayload {
   tick_catches: TickCatch[];
   // Optional for rolling-deploy compatibility with an older API.
   vwap_reclaims?: VwapReclaimItem[];
+  // Opportunity alerts from the last hour, newest first. Optional for
+  // rolling-deploy compatibility with an older API.
+  alerts?: OpportunityAlert[];
   news_radar: NewsRadarItem[];
   ema_crosses: EmaCrossItem[];
   macd_momo: MacdMomoItem[];

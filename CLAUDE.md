@@ -26,7 +26,7 @@ TELEGRAM_USER_ID=...                                     # optional — dashboar
 DATABENTO_API_KEY=db-...                                 # optional — Databento live (EQUS.MINI) for the tick-feed detector; Live Ticks PARKED 2026-10-01 (commented out in prod, subscription cancelled)
 TICKFEED_ENABLED=true                                    # optional — turn on the live tick feed (needs DATABENTO_API_KEY + a Standard/US-Equities subscription); off unless exactly 'true'
 TICKFEED_PYTHON=python3                                  # optional — python interpreter for the sidecar (default python3)
-ALERTS_DISABLED=tick_watch,accum                         # optional — mute these components' TELEGRAM pushes only; detection, grading, and the dashboard keep running (also: edge_armed, edge_entry, edge_bailout, vwap_reclaim)
+ALERTS_DISABLED=tick_watch,accum                         # optional — mute these components' TELEGRAM pushes only; detection, grading, and the dashboard keep running (also: edge_armed, edge_entry, edge_bailout, vwap_reclaim; the live opportunity alerts are grade_aplus, fast_move, news)
 COMPONENTS_DISABLED=ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks # optional product gates; this lean set is the default. Empty = enable all; "faders" aliases "continuation"
 ```
 
@@ -76,7 +76,7 @@ Postgres, migrations via `dbmate` in `db/migrations/`.
 5. Classify rows: `NEW` (first appearance), `ACC` (`change% delta > 2`), `UP` (any positive delta), `NEWS` (no movement but has today's news).
 6. Persist cycle + rows + new news articles to DB.
 7. Broadcast a delta payload to all connected SSE clients on `/api/screener/stream`.
-8. Push a Telegram alert (if `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` are set) for any row with fresh news and a strong/major catalyst — once per article URL, so it never spams. Server-side, so alerts arrive even with no browser open.
+8. Opportunity alerts (`services/opportunity-alerts.ts`, 2026-10-01): one engine decides 🅰️ first A+ of the day / ⚡ fast move / 📰 fresh headline per cycle; the same set goes to Telegram (if `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` are set; per-kind mutes via `ALERTS_DISABLED`) and to the dashboard via `payload.alerts`. Dedup state is seeded from `tier_events` (tier='alert') and recent `news_articles` on boot, so deploys don't re-ping. The older fresh-catalyst push (`momentum` slug) still exists but stays muted in prod — the 📰 alert supersedes it.
 
 When enabled, each cycle also runs a second **Ignition screen** alongside the Momentum one. In the default lean profile it is parked by `COMPONENTS_DISABLED`, so its fetch, score, writes, payload and UI list do not run. The same gate parks MOMO/SETUPS/EMA, Swing, Outcomes, Continuation, Edge (parked 2026-08-21 — `EdgeService` does not start and `/api/edge` answers 503), the ↑ VWAP reclaim tick layer (parked 2026-08-22 after grading as noise) and Live Ticks itself (`ticks`, parked 2026-10-01 — no Databento connection at all; the subscription is being cancelled); the shared daily-bar and technical-bar engines start only when one of their consumers is enabled. The default desk is Momentum (with the A+…D grade) + Momentum History, all Finviz-fed. See `docs/HANDOVER.md` for the current operating profile and `docs/ignition-screener-spec.md` for the preserved experiment.
 

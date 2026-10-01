@@ -7,6 +7,30 @@ the "where we are right now + what's open" layer on top of it.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
+**2026-10-01 (latest) — OPPORTUNITY ALERTS LIVE (phone + dashboard).**
+Operator asked to be notified on any opportunity: new A+, lower grade →
+A+, an existing ticker moving fast, new news. Built as ONE server engine
+(`services/opportunity-alerts.ts`) whose per-cycle output goes to Telegram
+AND the dashboard (`payload.alerts`), so they can't disagree. Rules were
+sized on September (out-of-sample), not guessed: A+ every-entry would be
+162/day (smoothing flicker) → **first A+ per ticker per day** (26/day, and
+the best moment: +10% within 30 min 38% vs 3% base); fast move = **+10%
+vs ~60s ago, RVol 1m ≥1000%, on screen ≥5 min, 15-min cooldown** (~31/day,
+44% continue +10% — but −10% comes first 50%); news = **headline published
+≤30 min before first sight** on a screened ticker (74% of first-seen
+headlines are OLD news found when a ticker appears), deduped by URL + title
+across sources; phone only catalyst ≥40. Combined ≈63 phone alerts/day,
+busiest hour 09:00 ET ≈10. Same-ticker events in one cycle merge into one
+message. Dedup is DB-seeded on boot (tier_events tier='alert' + last-24h
+news URLs) — no re-pings after deploys; every alert kind is a tier_events
+row for later grading. Mutes: phone = `ALERTS_DISABLED` slugs
+`grade_aplus`/`fast_move`/`news`; dashboard = per-type switches next to
+Alerts ON/OFF. The old `momentum` fresh-catalyst push stays muted (📰
+supersedes it). Regression: `scripts/verify-opportunity-alerts.ts` (27
+checks); replay of two September sessions reproduced the study's A+ count
+exactly (25/25). **Next:** after ~2 weeks, grade `tier='alert'` rows
+(continuation after each kind) and re-tune volume with the operator.
+
 **2026-10-01 (later) — LIVE TICKS RETIRED, DATABENTO BEING CANCELLED.**
 Found while shipping the grade: every tick-feed-sourced tier_event stopped
 after Fri 2026-09-11 — the Databento feed had been dead for three weeks

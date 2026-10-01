@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
-import type { CyclePayload } from '../api/types';
+import { getAlertKinds } from './useAlertKinds';
+import type { CyclePayload, OpportunityAlert } from '../api/types';
 
 // Browser equivalent of the bash script's audio + voice alerts. Events:
 // • Tick WATCH (👀) — soft single ping, price-led early flag from the tick feed
@@ -178,6 +179,25 @@ export function notifyEdge(title: string, body: string) {
   notify(title, body);
 }
 
+function fmtAlertPrice(p: number | null): string {
+  return p == null ? '' : `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
+}
+
+function opportunityTitle(a: OpportunityAlert): string {
+  if (a.kinds.includes('grade_aplus')) return `🅰️ ${a.ticker} — ${a.new_on_screen ? 'new A+' : `A+ (was ${a.prev_grade ?? '—'})`}`;
+  if (a.kinds.includes('fast_move')) return `⚡ ${a.ticker} +${a.move_pct}% in 60s`;
+  return `📰 ${a.ticker}${a.news?.direction === 'bearish' ? ' ⚠️' : ''} — ${a.news?.title.slice(0, 60) ?? 'news'}`;
+}
+
+function opportunityBody(a: OpportunityAlert): string {
+  const parts = [fmtAlertPrice(a.price)];
+  if (a.change_pct != null) parts.push(`${a.change_pct >= 0 ? '+' : ''}${a.change_pct.toFixed(1)}%`);
+  if (a.grade) parts.push(`grade ${a.grade}`);
+  if (a.float_m != null) parts.push(`float ${a.float_m.toFixed(1)}M`);
+  const line = parts.filter(Boolean).join(' · ');
+  return a.news && !a.kinds.every((k) => k === 'news') ? `${line}\n📰 ${a.news.title.slice(0, 90)}` : line;
+}
+
 export function useScreenerAlerts(payload: CyclePayload | null) {
   // The Alerts ON/OFF button is a real mute (2026-07-31). It used to be
   // cosmetic: nothing read its state, so confirmations beeped with alerts
@@ -199,6 +219,8 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
   const seenTicks = useRef<Set<string>>(new Set());
   // News-radar entries persist ~90 min; ping each article once.
   const seenRadar = useRef<Set<string>>(new Set());
+  // Opportunity alerts ride in every payload for an hour; play each id once.
+  const seenAlerts = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!payload) return;
@@ -227,7 +249,26 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       crossConfirmKeys.forEach((x) => seenTicks.current.add(x.key));
       crossObserveKeys.forEach((x) => seenTicks.current.add(x.key));
       (payload.vwap_reclaims ?? []).forEach((v) => seenTicks.current.add(`${v.ticker}:vwap:${v.reclaim_at}:${v.status}`));
+      (payload.alerts ?? []).forEach((a) => seenAlerts.current.add(a.id));
       return;
+    }
+
+    // Opportunity alerts (2026-10-01) — the same set the phone gets. One
+    // sound per cycle (loudest kind wins), one notification per alert.
+    const newAlerts = (payload.alerts ?? []).filter((a) => !seenAlerts.current.has(a.id));
+    newAlerts.forEach((a) => seenAlerts.current.add(a.id));
+    const kindsOn = getAlertKinds();
+    const audible = newAlerts
+      .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k]) }))
+      .filter((a) => a.kinds.length > 0);
+    if (audible.length > 0) {
+      try {
+        if (audible.some((a) => a.kinds.includes('grade_aplus'))) crossConfirmPing();
+        else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
+        else chime();
+      } catch { /* audio context not unlocked */ }
+      for (const a of audible.slice(0, 4)) notify(opportunityTitle(a), opportunityBody(a));
+      if (audible.length > 4) notify(`+${audible.length - 4} more alerts`, audible.slice(4).map((a) => a.ticker).join(', '));
     }
 
     const newConfirmedCrosses = crossConfirmKeys.filter((x) => !seenTicks.current.has(x.key));

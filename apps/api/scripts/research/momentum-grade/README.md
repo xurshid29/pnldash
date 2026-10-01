@@ -40,6 +40,15 @@ cd apps/api && npx tsx scripts/verify-momentum-grade.ts /tmp/grade/parity.csv
 
 Must report every replayed row's letter matching the study.
 
+## Alert sizing (2026-10-01)
+
+`alert_study.py` (same args as `study.py`, plus `news_titles.csv.gz` from
+`export-news-titles.sql`) measures the opportunity-alert triggers on the
+test month: A+ entries under several cooldowns, fast moves (+X% vs ~60s ago
+with an RVol 1m gate), fresh headlines, and the merged daily volume / busiest
+hour. The thresholds in `services/opportunity-alerts.ts` came from its
+September output.
+
 ## Results of the first fit (2026-10-01)
 
 Fit 2026-08-03…08-31 (3.29M rows), test 2026-09-01…09-30 (3.35M rows).

@@ -4,6 +4,7 @@ import { UserOutlined, LogoutOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useAuth } from '../../context/AuthContext';
 import { AlertsToggle } from './AlertsToggle';
+import { AlertKindsMenu } from './AlertKindsMenu';
 import { useLayout, type ChartCount } from '../../context/LayoutContext';
 
 const { Header, Content } = Layout;
@@ -61,6 +62,7 @@ export function AppLayout() {
                   onChange={setChartCount}
                 />
               </Space>
+              <AlertKindsMenu />
               <AlertsToggle />
             </>
           )}

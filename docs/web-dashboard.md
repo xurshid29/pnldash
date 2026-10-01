@@ -22,6 +22,20 @@ full experimental desk, or remove individual slugs selectively (`faders` is an
 accepted alias for `continuation`). `/health` and SSE cycle payloads expose the
 effective component flags.
 
+**Opportunity alerts (2026-10-01).** One server-side engine
+(`services/opportunity-alerts.ts`) decides, every cycle, three kinds of alert
+and sends the same set to Telegram and to the dashboard (`payload.alerts` →
+sound + browser notification): 🅰️ the first time a Momentum ticker reaches A+
+that day (new or upgraded), ⚡ a name on screen ≥5 min trading ≥+10% above
+its price ~60s earlier with RVol 1m ≥1000% (15-min cooldown, folded into a
+same-ticker alert from <5 min ago), and 📰 a headline published ≤30 min
+before we first see it on a screened ticker (deduped by URL and by title;
+the phone only gets catalyst ≥40). Sized on September 2026: ~63 phone
+alerts/day, busiest hour 09:00–10:00 ET ≈10. Per-type switches sit next to
+Alerts ON/OFF in the header; phone mutes are the `ALERTS_DISABLED` slugs
+`grade_aplus`, `fast_move`, `news`. Sizing study:
+`scripts/research/momentum-grade/alert_study.py`.
+
 **Momentum grade (2026-10-01).** Each Momentum row shows a letter A+ … D,
 re-graded every cycle (2-minute smoothing) and used as the table's default
 sort. It is a fitted ranking of the chance of a +10% move within 30 minutes

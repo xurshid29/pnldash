@@ -32,7 +32,10 @@ export type AlertComponent =
   | 'edge_armed'    // Edge ticker reached a configured EMA/VWAP decision zone
   | 'edge_entry'    // Edge closed-bar bounce/reclaim + MACD confirmation
   | 'edge_bailout'  // Edge closed below its configured bailout level
-  | 'vwap_reclaim'; // ↑ session-VWAP reclaim CONFIRMED on a closed 1m candle (Live Ticks list)
+  | 'vwap_reclaim'  // ↑ session-VWAP reclaim CONFIRMED on a closed 1m candle (Live Ticks list)
+  | 'grade_aplus'   // 🅰️ first A+ of the day for a Momentum ticker (opportunity-alerts.ts)
+  | 'fast_move'     // ⚡ Momentum ticker +10% within ~60s on volume
+  | 'news';         // 📰 fresh headline on a Momentum ticker (phone: catalyst ≥40)
 let disabledAlerts: Set<string> | null = null;
 export function alertDisabled(component: AlertComponent): boolean {
   if (!disabledAlerts) {
