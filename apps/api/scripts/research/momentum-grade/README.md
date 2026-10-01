@@ -49,6 +49,14 @@ with an RVol 1m gate), fresh headlines, and the merged daily volume / busiest
 hour. The thresholds in `services/opportunity-alerts.ts` came from its
 September output.
 
+## Fade cap (2026-10-01)
+
+`fade_study.py` (same args as `study.py`) races +10% vs −10% first within
+30 min for A-tier names by distance below their 10-minute high, picks the
+threshold on the fit month and checks it on the test month. `GRADE_FADE`
+(8%, cap B+) came from it; `study.py`'s parity export carries the capped
+letter (`g_final`) so the verify script proves the cap too.
+
 ## Results of the first fit (2026-10-01)
 
 Fit 2026-08-03…08-31 (3.29M rows), test 2026-09-01…09-30 (3.35M rows).

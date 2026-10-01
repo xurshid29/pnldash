@@ -87,18 +87,27 @@ const GRADE_STYLE: Record<string, { color: string; bg: string }> = {
   'D':  { color: '#595959', bg: 'transparent' },
 };
 
-function GradeCell({ grade }: { grade: string | null | undefined }) {
+// A capped (faded) grade gets a red ▼ with how far the name sits below its
+// 10-minute high — "this was A-tier, but it is dumping" (the LONA case).
+function GradeCell({ grade, faded, offHigh }: { grade: string | null | undefined; faded?: boolean; offHigh?: number | null }) {
   if (!grade) return <Text type="secondary">—</Text>;
   const s = GRADE_STYLE[grade] ?? GRADE_STYLE.D;
   return (
-    <span
-      style={{
-        display: 'inline-block', minWidth: 28, padding: '0 5px', borderRadius: 3,
-        textAlign: 'center', fontWeight: 700, fontSize: 12, lineHeight: '18px',
-        color: s.color, background: s.bg,
-      }}
-    >
-      {grade.replace('-', '\u2212')}
+    <span style={{ whiteSpace: 'nowrap' }}>
+      <span
+        style={{
+          display: 'inline-block', minWidth: 28, padding: '0 5px', borderRadius: 3,
+          textAlign: 'center', fontWeight: 700, fontSize: 12, lineHeight: '18px',
+          color: s.color, background: s.bg,
+        }}
+      >
+        {grade.replace('-', '\u2212')}
+      </span>
+      {faded && (
+        <span style={{ color: '#ff4d4f', fontSize: 10, fontWeight: 700, marginLeft: 3 }}>
+          ▼{offHigh != null ? Math.round(Math.abs(offHigh)) : ''}
+        </span>
+      )}
     </span>
   );
 }
@@ -205,11 +214,13 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
         title: 'Grade',
         dataIndex: 'grade',
         key: 'grade',
-        width: 58,
+        width: 74,
         align: 'center',
         defaultSortOrder: 'descend',
-        sorter: (a, b) => (a.grade_score ?? -99) - (b.grade_score ?? -99),
-        render: (g: string | null | undefined) => <GradeCell grade={g} />,
+        // Faded names sort with their capped letter (B+), not their raw score.
+        sorter: (a, b) => (a.grade_faded ? Math.min(a.grade_score ?? -99, 1.5649) : (a.grade_score ?? -99))
+          - (b.grade_faded ? Math.min(b.grade_score ?? -99, 1.5649) : (b.grade_score ?? -99)),
+        render: (g: string | null | undefined, row) => <GradeCell grade={g} faded={row.grade_faded} offHigh={row.off_high_pct} />,
       },
       {
         // "Activity now" — fresh/accelerating/VWAP-reclaiming names rank above

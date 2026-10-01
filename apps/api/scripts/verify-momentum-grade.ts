@@ -9,7 +9,7 @@
 
 import { readFileSync } from 'node:fs';
 import {
-  MomentumGrader, gradeBuckets, gradeScore, letterFor, GRADE_CUTS, GRADE_SMOOTH_CYCLES, type GradeInputs,
+  MomentumGrader, gradeBuckets, gradeScore, letterFor, GRADE_CUTS, GRADE_SMOOTH_CYCLES, GRADE_FADE, type GradeInputs,
 } from '../src/services/momentum-grade.js';
 
 let failures = 0;
@@ -62,6 +62,22 @@ console.log('Part 1 — buckets, smoothing, letters');
   check('2-cycle mean is the average', Math.abs(mixed.score - (gradeScore(base) + gradeScore(dead)) / 2) < 0.011);
   g2.reset();
   check('reset clears history', g2.grade('T', dead).score === g2.grade('U', dead).score);
+
+  // Fade cap: an A-tier name ≥8% below its 10-min high shows B+.
+  const f = new MomentumGrader();
+  const T = 1_790_000_000;
+  f.grade('F', { ...base, price: 5.0 }, T);
+  const near = f.grade('F', { ...base, price: 4.7 }, T + 20);       // −6% off high
+  check('6% off the high keeps the model letter', near.grade === near.base && !near.faded, JSON.stringify(near));
+  const dump = f.grade('F', { ...base, price: 4.2 }, T + 40);       // −16% off high
+  check('16% off the high caps an A-tier letter at B+', dump.base === 'A+' && dump.grade === GRADE_FADE.cap && dump.faded, JSON.stringify(dump));
+  check('…and reports how far off the high it is', dump.offHighPct === -16);
+  const later = f.grade('F', { ...base, price: 4.25 }, T + 40 + GRADE_FADE.lookback_sec + 1); // old high left the window
+  check('cap lifts once the 10-min window rolls past the old high', !later.faded && later.grade === later.base, JSON.stringify(later));
+  const low = new MomentumGrader();
+  low.grade('L', { ...dead, price: 5 }, T);
+  const lowDump = low.grade('L', { ...dead, price: 3 }, T + 20);
+  check('below A-tier the cap never raises a letter', lowDump.grade === lowDump.base && !lowDump.faded, JSON.stringify(lowDump));
 }
 
 const csvPath = process.argv[2];
@@ -73,8 +89,10 @@ if (csvPath) {
   const num = (v: string) => (v === '' ? null : Number(v));
   let grader = new MomentumGrader();
   let day = '';
-  let n = 0, letterMiss = 0, scoreMiss = 0;
+  let n = 0, letterMiss = 0, scoreMiss = 0, finalMiss = 0, fadedRows = 0;
   const examples: string[] = [];
+  const finalExamples: string[] = [];
+  const hasFinal = col('g_final') >= 0;
   for (const line of lines.slice(1)) {
     const c = line.split(',');
     if (c[col('day')] !== day) { day = c[col('day')]; grader = new MomentumGrader(); }
@@ -85,17 +103,26 @@ if (csvPath) {
       relVol1min: num(c[col('rv1')]), relVol5min: num(c[col('rv5')]),
       aboveVwap: c[col('av')] === '' ? null : c[col('av')] === 'true',
     };
-    const out = grader.grade(c[col('ticker')], x);
+    const out = grader.grade(c[col('ticker')], x, Number(c[col('ts')]));
     n++;
     const wantScore = Number(c[col('m6')]);
     if (Math.abs(out.score - wantScore) > 0.011) scoreMiss++;
-    if (out.grade !== c[col('g')]) {
+    if (out.base !== c[col('g')]) {
       letterMiss++;
-      if (examples.length < 5) examples.push(`${c[col('ticker')]} ${c[col('ts')]}: ts=${out.grade}/${out.score} study=${c[col('g')]}/${wantScore}`);
+      if (examples.length < 5) examples.push(`${c[col('ticker')]} ${c[col('ts')]}: ts=${out.base}/${out.score} study=${c[col('g')]}/${wantScore}`);
+    }
+    // Exports from the fade-cap study also carry the final (capped) letter.
+    if (hasFinal) {
+      if (out.grade !== c[col('g_final')]) {
+        finalMiss++;
+        if (finalExamples.length < 5) finalExamples.push(`${c[col('ticker')]} ${c[col('ts')]}: ts=${out.grade} (off ${out.offHighPct}) study=${c[col('g_final')]} (off ${c[col('off_hi')]})`);
+      }
+      if (out.faded) fadedRows++;
     }
   }
-  check(`letters match on all ${n.toLocaleString()} rows`, letterMiss === 0, `${letterMiss} mismatches; ${examples.join(' | ')}`);
+  check(`model letters match on all ${n.toLocaleString()} rows`, letterMiss === 0, `${letterMiss} mismatches; ${examples.join(' | ')}`);
   check('2-minute scores match (±0.01)', scoreMiss === 0, `${scoreMiss} mismatches`);
+  if (hasFinal) check(`final letters incl. the fade cap match (${fadedRows.toLocaleString()} capped rows)`, finalMiss === 0, `${finalMiss} mismatches; ${finalExamples.join(' | ')}`);
 }
 
 if (failures > 0) {

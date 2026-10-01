@@ -109,6 +109,10 @@ export interface EnrichedRow {
   // momentum-grade.ts). Optional for rolling-deploy compatibility.
   grade?: 'A+' | 'A' | 'A-' | 'B+' | 'B' | 'B-' | 'C' | 'D' | null;
   grade_score?: number | null;
+  // Fade cap: an A-tier name ≥8% below its 10-minute high shows B+ until it
+  // recovers; grade_faded marks it, off_high_pct says how far off it is.
+  grade_faded?: boolean;
+  off_high_pct?: number | null;
   // True the cycle price reclaims VWAP (below → at/above) — drives a ↑VWAP badge.
   vwap_reclaim: boolean;
   // Anchored VWAP since first detection today (restart-safe — rebuilt from

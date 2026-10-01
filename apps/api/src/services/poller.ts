@@ -625,6 +625,10 @@ export interface EnrichedRow extends ScreenerRow {
   // grade_score = the 2-minute rolling score the letter is cut from.
   grade: MomentumGrade | null;
   grade_score: number | null;
+  // Fade cap (momentum-grade.ts GRADE_FADE): an A-tier name ≥8% below its
+  // 10-minute high shows B+ until it recovers — grade_faded marks it.
+  grade_faded: boolean;
+  off_high_pct: number | null;
   // True the cycle price crosses from below VWAP to at/above it — the timed
   // "bad → good" reclaim. Drives a ↑VWAP badge.
   vwap_reclaim: boolean;
@@ -2543,7 +2547,7 @@ class PollerService {
         relVol1min,
         relVol5min,
         aboveVwap,
-      });
+      }, nowSec);
 
       return {
         ...r,
@@ -2554,6 +2558,8 @@ class PollerService {
         heat,
         grade: graded.grade,
         grade_score: graded.score,
+        grade_faded: graded.faded,
+        off_high_pct: graded.offHighPct,
         vwap_reclaim: vwapReclaim,
         vol_5min: vol5min,
         rel_vol_5min: relVol5min,

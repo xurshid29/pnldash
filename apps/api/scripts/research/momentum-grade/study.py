@@ -110,6 +110,11 @@ for g, up, dn in sorted(q("""select g.g, avg((ft.t_up is not null and (ft.t_dn i
 
 json.dump({'fit_end': FIT_END, 'points': points, 'cuts_m6': cuts}, open(f"{D}/model.json", 'w'), indent=1)
 days = ", ".join(f"date '{d}'" for d in PARITY_DAYS)
-con.execute(f"""copy (select ticker, day, ts, chg, float_m, price, tmin, imp, n_news, age_min, acc, rv1, rv5, av, round(m6, 4) as m6, g
-                     from gv where day in ({days}) order by day, ticker, ts) to '{D}/parity.csv' (header)""")
+# Fade cap (momentum-grade.ts GRADE_FADE): A-tier ≥8% below the 10-min high → B+.
+con.execute("""create table hi as
+  select id, max(price) over (partition by ticker, day order by ts range between 600 preceding and current row) as hi10 from r2""")
+con.execute(f"""copy (select g.ticker, g.day, g.ts, g.chg, g.float_m, g.price, g.tmin, g.imp, g.n_news, g.age_min, g.acc, g.rv1, g.rv5, g.av,
+                            round(g.m6, 4) as m6, g.g, round((g.price / hi.hi10 - 1) * 100, 4) as off_hi,
+                            case when (g.price / hi.hi10 - 1) * 100 <= -8 and g.g in ('A+', 'A', 'A-') then 'B+' else g.g end as g_final
+                     from gv g join hi using (id) where g.day in ({days}) order by g.day, g.ticker, g.ts) to '{D}/parity.csv' (header)""")
 print(f"\nwrote {D}/model.json and {D}/parity.csv")

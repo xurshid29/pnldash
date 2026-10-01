@@ -115,24 +115,78 @@ export function letterFor(smoothed: number): MomentumGrade {
   return 'D';
 }
 
+// Fade downgrade (2026-10-01, the LONA case: graded A+ right after dumping
+// ~20% off its high with MACD rolling over). The +10%-touch label REWARDS a
+// dump — the bounce off the low counts — so a falling name could out-grade a
+// healthy one. Measured on the first-touch race (+10% vs −10% first within
+// 30 min) for A-tier names, by distance below their 10-minute high:
+//   within 3%: up:down 1.11 Aug / 1.25 Sep   3–5%: 1.07 / 1.10
+//   5–8%: 0.99 / 1.11                       8–12%: 0.95 / 0.90
+//   12–20%: 0.84 / 0.88                     20%+: 0.91 / 0.87
+// The 8% line is where BOTH months turn down-first. Capping A-tier at B+ there
+// lifted September's A-tier up:down 1.12 → 1.19 (A-tier share 11.1% → 9.7%).
+// It is not the last minute's speed — names that just dropped fast are about
+// balanced (1.04); it is having faded from the recent high. The cap lifts on
+// its own once the name recovers or the 10-min window rolls past the old high.
+export const GRADE_FADE = {
+  lookback_sec: 600,     // 10-minute rolling high, the current row included
+  off_high_pct: -8,      // at or below → faded
+  cap: 'B+' as MomentumGrade,
+};
+const LADDER: MomentumGrade[] = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'];
+
+export interface GradeResult {
+  grade: MomentumGrade;        // what is displayed / alerted on (fade cap applied)
+  base: MomentumGrade;         // the model letter before the fade cap
+  faded: boolean;
+  offHighPct: number | null;   // % below the 10-min high (≤ 0)
+  score: number;
+  raw: number;
+}
+
 // Per-ticker rolling mean over the last GRADE_SMOOTH_CYCLES on-screen cycles —
 // the same window the study validated (consecutive appearances of the ticker
 // that ET day). Cuts flicker ~24 → ~9 letter changes per ticker-hour at equal
 // accuracy. Reset at midnight ET with the rest of the poller's day state.
 export class MomentumGrader {
   private hist = new Map<string, number[]>();
+  private prices = new Map<string, Array<{ ts: number; price: number }>>();
 
-  grade(ticker: string, x: GradeInputs): { grade: MomentumGrade; score: number; raw: number } {
+  grade(ticker: string, x: GradeInputs, tsSec = Math.floor(Date.now() / 1000)): GradeResult {
     const raw = gradeScore(x);
     let h = this.hist.get(ticker);
     if (!h) { h = []; this.hist.set(ticker, h); }
     h.push(raw);
     if (h.length > GRADE_SMOOTH_CYCLES) h.shift();
     const score = h.reduce((a, v) => a + v, 0) / h.length;
-    return { grade: letterFor(score), score: Math.round(score * 100) / 100, raw: Math.round(raw * 100) / 100 };
+    const base = letterFor(score);
+
+    let offHighPct: number | null = null;
+    if (x.price != null && x.price > 0) {
+      let p = this.prices.get(ticker);
+      if (!p) { p = []; this.prices.set(ticker, p); }
+      p.push({ ts: tsSec, price: x.price });
+      while (p.length > 0 && p[0].ts < tsSec - GRADE_FADE.lookback_sec) p.shift();
+      let hi = 0;
+      for (const s of p) if (s.price > hi) hi = s.price;
+      offHighPct = (x.price / hi - 1) * 100;
+    }
+    // Plain double compare, exactly as the study did (no tie tolerance —
+    // 4.6/5.0 lands at −7.9999…%, which the validated rule left un-capped).
+    const faded = offHighPct != null && offHighPct <= GRADE_FADE.off_high_pct
+      && LADDER.indexOf(base) < LADDER.indexOf(GRADE_FADE.cap);
+    return {
+      grade: faded ? GRADE_FADE.cap : base,
+      base,
+      faded,
+      offHighPct: offHighPct == null ? null : Math.round(offHighPct * 100) / 100,
+      score: Math.round(score * 100) / 100,
+      raw: Math.round(raw * 100) / 100,
+    };
   }
 
   reset(): void {
     this.hist.clear();
+    this.prices.clear();
   }
 }
