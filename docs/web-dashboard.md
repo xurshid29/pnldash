@@ -6,7 +6,8 @@ Status as of 2026-08-21. The bash scanner (`screener-poll_breakout.sh`) and the 
 Live Ticks + Momentum + Momentum History. Ignition, MOMO, SETUPS, EMA, Swing,
 Outcomes, Faders/Continuation, Edge (since 2026-08-21), the ↑ VWAP reclaim
 tick layer (since 2026-08-22) and Live Ticks itself (since 2026-10-01 — no
-Databento connection; the Watchlist now takes the whole left column) are
+Databento connection; the left rail is gone and the Watchlist is a screener
+tab next to Momentum and History) are
 preserved but parked by the default
 `COMPONENTS_DISABLED=ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`.
 When `edge` is parked, `EdgeService` never starts (no preset load, no 1m bar

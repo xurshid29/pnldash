@@ -14,7 +14,9 @@ after Fri 2026-09-11 — the Databento feed had been dead for three weeks
 operator uses only Momentum + History. So Live Ticks joined the parked set
 (new `ticks` slug in the `COMPONENTS_DISABLED` default): no sidecar, no
 Databento connection, no 🤫 scan, no ladder, no tier_events for
-accum/tick, empty `tick_catches`; the Watchlist now fills the left column.
+accum/tick, empty `tick_catches`. The left rail is gone by default (it only
+renders while Ignition or Live Ticks is on); the Watchlist moved into the
+screener tabs (Momentum · History · Watchlist).
 Prod `.env`: `DATABENTO_API_KEY` commented out (key presence can no longer
 bill anything). **Telegram is now silent** — the 🛰️ confirm was the last
 unmuted alert with a producer. Candidates if the operator wants pings back:

@@ -19,8 +19,10 @@ const { Text } = Typography;
 // shows its most recent catalyst, a 🆕 dot when news landed after you added /
 // last viewed it, and an editable expiry; clicking a row drives the shared
 // selection (charts + Quote panel). Expired entries auto-remove server-side.
-// Sits under the Ignition sidebar in the left rail.
-export function WatchlistPanel() {
+// Lives in the screener's Watchlist tab since 2026-10-01 (it used to fill the
+// left rail, which emptied once Ignition and Live Ticks were parked). The tab
+// label carries the title + count, so the in-panel header is optional.
+export function WatchlistPanel({ showHeader = true }: { showHeader?: boolean } = {}) {
   const { selected, setSelected } = useSelection();
   const { entries, remove, setExpiry, markSeen } = useWatchlist();
   const [catalystModal, setCatalystModal] = useState<{ ticker: string; catalyst: CatalystInfo | null } | null>(null);
@@ -38,20 +40,22 @@ export function WatchlistPanel() {
         catalyst={catalystModal?.catalyst ?? null}
         onClose={() => setCatalystModal(null)}
       />
-      <div
-        style={{
-          padding: '6px 8px',
-          borderBottom: '1px solid #303030',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-        }}
-      >
-        <span>
-          <Text strong style={{ color: '#e0e0e0', letterSpacing: 0.5, fontSize: 15 }}>★ Watchlist</Text>
-          <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>{entries.length}</Text>
-        </span>
-      </div>
+      {showHeader && (
+        <div
+          style={{
+            padding: '6px 8px',
+            borderBottom: '1px solid #303030',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          <span>
+            <Text strong style={{ color: '#e0e0e0', letterSpacing: 0.5, fontSize: 15 }}>★ Watchlist</Text>
+            <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>{entries.length}</Text>
+          </span>
+        </div>
+      )}
 
       {entries.length === 0 ? (
         <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>

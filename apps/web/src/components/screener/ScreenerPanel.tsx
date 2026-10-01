@@ -23,6 +23,8 @@ import { EmaReclaimPanel } from './EmaReclaimPanel';
 import { MacdMomoPanel } from './MacdMomoPanel';
 import { MomoSetupsPanel } from './MomoSetupsPanel';
 import { EdgePanel } from './EdgePanel';
+import { WatchlistPanel } from './WatchlistPanel';
+import { useWatchlist } from '../../hooks/useWatchlist';
 
 const { Text } = Typography;
 
@@ -52,7 +54,7 @@ const SESSION_COLOR: Record<TradingSession, string> = {
   closed: '#8c8c8c',
 };
 
-type ScreenerTab = 'momo' | 'setups' | 'ema' | 'momentum' | 'edge' | 'swing' | 'outcomes' | 'continuation' | 'history';
+type ScreenerTab = 'momo' | 'setups' | 'ema' | 'momentum' | 'edge' | 'swing' | 'outcomes' | 'continuation' | 'history' | 'watchlist';
 
 // First-appeared time in the operator's TZ (UTC+5), HH:MM, plus how long ago.
 // The "ago" is the staleness cue: a top-of-list +600% name first seen 9h ago is
@@ -130,6 +132,8 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [catalystModal, setCatalystModal] = useState<{ ticker: string; catalyst: CatalystInfo | null } | null>(null);
   const [activeTab, setActiveTab] = useState<ScreenerTab>('momentum');
+  // Same TanStack Query cache as the panel itself — the tab label's count is free.
+  const { entries: watchEntries } = useWatchlist();
   const components = payload?.components ?? LEAN_COMPONENT_FLAGS;
   const { hidden, hide, unhide } = useHiddenTickers();
   const { momentumNewsOnly, setMomentumNewsOnly } = useLayout();
@@ -547,6 +551,13 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
                 onOpenCatalyst={(ticker, catalyst) => setCatalystModal({ ticker, catalyst })}
               />
             ),
+          },
+          {
+            // Moved here from the left rail (2026-10-01): a tab next to the
+            // two the operator lives in, instead of a full-height column.
+            key: 'watchlist',
+            label: `Watchlist · ${watchEntries.length}`,
+            children: <WatchlistPanel showHeader={false} />,
           },
           {
             key: 'outcomes',

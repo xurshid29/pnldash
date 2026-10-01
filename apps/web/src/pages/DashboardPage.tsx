@@ -10,7 +10,6 @@ import { SelectedStockPanel } from '../components/screener/SelectedStockPanel';
 import { NewsRoomPanel } from '../components/news/NewsRoomPanel';
 import { ChartGrid } from '../components/charts/ChartGrid';
 import { IgnitionSidebar } from '../components/screener/IgnitionSidebar';
-import { WatchlistPanel } from '../components/screener/WatchlistPanel';
 import { SelectionProvider, useSelection } from '../context/SelectionContext';
 import { useLayout } from '../context/LayoutContext';
 import { LEAN_COMPONENT_FLAGS, type CyclePayload } from '../api/types';
@@ -30,34 +29,30 @@ export function DashboardPage() {
   useTabTitleFlash(payload);
   const { chartCount } = useLayout();
   const chartsVisible = chartCount > 0;
-  // The left rail's upper feed (Ignition list / Live Ticks) only exists when
-  // one of them is on. With both parked (the default since 2026-10-01) the
-  // Watchlist takes the whole column instead of sitting under an empty panel.
+  // The left rail only exists while Ignition or Live Ticks is on. Both are
+  // parked by default since 2026-10-01 and the Watchlist moved into the
+  // screener's tabs, so the default desk has no rail — the Momentum table
+  // gets the width.
   const railComponents = payload?.components ?? LEAN_COMPONENT_FLAGS;
-  const showRailFeed = railComponents.ignition || railComponents.ticks === true;
+  const showRail = railComponents.ignition || railComponents.ticks === true;
 
   return (
     <SelectionProvider>
       <AutoSelectFirstTicker payload={payload} />
       <div style={{ width: '100%', height: '100%', background: '#0a0a0a' }}>
         <PanelGroup direction="horizontal" autoSaveId="ms-outer">
-          <Panel id="ms-pane-ignition" order={0} defaultSize={16} minSize={11} maxSize={26}>
-            {showRailFeed ? (
-              <PanelGroup direction="vertical" autoSaveId="ms-leftrail">
-                <Panel defaultSize={65} minSize={25}>
-                  <Card><IgnitionSidebar payload={payload} /></Card>
-                </Panel>
-                <VHandle />
-                <Panel defaultSize={35} minSize={15}>
-                  <Card><WatchlistPanel /></Card>
-                </Panel>
-              </PanelGroup>
-            ) : (
-              <Card><WatchlistPanel /></Card>
-            )}
-          </Panel>
-          <HHandle />
-          <Panel id="ms-pane-left" order={1} defaultSize={chartsVisible ? 42 : 84} minSize={25}>
+          {showRail && (
+            <Panel id="ms-pane-ignition" order={0} defaultSize={16} minSize={11} maxSize={26}>
+              <Card><IgnitionSidebar payload={payload} /></Card>
+            </Panel>
+          )}
+          {showRail && <HHandle />}
+          <Panel
+            id="ms-pane-left"
+            order={1}
+            defaultSize={(showRail ? 84 : 100) - (chartsVisible ? 42 : 0)}
+            minSize={25}
+          >
             <PanelGroup direction="vertical" autoSaveId="ms-left">
               <Panel defaultSize={45} minSize={20}>
                 <Card><ScreenerPanel payload={payload} connected={connected} /></Card>
