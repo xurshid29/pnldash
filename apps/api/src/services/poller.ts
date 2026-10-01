@@ -35,6 +35,7 @@ import { outcomes } from './outcomes.js';
 import { getContinuationCandidates, type ContinuationCandidate } from './continuation.js';
 import { classifyByRules, type Classification, type ClassifierInput } from './catalyst-rules.js';
 import { recordTierEvent } from './tier-events.js';
+import { MomentumGrader, type MomentumGrade } from './momentum-grade.js';
 import type { VwapEvent, VwapSnapshot, VwapAnchor } from './vwap-reclaim.js';
 import { classifyByClaude, llmEnabled } from './catalyst-claude.js';
 import { fetchAndStoreTickerNews } from './ticker-news.js';
@@ -611,6 +612,12 @@ export interface EnrichedRow extends ScreenerRow {
   // reclaim + above-VWAP + 5m-RVol + fresh news. Drives the optional Heat sort
   // so fresh/rising names surface above stale big-Chg% leaders.
   heat: number;
+  // Momentum letter grade A+ … D (momentum-grade.ts): fitted on August,
+  // validated on September — P(+10% within 30 min) from ~27% at A+ down to
+  // ~0.1% at D. Attention ranking, not an entry signal (A+ is two-way).
+  // grade_score = the 2-minute rolling score the letter is cut from.
+  grade: MomentumGrade | null;
+  grade_score: number | null;
   // True the cycle price crosses from below VWAP to at/above it — the timed
   // "bad → good" reclaim. Drives a ↑VWAP badge.
   vwap_reclaim: boolean;
@@ -705,6 +712,9 @@ class PollerService {
   // same as a fresh mover. Cleared at midnight ET (NOT at session boundaries —
   // "first seen today" spans PM → regular → AH).
   private firstSeenAt = new Map<string, number>();
+  // Momentum grade smoothing state (last 6 raw scores per ticker); day-reset.
+  private momentumGrader = new MomentumGrader();
+  private gradeCatErrorAt = 0;
   // Per-ticker rolling volume samples (timestamp seconds, cumulative day volume).
   // Used to compute the last-5-minutes volume diff. Trimmed to ~10 minutes deep.
   private volHistory = new Map<string, Array<{ ts: number; volume: number }>>();
@@ -1945,6 +1955,7 @@ class PollerService {
       this.lastOutcomesDate = '';
       // "First seen today" is an ET-day concept — reset with the day.
       this.firstSeenAt.clear();
+      this.momentumGrader.reset();
       // Anchored VWAP must reset across days so yesterday's tallies don't
       // contaminate today's. Session-boundary changes inside a day deliberately
       // *don't* clear it (see lastSession block below).
@@ -2243,6 +2254,11 @@ class PollerService {
     // baseline is the volume that would flow in a typical such slice.
     const SLICES_PER_DAY = 78;
 
+    // Momentum-grade inputs shared by every row this cycle: the ET minute and
+    // each screened ticker's best non-bearish catalyst in the prior 16h.
+    const gradeEtMinute = etMinuteOfDay(new Date(nowSec * 1000));
+    const gradeCatalysts = await this.loadGradeCatalysts([...screenRows.keys()]);
+
     const enrichRow = (r: ScreenerRow): EnrichedRow => {
       const prev = this.prevChange.get(r.ticker);
       const cur = r.change_pct ?? 0;
@@ -2476,6 +2492,22 @@ class PollerService {
       if (isFresh) heat += 10; // fresh news this cycle
       heat = Math.max(0, Math.min(100, Math.round(heat)));
 
+      // Momentum grade — same inputs the September validation used.
+      const gradeCat = gradeCatalysts.get(r.ticker);
+      const graded = this.momentumGrader.grade(r.ticker, {
+        changePct: r.change_pct,
+        floatM: r.float_m,
+        price: r.price,
+        etMinute: gradeEtMinute,
+        catImpact: gradeCat?.imp ?? null,
+        newsCount: gradeCat?.n ?? 0,
+        ageMin: (nowSec * 1000 - firstSeenMs) / 60000,
+        accelDelta,
+        relVol1min,
+        relVol5min,
+        aboveVwap,
+      });
+
       return {
         ...r,
         status,
@@ -2483,6 +2515,8 @@ class PollerService {
         accel_delta: accelDelta,
         first_seen_at: new Date(firstSeenMs).toISOString(),
         heat,
+        grade: graded.grade,
+        grade_score: graded.score,
         vwap_reclaim: vwapReclaim,
         vol_5min: vol5min,
         rel_vol_5min: relVol5min,
@@ -3361,6 +3395,8 @@ class PollerService {
               prev_change_pct: r.prev_change_pct,
               accel_delta: r.accel_delta,
               heat: r.heat,
+              grade: r.grade,
+              grade_score: r.grade_score,
               vwap: r.vwap,
               above_vwap: r.above_vwap,
               vwap_reclaim: r.vwap_reclaim,
@@ -3733,6 +3769,40 @@ class PollerService {
 
   setMomoSetupSnapshotSource(fn: PollerService['momoSetupSnapshotFn']): void {
     this.momoSetupSnapshotFn = fn;
+  }
+
+  // Momentum-grade catalyst input: per ticker, the best NON-bearish classified
+  // impact among articles published in the prior 16h, plus the count of all
+  // linked articles in that window — the exact definition the grade was fitted
+  // on (momentum-grade.ts). One indexed query per cycle for the screened
+  // tickers; an error degrades to "no catalyst" rather than stalling the cycle.
+  private async loadGradeCatalysts(tickers: string[]): Promise<Map<string, { imp: number | null; n: number }>> {
+    const out = new Map<string, { imp: number | null; n: number }>();
+    if (tickers.length === 0) return out;
+    try {
+      const rows = await getDb()
+        .selectFrom('news_ticker_links as l')
+        .innerJoin('news_articles as a', 'a.id', 'l.article_id')
+        .leftJoin('news_classifications as nc', 'nc.article_id', 'a.id')
+        .select([
+          'l.ticker',
+          sql<number | null>`max(nc.impact_score) filter (where nc.direction is distinct from 'bearish')`.as('imp'),
+          sql<number>`count(*)::int`.as('n'),
+        ])
+        .where('l.ticker', 'in', tickers)
+        .where(sql<boolean>`a.published_at <= now()`)
+        .where(sql<boolean>`a.published_at > now() - interval '16 hours'`)
+        .groupBy('l.ticker')
+        .execute();
+      for (const r of rows) out.set(r.ticker, { imp: r.imp == null ? null : Number(r.imp), n: Number(r.n) });
+    } catch (err) {
+      const now = Date.now();
+      if (now - this.gradeCatErrorAt > 10 * 60_000) {
+        this.gradeCatErrorAt = now;
+        console.error('[grade] catalyst lookup failed (grading without catalysts):', err instanceof Error ? err.message : err);
+      }
+    }
+    return out;
   }
 
   // ↑ VWAP reclaim events from the tick feed (closed 1m candles, every

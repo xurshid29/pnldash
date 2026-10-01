@@ -70,6 +70,37 @@ function HeatCell({ heat }: { heat: number }) {
   );
 }
 
+// Momentum grade pill. Fitted on August, validated on September: the chance
+// of a +10% move within 30 min runs ~27% at A+, ~18% A, ~11% A−, ~7% B+ and
+// falls to ~0.1% at D. A+ is also where −10% comes first most often — it
+// marks where the action is, not which way it breaks.
+const GRADE_STYLE: Record<string, { color: string; bg: string }> = {
+  'A+': { color: '#d9f7be', bg: '#237804' },
+  'A':  { color: '#b7eb8f', bg: '#135200' },
+  'A-': { color: '#95de64', bg: '#162312' },
+  'B+': { color: '#fff1b8', bg: '#614700' },
+  'B':  { color: '#ffe58f', bg: '#3d2f00' },
+  'B-': { color: '#d4b106', bg: '#2b2111' },
+  'C':  { color: '#8c8c8c', bg: 'transparent' },
+  'D':  { color: '#595959', bg: 'transparent' },
+};
+
+function GradeCell({ grade }: { grade: string | null | undefined }) {
+  if (!grade) return <Text type="secondary">—</Text>;
+  const s = GRADE_STYLE[grade] ?? GRADE_STYLE.D;
+  return (
+    <span
+      style={{
+        display: 'inline-block', minWidth: 28, padding: '0 5px', borderRadius: 3,
+        textAlign: 'center', fontWeight: 700, fontSize: 12, lineHeight: '18px',
+        color: s.color, background: s.bg,
+      }}
+    >
+      {grade.replace('-', '\u2212')}
+    </span>
+  );
+}
+
 function AppearedCell({ iso }: { iso: string | null }) {
   if (!iso) return <Text type="secondary">—</Text>;
   const t = new Date(iso);
@@ -163,16 +194,28 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
         ),
       },
       {
+        // Momentum grade — the default sort since 2026-10-01: out-of-sample it
+        // ranked the next-30-min +10% movers better than Heat (A-tier 17.2%
+        // vs 13.5% for Heat's top 12%). Sorts on the underlying 2-minute score
+        // so rows inside a letter stay ordered.
+        title: 'Grade',
+        dataIndex: 'grade',
+        key: 'grade',
+        width: 58,
+        align: 'center',
+        defaultSortOrder: 'descend',
+        sorter: (a, b) => (a.grade_score ?? -99) - (b.grade_score ?? -99),
+        render: (g: string | null | undefined) => <GradeCell grade={g} />,
+      },
+      {
         // "Activity now" — fresh/accelerating/VWAP-reclaiming names rank above
-        // stale big-Chg% leaders. Default sort, so the top of the list is
-        // "worth looking at right now" instead of "already won today". Click
-        // Chg% to fall back to the cumulative-level view.
+        // stale big-Chg% leaders. Was the default sort until the Grade column
+        // (above) replaced it; click to sort by it.
         title: 'Heat',
         dataIndex: 'heat',
         key: 'heat',
         width: 64,
         align: 'right',
-        defaultSortOrder: 'descend',
         sorter: (a, b) => a.heat - b.heat,
         render: (h: number) => <HeatCell heat={h} />,
       },
@@ -275,7 +318,7 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
       { title: 'Country', dataIndex: 'country', key: 'country', width: 90, ellipsis: true },
       {
         // When the ticker first appeared in a screen today (UTC+5). Reference
-        // info — moved to the far right now that Heat (the sort key) leads.
+        // info — moved to the far right now that Grade (the sort key) leads.
         // Disambiguates a fresh mover from a stale leader sitting on a big Chg%.
         title: 'Appeared',
         dataIndex: 'first_seen_at',

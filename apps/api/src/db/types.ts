@@ -74,6 +74,11 @@ export interface ScreenerResultsTable {
   // the heat weights can be graded against screener_outcomes (the in-memory
   // VWAP state is otherwise unrecoverable offline). Null on pre-migration rows.
   heat: number | null;
+  // Momentum letter grade (A+ … D) + the 2-minute rolling score it was cut
+  // from — persisted 2026-10-01 so the live grade can be graded against
+  // forward outcomes exactly like it was validated. Null on older rows.
+  grade: string | null;
+  grade_score: number | null;
   vwap: number | null;
   above_vwap: boolean | null;
   vwap_reclaim: boolean | null;

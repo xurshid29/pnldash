@@ -19,6 +19,15 @@ full experimental desk, or remove individual slugs selectively (`faders` is an
 accepted alias for `continuation`). `/health` and SSE cycle payloads expose the
 effective component flags.
 
+**Momentum grade (2026-10-01).** Each Momentum row shows a letter A+ … D,
+re-graded every cycle (2-minute smoothing) and used as the table's default
+sort. It is a fitted ranking of the chance of a +10% move within 30 minutes
+(Aug fit / Sep out-of-sample: A+ ≈27% → D ≈0.1%), built from change %, time
+of day, catalyst, float, freshness and live tape activity. A+ is a two-way
+market (−10% first slightly more often than +10%); it marks attention, not
+direction. Model + re-fit pipeline: `services/momentum-grade.ts`,
+`scripts/research/momentum-grade/`.
+
 This pivot follows the operator's current 1-minute top-mover workflow: tune an
 EMA pair per ticker, treat those EMAs and session VWAP as dynamic levels, and
 enter only when price bounces/reclaims a level while MACD 3/15/8 turns upward,

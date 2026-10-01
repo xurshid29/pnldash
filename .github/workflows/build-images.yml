@@ -107,28 +107,12 @@ jobs:
             git pull --ff-only
             echo "::endgroup::"
 
-            echo "::group::docker compose pull"
-            docker compose -f docker-compose.prod.yml pull
-            echo "::endgroup::"
-
-            echo "::group::docker compose up -d"
-            docker compose -f docker-compose.prod.yml up -d
-            echo "::endgroup::"
-
-            # nginx.conf is a bind mount, and nginx caches upstream IPs — after
-            # api/web are recreated it can hold stale IPs and serve 502s. Validate
-            # the (live bind-mounted) config, then restart the container so it
-            # reloads config AND re-resolves api/web DNS. A ~1s blip, but it kills
-            # the stale-upstream 502 for good.
-            echo "::group::nginx restart"
-            # `</dev/null` is load-bearing: this whole script is piped to
-            # `bash -se` over stdin, and `docker compose exec` consumes stdin.
-            # Without the redirect the exec swallows the rest of the script —
-            # the deploy then silently ends here, skipping migrations.
-            docker compose -f docker-compose.prod.yml exec -T nginx nginx -t </dev/null
-            docker compose -f docker-compose.prod.yml restart nginx
-            echo "::endgroup::"
-
+            # MIGRATIONS FIRST (2026-10-01): apply them BEFORE the new images
+            # start. The old order (up -d, then dbmate) started the new API
+            # against a schema that was still behind — Edge's first rollout
+            # crashed on a missing table and never retried. The running (old)
+            # API tolerates the new schema as long as migrations stay
+            # ADDITIVE (new nullable columns / new tables) — keep them that way.
             # Apply new migrations, then verify against the database the app
             # actually uses. dbmate runs on the host and reaches the postgres
             # container via its published localhost port; -u is passed
@@ -153,6 +137,28 @@ jobs:
               exit 1
             fi
             echo "schema up to date — $APPLIED migrations applied"
+            echo "::endgroup::"
+
+            echo "::group::docker compose pull"
+            docker compose -f docker-compose.prod.yml pull
+            echo "::endgroup::"
+
+            echo "::group::docker compose up -d"
+            docker compose -f docker-compose.prod.yml up -d
+            echo "::endgroup::"
+
+            # nginx.conf is a bind mount, and nginx caches upstream IPs — after
+            # api/web are recreated it can hold stale IPs and serve 502s. Validate
+            # the (live bind-mounted) config, then restart the container so it
+            # reloads config AND re-resolves api/web DNS. A ~1s blip, but it kills
+            # the stale-upstream 502 for good.
+            echo "::group::nginx restart"
+            # `</dev/null` is load-bearing: this whole script is piped to
+            # `bash -se` over stdin, and `docker compose exec` consumes stdin.
+            # Without the redirect the exec swallows the rest of the script —
+            # the deploy then silently ends here, skipping the steps below.
+            docker compose -f docker-compose.prod.yml exec -T nginx nginx -t </dev/null
+            docker compose -f docker-compose.prod.yml restart nginx
             echo "::endgroup::"
 
             echo "::group::final status"

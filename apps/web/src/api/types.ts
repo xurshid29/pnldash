@@ -105,6 +105,10 @@ export interface EnrichedRow {
   first_seen_at: string;
   // Composite "activity now" score (0..100) — drives the optional Heat sort.
   heat: number;
+  // Momentum letter grade A+ … D, re-graded every cycle (server:
+  // momentum-grade.ts). Optional for rolling-deploy compatibility.
+  grade?: 'A+' | 'A' | 'A-' | 'B+' | 'B' | 'B-' | 'C' | 'D' | null;
+  grade_score?: number | null;
   // True the cycle price reclaims VWAP (below → at/above) — drives a ↑VWAP badge.
   vwap_reclaim: boolean;
   // Anchored VWAP since first detection today (restart-safe — rebuilt from

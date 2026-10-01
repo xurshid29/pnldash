@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-08-21
+# Session Handover — updated 2026-10-01
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read `docs/web-dashboard.md` first** (the canonical status doc); this file is
@@ -6,6 +6,24 @@ the "where we are right now + what's open" layer on top of it.
 **`docs/detection-layers.md` is the systematic reference for the early-
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
+
+**2026-10-01 — MOMENTUM LETTER GRADE (A+ … D) LIVE + CI MIGRATIONS-FIRST
+(see XGRADE below).** Every Momentum row carries a letter grade, re-graded
+each cycle and smoothed over 2 minutes; the Momentum table's new Grade
+column is the DEFAULT SORT (Heat stays as a clickable column). Fitted, not
+hand-weighted: inspired by a Ross Cameron 5-criteria video, but his
+criteria were tested on our data first — change %, time of day (07:00–11:00
+ET best, after-hours worst), catalyst (strong 40–69 beats "major" ≥70) and
+float carry signal; his $2–20 price band and day-RVol ≥5× do NOT inside our
+screen. Live tape activity (acceleration, 1m/5m burst, idle tape) dominates.
+Fit Aug / test Sep, out-of-sample P(+10% within 30 min): A+ 26.8% … D 0.1%;
+A-tier 17.2% vs Heat top-12% 13.5%. **Read A+ as "where the action is", not
+a long signal**: within 30 min A+ hits −10% first 29.8% vs +10% first
+25.0%; from A downward up-first wins (A 17.8/15.2, A− 11.0/6.5, B+ 7.3/3.1).
+Grade + score persist per row (`screener_results.grade/grade_score`) so the
+LIVE grade can be re-graded the same way after ~2 weeks. Also: the CI
+rollout now runs `dbmate up` BEFORE `docker compose up -d` (the deploy-order
+gotcha that broke Edge's first rollout is closed) — keep migrations additive.
 
 **UPDATE 2026-08-21 (later the same day): Edge PARKED.** The operator stopped
 using the ⚡ Edge playbook, so it joined the `COMPONENTS_DISABLED` set (new
@@ -293,6 +311,38 @@ Journal; **attribution join still the open payoff**) · 06-17 tick feed go-live.
 ---
 
 ## What shipped this session (newest first, all on prod unless noted)
+
+XGRADE. **Momentum letter grade A+ … D (2026-10-01).** Operator watched a
+Ross Cameron stock-selection video (RV ≥5×, ≥25M volume potential, up ≥10%,
+$2–20, float <10M, breaking news; 07:00–11:00 ET) and asked for an A+/A/B
+ranking next to each Momentum ticker, updated over time. Measured first
+(operating norm): on 60 sessions of first-sight rows the checklist count
+already graded monotonically (+20% later: 3% at 0 criteria → 18% at 4), but
+only change %, time of day, news and float discriminated inside our screen;
+$2–20 and day-RVol did not. Then FITTED per displayed cycle on 6.6M rows:
+label = +10% within 30 min on screen; 9 bucketed features (change, float,
+price, time of day, best non-bearish catalyst in 16h, age on screen, accel,
+1m/5m volume burst/drying, VWAP side incl. "no volume since tracked");
+points = smoothed log-odds lift fitted on August; letters cut at August
+percentiles of the 6-cycle (2-min) rolling mean — A+ 3%, A 4%, A− 5%,
+B+ 8%, B 10%, B− 10%, C 25%, D 35%. A first base-letter + live ± design was
+dropped: A− (idle) graded 0.3% vs B+ 10.5% — an ordinal-reading trap; one
+combined scale fixed it. Smoothing cut flicker 24 → 9 letter changes per
+ticker-hour at equal accuracy. September (out-of-sample) table and the
+first-touch race are in the top note + `momentum-grade.ts` header. Built:
+`services/momentum-grade.ts` (pure buckets/points/cuts + per-ticker ring,
+midnight reset); poller loads the 16h catalyst per screened ticker with one
+indexed query per cycle (fails soft to "no catalyst"); `grade`/`grade_score`
+on EnrichedRow + persisted (migration `20261001100000`); web Grade pill
+column, default sort. Proof: `scripts/verify-momentum-grade.ts` pins
+buckets/smoothing and replays the study's parity export — 201,981/201,981
+letters match (ties needed a 1e-6 epsilon: decimal vs double sums). Re-fit
+pipeline committed at `scripts/research/momentum-grade/` (export SQL +
+DuckDB `study.py`, reproduces the shipped constants exactly). CI: migrations
+now run BEFORE the new containers start. **Next:** after ~2 weeks, re-grade
+the LIVE persisted grade (same label) — if it holds, consider re-fitting on
+Aug–Oct; candidate add: a 1m MACD-negative exit tell (Ross's exit rule) as a
+live feature for listed names only.
 
 XVWAP. **↑ VWAP reclaim layer + Live Ticks alerts un-muted (2026-08-21).
 RETIRED 2026-08-22 — see the top note; retained as history.**

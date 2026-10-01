@@ -12,6 +12,7 @@ This project began as a single bash script (`screener-poll_breakout.sh`) and is 
 ## Features
 
 - **Live screener** — top low-float momentum runners (filter customizable in UI), updated every 20s via Server-Sent Events; screens the pre-market, regular, and after-hours sessions
+- **Momentum grade (A+ … D)** — every Momentum row is re-graded each cycle by a model fitted on August and validated on September (chance of +10% within 30 min: ~27% at A+ down to ~0.1% at D); the table's default sort. An attention ranking, not a long signal — A+ names move hard both ways
 - **Edge playbook (optional/parked by default)** — save a custom fast/slow EMA pair for each top mover; a lightweight 1-minute tracker evaluates session VWAP + standard EMA-MACD 3/15/8 and moves through Watching → Armed → Entry → Bailout. Entry/bailout are closed-candle decisions; dashboard sound/browser notifications and optional Telegram alerts fire once per transition
 - **Ignition screener (optional/parked by default)** — a second, volume-led screen that catches low-float names in the *first minutes* of a move; ranked by a composite runner-score and preserved for selective re-enabling
 - **Multi-source catalysts** — Finviz + Yahoo RSS + Benzinga news, plus **SEC EDGAR filings** (offerings/dilution, 8-Ks, M&A, 13D/G stakes) and **Nasdaq trade halts** — deduped & merged, primary sources outranking aggregators
