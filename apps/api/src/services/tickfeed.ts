@@ -613,6 +613,12 @@ class TickFeedService {
   }
 
   start(): void {
+    // Parked by default since 2026-10-01 (COMPONENTS_DISABLED `ticks`): no
+    // sidecar, no Databento subscription, no bars — nothing can bill.
+    if (!getComponentFlags().ticks) {
+      console.log('[tickfeed] Live Ticks parked — COMPONENTS_DISABLED includes ticks (no Databento connection)');
+      return;
+    }
     if (!TICKFEED.enabled) {
       console.log('[tickfeed] disabled (set TICKFEED_ENABLED=true to enable)');
       return;

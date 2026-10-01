@@ -30,6 +30,11 @@ export function DashboardPage() {
   useTabTitleFlash(payload);
   const { chartCount } = useLayout();
   const chartsVisible = chartCount > 0;
+  // The left rail's upper feed (Ignition list / Live Ticks) only exists when
+  // one of them is on. With both parked (the default since 2026-10-01) the
+  // Watchlist takes the whole column instead of sitting under an empty panel.
+  const railComponents = payload?.components ?? LEAN_COMPONENT_FLAGS;
+  const showRailFeed = railComponents.ignition || railComponents.ticks === true;
 
   return (
     <SelectionProvider>
@@ -37,15 +42,19 @@ export function DashboardPage() {
       <div style={{ width: '100%', height: '100%', background: '#0a0a0a' }}>
         <PanelGroup direction="horizontal" autoSaveId="ms-outer">
           <Panel id="ms-pane-ignition" order={0} defaultSize={16} minSize={11} maxSize={26}>
-            <PanelGroup direction="vertical" autoSaveId="ms-leftrail">
-              <Panel defaultSize={65} minSize={25}>
-                <Card><IgnitionSidebar payload={payload} /></Card>
-              </Panel>
-              <VHandle />
-              <Panel defaultSize={35} minSize={15}>
-                <Card><WatchlistPanel /></Card>
-              </Panel>
-            </PanelGroup>
+            {showRailFeed ? (
+              <PanelGroup direction="vertical" autoSaveId="ms-leftrail">
+                <Panel defaultSize={65} minSize={25}>
+                  <Card><IgnitionSidebar payload={payload} /></Card>
+                </Panel>
+                <VHandle />
+                <Panel defaultSize={35} minSize={15}>
+                  <Card><WatchlistPanel /></Card>
+                </Panel>
+              </PanelGroup>
+            ) : (
+              <Card><WatchlistPanel /></Card>
+            )}
           </Panel>
           <HHandle />
           <Panel id="ms-pane-left" order={1} defaultSize={chartsVisible ? 42 : 84} minSize={25}>

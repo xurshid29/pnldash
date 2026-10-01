@@ -6,6 +6,10 @@
 // The ↑ VWAP reclaim detection layer (tick feed) joined on 2026-08-22 after
 // one graded session: 85% confirm rate, median hold 10 min, median peak
 // +1.2% above VWAP — noise. Machinery + regression kept for a revisit.
+// Live Ticks (`ticks`: the Databento 1s feed sidecar, the 🤫/👀/🛰️ ladder
+// and its Telegram pushes) joined on 2026-10-01: the operator works from
+// Momentum + History only, the feed had been dead unnoticed since ~09-12
+// (unpaid renewal), and the Databento subscription is being cancelled.
 
 export type ComponentSlug =
   | 'ignition'
@@ -16,7 +20,8 @@ export type ComponentSlug =
   | 'outcomes'
   | 'continuation'
   | 'edge'
-  | 'vwap';
+  | 'vwap'
+  | 'ticks';
 
 export interface ComponentFlags {
   ignition: boolean;
@@ -28,6 +33,7 @@ export interface ComponentFlags {
   continuation: boolean;
   edge: boolean;
   vwap: boolean;
+  ticks: boolean;
 }
 
 export const DEFAULT_DISABLED_COMPONENTS: ComponentSlug[] = [
@@ -40,6 +46,7 @@ export const DEFAULT_DISABLED_COMPONENTS: ComponentSlug[] = [
   'continuation',
   'edge',
   'vwap',
+  'ticks',
 ];
 
 const KNOWN = new Set<ComponentSlug>(DEFAULT_DISABLED_COMPONENTS);
@@ -75,6 +82,7 @@ export function getComponentFlags(): ComponentFlags {
     continuation: !disabled.has('continuation'),
     edge: !disabled.has('edge'),
     vwap: !disabled.has('vwap'),
+    ticks: !disabled.has('ticks'),
   };
   return cachedFlags;
 }

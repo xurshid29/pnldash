@@ -2,9 +2,10 @@
 
 A real-time low-float momentum scanner with a multi-panel web dashboard. Polls Finviz Elite every 20s, enriches with Yahoo Finance RSS, Benzinga, SEC EDGAR filings, and Nasdaq trade halts, scores each catalyst, and pushes live updates to a browser dashboard with embedded TradingView charts.
 
-The default 2026-08-21 operating profile is intentionally lean: **Live Ticks,
-Momentum, and Momentum History**. The earlier Ignition/MOMO/SETUPS/EMA/Swing/
-Outcomes/Faders/Edge experiments remain available behind `COMPONENTS_DISABLED`, but
+The default 2026-10-01 operating profile is intentionally lean: **Momentum
+(with its A+ … D grade) and Momentum History**, all fed by Finviz. The earlier
+Ignition/MOMO/SETUPS/EMA/Swing/Outcomes/Faders/Edge/VWAP experiments and the
+Databento-fed Live Ticks remain available behind `COMPONENTS_DISABLED`, but
 their backend compute and writes are parked by default—not merely hidden.
 
 This project began as a single bash script (`screener-poll_breakout.sh`) and is being ported to a multi-user web app while keeping the bash version available for terminal use.
@@ -156,7 +157,7 @@ pnldash/
 See `.env.example`.
 
 `COMPONENTS_DISABLED` defaults to
-`ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap`. Set it to an empty value
+`ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`. Set it to an empty value
 to restore the full experimental dashboard, or remove individual slugs to
 restore selected components. `faders` is accepted as an alias for
 `continuation`.

@@ -1,5 +1,13 @@
 # The Early-Detection Layers — reference (current as of 2026-08-21)
 
+> **2026-10-01: the whole tick-feed chain is PARKED** (`COMPONENTS_DISABLED`
+> slug `ticks`): no Databento sidecar, no 🤫 accumulation scan, no 👀/🛰️
+> ladder, no tick Telegram pushes. The feed had already been dead since
+> ~2026-09-12 (unpaid renewal) without anyone noticing, the operator works
+> from Momentum + History only, and the Databento subscription is being
+> cancelled. Everything below is retained as the reference for a revisit;
+> re-enabling needs a paid Databento key AND `ticks` removed from the env.
+
 The dashboard detects runners through a chain of layers, ordered by how early
 they can speak. Each was measured before (or while) shipping, each is graded
 continuously via the `tier_events` table, and each survives deploys. This doc

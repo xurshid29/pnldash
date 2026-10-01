@@ -1614,7 +1614,11 @@ class PollerService {
   private async seedTierState() {
     try {
       const components = getComponentFlags();
-      const tiers = ['accum', 'tick', 'radar'];
+      const tiers = ['radar'];
+      // The 🤫/👀/🛰️ ladder only reseeds while Live Ticks is on — a parked
+      // ladder must not resurrect today's rows (and then expire them,
+      // writing tier_events) after a deploy.
+      if (components.ticks) tiers.push('accum', 'tick');
       if (components.vwap) tiers.push('vwap');
       if (components.ema) tiers.push('cross');
       if (components.momo || components.setups) tiers.push('macd');
@@ -2705,7 +2709,9 @@ class PollerService {
     // Quiet-accumulation scan (🤫) — flag screened names still quiet on price
     // with strong early volume. Must run BEFORE the tick-catch payload block
     // so a fresh flag shows this cycle, not next.
-    this.scanAccumulation([...enriched, ...ignition], session, this.firstPoll);
+    // Parked with Live Ticks (COMPONENTS_DISABLED `ticks`, 2026-10-01): the
+    // 🤫 scan feeds only the ladder, so it stops too — no flags, no events.
+    if (components.ticks) this.scanAccumulation([...enriched, ...ignition], session, this.firstPoll);
 
     // Tick-feed catches for the dashboard 🛰️ section — kept as a rolling
     // "recent catches" feed so they're actually VISIBLE. We deliberately do
@@ -3223,7 +3229,7 @@ class PollerService {
       ignition: components.ignition ? ignition : [],
       swing: components.swing ? scoredSwing : [],
       continuation: components.continuation ? this.lastContinuation : [],
-      tick_catches: tickCatchList,
+      tick_catches: components.ticks ? tickCatchList : [],
       vwap_reclaims: components.vwap ? vwapList : [],
       news_radar: radarDisplay,
       ema_crosses: components.ema ? emaCrossDisplay : [],

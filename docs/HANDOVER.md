@@ -7,6 +7,22 @@ the "where we are right now + what's open" layer on top of it.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
+**2026-10-01 (later) — LIVE TICKS RETIRED, DATABENTO BEING CANCELLED.**
+Found while shipping the grade: every tick-feed-sourced tier_event stopped
+after Fri 2026-09-11 — the Databento feed had been dead for three weeks
+(unpaid renewal around the 12th, as on 08-12) and nobody noticed; the
+operator uses only Momentum + History. So Live Ticks joined the parked set
+(new `ticks` slug in the `COMPONENTS_DISABLED` default): no sidecar, no
+Databento connection, no 🤫 scan, no ladder, no tier_events for
+accum/tick, empty `tick_catches`; the Watchlist now fills the left column.
+Prod `.env`: `DATABENTO_API_KEY` commented out (key presence can no longer
+bill anything). **Telegram is now silent** — the 🛰️ confirm was the last
+unmuted alert with a producer. Candidates if the operator wants pings back:
+unmute `momentum` (fresh-news strong/major catalyst rows) or a new
+first-time-grade-A ping. Operator cancels the subscription in the Databento
+portal; the unpaid September invoice may still be owed. Default desk now:
+**Momentum (A+…D grade, default sort) + Momentum History**, all Finviz.
+
 **2026-10-01 — MOMENTUM LETTER GRADE (A+ … D) LIVE + CI MIGRATIONS-FIRST
 (see XGRADE below).** Every Momentum row carries a letter grade, re-graded
 each cycle and smoothed over 2 minutes; the Momentum table's new Grade

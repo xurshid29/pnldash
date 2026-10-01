@@ -588,6 +588,9 @@ export interface ComponentFlags {
   // slug existed omits it, and a missing flag must read as parked.
   edge?: boolean;
   vwap?: boolean;
+  // Live Ticks (Databento feed + 🤫/👀/🛰️ ladder); parked by default since
+  // 2026-10-01. Missing (older API) is treated as parked too.
+  ticks?: boolean;
 }
 
 export const LEAN_COMPONENT_FLAGS: ComponentFlags = {
@@ -600,6 +603,7 @@ export const LEAN_COMPONENT_FLAGS: ComponentFlags = {
   continuation: false,
   edge: false,
   vwap: false,
+  ticks: false,
 };
 
 export interface HistoryRow {
