@@ -1903,6 +1903,7 @@ class PollerService {
     await this.seedRadarHistory();
     await this.seedTierState();
     await this.seedOpportunityState();
+    await this.seedGradePrices();
     console.log(`[poller] starting (every ${this.config.interval_sec}s)`);
     void this.tick();
     this.timer = setInterval(() => void this.tick(), this.config.interval_sec * 1000);
@@ -3849,6 +3850,25 @@ class PollerService {
 
   setMomoSetupSnapshotSource(fn: PollerService['momoSetupSnapshotFn']): void {
     this.momoSetupSnapshotFn = fn;
+  }
+
+  // The grade's fade cap needs each ticker's 10-minute high; reload the last
+  // 10 minutes of persisted Momentum prices so a deploy doesn't reset it.
+  private async seedGradePrices() {
+    try {
+      const rows = await getDb()
+        .selectFrom('screener_results as sr')
+        .innerJoin('screener_cycles as c', 'c.id', 'sr.cycle_id')
+        .select(['sr.ticker', 'sr.price', sql<number>`extract(epoch from c.polled_at)::bigint`.as('ts')])
+        .where(sql<boolean>`c.polled_at > now() - interval '10 minutes'`)
+        .where('sr.price', '>', 0)
+        .orderBy('c.polled_at', 'asc')
+        .execute();
+      this.momentumGrader.seedPrices(rows.map((r) => ({ ticker: r.ticker, ts: Number(r.ts), price: Number(r.price) })));
+      console.log(`[grade] seeded ${rows.length} prices from the last 10 min for the fade cap`);
+    } catch (err) {
+      console.error('[grade] price seeding failed (fade cap warms up live):', err instanceof Error ? err.message : err);
+    }
   }
 
   // Rebuild opportunity-alert dedup state so a deploy neither re-pings

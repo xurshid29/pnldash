@@ -185,6 +185,18 @@ export class MomentumGrader {
     };
   }
 
+  // Boot seeding: the last 10 minutes of persisted prices, so a deploy can't
+  // forget a dump that just happened (LONA would read A+ again until the new
+  // process had watched ten minutes of tape). Entries must be time-ordered.
+  seedPrices(entries: Array<{ ticker: string; ts: number; price: number }>): void {
+    for (const e of entries) {
+      if (!(e.price > 0)) continue;
+      let p = this.prices.get(e.ticker);
+      if (!p) { p = []; this.prices.set(e.ticker, p); }
+      p.push({ ts: e.ts, price: e.price });
+    }
+  }
+
   reset(): void {
     this.hist.clear();
     this.prices.clear();

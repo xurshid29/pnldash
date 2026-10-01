@@ -74,6 +74,10 @@ console.log('Part 1 — buckets, smoothing, letters');
   check('…and reports how far off the high it is', dump.offHighPct === -16);
   const later = f.grade('F', { ...base, price: 4.25 }, T + 40 + GRADE_FADE.lookback_sec + 1); // old high left the window
   check('cap lifts once the 10-min window rolls past the old high', !later.faded && later.grade === later.base, JSON.stringify(later));
+  const seeded = new MomentumGrader();
+  seeded.seedPrices([{ ticker: 'S', ts: T - 300, price: 5.0 }]);           // pre-deploy high
+  const afterBoot = seeded.grade('S', { ...base, price: 4.2 }, T);
+  check('seeded pre-deploy high still caps a dump right after boot', afterBoot.faded && afterBoot.grade === GRADE_FADE.cap, JSON.stringify(afterBoot));
   const low = new MomentumGrader();
   low.grade('L', { ...dead, price: 5 }, T);
   const lowDump = low.grade('L', { ...dead, price: 3 }, T + 20);
