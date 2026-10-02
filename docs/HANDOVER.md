@@ -1,11 +1,112 @@
-# Session Handover — updated 2026-10-01
+# Session Handover — updated 2026-10-02
 
 A running handover so a fresh session can continue without re-deriving context.
-**Read `docs/web-dashboard.md` first** (the canonical status doc); this file is
-the "where we are right now + what's open" layer on top of it.
+**Read START HERE below first** — it is the current state in one place.
+`docs/web-dashboard.md` is the longer feature/status doc; this file is the
+"where we are right now + what's open" layer on top of it.
 **`docs/detection-layers.md` is the systematic reference for the early-
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
+
+## START HERE — state at 2026-10-02 (HEAD `8b97f89`, tree clean)
+
+**The desk the operator actually uses.** The Momentum table (Finviz, every
+20s) sorted by the **A+…D grade**, plus the History, Watchlist and Alerts
+tabs, Quote Details, the news room and 0–4 TradingView charts. Manual
+trading off 1-minute charts, Ross-Cameron-style selection: catalyst first,
+low float, mostly 07:00–11:00 ET. Everything else is parked (below). Prod
+`/health` ok; ~0.8 GB of 3.9 GB RAM used (was ~3 GB + swap before the
+parking), disk 26%.
+
+**Live in production (all verified on prod):**
+1. **Momentum grade A+…D** (`services/momentum-grade.ts`). Fitted on
+   August, validated out-of-sample on September, per displayed cycle. Label:
+   price touches +10% within 30 min. 2-minute smoothing; the table's default
+   sort; persisted per row (`screener_results.grade` / `grade_score`).
+   **Fade cap:** an A-tier name ≥8% below its 10-minute high shows **B+ ▼N**
+   until it recovers. **Read A+ as "where the action is", not a long
+   signal** — at A+, −10% comes first 29.8% vs +10% first 25.0%; from A down,
+   up-first wins.
+2. **Opportunity alerts** (`services/opportunity-alerts.ts`): 🅰️ first A+
+   per ticker per ET day · ⚡ +10% vs ~60s ago with RVol 1m ≥1000%, on screen
+   ≥5 min, 15-min cooldown · 📰 headline published ≤30 min before first
+   sight, deduped across sources; the phone only gets catalyst ≥40. ONE
+   engine feeds Telegram and `payload.alerts`. Sized ≈63 phone alerts/day;
+   10-02 had 33 by midday (17 A+, 13 news, 3 fast). Dashboard: sound +
+   browser notification, in-page toast (`AlertToasts`), row pulse ~90s then a
+   colored left edge for 15 min, 🅰️⚡📰 badges, and the **Alerts** tab
+   (`GET /api/screener/alerts`). Switches: header ⚙ per-type menu + Alerts
+   ON/OFF (dashboard); `ALERTS_DISABLED` slugs `grade_aplus` / `fast_move` /
+   `news` (phone).
+3. **UI state:** no hover tooltips anywhere (global `.ant-tooltip` hide in
+   `index.css` + native `title=` removed — **don't add hover hints back**);
+   no left rail (Watchlist is a tab; the rail only renders if Ignition or
+   Live Ticks is re-enabled); Momentum columns: Ticker · Grade · Heat · Chg% ·
+   Float · Volume · RVol 1m · RVol 5m · RVol Day · Price · MCap · Country ·
+   Appeared.
+4. **CI rollout runs `dbmate up` BEFORE `docker compose up -d`** (fixed
+   10-01). The old API briefly runs on the new schema, so keep migrations
+   additive.
+
+**Parked, code kept** — `COMPONENTS_DISABLED` default
+`ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`:
+every experiment, including Edge (08-21), ↑ VWAP reclaim (08-22, graded as
+noise) and **Live Ticks / Databento** (10-01). The feed had been dead since
+~09-12 without anyone noticing (unpaid renewal); the key is commented out
+and the operator said they'd cancel the subscription — **confirm it was
+cancelled and whether the September invoice is still owed.** Paid APIs
+parked: Benzinga and Anthropic (keys commented out). No OpenAI key, so
+catalyst classification is rules-only. News = Finviz + Yahoo + SEC + halts.
+
+**Prod `.env` snapshot (10-02):** `COMPONENTS_DISABLED` unset (= the
+default above); `ALERTS_DISABLED=momentum,ignition,new_ignition,fresh_burst,
+accum,tick_watch,radar,dual_signal,swing,vwap_reclaim` (so `grade_aplus`,
+`fast_move`, `news` are on; `tick_catch` is unmuted but has no producer);
+`TICKFEED_ENABLED=true` but inert. Backups: `.env.bak-20260821`,
+`.env.bak-20260821b`, `.env.bak-20261001`.
+
+**Open items, ranked:**
+1. **~2026-10-15 — re-grade the LIVE grade** from `screener_results.grade`
+   with the same label and the first-touch race. Does it hold live? Pipeline:
+   `apps/api/scripts/research/momentum-grade/` (export SQL → `study.py` →
+   `verify-momentum-grade.ts` parity). Re-fit there; never hand-edit
+   POINTS/CUTS.
+2. **~2026-10-15 — grade the alerts** (`tier_events` tier='alert'; meta has
+   the alert id, price, grade, kind details): continuation after each kind,
+   then review the volume with the operator. Dials: the +10% fast threshold,
+   cooldowns, the news phone floor — `alert_study.py` re-measures them.
+3. **Noise is the failure mode.** The operator muted alerts for noise twice
+   before (07-22, 08-21). Treat "too many pings" as a tuning request.
+4. Same-ticker alerts in consecutive cycles are not merged (FLUX on 10-02:
+   A+ and a headline 20s apart = two toasts). Add a cross-cycle merge window
+   if it annoys.
+5. Candidate, not built: Ross's exit tell, the 1-minute MACD turning
+   negative, as a live feature/alert. Finviz gives 20s snapshots, not 1m
+   candles, so it needs 1m bars built from cycles or a data source.
+6. Long-open: Trade Journal attribution — join trades to the grade/rows at
+   entry time; more interesting now that grades persist.
+
+**Gotchas before touching things:**
+- A deploy resets in-memory state. Seeded on boot: firstSeen, VWAP, the
+  fade-cap price history (last 10 min), alert dedup (tier_events +
+  24h news URLs). Not seeded: the 6-cycle grade smoothing ring, which
+  refills in 2 min.
+- In after-hours, a row's change % is the AH overlay (vs today's close), and
+  the grade reads it as-is; the AH time bucket carries a penalty.
+- Research exports are not in the repo; re-export with the `export-*.sql`
+  files outside 07:00–11:00 ET. In study SQL, `dd10` is already the
+  "−10% within 30 min" label column — a same-named feature silently shadows
+  it (cost an hour on 10-01).
+- The droplet's `git pull` once failed mid-deploy with "expected flush
+  after ref listing" (a GitHub HTTPS hiccup); rerunning the deploy job fixed
+  it.
+- Verify UI deploys by matching the bundle hash
+  (`apps/web/dist/assets/index-*.js` vs `/usr/share/nginx/html/assets/` in
+  the web container), not by CI status alone.
+
+## Session log 2026-10-01 → 10-02 (newest first)
+
+These are the detailed notes behind START HERE, kept verbatim.
 
 **2026-10-02 — ALERTS VISIBLE ON THE DASHBOARD.** New **Alerts** tab with
 the day's log (`GET /api/screener/alerts`, regrouped from tier_events
@@ -89,6 +190,16 @@ Grade + score persist per row (`screener_results.grade/grade_score`) so the
 LIVE grade can be re-graded the same way after ~2 weeks. Also: the CI
 rollout now runs `dbmate up` BEFORE `docker compose up -d` (the deploy-order
 gotcha that broke Edge's first rollout is closed) — keep migrations additive.
+
+---
+
+## Earlier context — superseded, kept for reference
+
+> Everything in this section describes the desk BEFORE 2026-10-01: Edge
+> live, the MOMO/EMA/reclaim layers, Live Ticks. All of those are parked
+> now, and **"THE PENDING TASK" below (the 08-12 reclaim grading
+> checkpoint) is obsolete** — the reclaim layer is parked. Use START HERE
+> for the current state.
 
 **UPDATE 2026-08-21 (later the same day): Edge PARKED.** The operator stopped
 using the ⚡ Edge playbook, so it joined the `COMPONENTS_DISABLED` set (new
@@ -349,8 +460,9 @@ Journal; **attribution join still the open payoff**) · 06-17 tick feed go-live.
   returns per detection) — use it to validate/kill features with data, not
   intuition. Always gate `bars_forward >= horizon`; early/small samples are a
   direction check, not a verdict.
-- **Ship via CI.** Commit to `main` → GitHub Actions builds + deploys (runs
-  `dbmate up`). Always: build web locally (`npm run build --workspace=apps/web`)
+- **Ship via CI, without asking.** Commit to `main` → GitHub Actions builds +
+  deploys (migrations first since 2026-10-01, then containers). The operator
+  wants ship-and-verify, no confirmation prompts. Always: build web locally (`npm run build --workspace=apps/web`)
   AND api typecheck (`cd apps/api && npx tsc --noEmit`) before pushing — the CI
   matrix is fail-fast (a web tsc error silently cancels the api build).
 - **Find the real CI run id** via `gh run list` — don't guess it.
@@ -360,9 +472,22 @@ Journal; **attribution join still the open payoff**) · 06-17 tick feed go-live.
 - **Prod = DigitalOcean droplet** `root@165.245.210.95`, `/root/projects/pnldash`,
   `docker-compose.prod.yml`. Admin login admin/123456. psql via
   `docker compose -f docker-compose.prod.yml exec -T postgres psql -U pnldash -d pnldash`.
-- **Operator TZ is UTC+5** (Asia/Tashkent); the app is ET-anchored.
+- **Operator TZ is UTC+5** (Asia/Tashkent); the app is ET-anchored. The
+  dashboard's "Appeared" and Alerts times are shown in UTC+5.
+- **No hover tooltips** (operator's call, 2026-10-01) — explain things in
+  visible UI text or not at all.
+- **Fit, then validate out-of-sample, then port with parity.** The grade,
+  the alert thresholds and the fade cap were all fitted on one month,
+  checked on the next, and ported to TypeScript with row-for-row parity
+  checks. Keep that bar for new scoring logic.
 
-## Current strategy thesis (operator's, evolved 2026-06-02 → 06-12)
+## Current strategy thesis (operator's, evolved 2026-06-02 → 06-12; refreshed 2026-10)
+
+- **2026-10:** a Ross Cameron 5-criteria video shaped the current desk:
+  catalyst, low float, already moving, 07:00–11:00 ET. On our data his
+  $2–20 price band and day-RVol ≥5× did NOT discriminate inside our screen;
+  change %, time of day, catalyst strength, float and live tape activity
+  did. The grade encodes the measured version.
 
 - **Catalyst quality is the #1 factor.** Momentum + catalyst, entered on the
   FIRST appearance, ride it, **exit when the larger pullback begins** (topping
@@ -1462,6 +1587,8 @@ history (temp tables `ir_entry` / `scored`, joined `ignition_results` →
 ---
 
 ## Other deferred / known (refreshed 2026-08-04)
+
+> Mostly about layers that are parked now. Current open items live in START HERE.
 
 - **The grading pass** — the single next task; see THE PENDING TASK above
   (reclaim precision per tf, clean segment from 2026-07-28). Watch reclaim
