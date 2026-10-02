@@ -7,6 +7,13 @@ the "where we are right now + what's open" layer on top of it.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
+**2026-10-02 — ALERTS VISIBLE ON THE DASHBOARD.** New **Alerts** tab with
+the day's log (`GET /api/screener/alerts`, regrouped from tier_events
+tier='alert'; meta now carries the alert `id`/`at`, older rows regroup by
+ticker within 3s), filter by kind, price/grade at alert and a live "since
+alert" %, click = select; Momentum rows that alerted in the last 15 min
+show 🅰️/⚡/📰 badges by the ticker.
+
 **2026-10-01 (evening) — GRADE FADE CAP.** Operator spotted LONA graded A+
 right after dumping ~20% off its high (MACD rolling over). Root cause: the
 grade's label (+10% touch within 30 min) REWARDS a dump — the bounce off the

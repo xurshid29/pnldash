@@ -3274,10 +3274,12 @@ class PollerService {
       // and later grading of each trigger against what happened next.
       for (const k of a.kinds) {
         recordTierEvent('alert', k, a.ticker, {
+          id: a.id, at: a.at, // groups a merged alert's kinds back together (GET /api/screener/alerts)
           price: a.price, chg: a.change_pct, grade: a.grade, prev_grade: a.prev_grade,
           new_on_screen: a.new_on_screen, move_pct: a.move_pct, rv1: a.rel_vol_1min, float_m: a.float_m,
           news_title: a.news?.title ?? null, news_score: a.news?.score ?? null,
           news_dir: a.news?.direction ?? null, news_source: a.news?.source ?? null, news_url: a.news?.url ?? null,
+          news_type: a.news?.type ?? null, news_published_at: a.news?.published_at ?? null,
         });
       }
       console.log(

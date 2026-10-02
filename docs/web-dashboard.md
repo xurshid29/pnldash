@@ -33,7 +33,11 @@ before we first see it on a screened ticker (deduped by URL and by title;
 the phone only gets catalyst ≥40). Sized on September 2026: ~63 phone
 alerts/day, busiest hour 09:00–10:00 ET ≈10. Per-type switches sit next to
 Alerts ON/OFF in the header; phone mutes are the `ALERTS_DISABLED` slugs
-`grade_aplus`, `fast_move`, `news`. Sizing study:
+`grade_aplus`, `fast_move`, `news`. On screen (2026-10-02): an **Alerts**
+tab (Momentum · History · Watchlist · Alerts) lists the day's log from
+`GET /api/screener/alerts`, filterable by kind, with price/grade at the alert
+and the live "since alert" move; Momentum rows that alerted in the last 15
+min carry 🅰️/⚡/📰 badges next to the ticker. Sizing study:
 `scripts/research/momentum-grade/alert_study.py`.
 
 **Momentum grade (2026-10-01).** Each Momentum row shows a letter A+ … D,

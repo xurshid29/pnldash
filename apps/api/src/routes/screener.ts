@@ -94,6 +94,68 @@ router.get('/ema-debug', authMiddleware, (req, res) => {
   res.json({ data: { ticker, layers: tickfeed.emaSnapshot(ticker) } });
 });
 
+// GET /api/screener/alerts[?day=YYYY-MM-DD] — the day's opportunity-alert log
+// (default: today, ET), newest first. Each alert kind is one tier_events row;
+// rows sharing meta.id (one merged alert) fold back into one entry. Rows
+// written before meta.id existed (2026-10-01) fold by ticker within 3s — one
+// cycle's inserts land milliseconds apart.
+router.get('/alerts', authMiddleware, async (req, res) => {
+  const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
+  if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
+  const dayExpr = dayParam
+    ? sql<boolean>`(at AT TIME ZONE 'America/New_York')::date = ${dayParam}::date`
+    : sql<boolean>`(at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`;
+  const rows = await getDb()
+    .selectFrom('tier_events')
+    .select(['event', 'ticker', 'at', 'meta'])
+    .where('tier', '=', 'alert')
+    .where(dayExpr)
+    .orderBy('ticker').orderBy('at')
+    .limit(3000)
+    .execute();
+  type Alert = {
+    id: string; ticker: string; kinds: string[]; at: string;
+    price: number | null; change_pct: number | null; grade: string | null; prev_grade: string | null;
+    new_on_screen: boolean; move_pct: number | null; rel_vol_1min: number | null; float_m: number | null;
+    news: { source: string; title: string; url: string; published_at: string | null; score: number; direction: string; type: string } | null;
+  };
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const str = (v: unknown) => (typeof v === 'string' ? v : null);
+  const out: Alert[] = [];
+  const byId = new Map<string, Alert>();
+  let last: { ticker: string; ms: number; alert: Alert } | null = null;
+  for (const r of rows) {
+    const m = (r.meta ?? {}) as Record<string, unknown>;
+    const ms = new Date(r.at).getTime();
+    const id = str(m.id);
+    let a: Alert | undefined = id ? byId.get(id) : undefined;
+    if (!a && !id && last && last.ticker === r.ticker && ms - last.ms < 3000) a = last.alert;
+    if (!a) {
+      a = {
+        id: id ?? `${r.ticker}:${Math.floor(ms / 1000)}:legacy`, ticker: r.ticker, kinds: [], at: str(m.at) ?? new Date(ms).toISOString(),
+        price: num(m.price), change_pct: num(m.chg), grade: str(m.grade), prev_grade: str(m.prev_grade),
+        new_on_screen: m.new_on_screen === true, move_pct: num(m.move_pct), rel_vol_1min: num(m.rv1), float_m: num(m.float_m), news: null,
+      };
+      out.push(a);
+      if (id) byId.set(id, a);
+      last = { ticker: r.ticker, ms, alert: a };
+    }
+    if (!a.kinds.includes(r.event)) a.kinds.push(r.event);
+    if (r.event === 'news' && str(m.news_title)) {
+      a.news = {
+        source: str(m.news_source) ?? '', title: str(m.news_title)!, url: str(m.news_url) ?? '',
+        published_at: str(m.news_published_at), score: num(m.news_score) ?? 0,
+        direction: str(m.news_dir) ?? 'neutral', type: str(m.news_type) ?? '',
+      };
+    }
+  }
+  // Same kind order the engine uses, newest first.
+  const ORDER = ['grade_aplus', 'fast_move', 'news'];
+  for (const a of out) a.kinds.sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y));
+  out.sort((x, y) => y.at.localeCompare(x.at));
+  res.json({ data: out });
+});
+
 // GET /api/screener/vwap-debug[?ticker=X] — live ↑ VWAP reclaim tracker
 // state. Without a ticker: phase counts, open episodes and the "loaded"
 // names (≥5 closed 1m candles under VWAP — one close over the line from a

@@ -25,6 +25,8 @@ import { MomoSetupsPanel } from './MomoSetupsPanel';
 import { EdgePanel } from './EdgePanel';
 import { WatchlistPanel } from './WatchlistPanel';
 import { useWatchlist } from '../../hooks/useWatchlist';
+import { AlertsPanel } from './AlertsPanel';
+import { useAlertLog } from '../../hooks/useAlertLog';
 
 const { Text } = Typography;
 
@@ -54,7 +56,7 @@ const SESSION_COLOR: Record<TradingSession, string> = {
   closed: '#8c8c8c',
 };
 
-type ScreenerTab = 'momo' | 'setups' | 'ema' | 'momentum' | 'edge' | 'swing' | 'outcomes' | 'continuation' | 'history' | 'watchlist';
+type ScreenerTab = 'momo' | 'setups' | 'ema' | 'momentum' | 'edge' | 'swing' | 'outcomes' | 'continuation' | 'history' | 'watchlist' | 'alerts';
 
 // First-appeared time in the operator's TZ (UTC+5), HH:MM, plus how long ago.
 // The "ago" is the staleness cue: a top-of-list +600% name first seen 9h ago is
@@ -143,6 +145,20 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
   const [activeTab, setActiveTab] = useState<ScreenerTab>('momentum');
   // Same TanStack Query cache as the panel itself — the tab label's count is free.
   const { entries: watchEntries } = useWatchlist();
+  const { alerts: alertLog } = useAlertLog(payload);
+  // Momentum rows that alerted in the last 15 min get a small badge per kind,
+  // so the table itself shows what just fired (payload.alerts = last hour).
+  const recentAlertKinds = useMemo(() => {
+    const m = new Map<string, Set<string>>();
+    const cutoff = Date.now() - 15 * 60_000;
+    for (const a of payload?.alerts ?? []) {
+      if (Date.parse(a.at) < cutoff) continue;
+      const s = m.get(a.ticker) ?? new Set<string>();
+      for (const k of a.kinds) s.add(k);
+      m.set(a.ticker, s);
+    }
+    return m;
+  }, [payload]);
   const components = payload?.components ?? LEAN_COMPONENT_FLAGS;
   const { hidden, hide, unhide } = useHiddenTickers();
   const { momentumNewsOnly, setMomentumNewsOnly } = useLayout();
@@ -182,6 +198,13 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
               stopPropagation
               style={{ color: '#fff', fontWeight: 600 }}
             />
+            {recentAlertKinds.has(t) && (
+              <span style={{ marginLeft: 4, fontSize: 11 }}>
+                {recentAlertKinds.get(t)!.has('grade_aplus') && '🅰️'}
+                {recentAlertKinds.get(t)!.has('fast_move') && '⚡'}
+                {recentAlertKinds.get(t)!.has('news') && '📰'}
+              </span>
+            )}
             {row.is_fresh_news && <span> 🚨</span>}
             {row.vwap_reclaim && (
               <Tooltip title="Reclaimed VWAP this cycle — crossed from below to above">
@@ -363,7 +386,8 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
         ),
       },
     ],
-    [hide, payload?.session],
+    // recentAlertKinds: the ticker cell's alert badges must refresh each cycle.
+    [hide, payload?.session, recentAlertKinds],
   );
 
   const allRows = payload?.rows ?? [];
@@ -570,6 +594,13 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
             key: 'watchlist',
             label: `Watchlist · ${watchEntries.length}`,
             children: <WatchlistPanel showHeader={false} />,
+          },
+          {
+            // Today's opportunity-alert log (2026-10-02): the same events that
+            // pinged the phone/browser, kept on screen with "since alert".
+            key: 'alerts',
+            label: `Alerts · ${alertLog.length}`,
+            children: <AlertsPanel alerts={alertLog} payload={payload} />,
           },
           {
             key: 'outcomes',

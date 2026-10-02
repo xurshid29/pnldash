@@ -9,10 +9,17 @@ import type {
   OutcomesGroupBy,
   OutcomesHorizon,
   OutcomesScreen,
+  OpportunityAlert,
   ScreenerFilterSnapshot,
 } from './types';
 
 export const screenerApi = {
+  // The day's opportunity-alert log (default today, ET), newest first.
+  async alerts(day?: string): Promise<OpportunityAlert[]> {
+    const res = await apiClient.get<OpportunityAlert[]>(`/api/screener/alerts${day ? `?day=${encodeURIComponent(day)}` : ''}`);
+    return res.data;
+  },
+
   async latest(): Promise<CyclePayload> {
     const res = await apiClient.get<CyclePayload>('/api/screener/latest');
     return res.data;
