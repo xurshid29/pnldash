@@ -53,8 +53,8 @@ parking), disk 26%.
 every experiment, including Edge (08-21), ↑ VWAP reclaim (08-22, graded as
 noise) and **Live Ticks / Databento** (10-01). The feed had been dead since
 ~09-12 without anyone noticing (unpaid renewal); the key is commented out
-and the operator said they'd cancel the subscription — **confirm it was
-cancelled and whether the September invoice is still owed.** Paid APIs
+and the **subscription is cancelled** (operator confirmed 2026-10-02).
+Reviving Live Ticks would need a new paid subscription. Paid APIs
 parked: Benzinga and Anthropic (keys commented out). No OpenAI key, so
 catalyst classification is rules-only. News = Finviz + Yahoo + SEC + halts.
 
