@@ -159,6 +159,23 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
     }
     return m;
   }, [payload]);
+  // Row highlight for alerted tickers: a pulse for the first 90s, then a
+  // colored left edge until the 15-min badge window ends. Color = the
+  // strongest kind that fired (A+ green > fast amber > news blue).
+  const alertRowClass = useMemo(() => {
+    const m = new Map<string, string>();
+    const now = Date.now();
+    const latest = new Map<string, number>();
+    for (const a of payload?.alerts ?? []) {
+      const t = Date.parse(a.at);
+      if (now - t <= 90_000) latest.set(a.ticker, Math.max(latest.get(a.ticker) ?? 0, t));
+    }
+    for (const [ticker, kinds] of recentAlertKinds) {
+      const tone = kinds.has('grade_aplus') ? 'aplus' : kinds.has('fast_move') ? 'fast' : 'news';
+      m.set(ticker, `screener-row-alert screener-row-alert-${tone}${latest.has(ticker) ? ' screener-row-alert-pulse' : ''}`);
+    }
+    return m;
+  }, [payload, recentAlertKinds]);
   const components = payload?.components ?? LEAN_COMPONENT_FLAGS;
   const { hidden, hide, unhide } = useHiddenTickers();
   const { momentumNewsOnly, setMomentumNewsOnly } = useLayout();
@@ -548,6 +565,7 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
                       isWarned(r.ticker) ? 'screener-row-warned' : '',
                       r.is_fresh_news ? 'screener-row-fresh' : '',
                       isFreshArrival(r.first_seen_at) ? 'screener-row-new' : '',
+                      alertRowClass.get(r.ticker) ?? '',
                     ]
                       .filter(Boolean)
                       .join(' ')

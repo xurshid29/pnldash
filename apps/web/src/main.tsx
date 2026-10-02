@@ -22,7 +22,7 @@ createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <ConfigProvider theme={theme}>
-        <App message={{ maxCount: 3 }}>
+        <App message={{ maxCount: 3 }} notification={{ maxCount: 4, stack: { threshold: 3 } }}>
           <AuthProvider>
             <RouterProvider router={router} />
           </AuthProvider>

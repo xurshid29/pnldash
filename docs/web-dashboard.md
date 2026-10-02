@@ -37,7 +37,12 @@ Alerts ON/OFF in the header; phone mutes are the `ALERTS_DISABLED` slugs
 tab (Momentum · History · Watchlist · Alerts) lists the day's log from
 `GET /api/screener/alerts`, filterable by kind, with price/grade at the alert
 and the live "since alert" move; Momentum rows that alerted in the last 15
-min carry 🅰️/⚡/📰 badges next to the ticker. Sizing study:
+min carry 🅰️/⚡/📰 badges next to the ticker, pulse for ~90s after the
+alert and keep a colored left edge (A+ green, fast amber, news blue) for the
+rest of the 15 min; and every new alert also opens an in-page toast (top
+right, 12s, click = select ticker) that follows Alerts ON/OFF and the
+per-type switches — it shows even when the OS swallows browser
+notifications. Sizing study:
 `scripts/research/momentum-grade/alert_study.py`.
 
 **Momentum grade (2026-10-01).** Each Momentum row shows a letter A+ … D,

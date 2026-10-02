@@ -12,7 +12,9 @@ the day's log (`GET /api/screener/alerts`, regrouped from tier_events
 tier='alert'; meta now carries the alert `id`/`at`, older rows regroup by
 ticker within 3s), filter by kind, price/grade at alert and a live "since
 alert" %, click = select; Momentum rows that alerted in the last 15 min
-show 🅰️/⚡/📰 badges by the ticker.
+show 🅰️/⚡/📰 badges by the ticker, pulse ~90s after the alert, then keep
+a colored left edge for 15 min; each new alert also opens an in-page toast
+(`components/dashboard/AlertToasts.tsx`, same switches as the sound).
 
 **2026-10-01 (evening) — GRADE FADE CAP.** Operator spotted LONA graded A+
 right after dumping ~20% off its high (MACD rolling over). Root cause: the

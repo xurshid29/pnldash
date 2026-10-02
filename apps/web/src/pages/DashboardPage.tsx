@@ -5,6 +5,7 @@ import { useScreenerAlerts } from '../hooks/useScreenerAlerts';
 import { useTabTitleFlash } from '../hooks/useTabTitleFlash';
 import { useEdge } from '../hooks/useEdge';
 import { useEdgeAlerts } from '../hooks/useEdgeAlerts';
+import { AlertToasts } from '../components/dashboard/AlertToasts';
 import { ScreenerPanel } from '../components/screener/ScreenerPanel';
 import { SelectedStockPanel } from '../components/screener/SelectedStockPanel';
 import { NewsRoomPanel } from '../components/news/NewsRoomPanel';
@@ -39,6 +40,7 @@ export function DashboardPage() {
   return (
     <SelectionProvider>
       <AutoSelectFirstTicker payload={payload} />
+      <AlertToasts payload={payload} />
       <div style={{ width: '100%', height: '100%', background: '#0a0a0a' }}>
         <PanelGroup direction="horizontal" autoSaveId="ms-outer">
           {showRail && (

@@ -183,13 +183,13 @@ function fmtAlertPrice(p: number | null): string {
   return p == null ? '' : `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
 }
 
-function opportunityTitle(a: OpportunityAlert): string {
+export function opportunityTitle(a: OpportunityAlert): string {
   if (a.kinds.includes('grade_aplus')) return `🅰️ ${a.ticker} — ${a.new_on_screen ? 'new A+' : `A+ (was ${a.prev_grade ?? '—'})`}`;
   if (a.kinds.includes('fast_move')) return `⚡ ${a.ticker} +${a.move_pct}% in 60s`;
   return `📰 ${a.ticker}${a.news?.direction === 'bearish' ? ' ⚠️' : ''} — ${a.news?.title.slice(0, 60) ?? 'news'}`;
 }
 
-function opportunityBody(a: OpportunityAlert): string {
+export function opportunityBody(a: OpportunityAlert): string {
   const parts = [fmtAlertPrice(a.price)];
   if (a.change_pct != null) parts.push(`${a.change_pct >= 0 ? '+' : ''}${a.change_pct.toFixed(1)}%`);
   if (a.grade) parts.push(`grade ${a.grade}`);

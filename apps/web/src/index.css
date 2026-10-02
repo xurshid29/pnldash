@@ -122,3 +122,23 @@ body {
 .ant-tooltip {
   display: none !important;
 }
+
+/* Alerted Momentum rows (2026-10-02): pulse for ~90s after an opportunity
+   alert, then a colored left edge for the rest of the 15-min badge window.
+   The pulse is an inset box-shadow overlay, not a background, so it still
+   shows on rows whose fresh-news / just-appeared backgrounds are !important.
+   Tone = strongest kind: A+ green, fast move amber, news blue. */
+.screener-row-alert > td { --alert-rgb: 82, 196, 26; }
+.screener-row-alert-fast > td { --alert-rgb: 250, 173, 20; }
+.screener-row-alert-news > td { --alert-rgb: 24, 144, 255; }
+.screener-row-alert > td:first-child {
+  box-shadow: inset 3px 0 0 rgb(var(--alert-rgb));
+}
+@keyframes alert-row-pulse {
+  from { box-shadow: inset 0 0 0 999px rgba(var(--alert-rgb), 0.30); }
+  to   { box-shadow: inset 0 0 0 999px rgba(var(--alert-rgb), 0.06); }
+}
+.screener-row-alert-pulse > td,
+.screener-row-alert-pulse > td:first-child {
+  animation: alert-row-pulse 0.9s ease-in-out infinite alternate;
+}
