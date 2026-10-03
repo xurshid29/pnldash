@@ -53,7 +53,7 @@ parking), disk 26%.
 5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
    detected by TradingView (we can't compute a month VWAP with pre-market
    volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine`
-   (**v7**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
+   (**v8**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
    posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
    a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
    event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
@@ -134,6 +134,13 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-03 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-03 (late night) — 📐 SCRIPT v8 (names only).** The operator asked
+which screener identifies the "top gainers". None does: it's a per-ticker
+filter from the ticker's own bars, run on every symbol of the attached
+watchlist (our screener only supplies that watchlist). The settings group
+is renamed "Gainer filter (this ticker's own move)" and its titles are
+clearer; −100 switches the filter off. No logic change.
 
 **2026-10-03 (late night) — 📐 SCRIPT v7.** "Why nothing between
 13:00–13:20?" (AIXI 10-02 pre-market): AIXI was a third-session runner

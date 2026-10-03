@@ -1,4 +1,4 @@
-"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v7).
+"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v8 = v7 logic, clearer setting names).
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.

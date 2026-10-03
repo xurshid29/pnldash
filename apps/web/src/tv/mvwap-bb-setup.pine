@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v7 (2026-10-03).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v8 (2026-10-03).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // A top gainer pulls back under its month-anchored VWAP while the Bollinger
@@ -21,9 +21,11 @@
 // mirrors this logic; update it with the script.
 indicator("mVWAP x BB basis setup", shorttitle = "mVWAP-BB", overlay = true)
 
-minDayGain = input.float(20.0, "Gainer: day high at least % above prior close", group = "Top gainer")
-runnerDays = input.int(3,      "…or that in any of the last N sessions (0 = today only)", minval = 0, maxval = 5, group = "Top gainer")
-useAhGain  = input.bool(true,  "After hours: …or that since today's close", group = "Top gainer")
+// Gainer filter: computed per ticker from its own bars — no screener, no ranking.
+// A ticker that doesn't pass stays silent; -100 switches the filter off.
+minDayGain = input.float(20.0, "Up at least % (day high vs prior close; -100 = filter off)", group = "Gainer filter (this ticker's own move)")
+runnerDays = input.int(3,      "…today, or on any of the last N sessions (0 = today only)", minval = 0, maxval = 5, group = "Gainer filter (this ticker's own move)")
+useAhGain  = input.bool(true,  "After hours, also count the move since today's close", group = "Gainer filter (this ticker's own move)")
 maxPxBelow = input.float(15.0, "Price at most % under mVWAP", group = "Setup")
 formBasis  = input.float(10.0, "FORMING: basis at most % under mVWAP", group = "Setup")
 readyBasis = input.float(6.0,  "READY: basis at most % under mVWAP", group = "Setup")

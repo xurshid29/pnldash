@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v7** (history in §12) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v8** (history in §12) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -227,13 +227,19 @@ disagree with the file, the file wins.
 
 ### 5.1 Inputs — what each one does and how to tune it
 
-Grouped as in the script's settings dialog.
+Grouped as in the script's settings dialog. The **gainer filter** (formerly
+the "Top gainer" group, renamed in v8) is computed per ticker from that
+ticker's own bars. It isn't a screener or a ranking: TradingView runs the
+script on every symbol of the attached watchlist, and a ticker that fails the
+filter stays silent. Set `minDayGain` to −100 to switch the filter off, e.g.
+for a short personal watchlist. Our screener only supplies the suggested
+watchlist (§7.1).
 
 | Group | Input | Default | Meaning | Higher → / Lower → |
 |---|---|---|---|---|
-| Top gainer | `minDayGain` | 20 | Day high vs the prior regular close, % | fewer, stronger names / more names |
-| Top gainer | `runnerDays` | 3 (v2–v6: 2) | …or that held in any of the last N sessions (0 = today only, max 5). New in v2 | older runners qualify / today's gainers only |
-| Top gainer | `useAhGain` | on | After hours, …or the high since today's close is up `minDayGain`%. New in v3 | — / off = after-hours names need a +20% day too |
+| Gainer filter | `minDayGain` | 20 | "Up at least %": day high vs the prior regular close; −100 = filter off | fewer, stronger names / more names |
+| Gainer filter | `runnerDays` | 3 (v2–v6: 2) | "…today, or on any of the last N sessions" (0 = today only, max 5). New in v2 | older runners qualify / today's gainers only |
+| Gainer filter | `useAhGain` | on | "After hours, also count the move since today's close". New in v3 | — / off = after-hours names need a +20% day too |
 | Setup | `maxPxBelow` | 15 | Price may be at most this % under the month VWAP | deeper pullbacks qualify / only near-the-line setups |
 | Setup | `formBasis` | 10 | Base FORMING when the basis is within this % under the VWAP | earlier heads-up, noisier / later, fewer |
 | Setup | `readyBasis` | 6 | Base READY when the basis is within this % (the operator's "5–6%") | earlier entries / tighter, later |
@@ -716,3 +722,4 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-03 | v5 | `c4a15a3` | Operator: "GO is not accurate" (NIVF 1m: GO at 09:38 ET, near the top of the spike). New `goOn` (Either / Price reclaim / Basis cross, default Either), `goAbovePct` 2, `goWithin` 5. GO now fires on a decisive price reclaim (close ≥2% above the line, at/under it within 5 bars, basis rising) or the basis cross, whichever comes first. The message adds `via reclaim|cross`; it is stored as `go_via`, and Telegram and the notification say which. FORMING/READY are unchanged from v4. Replay GO quality (`python3 replay.py go`): v4 → v5 median upside left over the next 30 min +5.9% → +15.7% (1m) and +11.6% → +18.7% (2m); fell back under the line within 10 min 1 → 2 (1m) and 0 → 2 (2m: AIXI's rejected first push, a MEDS after-hours poke). NIVF GO 18:38 → 18:31 UTC+5 (2m 18:42 → 18:30). |
 | 2026-10-03 | v6 | `17f70ab` | Operator: "this one also is not accurate" (AIXI 10-01 1m: GO on the 09:38 ET crash bar). The month-start line, built on thin volume, fell under a flat basis on one 26K-share red bar, and v5 counted that as the basis crossing above it. v6: the cross needs `basisUp` (`crossOk`), and no GO prints on a bar that closes below the previous close. Replay: GOs unchanged except NXL 09:06 on 2m (NXL keeps its 09:12 reclaim GO). The replica gained `python3 pinesim.py`, a synthetic crash test: v5 gives GO, v6 doesn't. AIXI-1001 was added as a should-not-fire replay case (its pre-market line is approximated, since Yahoo has no pre-market volume). |
 | 2026-10-03 | v7 | `90d580a` | Operator: "why nothing between 13:00–13:20?" (AIXI 10-02 pre-market). AIXI was a third-session runner (+22% on 09-29), so the 2-session look-back kept the gate shut. `runnerDays` default 2 → 3, max 3 → 5; the gains now live in a 5-entry array instead of gain1..3. Replay with the new AIXI-1002PM case: v6 caught 8/10 on 1m and 8/10 on 2m, v7 caught 9/10 on both (READY 04:06 / 04:08 ET, GO 04:21). Other signals unchanged (24 / 16). |
+| 2026-10-03 | v8 | see `git log` | Clarity only, no logic change. The settings group "Top gainer" is renamed "Gainer filter (this ticker's own move)", with titles "Up at least % (day high vs prior close; -100 = filter off)", "…today, or on any of the last N sessions", and "After hours, also count the move since today's close". The operator had asked which screener picks the "top gainers"; none does — it's a per-ticker filter. Renamed inputs may come back at their defaults after the update. |
