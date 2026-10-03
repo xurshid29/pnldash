@@ -1,0 +1,119 @@
+"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v2).
+
+Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
+can be scored on past examples in seconds instead of by hand in bar replay.
+Keep it in step with the .pine file (docs/vwap-setup.md §10).
+
+What it can't do: build the month-anchored VWAP. Yahoo's pre/post-market bars
+carry zero volume, so the caller supplies mVWAP per bar (read off TradingView —
+the line is flat mid-month, and a short window around a setup is enough).
+Validated 2026-10-03: with mVWAP 4.94 it reproduces v1's markers on the
+operator's MEDS 1m chart for 2026-09-17 (FORMING 11:07, READY 11:45 and 11:59,
+FORMING 13:30 ET) and the 09-18 miss.
+"""
+import datetime
+import json
+
+ET = datetime.timezone(datetime.timedelta(hours=-4))   # EDT; fine for Sep–Oct examples
+
+# Script inputs, same names and defaults as the .pine file.
+V2 = dict(minDayGain=20.0, runnerDays=2, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0, holdTol=2.0,
+          failPct=3.0, slopeBars=3, useFast=True, fastAbove=3.0, formPx=10.0, readyPx=5.0, maxBasis=15.0,
+          maxCycles=4, window=(240, 960))   # alert window in ET minutes [04:00, 16:00); None = always
+# Script v1 is v2 with the new parts switched off.
+V1 = dict(V2, runnerDays=0, useFast=False, maxCycles=3, window=None)
+
+
+def load(path):
+    """Yahoo v8 chart JSON → bars (ET-aware times; open/high/low/close/volume)."""
+    d = json.load(open(path))['chart']['result'][0]
+    q = d['indicators']['quote'][0]
+    out = []
+    for i, t in enumerate(d['timestamp']):
+        if q['close'][i] is None:
+            continue
+        out.append({'t': datetime.datetime.fromtimestamp(t, ET), 'o': q['open'][i], 'h': q['high'][i],
+                    'l': q['low'][i], 'c': q['close'][i], 'v': q['volume'][i] or 0})
+    return out
+
+
+def resample(bars, minutes):
+    """1m → N-minute bars aligned to the hour (TradingView's 2m bars start on even minutes)."""
+    out = []
+    for b in bars:
+        m = b['t'].hour * 60 + b['t'].minute
+        key = (b['t'].date(), m // minutes)
+        if out and out[-1]['key'] == key:
+            o = out[-1]
+            o['h'] = max(o['h'], b['h']); o['l'] = min(o['l'], b['l']); o['c'] = b['c']; o['v'] += b['v']
+        else:
+            start = m // minutes * minutes
+            out.append({**b, 'key': key, 't': b['t'].replace(hour=start // 60, minute=start % 60)})
+    return out
+
+
+def is_market(t):
+    m = t.hour * 60 + t.minute
+    return 570 <= m < 960
+
+
+def simulate(bars, mvwap_of, params=None, start=None, end=None):
+    """Run the stage machine. mvwap_of(bar) → month VWAP or None (no signal on that bar).
+    Returns fired events: (time, stage, path, close, basis, px_below %, basis_below %, day-high gain %)."""
+    p = {**V2, **(params or {})}
+    closes, basis_hist, bbelow_hist, gains = [], [], [], []
+    last_reg = prev_close = day_high = cur_day = None
+    stage = cycles = 0
+    prev_basis = prev_mv = None
+    fired = []
+    for b in bars:
+        t, c = b['t'], b['c']
+        closes.append(c)
+        basis = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
+        mv = mvwap_of(b)
+        new_day = cur_day != t.date()
+        if new_day:
+            if day_high is not None and prev_close:
+                gains.append((day_high / prev_close - 1) * 100)       # gain1..3 in the script
+            cur_day, prev_close, day_high = t.date(), last_reg, b['h']
+        else:
+            day_high = max(day_high, b['h'])
+        if is_market(t):
+            last_reg = c
+        gain = (day_high / prev_close - 1) * 100 if prev_close else None
+        recent = max(gains[-p['runnerDays']:]) if p['runnerDays'] > 0 and gains else None
+        gainer = (gain is not None and gain >= p['minDayGain']) or (recent is not None and recent >= p['minDayGain'])
+        valid = gainer and mv is not None and basis is not None
+        px_below = (mv - c) / mv * 100 if mv and basis else None
+        b_below = (mv - basis) / mv * 100 if mv and basis else None
+        basis_hist.append(basis); bbelow_hist.append(b_below)
+        sb = p['slopeBars']
+        basis_up = len(basis_hist) > sb and basis is not None and basis_hist[-1 - sb] is not None and basis > basis_hist[-1 - sb]
+        gap_closing = (len(bbelow_hist) > sb and b_below is not None and bbelow_hist[-1 - sb] is not None
+                       and b_below < bbelow_hist[-1 - sb])
+        holding = basis is not None and c >= basis * (1 - p['holdTol'] / 100)
+        cross_up = (None not in (prev_basis, prev_mv, basis, mv)) and basis > mv and prev_basis <= prev_mv
+        in_zone = valid and 0 < px_below <= p['maxPxBelow'] and basis_up and holding
+        fast = (p['useFast'] and basis is not None and b_below is not None
+                and c >= basis * (1 + p['fastAbove'] / 100) and b_below <= p['maxBasis'])
+        base_forming = in_zone and p['readyBasis'] < b_below <= p['formBasis']
+        base_ready = in_zone and 0 < b_below <= p['readyBasis']
+        forming = in_zone and gap_closing and (base_forming or (fast and px_below <= p['formPx']))
+        ready = in_zone and (base_ready or (fast and px_below <= p['readyPx']))
+        go = valid and cross_up
+        if new_day:
+            stage = cycles = 0
+        if stage > 0 and mv is not None and basis is not None and c < mv and c < basis * (1 - p['failPct'] / 100):
+            stage = 0
+        target = 3 if (stage >= 1 and go) else 2 if ready else 1 if forming else 0
+        m = t.hour * 60 + t.minute
+        in_window = p['window'] is None or p['window'][0] <= m < p['window'][1]
+        fire = in_window and target > stage and (stage > 0 or cycles < p['maxCycles'])
+        if fire:
+            if stage == 0:
+                cycles += 1
+            stage = target
+            path = '' if target == 3 else ('base' if (base_ready if target == 2 else base_forming) else 'fast')
+            fired.append((t, ['', 'FORMING', 'READY', 'GO'][target], path, c, basis, px_below, b_below, gain))
+        prev_basis, prev_mv = basis, mv
+    return [e for e in fired if (start is None or e[0] >= start) and (end is None or e[0] <= end)]

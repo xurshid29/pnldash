@@ -74,7 +74,7 @@ export function AlertsPanel({ alerts, payload }: { alerts: OpportunityAlert[]; p
           {a.kinds.includes('tv_setup') && a.setup && (
             <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
               <span style={{ color: '#5cdbd3', fontWeight: 700 }}>📐</span>
-              <TvStageTag stage={a.setup.stage} dim={!a.setup.notified} />
+              <TvStageTag stage={a.setup.stage} dim={!a.setup.notified} path={a.setup.path} />
               <span style={{ color: '#d9d9d9', fontSize: 12 }}>{tvLevelsText(a.setup)}</span>
               {a.setup.tf && <Text type="secondary" style={{ fontSize: 10 }}>{fmtTf(a.setup.tf)}</Text>}
             </span>

@@ -27,6 +27,11 @@ console.log('Parse — the Pine alert() message');
   check('GO with price above the line', go?.stage === 'go' && go.px_pct === 4 && go.basis_pct === 0.3 && go.tf === '30S', JSON.stringify(go));
   const minus = parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (−5.7%) | basis 1.49 (−5.1%) | day high +41% | tf 1');
   check('unicode minus reads as negative', minus?.px_pct === -5.7 && minus.basis_pct === -5.1, JSON.stringify(minus));
+  check('a v1 message has no path', s?.path === null, JSON.stringify(s));
+  const fast = parseTvMessage('READY MEDS 4.73 | mVWAP 4.94 (-4.3%) | basis 4.37 (-11.5%) | day high +0% | tf 1 | path fast');
+  check('v2 fast path', fast?.path === 'fast' && fast.basis_pct === -11.5 && fast.day_gain === 0 && fast.tf === '1', JSON.stringify(fast));
+  const base = parseTvMessage('FORMING VEEA 2.94 | mVWAP 3.06 (-4.0%) | basis 2.89 (-5.7%) | day high +101% | tf 2 | path base');
+  check('v2 base path', base?.path === 'base' && base.stage === 'forming', JSON.stringify(base));
 }
 
 console.log('Parse — fallbacks and JSON');
@@ -37,8 +42,8 @@ console.log('Parse — fallbacks and JSON');
   check('lower-case stage, no price', bare?.stage === 'go' && bare.ticker === 'NXL' && bare.price == null, JSON.stringify(bare));
   const pre = parseTvMessage('READY NASDAQ:AIXI 1.48');
   check('exchange prefix stripped', pre?.ticker === 'AIXI', JSON.stringify(pre));
-  const js = parseTvMessage('{"stage":"READY","ticker":"amex:soar","price":0.31,"mvwap":0.336,"basis_pct":-4.2,"tf":2}');
-  check('JSON text body', js?.stage === 'ready' && js.ticker === 'SOAR' && js.price === 0.31 && js.basis_pct === -4.2 && js.tf === '2', JSON.stringify(js));
+  const js = parseTvMessage('{"stage":"READY","ticker":"amex:soar","price":0.31,"mvwap":0.336,"basis_pct":-4.2,"tf":2,"path":"FAST"}');
+  check('JSON text body', js?.stage === 'ready' && js.ticker === 'SOAR' && js.price === 0.31 && js.basis_pct === -4.2 && js.tf === '2' && js.path === 'fast', JSON.stringify(js));
   const obj = parseTvMessage({ stage: 'forming', ticker: 'MEDS', price: '4.41' });
   check('pre-parsed JSON object', obj?.stage === 'forming' && obj.ticker === 'MEDS' && obj.price === 4.41, JSON.stringify(obj));
 }
@@ -56,7 +61,7 @@ console.log('Gate — duplicates, other timeframes, flood');
 {
   const T0 = 1_790_000_000;
   const sig = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
-    stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, tf: '1', ...over,
+    stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, tf: '1', path: 'base', ...over,
   });
   const g = new TvSetupGate();
   check('first READY notifies', g.admit(sig(), T0) === 'notify');
@@ -77,7 +82,7 @@ console.log('Gate — duplicates, other timeframes, flood');
 console.log('Telegram format');
 {
   const html = formatTvSetupAlert(
-    { stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, tf: '1' },
+    { stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, tf: '1', path: 'fast' },
     'NASDAQ:AIXI',
     { change_pct: 21.8, grade: 'B+', float_m: 3.2 },
   );
@@ -85,7 +90,8 @@ console.log('Telegram format');
   check('levels line', html.includes('mVWAP $1.57 (-5.7%)') && html.includes('basis $1.49 (-5.1%)'), html);
   check('context line', html.includes('day high +41%') && html.includes('now +21.8%') && html.includes('grade B+') && html.includes('tf 1'), html);
   check('chart link is exchange-qualified', html.includes('symbol=NASDAQ%3AAIXI'), html);
-  const bare = formatTvSetupAlert({ stage: 'go', ticker: 'NXL', price: null, mvwap: null, px_pct: null, basis: null, basis_pct: null, day_gain: null, tf: null }, 'NXL', null);
+  check('fast path is named in the hint', html.includes('fast approach'), html);
+  const bare = formatTvSetupAlert({ stage: 'go', ticker: 'NXL', price: null, mvwap: null, px_pct: null, basis: null, basis_pct: null, day_gain: null, tf: null, path: null }, 'NXL', null);
   check('fallback message renders without levels', bare.includes('<b>GO</b>') && !bare.includes('mVWAP $') && !bare.includes('undefined') && !bare.includes('null'), bare);
 }
 
@@ -93,7 +99,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const pine = readFileSync(resolve(here, '../../web/src/tv/mvwap-bb-setup.pine'), 'utf8');
-  for (const part of ['" | mVWAP "', '" | basis "', '" | day high +"', '" | tf "', '"FORMING"', '"READY"', '"GO"']) {
+  for (const part of ['" | mVWAP "', '" | basis "', '" | day high +"', '" | tf "', '" | path "', '"base"', '"fast"', '"FORMING"', '"READY"', '"GO"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

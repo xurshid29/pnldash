@@ -338,6 +338,7 @@ export interface TvSetupInfo {
   basis_pct: number | null;   // BB basis (SMA 20) vs mVWAP, %
   day_gain: number | null;    // day high vs prior close, %
   tf: string | null;          // TradingView interval of the alert
+  path?: 'base' | 'fast' | null; // which shape reached FORMING/READY (script v2+)
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

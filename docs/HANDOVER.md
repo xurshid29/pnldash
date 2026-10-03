@@ -52,8 +52,8 @@ parking), disk 26%.
    additive.
 5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
    detected by TradingView (we can't compute a month VWAP with pre-market
-   volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine` runs
-   as ONE watchlist alert (operator is on Premium = 2 watchlist alerts) and
+   volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine`
+   (**v2**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
    posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
    a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
    event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
@@ -134,6 +134,21 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-03 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-03 (later) — 📐 SCRIPT v2.** The operator replayed v1 on MEDS (1m)
+and it missed the 09-18 07:00 ET move. Diagnosis with an offline replica of the
+script (it reproduced v1's markers on their chart): (1) the today-only +20%
+gate. MEDS closed 09-17 at 4.60 and was −2% pre-market, a 3rd-day runner.
+(2) A fast approach: price 9.9% → 2.8% under the line while the 20-bar basis
+lagged 12–13% under, outside FORMING's 10%. Settings alone topped out at 4/6
+with ~2× noise and still missed MEDS. v2 adds `runnerDays` 2, a fast-approach
+route (price-led, `path fast`), an alert window 04:00–16:00 NY, and
+`maxCycles` 4; run it on 1m AND 2m (NXL only exists on 2m — the 1m basis was
+already above the line). Replay on the six examples: v1 2/6 (1m) and 3/6 (2m);
+v2 5/6 and 6/6; other signals 4/5 → 8/9. Tool:
+`apps/api/scripts/research/vwap-setup/` (`python3 replay.py`). Full
+write-up: `docs/vwap-setup.md` §3, §5, §12. The operator must paste v2 and
+recreate both alerts.
 
 **2026-10-03 — 📐 TRADINGVIEW VWAP SETUP (the operator's edge, wired in).**
 Operator described the edge they trade since ~10-01: a session top gainer

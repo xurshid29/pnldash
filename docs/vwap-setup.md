@@ -9,8 +9,9 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v1** |
-| Runs as | one TradingView **watchlist alert** (operator is on Premium = 2 watchlist alerts) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v2** (v1 shipped 2026-10-03 `d50ebbe`) |
+| Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
+| Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
 | First live session | Mon 2026-10-05 |
 | Grade it | ~2026-10-17 (the "Grading plan" section below has the SQL) |
@@ -107,6 +108,22 @@ of the grading plan (§9).
   The setup is an attempt to pick out the up-first half: timing on leaders,
   which is the one family our EMA/MACD studies never ruled out (they ruled out
   those indicators as a stock-picking signal).
+- **v1 was blind to fast approaches and second-day runners** (found 2026-10-03
+  when the operator replayed MEDS on 1m: "missing the opportunity around
+  16:00"). On Sep 18 MEDS closed the prior day at 4.60 and traded 4.1–4.5
+  pre-market, so its day high was −2% and v1's today-only +20% gate stayed shut
+  until 07:11, after the move had started. Its basis also lagged 12–13% under
+  the line while price ran from 9.9% to 2.8% under it (07:00–07:07), outside
+  FORMING's 10%. NIVF 09-30 (a fast run into the open) and SOAR 09-29 (a
+  second-day name) were invisible to v1 for the same two reasons. Turning the
+  gate off and widening the bands only reached 4/6 with ~2× the noise, and it
+  still missed MEDS: earlier pre-market signals used up the day's setups first.
+  That's why v2 changed the logic rather than the settings (§5, §12).
+- **The timeframe changes which setups exist.** On 1m, NXL's 20-bar basis was
+  already *above* the line during its 09:00–09:08 pullback (a 20-minute mean
+  that still remembered the run to 7.7). On the operator's 2m chart, the
+  40-minute basis was −4.4% and crossed at ~09:06, exactly their setup. The
+  operator's "5–6%" was learned on 2m, so v2 runs on both 1m and 2m.
 - **Free data can't draw this line.** Yahoo's chart API returns real prices
   for pre- and post-market bars but **zero volume** (verified at 1m and 2m on
   AIXI). AIXI's month VWAP at the 10-02 close came out 1.81 from Yahoo
@@ -141,6 +158,10 @@ of the grading plan (§9).
   runners — and the script's own top-gainer gate keeps the quiet names silent.
   All six examples had been on our Momentum screen in the 2–3 weeks before
   their setup day.
+- **Two alerts: 1m and 2m.** On the examples (§12), 1m catches fast moves a
+  few minutes earlier (MEDS, NIVF) while 2m matches the operator's own 2m eye
+  (NXL). Together they caught all six. A stage that fires on both is announced
+  once; the second copy is logged only (§7.2).
 - **Stages, not one signal.** The operator asked for *earlier* detection.
   FORMING is the heads-up ("open the chart"), READY is the entry zone, and GO
   is the confirmation they described.
@@ -162,16 +183,25 @@ disagree with the file, the file wins.
 
 ### 5.1 Inputs — what each one does and how to tune it
 
-| Input | Default | Meaning | Higher → / Lower → |
-|---|---|---|---|
-| `minDayGain` | 20 | Top-gainer gate: today's high vs the prior regular close, % | fewer, stronger names / more names (second-day names that only gap 10–15%) |
-| `maxPxBelow` | 15 | Price may be at most this % under the month VWAP | deeper pullbacks qualify / only near-the-line setups |
-| `formBasis` | 10 | FORMING when the basis is within this % under the VWAP | earlier heads-up, noisier / later, fewer |
-| `readyBasis` | 6 | READY when the basis is within this % (the operator's "5–6%") | earlier entries / tighter, later |
-| `holdTol` | 2 | Price may sit this % under the basis and still count as holding it | allows deeper higher lows / stricter structure |
-| `failPct` | 3 | The setup breaks on a close this % under the basis (and under the VWAP) | fewer re-arms / faster re-arming |
-| `slopeBars` | 3 | The basis must be higher than N bars ago | smoother and later / faster and noisier |
-| `maxCycles` | 3 | Max setups per ticker per day (re-arms included) | — |
+Grouped as in the script's settings dialog.
+
+| Group | Input | Default | Meaning | Higher → / Lower → |
+|---|---|---|---|---|
+| Top gainer | `minDayGain` | 20 | Day high vs the prior regular close, % | fewer, stronger names / more names |
+| Top gainer | `runnerDays` | 2 | …or that held in any of the last N sessions (0 = today only, max 3). New in v2 | second- and third-day runners qualify / today's gainers only |
+| Setup | `maxPxBelow` | 15 | Price may be at most this % under the month VWAP | deeper pullbacks qualify / only near-the-line setups |
+| Setup | `formBasis` | 10 | Base FORMING when the basis is within this % under the VWAP | earlier heads-up, noisier / later, fewer |
+| Setup | `readyBasis` | 6 | Base READY when the basis is within this % (the operator's "5–6%") | earlier entries / tighter, later |
+| Setup | `holdTol` | 2 | Price may sit this % under the basis and still count as holding it | allows deeper higher lows / stricter structure |
+| Setup | `failPct` | 3 | The setup breaks on a close this % under the basis (and under the VWAP) | fewer re-arms / faster re-arming |
+| Setup | `slopeBars` | 3 | The basis must be higher than N bars ago | smoother and later / faster and noisier |
+| Fast approach | `useFast` | on | Price-led route for runs at the line while the basis lags. New in v2 | — / off = v1's base-only behavior |
+| Fast approach | `fastAbove` | 3 | Price must be at least this % above the basis (the momentum test) | only strong runs / more, incl. drifts |
+| Fast approach | `formPx` | 10 | Fast FORMING when price is within this % under the VWAP | earlier heads-up / later |
+| Fast approach | `readyPx` | 5 | Fast READY when price is within this % | earlier, more failed tests / later, closer to the line |
+| Fast approach | `maxBasis` | 15 | …while the basis is at most this % under the VWAP | catches steeper ramps / only moderate lag |
+| Alerts | `maxCycles` | 4 (v1: 3) | Max setups per ticker per day (re-arms included) | later setups survive early chop / fewer repeats |
+| Alerts | `alertWin` | 0400-1600 | New York time window in which stages can fire. New in v2 | — / e.g. 0600-1600 drops early pre-market chop |
 
 **The timeframe changes what the basis means.** The basis is a 20-bar SMA: 20
 minutes on a 1m chart, 40 on 2m, 10 on 30s. The operator's "5–6%" came from 2m
@@ -190,20 +220,27 @@ This reproduces TradingView's built-in VWAP with anchor Month and source hlc3,
 and the BB basis. Volume includes extended hours when the chart or alert
 session is Extended.
 
-### 5.3 The top-gainer gate
+### 5.3 The top-gainer gate (today, or a recent session — v2)
 
 ```pine
 newDay = timeframe.change("D")
 if newDay
-    prevDayClose := lastRegClose      // the last regular-session close of the prior day
+    gain3 := gain2
+    gain2 := gain1
+    gain1 := (dayHigh / prevDayClose - 1) * 100   // the session that just ended
+    prevDayClose := lastRegClose                   // the last regular-session close of the prior day
     dayHigh      := high
 else
     dayHigh := na(dayHigh) ? high : math.max(dayHigh, high)
 if session.ismarket
     lastRegClose := close
 dayHighGain = (dayHigh / prevDayClose - 1) * 100
-gainer = not na(dayHighGain) and dayHighGain >= minDayGain
+gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain   // recentGain = max of gain1..N
 ```
+
+A second- or third-day runner sets up *before* it is up on the day. MEDS on
+09-18 was −2% until its move began, but +655% two sessions earlier. The
+lookback needs those sessions loaded on the chart; on 1m and 2m they are.
 
 The prior close is tracked from the last regular-session bar rather than
 `request.security("D", close[1])`, because during pre-market the daily series'
@@ -212,7 +249,7 @@ It needs at least one prior regular session loaded. The gate uses the **day
 high** on purpose: the setup is a *pullback*, so the stock may currently be well
 off its high.
 
-### 5.4 Distances and conditions
+### 5.4 Distances, conditions and the two shapes
 
 ```pine
 pxBelow    = (mvwap - close) / mvwap * 100   // > 0 = price under the line
@@ -220,11 +257,26 @@ basisBelow = (mvwap - basis) / mvwap * 100   // > 0 = basis under the line
 basisUp    = basis > basis[slopeBars]
 gapClosing = basisBelow < basisBelow[slopeBars]
 holding    = close >= basis * (1 - holdTol / 100)
-inZone  = valid and pxBelow > 0 and pxBelow <= maxPxBelow and basisUp and holding
-forming = inZone and basisBelow > readyBasis and basisBelow <= formBasis and gapClosing
-ready   = inZone and basisBelow > 0 and basisBelow <= readyBasis
+inZone       = valid and pxBelow > 0 and pxBelow <= maxPxBelow and basisUp and holding
+fastApproach = useFast and close >= basis * (1 + fastAbove / 100) and basisBelow <= maxBasis
+baseForming  = basisBelow > readyBasis and basisBelow <= formBasis
+baseReady    = basisBelow > 0 and basisBelow <= readyBasis
+forming = inZone and gapClosing and (baseForming or (fastApproach and pxBelow <= formPx))
+ready   = inZone and (baseReady or (fastApproach and pxBelow <= readyPx))
 go      = valid and crossU
+inWindow = not na(time(timeframe.period, alertWin, "America/New_York"))
 ```
+
+There are two shapes of the same setup:
+- **Base:** price consolidates under the line long enough that the 20-bar
+  basis converges within 6% (AIXI, VEEA). Stages are reached by the **basis**
+  distance, as in v1.
+- **Fast** (new in v2): price runs at the line while the basis lags far behind
+  (MEDS 09-18, NIVF 09-30). Stages are reached by the **price** distance
+  instead. The momentum test is price at least `fastAbove`% over a rising basis,
+  which keeps flat drifts out; in flat chop, price ≈ basis.
+
+Each FORMING/READY message says which shape reached it (`path base|fast`, §5.6).
 
 `holding` has a tolerance because at AIXI's higher low (1.47 at ~08:02) price
 sat slightly *under* the 2m basis (~1.49). A strict `close >= basis` would have
@@ -244,7 +296,11 @@ fired READY only after the bounce.
 - Each stage fires once per setup, and only forward (`target > stage`).
 - **GO requires an earlier FORMING or READY**, so a vertical spike straight
   through the VWAP is not reported as this setup.
-- A broken setup re-arms and counts as a new cycle (max 3 per ticker per day).
+- A broken setup re-arms and counts as a new cycle (max 4 per ticker per day).
+- **Outside the alert window (04:00–16:00 New York) nothing fires and no stage
+  advances.** At the window's start, conditions fire fresh. Breaks still
+  re-arm outside it. This keeps after-hours chop from pinging the operator at
+  night (UTC+5).
 - On fire, the script sends the alert message and plots a marker (orange
   circle = FORMING, yellow triangle = READY, green "GO" label). Bar replay on
   past days therefore shows exactly where it would have fired.
@@ -252,11 +308,13 @@ fired READY only after the bounce.
 ### 5.6 The alert message — a contract with the server
 
 ```
-READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1
+READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base
 ```
 
 `stage ticker close | mVWAP <value> (<price vs VWAP %>) | basis <value> (<basis
-vs VWAP %>) | day high +<gain>% | tf <timeframe.period>`. It is built with
+vs VWAP %>) | day high +<gain>% | tf <timeframe.period> | path <base|fast>`.
+The `path` segment is new in v2 and only on FORMING/READY, so v1 messages
+still parse (`path` = null). It is built with
 `str.tostring(x, format.mintick)`, which keeps sub-dollar precision (0.1259).
 It is sent with `alert(msg, alert.freq_once_per_bar_close)`, so it arrives at
 the bar close: up to 60 s after the condition on a 1m chart.
@@ -293,6 +351,19 @@ parser relies on are gone. The parser also accepts:
 - **Alerts snapshot the script.** TradingView alerts keep running the script
   as it was when the alert was created. After saving a new version, delete and
   recreate the watchlist alert (§10).
+- **Wrapping long expressions:** continuation lines must be indented by a
+  number of spaces that is not a multiple of 4 (see `recentGain`).
+
+### 5.8 Offline replay — score a change before shipping it
+
+`apps/api/scripts/research/vwap-setup/` holds `pinesim.py`, a Python mirror of
+the script (`V1` / `V2` presets), and `replay.py`, which scores a version on
+the six examples on 1m and 2m. A FORMING/READY in the operator's real entry
+window counts as caught, and every other FORMING/READY as noise. It was
+validated against the operator's MEDS 1m chart (v1 markers on 09-17
+reproduced). The month VWAP is read off TradingView per example, because
+Yahoo can't build it. Yahoo's 1m bars only reach back ~30 days, so add fresh
+examples (failures too) while they are available. See the folder's README.
 
 ## 6. TradingView setup (operator steps)
 
@@ -303,19 +374,20 @@ repeats these steps).
    Check that its yellow line sits on the built-in "VWAP Month".
 2. **Download .txt** → watchlist menu → Import list (or paste **Copy list**).
    Refresh it each morning; it changes as new runners appear.
-3. **Create alert** → Symbols: that watchlist → Condition: *mVWAP-BB* → "Any
-   alert() function call" → interval 1 minute → session Extended → once per bar
-   close.
+3. **Create two alerts** → Symbols: that watchlist → Condition: *mVWAP-BB* →
+   "Any alert() function call" → session Extended → once per bar close. Make
+   one with interval **1 minute** and one with **2 minutes**; that uses both of
+   Premium's watchlist-alert slots.
 4. **Notifications** → tick Webhook URL → `https://pnldash.uz/api/tv/webhook?key=<TV_WEBHOOK_SECRET>`.
    The key is in the prod `.env`; the full URL was given to the operator on
    2026-10-03. TradingView may ask for two-factor authentication on the account
    before it allows webhooks. App push and pop-up are optional, since Telegram
    and the dashboard already notify.
 
-Premium's second watchlist-alert slot is free for a variant: a 2m alert
-alongside the 1m one, or a separate alert on the READY/GO `alertcondition`s if
-"Any alert() function call" isn't offered for watchlists. A repeated stage from
-a second timeframe is logged but not announced again (§7).
+If "Any alert() function call" isn't offered for watchlists, use the READY
+condition instead (one per timeframe). A stage that fires on both timeframes
+within 5 min is announced once; the second copy is logged only (§7.2).
+**After every script update, delete and recreate both alerts.**
 
 ## 7. Our side — how a signal travels
 
@@ -363,7 +435,8 @@ TradingView servers                                   pnldash droplet
 ### 7.3 What gets stored — `tier_events` row (tier `alert`, event `tv_setup`)
 
 `meta`: `id`, `at`, `stage` (forming/ready/go), `price`, `mvwap`, `px_pct`,
-`basis`, `basis_pct`, `day_gain`, `tf` — all as TradingView reported them —
+`basis`, `basis_pct`, `day_gain`, `tf`, `path` (v2: `base` / `fast`) — all
+as TradingView reported them —
 plus our context at that moment: `chg`, `grade`, `float_m`, `rv1` (when the
 ticker is on our Momentum screen), `on_screen`, and `notified` (false = a
 repeat from another timeframe). `GET /api/screener/alerts` returns these rows
@@ -373,7 +446,8 @@ with a `setup` object; the boot seeding of the other alert kinds ignores them.
 
 - **📐 VWAP setups tab** (next to Momentum): one row per ticker with today's
   stage trail. "→" means the setup advanced, "·" means it broke and re-armed.
-  Repeats from another timeframe are dimmed. It also shows the latest signal's
+  Repeats from another timeframe are dimmed, and a cyan **fast** tag marks the
+  fast-approach path. It also shows the latest signal's
   price and levels, "Since" (live Momentum price vs the signal; "off screen"
   when we have no row), and the current change and grade. Header buttons: Copy
   list, Download .txt, Copy Pine script, How to.
@@ -462,6 +536,8 @@ is missing).
 - time to GO, and how often FORMING becomes READY and READY becomes GO.
 
 **Split by:**
+- `path`: base vs fast (v2) — did the fast route add winners or chop?
+- timeframe: 1m vs 2m;
 - early month (days 1–3, where the line is ≈ the session VWAP) vs mid/late month;
 - time of day (pre-market, the open, 10:00–11:00, midday);
 - the first setup of the day vs re-arms;
@@ -483,7 +559,10 @@ Also ask the operator to import a fresh IBKR `.tlg`. The journal stops at
 ## 10. Changing the script — the procedure
 
 1. Edit `apps/web/src/tv/mvwap-bb-setup.pine` and **bump the version** in its
-   header comment.
+   header comment. Mirror the logic change in
+   `apps/api/scripts/research/vwap-setup/pinesim.py` and run `replay.py`: the
+   change should catch at least what the previous version caught, without
+   much extra noise.
 2. If the alert message changed: update `parseTvMessage`, extend
    `verify-tv-setups.ts`, and run it.
 3. `npm run build --workspace=apps/web` (plus `npx tsc --noEmit` in `apps/api`
@@ -498,35 +577,44 @@ Also ask the operator to import a fresh IBKR `.tlg`. The journal stops at
 
 Ordered roughly by expected value; most should wait for the first grading.
 
-1. **Calibrate the thresholds on 1m.** `readyBasis` / `formBasis` came from 2m
-   screenshots. Use bar replay on the six examples **and** on top gainers where
-   it failed, then the grading.
-2. **A BROKE stage.** The script re-arms silently today. An explicit "setup
+1. **Calibrate on failures, not just winners.** v2's thresholds were shaped on
+   the six winners (in-sample). Add the operator's failed setups to `replay.py`
+   while Yahoo still has their bars, then use the live grading.
+2. **A volume test for the fast path.** It currently relies on price ≥ 3% over
+   the basis. A rising-volume condition (e.g. the last N bars' volume vs the
+   prior M) may separate real runs from bounces; TradingView has the volume
+   even though our replica can't test it.
+3. **GO on the price reclaim (option).** On fast moves the basis cross lags:
+   MEDS went 07:08 price reclaim → 07:17 basis cross (5.07 → 5.52). An input
+   could let GO fire on the first close back above the line after READY. Keep
+   the basis cross as the default; it is the operator's definition and it
+   filters AIXI-style first pokes that get rejected.
+4. **A BROKE stage.** The script re-arms silently today. An explicit "setup
    broke" alert (close under the basis after READY/GO) would support the
    operator's fast exits. It would be a fourth message type: parser + UI + slug.
-3. **Rejection confirmation as a stage.** First VWAP test rejected, then a
+5. **Rejection confirmation as a stage.** First VWAP test rejected, then a
    higher low on the basis. It is the operator's preferred structure and is
    detectable in Pine (track the session's first close above the VWAP and the
    following low).
-4. **Time-of-day gate**, if grading confirms the clustering at 07:00–10:00 ET
-   and the open.
-5. **Optional MACD confirmation:** the 12/26/9 histogram turning up at READY,
+6. **Tighter alert window**, if grading confirms the clustering at 07:00–10:00
+   ET and the open (`alertWin` already exists).
+7. **Optional MACD confirmation:** the 12/26/9 histogram turning up at READY,
    as an input toggle.
-6. **Anchor experiments:** session VWAP vs month VWAP vs an anchored VWAP from
+8. **Anchor experiments:** session VWAP vs month VWAP vs an anchored VWAP from
    the spike day or first-seen day. The month anchor is a calendar accident; the
    crowd's cost basis may be better anchored at the run's start. Test in Pine
    (one input switching the anchor), grade side by side.
-7. **Month-to-date from 60m bars**, if the yellow line drifts late in the month
+9. **Month-to-date from 60m bars**, if the yellow line drifts late in the month
    on 1m (§5.7).
-8. **JSON messages** carrying bar time and volume, if the parser needs more
+10. **JSON messages** carrying bar time and volume, if the parser needs more
    than the text gives. TradingView then shows raw JSON in its own pop-ups, so
    keep the text format if the operator uses those.
-9. **Merge a ticker's stages into one toast** within a few minutes, if
+11. **Merge a ticker's stages into one toast** within a few minutes, if
    FORMING → READY → GO in quick succession proves noisy (the same open item as
    the opportunity alerts' cross-cycle merge).
-10. **"Since" for off-screen names** from Yahoo prices, and outcome columns on
+12. **"Since" for off-screen names** from Yahoo prices, and outcome columns on
     the 📐 tab once grading exists.
-11. **Webhook hardening:** TradingView publishes its webhook source IPs, so an
+13. **Webhook hardening:** TradingView publishes its webhook source IPs, so an
     nginx allowlist on `/api/tv/webhook` would make a leaked key useless from
     elsewhere.
 
@@ -535,3 +623,4 @@ Ordered roughly by expected value; most should wait for the first grading.
 | Date | Script | Commit | Change |
 |---|---|---|---|
 | 2026-10-03 | v1 | `d50ebbe` | First version: month VWAP + BB basis, top-gainer gate (day high ≥ +20%), FORMING / READY / GO stage machine with re-arm (max 3/day), once-per-bar-close alerts; webhook, 📐 tab, `tv_setup` alert kind, Telegram slugs, regression script. |
+| 2026-10-03 | v2 | see `git log` | The operator's MEDS replay showed v1 missing 09-18 07:00 ET (§3). Added: `runnerDays` (a gainer in the last 2 sessions also qualifies), the fast-approach route (`useFast`, `fastAbove` 3, `formPx` 10, `readyPx` 5, `maxBasis` 15), `alertWin` 04:00–16:00 New York, `maxCycles` 3 → 4, and a `path base|fast` message segment (parsed and stored; a "fast" tag in the UI). Run on 1m **and** 2m. Replay on the six examples: v1 caught 2/6 (1m) and 3/6 (2m) with 4/5 other signals; v2 caught 5/6 (1m, all but NXL) and 6/6 (2m) with 8/9. MEDS is now FORMING 07:01 → READY 07:05 → GO 07:17 on 1m. The offline replay tool was added in `apps/api/scripts/research/vwap-setup/`. |

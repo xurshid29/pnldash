@@ -24,16 +24,21 @@ export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
 }
 
-export function TvStageTag({ stage, dim }: { stage: TvStage; dim?: boolean }) {
+// `path` 'fast' (script v2+): the stage came from the fast-approach route —
+// price ran at the line while the basis lagged — shown as a small suffix.
+export function TvStageTag({ stage, dim, path }: { stage: TvStage; dim?: boolean; path?: 'base' | 'fast' | null }) {
   const s = TV_STAGE_STYLE[stage];
   return (
-    <span
-      style={{
-        display: 'inline-block', padding: '0 6px', borderRadius: 3, fontWeight: 700, fontSize: 11,
-        lineHeight: '18px', color: s.color, background: s.bg, opacity: dim ? 0.55 : 1, whiteSpace: 'nowrap',
-      }}
-    >
-      {s.label}
+    <span style={{ whiteSpace: 'nowrap', opacity: dim ? 0.55 : 1 }}>
+      <span
+        style={{
+          display: 'inline-block', padding: '0 6px', borderRadius: 3, fontWeight: 700, fontSize: 11,
+          lineHeight: '18px', color: s.color, background: s.bg,
+        }}
+      >
+        {s.label}
+      </span>
+      {path === 'fast' && <span style={{ color: '#5cdbd3', fontSize: 10, fontWeight: 700, marginLeft: 3 }}>fast</span>}
     </span>
   );
 }

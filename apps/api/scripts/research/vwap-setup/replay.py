@@ -1,0 +1,112 @@
+"""Score the 📐 VWAP-setup script on the six examples it was built from.
+
+  python3 replay.py              # scorecard: v1 vs v2 on 1m and 2m
+  python3 replay.py MEDS 1       # every signal for one example (1m), v1 and v2
+
+A FORMING/READY inside the example's real entry window = caught; every other
+FORMING/READY in the report window = noise. Bars come from Yahoo (1m reaches
+back ~30 days, so these examples stop being replayable around 2026-10-18 —
+add newer ones); they are cached in $VWAP_SETUP_DATA (default /tmp/vwap-setup).
+mVWAP levels were read off the operator's TradingView screenshots.
+"""
+import datetime
+import json
+import os
+import sys
+import time
+import urllib.request
+
+from pinesim import ET, V1, V2, load, resample, simulate
+
+DATA = os.environ.get('VWAP_SETUP_DATA', '/tmp/vwap-setup')
+U5 = datetime.timezone(datetime.timedelta(hours=5))   # the operator's clock
+
+
+def D(mo, d, h, m):
+    return datetime.datetime(2026, mo, d, h, m, tzinfo=ET)
+
+
+def flat(*segs):
+    """mVWAP read off the chart: [(start, end, level), ...]; None (no signals) elsewhere."""
+    def f(b):
+        for s, e, v in segs:
+            if s <= b['t'] <= e:
+                return v
+        return None
+    return f
+
+
+# ticker, Yahoo fetch range (UTC dates; includes prior sessions for the runner gate),
+# mVWAP, report window, the entry window the operator traded, note
+EXAMPLES = [
+    ('MEDS', ('2026-09-15', '2026-09-19'), flat((D(9, 17, 9, 30), D(9, 18, 9, 0), 4.94)),
+     (D(9, 17, 9, 30), D(9, 18, 9, 0)), (D(9, 18, 6, 45), D(9, 18, 7, 8)),
+     '3rd-day runner: VWAP cross 07:08, 6.83 by 07:40; 09-17 afternoon = chop'),
+    ('AIXI', ('2026-09-29', '2026-10-03'), flat((D(10, 2, 7, 0), D(10, 2, 8, 30), 1.565)),
+     (D(10, 2, 7, 0), D(10, 2, 8, 30)), (D(10, 2, 7, 30), D(10, 2, 8, 9)),
+     'base, rejected push 07:52, higher low 07:56-08:05, breakout 08:09 to 1.89'),
+    ('NXL', ('2026-09-28', '2026-10-02'), flat((D(10, 1, 8, 40), D(10, 1, 9, 25), 6.60)),
+     (D(10, 1, 8, 40), D(10, 1, 9, 25)), (D(10, 1, 8, 50), D(10, 1, 9, 12)),
+     'pullback to the line 08:57-09:11, then 9+ (a 2m-chart setup)'),
+    ('VEEA', ('2026-09-28', '2026-10-02'),
+     flat((D(10, 1, 8, 45), D(10, 1, 9, 45), 3.06), (D(10, 1, 13, 30), D(10, 1, 15, 30), 3.22)),
+     (D(10, 1, 8, 45), D(10, 1, 15, 30)), (D(10, 1, 8, 50), D(10, 1, 9, 31)),
+     'base 09:00-09:29 -> 3.7+ at the open'),
+    ('NIVF', ('2026-09-25', '2026-10-01'), flat((D(9, 30, 8, 0), D(9, 30, 9, 45), 0.188)),
+     (D(9, 30, 8, 0), D(9, 30, 9, 45)), (D(9, 30, 8, 45), D(9, 30, 9, 31)),
+     'fast approach into the open -> 0.25 by 09:40'),
+    ('SOAR', ('2026-09-24', '2026-09-30'), flat((D(9, 29, 4, 0), D(9, 29, 15, 30), 0.336)),
+     (D(9, 29, 4, 0), D(9, 29, 15, 30)), (D(9, 29, 10, 0), D(9, 29, 13, 30)),
+     '2nd-day runner: chop, then the base that ran to 0.42 by 15:30'),
+]
+
+
+def bars_for(ticker, rng, minutes):
+    os.makedirs(DATA, exist_ok=True)
+    path = os.path.join(DATA, f'{ticker.lower()}_1m.json')
+    if not os.path.exists(path):
+        p1 = int(datetime.datetime.fromisoformat(rng[0] + 'T04:00:00+00:00').timestamp())
+        p2 = int(datetime.datetime.fromisoformat(rng[1] + 'T04:00:00+00:00').timestamp())
+        url = (f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}'
+               f'?interval=1m&period1={p1}&period2={p2}&includePrePost=true')
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        open(path, 'wb').write(urllib.request.urlopen(req, timeout=20).read())
+        time.sleep(1)
+    bars = load(path)
+    return bars if minutes == 1 else resample(bars, minutes)
+
+
+def show(events):
+    for t, st, path, c, basis, px, bb, g in events:
+        print(f"    {t:%m-%d %H:%M} ET ({t.astimezone(U5):%H:%M} UTC+5)  {st:7s} {path:4s}  "
+              f"c={c:<8.4g} px<={px:5.1f}%  bb<={bb:5.1f}%")
+
+
+def scorecard(variants, minutes):
+    print(f"\n=== {minutes}m — first FORMING/READY in the traded entry window (+ other FORMING/READY)")
+    print(f"{'variant':10s}" + ''.join(f"{x[0]:>15s}" for x in EXAMPLES) + "   caught  noise")
+    for name, params in variants:
+        cells, caught, noise = [], 0, 0
+        for tk, rng, mv, (s, e), (a, z), _ in EXAMPLES:
+            ev = [x for x in simulate(bars_for(tk, rng, minutes), mv, params, start=s, end=e) if x[1] != 'GO']
+            hit = [x for x in ev if a <= x[0] <= z]
+            other = len(ev) - len(hit)
+            caught += bool(hit); noise += other
+            cells.append((f"{hit[0][0]:%H:%M} {hit[0][1][:4]}" if hit else '—') + f" +{other}")
+        print(f"{name:10s}" + ''.join(f"{c:>15s}" for c in cells) + f"   {caught}/{len(EXAMPLES)}    {noise}")
+
+
+if __name__ == '__main__':
+    variants = [('v1', V1), ('v2', V2)]
+    if len(sys.argv) >= 2:
+        tk = sys.argv[1].upper()
+        minutes = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+        for t, rng, mv, (s, e), _, note in EXAMPLES:
+            if t == tk:
+                print(f"{t} {minutes}m — {note}")
+                for name, params in variants:
+                    print(f"  {name}:")
+                    show(simulate(bars_for(t, rng, minutes), mv, params, start=s, end=e))
+    else:
+        for minutes in (1, 2):
+            scorecard(variants, minutes)

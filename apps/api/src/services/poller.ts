@@ -3932,18 +3932,19 @@ class PollerService {
       news: null,
       setup: {
         stage: sig.stage, mvwap: sig.mvwap, px_pct: sig.px_pct, basis: sig.basis, basis_pct: sig.basis_pct,
-        day_gain: sig.day_gain, tf: sig.tf, on_screen: row != null, notified: mode === 'notify',
+        day_gain: sig.day_gain, tf: sig.tf, path: sig.path, on_screen: row != null, notified: mode === 'notify',
       },
     };
     recordTierEvent('alert', 'tv_setup', sig.ticker, {
       id: alert.id, at, stage: sig.stage, price: alert.price, mvwap: sig.mvwap, px_pct: sig.px_pct,
-      basis: sig.basis, basis_pct: sig.basis_pct, day_gain: sig.day_gain, tf: sig.tf,
+      basis: sig.basis, basis_pct: sig.basis_pct, day_gain: sig.day_gain, tf: sig.tf, path: sig.path,
       chg: alert.change_pct, grade: alert.grade, float_m: alert.float_m, rv1: alert.rel_vol_1min,
       on_screen: row != null, notified: mode === 'notify',
     });
     console.log(
       `[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · mVWAP ${sig.mvwap ?? '?'} (${sig.px_pct ?? '?'}%)` +
       ` · basis ${sig.basis ?? '?'} (${sig.basis_pct ?? '?'}%) · day +${sig.day_gain ?? '?'}% · tf ${sig.tf ?? '?'}` +
+      (sig.path ? ` · ${sig.path}` : '') +
       `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}${mode === 'log' ? ' · repeat (logged only)' : ''}`,
     );
     if (mode === 'notify') {

@@ -202,7 +202,7 @@ export function opportunityTitle(a: OpportunityAlert): string {
     const where = s.stage === 'go'
       ? 'basis crossed above mVWAP'
       : `${fmtSignedPct(s.px_pct)} vs mVWAP · basis ${fmtSignedPct(s.basis_pct)}`;
-    return `📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — ${where}`;
+    return `📐 ${TV_STAGE_TITLE[s.stage]}${s.path === 'fast' ? ' (fast)' : ''} ${a.ticker} — ${where}`;
   }
   if (a.kinds.includes('grade_aplus')) return `🅰️ ${a.ticker} — ${a.new_on_screen ? 'new A+' : `A+ (was ${a.prev_grade ?? '—'})`}`;
   if (a.kinds.includes('fast_move')) return `⚡ ${a.ticker} +${a.move_pct}% in 60s`;

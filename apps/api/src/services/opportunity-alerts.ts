@@ -34,7 +34,7 @@
 
 import type { NewsSource } from '../db/types.js';
 import { classifyByRules } from './catalyst-rules.js';
-import type { TvStage } from './tv-setups.js';
+import type { TvPath, TvStage } from './tv-setups.js';
 
 export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 
@@ -47,6 +47,7 @@ export interface TvSetupInfo {
   basis_pct: number | null;   // BB basis vs mVWAP, %
   day_gain: number | null;    // day high vs prior close, %
   tf: string | null;
+  path: TvPath | null;        // 'base' | 'fast' — which shape reached FORMING/READY (script v2+)
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe
 }

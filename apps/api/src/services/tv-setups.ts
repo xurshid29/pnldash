@@ -22,6 +22,10 @@
 import { escapeHtml } from './telegram.js';
 
 export type TvStage = 'forming' | 'ready' | 'go';
+// Which shape reached FORMING/READY (script v2+): 'base' = price consolidated
+// until the basis converged under the line; 'fast' = price ran at the line
+// while the basis lagged. Null for GO and for v1 / fallback messages.
+export type TvPath = 'base' | 'fast';
 
 export interface TvSetupSignal {
   stage: TvStage;
@@ -33,6 +37,7 @@ export interface TvSetupSignal {
   basis_pct: number | null;   // BB basis vs mVWAP, %
   day_gain: number | null;    // day high vs the prior close, %
   tf: string | null;          // TradingView interval: "1", "2", "30S", …
+  path: TvPath | null;
 }
 
 export const TV_SETUP = {
@@ -68,11 +73,17 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     basis_pct: toNum(o.basis_pct),
     day_gain: toNum(o.day_gain),
     tf: typeof o.tf === 'string' || typeof o.tf === 'number' ? String(o.tf) : null,
+    path: toPath(o.path),
   };
 }
 
-// The Pine script's alert() message:
-//   READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1
+function toPath(v: unknown): TvPath | null {
+  const p = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return p === 'base' || p === 'fast' ? p : null;
+}
+
+// The Pine script's alert() message (v2 appends the path on FORMING/READY):
+//   READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -97,6 +108,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const bb = line('basis');
   const day = /day\s+high\s+([-+]?\d*\.?\d+)\s*%/i.exec(text);
   const tf = /\btf\s+([0-9A-Za-z]+)/i.exec(text);
+  const path = /\bpath\s+(base|fast)\b/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -107,6 +119,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     basis_pct: toNum(bb?.[2]),
     day_gain: toNum(day?.[1]),
     tf: tf?.[1] ?? null,
+    path: toPath(path?.[1]),
   };
 }
 
@@ -144,7 +157,7 @@ export const TV_STAGE_LABEL: Record<TvStage, string> = { forming: 'FORMING', rea
 const STAGE_ICON: Record<TvStage, string> = { forming: '🟡', ready: '🟠', go: '🟢' };
 const STAGE_HINT: Record<TvStage, string> = {
   forming: 'setup forming — open the chart',
-  ready: 'entry zone — basis ≤6% under mVWAP',
+  ready: 'entry zone',
   go: 'basis crossed above mVWAP',
 };
 
@@ -164,7 +177,7 @@ export function formatTvSetupAlert(
 ): string {
   const lines = [
     `📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>${STAGE_HINT[sig.stage]}</i>`,
+    `<i>${STAGE_HINT[sig.stage]}${sig.path === 'fast' ? ' · fast approach (price leads, basis lagging)' : ''}</i>`,
   ];
   const lvl: string[] = [];
   if (sig.mvwap != null) lvl.push(`mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})`);

@@ -34,7 +34,8 @@ const HOW_TO = (
   <div style={{ maxWidth: 420, fontSize: 12, lineHeight: 1.5 }}>
     <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month”.</div>
     <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning.</div>
-    <div><b>3.</b> Create alert → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · 1 minute · session Extended · once per bar close.</div>
+    <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>2 minutes</b>.</div>
+    <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
   </div>
 );
@@ -125,7 +126,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
                   {TV_STAGE_RANK[s.setup.stage] > TV_STAGE_RANK[g.signals[i - 1].setup.stage] ? '→' : '·'}
                 </Text>
               )}
-              <TvStageTag stage={s.setup.stage} dim={!s.setup.notified} />
+              <TvStageTag stage={s.setup.stage} dim={!s.setup.notified} path={s.setup.path} />
               <Text type="secondary" style={{ fontSize: 10 }}>{hhmm(s.at)}{s.setup.tf ? ` ${fmtTf(s.setup.tf)}` : ''}</Text>
             </span>
           ))}
