@@ -1,7 +1,7 @@
 # 📐 VWAP setup — offline replay of the Pine script
 
-`pinesim.py` mirrors `apps/web/src/tv/mvwap-bb-setup.pine` (script v5; the
-`V1`–`V4` presets reproduce the earlier versions). `replay.py` scores a script
+`pinesim.py` mirrors `apps/web/src/tv/mvwap-bb-setup.pine` (script v6; the
+`V1`–`V5` presets reproduce the earlier versions). `replay.py` scores a script
 version on the examples the setup was defined from, on 1m and 2m bars:
 - the six winners;
 - AMOD's after-hours setup;
@@ -16,6 +16,7 @@ cd apps/api/scripts/research/vwap-setup
 python3 replay.py            # scorecard, v1 vs v2 vs v3, 1m and 2m
 python3 replay.py MEDS 1     # every signal for one example on 1m
 python3 replay.py go         # GO quality: upside left / drawdown / back under the line
+python3 pinesim.py           # self-test: a synthetic month-start crash bar must not be GO (v6)
 ```
 
 No dependencies beyond Python 3. Bars come from Yahoo's chart API and are

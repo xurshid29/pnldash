@@ -53,7 +53,7 @@ parking), disk 26%.
 5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
    detected by TradingView (we can't compute a month VWAP with pre-market
    volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine`
-   (**v5**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
+   (**v6**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
    posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
    a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
    event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
@@ -134,6 +134,14 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-03 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-03 (late night) — 📐 SCRIPT v6.** The operator found a GO on AIXI's
+10-01 opening crash bar. Early in the month the line rests on thin volume,
+and one heavy red bar dragged it under a flat basis: a false "cross". v6
+requires the basis rising for a cross and never prints GO on a bar closing
+below the previous close. Replay unchanged except NXL 09:06 on 2m; a synthetic
+crash test is in `pinesim.py`. The operator confirmed the other AIXI 10-02
+signals look right.
 
 **2026-10-03 (late night) — 📐 SCRIPT v5.** The operator said "GO is not
 accurate": on NIVF 1m, GO (the basis crossing the line) came at 09:38 ET, near

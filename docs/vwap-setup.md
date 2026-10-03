@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v5** (history in §12) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v6** (history in §12) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -147,6 +147,15 @@ of the grading plan (§9).
   on the basis cross left a median +6% (1m) of upside in the next 30 min.
   GOs on a decisive price reclaim left +16%, and only 2 of 12 fell back
   under the line within 10 min. v5 fires GO on whichever comes first.
+- **Early in a month the line can fall through the basis** (operator, AIXI
+  10-01 replay: GO on a crash bar). On the 1st, AIXI's month VWAP rested on a
+  few hundred pre-market shares and a ~30K-share opening bar. The 09:38 ET bar
+  crashed 1.32 → 1.26 on 26K shares and dragged the line under a flat basis.
+  v5 read that as "the basis crossed above the line" and fired GO with price
+  under both. Since v6 a cross needs the basis *rising*, and no GO prints on a
+  bar that closes below the previous close. The replay can't rebuild TV's
+  pre-market line for that day, so `python3 pinesim.py` checks the mechanism
+  on a synthetic crash instead.
 - **The timeframe changes which setups exist.** On 1m, NXL's 20-bar basis was
   already *above* the line during its 09:00–09:08 pullback (a 20-minute mean
   that still remembered the run to 7.7). On the operator's 2m chart, the
@@ -346,6 +355,10 @@ fired READY only after the bounce.
   line, at/under it within the previous 5 bars, with the basis rising. The
   message says which one fired (`via reclaim|cross`). The basis cross alone
   fired near the top of fast moves (§3).
+- **GO sanity (v6):** a basis cross counts only with the basis **rising**, and
+  no GO of either kind prints on a bar that closes **below the previous
+  close**. This blocks a thin month-start line collapsing under a flat basis
+  on one heavy red bar (AIXI 10-01, §3).
 - **GO requires an earlier FORMING or READY**, so a vertical spike straight
   through the VWAP is not reported as this setup. Since v4, "earlier" means
   the setup is armed now *or* one fired within `goMemory` (60) bars, even if a
@@ -696,3 +709,4 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-03 | v3 | `88a7093` | The operator asked why AMOD showed nothing around 02:30 UTC+5 (17:30 ET, after hours) (§3). Added `useAhGain`: after hours, the high since today's close also passes the gate (AMOD 10-01: +19.8% day high on TV, +70% after hours). `alertWin` default 0400-1600 → 0400-2000. Message adds `ah ±N%` after hours and writes a negative day high as `-2%` (the parser also reads v1/v2's `+-2%`). AMOD added to the replay as the 7th example. Replay: v3 catches 6/7 on 1m (all but NXL) and 7/7 on 2m, AMOD READY 17:08 / 17:30 ET; other signals 9 / 12 (v2: 8 / 9; the extra are after-hours chop the wider window now reaches). |
 | 2026-10-03 | v4 | `3c0076a` | Operator: "a setup under the BB basis should not be a signal", plus three ideal setups (NIVF 09-30 18:30, SDEV 10-01 17:40 and 01:40 UTC+5). `holdTol` 2 → 0 (must close at/above the basis); `failPct` 3 → 2 (a basis loss ends the setup; the reclaim is a fresh READY: SDEV after hours 16:34 ET); new `fromBelow` 10 (the fast route needs the previous 10 closes under the line, which blocks spike pull-backs like AMOD 09-01); new `goMemory` 60 (GO after a break: AIXI 08:12, NXL 09:06 on 2m, SOAR 13:40 on 2m); `maxCycles` 4 → 6. Replay grows to 9 targets + 1 negative (SDEV ×2, AMOD-0901). v3 caught 7/9 on 1m and 7/9 on 2m; v4 caught 8/9 (1m, all but NXL) and 8/9 (2m, all but SDEV-AH), so the two alerts together catch 9/9, and the negative is silent on 2m. Other signals: 1m 14 → 23 (re-fired READYs on basis reclaims in chop), 2m 16 → 16. |
 | 2026-10-03 | v5 | `c4a15a3` | Operator: "GO is not accurate" (NIVF 1m: GO at 09:38 ET, near the top of the spike). New `goOn` (Either / Price reclaim / Basis cross, default Either), `goAbovePct` 2, `goWithin` 5. GO now fires on a decisive price reclaim (close ≥2% above the line, at/under it within 5 bars, basis rising) or the basis cross, whichever comes first. The message adds `via reclaim|cross`; it is stored as `go_via`, and Telegram and the notification say which. FORMING/READY are unchanged from v4. Replay GO quality (`python3 replay.py go`): v4 → v5 median upside left over the next 30 min +5.9% → +15.7% (1m) and +11.6% → +18.7% (2m); fell back under the line within 10 min 1 → 2 (1m) and 0 → 2 (2m: AIXI's rejected first push, a MEDS after-hours poke). NIVF GO 18:38 → 18:31 UTC+5 (2m 18:42 → 18:30). |
+| 2026-10-03 | v6 | see `git log` | Operator: "this one also is not accurate" (AIXI 10-01 1m: GO on the 09:38 ET crash bar). The month-start line, built on thin volume, fell under a flat basis on one 26K-share red bar, and v5 counted that as the basis crossing above it. v6: the cross needs `basisUp` (`crossOk`), and no GO prints on a bar that closes below the previous close. Replay: GOs unchanged except NXL 09:06 on 2m (NXL keeps its 09:12 reclaim GO). The replica gained `python3 pinesim.py`, a synthetic crash test: v5 gives GO, v6 doesn't. AIXI-1001 was added as a should-not-fire replay case (its pre-market line is approximated, since Yahoo has no pre-market volume). |

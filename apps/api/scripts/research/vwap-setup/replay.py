@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.request
 
-from pinesim import ET, V1, V2, V3, V4, V5, load, resample, simulate
+from pinesim import ET, V1, V2, V3, V4, V5, V6, load, resample, simulate
 
 DATA = os.environ.get('VWAP_SETUP_DATA', '/tmp/vwap-setup')
 U5 = datetime.timezone(datetime.timedelta(hours=5))   # the operator's clock
@@ -25,6 +25,26 @@ U5 = datetime.timezone(datetime.timedelta(hours=5))   # the operator's clock
 
 def D(mo, d, h, m):
     return datetime.datetime(2026, mo, d, h, m, tzinfo=ET)
+
+
+def session_vwap(path, day, seed=None):
+    """mVWAP built from the bars themselves, anchored at `day` 04:00 ET — exact enough when
+    `day` is the month's first session and its pre-market volume (zero on Yahoo) was tiny.
+    seed=(price, shares) stands in for that pre-market volume (the level read off TradingView).
+    Loads lazily: the bars may not be fetched yet when the examples are defined."""
+    cache = {}
+
+    def f(b):
+        if not cache:
+            pv, v = (seed[0] * seed[1], float(seed[1])) if seed else (0.0, 0.0)
+            for x in load(path):
+                if x['t'].date() < day:
+                    continue
+                pv += (x['h'] + x['l'] + x['c']) / 3 * x['v']
+                v += x['v']
+                cache[x['t']] = pv / v if v else (x['h'] + x['l'] + x['c']) / 3
+        return cache.get(b['t'])
+    return f
 
 
 def flat(*segs):
@@ -43,7 +63,7 @@ EXAMPLES = [
     ('MEDS', ('2026-09-15', '2026-09-19'), flat((D(9, 17, 9, 30), D(9, 18, 9, 0), 4.94)),
      (D(9, 17, 9, 30), D(9, 18, 9, 0)), (D(9, 18, 6, 45), D(9, 18, 7, 8)),
      '3rd-day runner: VWAP cross 07:08, 6.83 by 07:40; 09-17 afternoon = chop'),
-    ('AIXI', ('2026-09-29', '2026-10-03'), flat((D(10, 2, 7, 0), D(10, 2, 8, 30), 1.565)),
+    ('AIXI', ('2026-09-25', '2026-10-03'), flat((D(10, 2, 7, 0), D(10, 2, 8, 30), 1.565)),
      (D(10, 2, 7, 0), D(10, 2, 8, 30)), (D(10, 2, 7, 30), D(10, 2, 8, 9)),
      'base, rejected push 07:52, higher low 07:56-08:05, breakout 08:09 to 1.89'),
     ('NXL', ('2026-09-28', '2026-10-02'), flat((D(10, 1, 8, 40), D(10, 1, 9, 25), 6.60)),
@@ -76,7 +96,15 @@ EXAMPLES = [
     ('AMOD-0901', ('2026-08-27', '2026-09-03'), flat((D(9, 1, 15, 58), D(9, 1, 16, 30), 2.94)),
      (D(9, 1, 15, 58), D(9, 1, 16, 30)), None,
      'NEGATIVE: spike to 3.2 then back under the line and the basis'),
+    # Should NOT give GO (operator, 2026-10-03): the 09:38 ET crash bar pulled the 1st-of-month
+    # VWAP under a flat basis — a "cross" with price below both lines.
+    ('AIXI-1001', ('2026-09-25', '2026-10-03'), None, (D(10, 1, 9, 0), D(10, 1, 10, 30)), None,
+     'NEGATIVE: open crash 1.34 -> 1.23 on Oct 1 (session VWAP from the bars)'),
 ]
+# AIXI's Oct 1 pre-market: a few hundred shares around 1.33 on TV (Yahoo shows zero volume)
+EXAMPLES = [(t, r, mv if mv is not None else session_vwap(os.path.join(DATA, 'aixi_1m.json'), datetime.date(2026, 10, 1),
+                                                          seed=(1.333, 2000)),
+             w, tg, n) for t, r, mv, w, tg, n in EXAMPLES]
 
 
 # Where Yahoo's bars sit on the other side of a gate than TradingView's do.
@@ -89,7 +117,7 @@ def params_for(ticker, params):
     return {**params, **TV_ADJUST.get(ticker, {})}
 
 
-FILES = {'SDEV-AH': 'sdev_1m.json', 'AMOD-0901': 'amod_sep_2m.json'}   # second windows on the same bars; 2m-only data
+FILES = {'SDEV-AH': 'sdev_1m.json', 'AMOD-0901': 'amod_sep_2m.json', 'AIXI-1001': 'aixi_1m.json'}   # second windows on the same bars; 2m-only data
 BAR_MINUTES = {'AMOD-0901': 2}
 
 
@@ -105,7 +133,8 @@ def bars_for(ticker, rng, minutes):
         url = (f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker.split("-")[0]}'
                f'?interval={base}m&period1={p1}&period2={p2}&includePrePost=true')
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        open(path, 'wb').write(urllib.request.urlopen(req, timeout=20).read())
+        data = urllib.request.urlopen(req, timeout=20).read()   # read first: a failed fetch must not leave an empty file
+        open(path, 'wb').write(data)
         time.sleep(1)
     bars = load(path)
     return bars if minutes == base else resample(bars, minutes)
@@ -169,7 +198,7 @@ def go_report(variants, minutes):
 
 
 if __name__ == '__main__':
-    variants = [('v1', V1), ('v2', V2), ('v3', V3), ('v4', V4), ('v5', V5)]
+    variants = [('v1', V1), ('v2', V2), ('v3', V3), ('v4', V4), ('v5', V5), ('v6', V6)]
     if len(sys.argv) >= 2 and sys.argv[1] == 'go':
         for minutes in (1, 2):
             go_report(variants[2:], minutes)

@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v5 (2026-10-03).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v6 (2026-10-03).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // A top gainer pulls back under its month-anchored VWAP while the Bollinger
@@ -8,7 +8,8 @@
 //            price ≤10% under mVWAP and ≥3% above a rising basis → open the chart
 //   READY    basis ≤6% under mVWAP — or, on a fast approach, price ≤5% under → entry zone
 //   GO       price reclaims mVWAP decisively (close ≥2% above it, under it within 5 bars)
-//            or the basis crosses above it — whichever first, within 60 bars of a FORMING/READY
+//            or the basis crosses above it (rising) — whichever first, within 60 bars of a
+//            FORMING/READY, and never on a bar that closes lower than the bar before
 // Price must close at or above the BB basis: a setup under the basis is no
 // setup, and a close 2% under it ends the setup — the next reclaim is a fresh READY.
 // Run it as TradingView watchlist alerts — one on 1m and one on 2m (Premium allows 2):
@@ -110,9 +111,13 @@ ready       = inZone and (baseReady or (fastApproach and pxBelow <= readyPx))
 // GO: the basis cross alone fires late on fast moves — the 20-bar basis lags,
 // so it crossed near the top on NIVF 2026-09-30 (+40% after the break). The
 // decisive price reclaim marks the breakout itself.
+// A cross only counts with the basis RISING, and no GO prints on a falling bar:
+// early in a month the line is built on thin volume, and one heavy red bar can
+// drag it under a flat basis — a "cross" with price below both (AIXI 2026-10-01 09:38).
 reclaim     = basisUp and underRecent > 0 and close > mvwap * (1 + goAbovePct / 100)
-goTrig      = goOn == "Basis cross" ? crossU : goOn == "Price reclaim" ? reclaim : (crossU or reclaim)
-go          = valid and goTrig
+crossOk     = crossU and basisUp
+goTrig      = goOn == "Basis cross" ? crossOk : goOn == "Price reclaim" ? reclaim : (crossOk or reclaim)
+go          = valid and goTrig and close >= close[1]
 inWindow    = not na(time(timeframe.period, alertWin, "America/New_York"))
 
 // Stages: 0 idle, 1 forming, 2 ready, 3 go; each fires once per setup.

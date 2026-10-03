@@ -1,4 +1,4 @@
-"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v5).
+"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v6).
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -17,7 +17,7 @@ import json
 ET = datetime.timezone(datetime.timedelta(hours=-4))   # EDT; fine for Sep–Oct examples
 
 # Script inputs, same names and defaults as the .pine file (fromBelowBars = the script's `fromBelow`).
-V5 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
+V6 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
           holdTol=0.0, failPct=2.0, slopeBars=3, useFast=True, fastAbove=3.0, formPx=10.0, readyPx=5.0,
           maxBasis=15.0, maxCycles=6, window=(240, 1200),  # alert window in ET minutes [04:00, 20:00); None = always
           fromBelowBars=10,  # fast route only if every close of the previous N bars was under the line (0 = off)
@@ -26,8 +26,12 @@ V5 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBa
           goOn='either',     # GO trigger: 'basis' = basis crosses above the line; 'price' = price reclaims the
                              # line (basis rising); 'either' = whichever comes first (the script's "Either")
           goAbovePct=2.0,    # price reclaim must close this % above the line…
-          goWithin=5)        # …having been at/under it within the previous N bars
-# Earlier versions: V5 with the newer parts switched off / older defaults.
+          goWithin=5,        # …having been at/under it within the previous N bars
+          crossRule='rising',  # extra test on a basis-cross GO: 'none' (v5) | 'rising' (basis rising, v6) |
+                               # 'rising_up' (rising, close >= previous close) | 'full' (rising, close above line and basis)
+          goNotFalling=True)   # v6: no GO of either kind on a bar that closes below the previous close
+# Earlier versions: V6 with the newer parts switched off / older defaults.
+V5 = dict(V6, crossRule='none', goNotFalling=False)
 V4 = dict(V5, goOn='basis', goAbovePct=0.0, goWithin=1)
 V3 = dict(V4, holdTol=2.0, failPct=3.0, maxCycles=4, fromBelowBars=0, goMemory=0)
 V2 = dict(V3, useAhGain=False, window=(240, 960))
@@ -71,7 +75,7 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
     """Run the stage machine. mvwap_of(bar) → month VWAP or None (no signal on that bar).
     Returns fired events: (time, stage, path, close, basis, px_below %, basis_below %, day-high gain %).
     trace(dict) — optional, called on every bar with each condition (the "why didn't it fire" tool)."""
-    p = {**V5, **(params or {})}
+    p = {**V6, **(params or {})}
     closes, basis_hist, bbelow_hist, gains, mv_hist = [], [], [], [], []
     last_reg = prev_close = day_high = cur_day = ah_high = None
     stage = cycles = under_basis = 0
@@ -112,11 +116,23 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
                        and b_below < bbelow_hist[-1 - sb])
         holding = basis is not None and c >= basis * (1 - p['holdTol'] / 100)
         cross_up = (None not in (prev_basis, prev_mv, basis, mv)) and basis > mv and prev_basis <= prev_mv
+        prev_c = closes[-2] if len(closes) > 1 else None
         k = p['goWithin']
         was_under = any(m is not None and cc <= m for cc, m in zip(closes[-1 - k:-1], mv_hist[-1 - k:-1]))
         reclaim = (mv is not None and basis is not None and basis_up and was_under
                    and c > mv * (1 + p['goAbovePct'] / 100))
+        # a real bullish cross: the basis rising through the line — not the line collapsing under a
+        # flat basis on one heavy red bar early in a month (AIXI 2026-10-01 09:38)
+        rule = p['crossRule']
+        if rule == 'rising':
+            cross_up = cross_up and basis_up
+        elif rule == 'rising_up':
+            cross_up = cross_up and basis_up and (prev_c is None or c >= prev_c)
+        elif rule == 'full':
+            cross_up = cross_up and basis_up and c > mv and c >= basis
         trig = {'basis': cross_up, 'price': reclaim, 'either': cross_up or reclaim}[p['goOn']]
+        if p['goNotFalling'] and prev_c is not None and c < prev_c:
+            trig = False
         in_zone = valid and 0 < px_below <= p['maxPxBelow'] and basis_up and holding
         fast = (p['useFast'] and basis is not None and b_below is not None
                 and c >= basis * (1 + p['fastAbove'] / 100) and b_below <= p['maxBasis'])
@@ -160,3 +176,40 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
                        cycles=cycles, fired=fired[-1][1] if fire else ''))
         prev_basis, prev_mv = basis, mv
     return [e for e in fired if (start is None or e[0] >= start) and (end is None or e[0] <= end)]
+
+
+def selftest():
+    """Synthetic check of the GO rules (run: python3 pinesim.py).
+    Crash: a month-start line built on thin volume collapses under a flat basis on one
+    heavy red bar — must NOT be GO. Breakout: the basis rises through the line — GO."""
+    import datetime as dt
+    t0 = dt.datetime(2026, 10, 1, 8, 0, tzinfo=ET)
+    def bars_of(closes, vols):
+        return [{'t': t0 + dt.timedelta(minutes=i), 'o': c, 'h': c, 'l': c, 'c': c, 'v': v}
+                for i, (c, v) in enumerate(zip(closes, vols))]
+    def vwap_of(bars):
+        out, pv, v = {}, 0.0, 0.0
+        for b in bars:
+            pv += b['c'] * b['v']; v += b['v']; out[b['t']] = pv / v
+        return lambda b: out[b['t']]
+    gate = dict(minDayGain=-100.0, window=None)      # no gainer history in a synthetic series
+    # thin month-start tape: flat 1.40, dip to 1.30, curl back up to ~1.37 under a ~1.39 line
+    # (READY), then ONE heavy red bar at 1.25 drags the line under the basis
+    closes = [1.40] * 30 + [1.40 - 0.01 * i for i in range(1, 11)] + [1.30 + 0.0045 * i for i in range(1, 16)] + [1.25]
+    vols = [100] * (len(closes) - 1) + [50000]
+    prior = {'t': t0 - dt.timedelta(days=1) + dt.timedelta(hours=7, minutes=59), 'o': 1.40, 'h': 1.40, 'l': 1.40,
+             'c': 1.40, 'v': 1}            # yesterday 15:59 ET: gives the gate a prior close
+    crash = [prior] + bars_of(closes, vols)
+    line = vwap_of(crash)
+    out = {}
+    for name, params in (('v5', V5), ('v6', V6)):
+        ev = simulate(crash, line, dict(params, **gate))
+        armed = any(e[1] in ('FORMING', 'READY') for e in ev)
+        out[name] = ('armed ' if armed else 'not armed ') + ','.join(e[1] for e in ev if e[0] == crash[-1]['t'])
+    ok = out['v5'] == 'armed GO' and out['v6'] == 'armed '
+    print('crash-bar GO by version:', out, '→', 'OK' if ok else 'UNEXPECTED')
+    return ok
+
+
+if __name__ == '__main__':
+    raise SystemExit(0 if selftest() else 1)
