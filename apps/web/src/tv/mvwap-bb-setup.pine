@@ -1,5 +1,7 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge (2026-10-03).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v1 (2026-10-03).
+// Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
+// steps for shipping a new version (bump the version above, recreate the alert).
 // A top gainer pulls back under its month-anchored VWAP while the Bollinger
 // basis (SMA 20) curls up beneath it; the trade is the reclaim.
 //   FORMING  basis 6–10% under mVWAP, rising, gap closing → open the chart

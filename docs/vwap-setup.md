@@ -1,0 +1,537 @@
+# 📐 VWAP setup — the operator's edge, detected by TradingView
+
+The single reference for the VWAP/BB setup: what the setup is, what we learned
+about it, why TradingView does the detecting, how the Pine script works and how
+to tune it, how the signal reaches the dashboard and the phone, and how to grade
+and improve it. `docs/detection-layers.md` carries a short summary that points
+here; `docs/HANDOVER.md` carries the live status.
+
+| | |
+|---|---|
+| Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v1** |
+| Runs as | one TradingView **watchlist alert** (operator is on Premium = 2 watchlist alerts) |
+| Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
+| First live session | Mon 2026-10-05 |
+| Grade it | ~2026-10-17 (the "Grading plan" section below has the SQL) |
+| Status | **The edge itself is unmeasured** — the evidence is six hand-picked winners |
+
+---
+
+## 1. The setup (the operator's definition)
+
+Described by the operator on 2026-10-03 as the entry they had been trading
+"successfully in recent days" (since ~10-01):
+
+1. **The ticker is one of the session's top gainers.** The operator clarified
+   it does **not** need to be graded A+ at the moment of entry (in the examples
+   it usually wasn't — see §3).
+2. **Price is under the month-anchored VWAP** and moving toward it, usually
+   less than 10–15% below it.
+3. **The Bollinger basis is about to cross up through that VWAP** from about
+   5–6% below it.
+4. Usually there is a **"rejection confirmation"** first — the first push at the
+   VWAP fails, and the pullback holds the rising basis (a higher low). The
+   operator says it helps but isn't essential.
+5. **MACD 12/26/9** as extra confirmation.
+6. **Exit quickly** when the setup goes against them. The edge is not expected
+   to work every time.
+
+Chart settings (TradingView, from the operator's screenshots):
+
+| Indicator | Settings |
+|---|---|
+| VWAP (yellow) | Anchor Period **Month**, Source (H+L+C)/3, bands off, Timeframe Chart, "Wait for timeframe closes" on; chart session **Extended** (pre/post-market included) |
+| Bollinger Bands (green) | Length 20, Basis MA **SMA**, Source Close, StdDev 2 — **only the basis line** shown |
+| MACD | 12, 26, 9 close |
+
+Timeframes: the screenshots were 2-minute charts; the operator trades from 1m
+and 30s charts.
+
+## 2. The evidence so far
+
+Six examples, all session top gainers, read off the operator's 2m screenshots
+(times approximate; ET with the operator's UTC+5 in brackets):
+
+| Ticker | Day (ET) | On our screen | Setup | Entry zone | What followed |
+|---|---|---|---|---|---|
+| AIXI | Fri 10-02 | from 04:56, first A+ 04:59 | basing under mVWAP 07:20–07:50 (16:20–16:50); first push through it 07:52–07:55 rejected; higher low 07:56–08:05 | ~1.48 | 1.89 by 08:13 (+27%); 2.22 after the open |
+| NXL | Thu 10-01 | from 08:32, A+ 08:34 | pullback to mVWAP 08:57–09:11 (17:57–18:11), basis rising beneath | ~6.4 | 9.9 on our screen, a ~11 wick on TV around 10:00 |
+| VEEA | Thu 10-01 | from 08:03, A+ 08:05 | base 09:00–09:29 (18:00–18:29) at 2.93–3.05 just under mVWAP ~3.06 | ~2.97 | 3.71–3.85 at the open (+25%); a second instance 14:10–15:25 ran to 4.00 |
+| NIVF | Wed 09-30 | from 04:56 (before the grade existed) | 08:45–09:28 (17:45–18:28): price ~0.165 vs mVWAP ~0.188, basis ~0.16 | ~0.165 | 0.25 at ~09:40 (+50%) |
+| MEDS | Fri 09-18 | from **07:17 — after its VWAP cross** | 06:00–07:09 (15:00–16:09): from ~4.0 up to ~4.6 under mVWAP 4.95 | ~4.5 | 6.83 at ~07:40 (+50%) |
+| SOAR | Tue 09-29 | **not on our screen during the session** | several basis crosses that day; the one that ran started ~10:30–13:30 (19:30–22:30) under mVWAP 0.336 | ~0.31 | ~0.42 by 15:30 (+35%) |
+
+**What this evidence cannot tell us.** These are hand-picked winners — the
+session's top gainers, chosen after the fact. Bullish patterns tend to show up
+on the charts of stocks that went up a lot. What's missing is how often the
+same setup appeared on top gainers and failed. Getting that count is the point
+of the grading plan (§9).
+
+## 3. What we learned on the first look (2026-10-03)
+
+- **The grade is usually not A+ at the entry.** AIXI on 10-02 went B+/A− while
+  basing, briefly A+ on the first push through the VWAP (07:52–07:55), **B+**
+  through the higher low (07:56–08:05), and A+ again only once it broke out
+  (08:09). The first B+ minutes were the fade cap (≥8% under its 10-minute high)
+  and the rest was a genuinely cooling score. VEEA was A/A− through its whole
+  base and turned A+ at 09:33 with the opening spike. NXL stayed A+ throughout.
+  The dashboard grade therefore looks lukewarm (B+ ▼) exactly when this setup
+  wants an entry. The operator's rule is "top gainer today", and the script
+  follows it.
+- **"Monthly VWAP" is two different lines.** On the 1st trading day of a month
+  it *is* the session VWAP (NXL and VEEA on 10-01), and early in a month it is
+  a 1–2-day VWAP (AIXI on 10-02 was mostly its own pre-market). Mid- or late
+  month, the spike day's volume dominates and the line goes flat: MEDS sat at
+  ≈4.95 from its Sep 16–17 run, and SOAR at 0.336 after its 09-28 spike. Both
+  can work, but they are different trades, so grading should split them.
+- **The setup also chops, even in the operator's own charts.** AIXI around
+  13:00 ET 10-02 (the basis reached the VWAP, +3%, then back), VEEA 11:30–14:00
+  ET 10-01 (the basis crossed, then two flat hours), SOAR on 09-29 (3–4 crosses
+  before the one that ran), and NIVF around 12:00 ET 09-30 (rejected under the
+  line). With fast exits that's fine, but it means win rate is the wrong measure.
+  What matters is small scratches against +20–60% squeezes.
+- **The big moves cluster at clock events.** VEEA, NIVF and AIXI's second leg
+  all launched at the 09:30 open, and AIXI's first at ~08:00. A base sitting
+  under the VWAP right before the open may simply be riding the open's
+  volatility, so time of day needs its own split in grading.
+- **We tried the plain version before.** The session-VWAP reclaim layer
+  (2026-08-21, retired 08-22) fired 48 reclaims. Of the 41 that "confirmed", 31
+  fell back under the VWAP, the median best move was +1.16% above it, and the
+  median hold was 10 minutes. It caught chop, not rallies (detection-layers ↑
+  section). This setup adds exactly the filters that layer lacked — a top
+  gainer, a basis rising under the line, a higher low — so it is a different
+  hypothesis, not a disproven one.
+- **A+ alone is a coin flip tilted down.** In September (out-of-sample), A+
+  rows touched −10% first 29.8% of the time and +10% first 25.0% within 30 min.
+  The setup is an attempt to pick out the up-first half: timing on leaders,
+  which is the one family our EMA/MACD studies never ruled out (they ruled out
+  those indicators as a stock-picking signal).
+- **Free data can't draw this line.** Yahoo's chart API returns real prices
+  for pre- and post-market bars but **zero volume** (verified at 1m and 2m on
+  AIXI). AIXI's month VWAP at the 10-02 close came out 1.81 from Yahoo
+  (regular hours only) vs 1.77 on TradingView, while the BB basis matched to
+  the cent (1.63). Our own Finviz snapshots have pre-market volume, but only
+  from the moment a ticker reaches our screen, and the `vwap` column is
+  anchored at first sight.
+
+## 4. Design decisions
+
+- **TradingView computes the setup; we don't.** The line needs the whole
+  month's volume, including pre-market, which neither Yahoo nor our snapshots
+  have (§3). Letting TradingView run the rule means the numbers match the
+  operator's chart by construction, in real time, on servers TradingView runs,
+  and at no extra cost on the Premium plan.
+- **Not a headless browser + screenshots + LLM.** The operator floated this
+  to watch more charts at once. We rejected it for four reasons:
+  - The setup is arithmetic on three numbers (price, VWAP, basis) and a slope,
+    and an LLM judging whether a line is 5% or 8% under another is the least
+    precise step.
+  - Reading the numbers from the chart legend makes the LLM unnecessary anyway.
+  - A logged-in automated browser is against TradingView's terms and can clash
+    with the operator's own session.
+  - Cycling 20–30 charts takes minutes per round, while AIXI's whole entry
+    window was ~10 minutes.
+- **One watchlist alert over a wide list.** A watchlist alert runs one script
+  condition on every symbol in a list. Premium allows 2 active watchlist alerts
+  and Ultimate 15
+  ([PineConnector, reviewed 2026-09-23](https://www.pineconnector.com/blogs/pico-blog/how-to-use-watchlist-alerts-in-tradingview-for-smarter-trading)).
+  Rather than syncing the list with each day's gainers (TradingView has no
+  watchlist API), the list is wide — today's screen plus a month of recent
+  runners — and the script's own top-gainer gate keeps the quiet names silent.
+  All six examples had been on our Momentum screen in the 2–3 weeks before
+  their setup day.
+- **Stages, not one signal.** The operator asked for *earlier* detection.
+  FORMING is the heads-up ("open the chart"), READY is the entry zone, and GO
+  is the confirmation they described.
+- **A fourth opportunity-alert kind (`tv_setup`), not a separate pipeline.**
+  It reuses the Alerts tab, toasts, sounds, the ⚙ switches, the row badges,
+  Telegram and the `tier_events` grading log the other alerts already have.
+- **Plan B, not built: an IBKR TWS API bridge** on the operator's Mac.
+  IBKR's data includes pre-market volume, so we could compute the line
+  ourselves and show live distances on every top gainer. That's more work, and
+  it only runs while TWS is open (IBKR allows one session per username, so it
+  can't run on the droplet alongside the operator's own TWS).
+
+## 5. The Pine script (`apps/web/src/tv/mvwap-bb-setup.pine`)
+
+The file in the repo is the only copy. The 📐 tab's **Copy Pine script** button
+serves exactly that file (a Vite `?raw` import), so after a deploy the button
+always hands out the latest version. The excerpts below explain it; when they
+disagree with the file, the file wins.
+
+### 5.1 Inputs — what each one does and how to tune it
+
+| Input | Default | Meaning | Higher → / Lower → |
+|---|---|---|---|
+| `minDayGain` | 20 | Top-gainer gate: today's high vs the prior regular close, % | fewer, stronger names / more names (second-day names that only gap 10–15%) |
+| `maxPxBelow` | 15 | Price may be at most this % under the month VWAP | deeper pullbacks qualify / only near-the-line setups |
+| `formBasis` | 10 | FORMING when the basis is within this % under the VWAP | earlier heads-up, noisier / later, fewer |
+| `readyBasis` | 6 | READY when the basis is within this % (the operator's "5–6%") | earlier entries / tighter, later |
+| `holdTol` | 2 | Price may sit this % under the basis and still count as holding it | allows deeper higher lows / stricter structure |
+| `failPct` | 3 | The setup breaks on a close this % under the basis (and under the VWAP) | fewer re-arms / faster re-arming |
+| `slopeBars` | 3 | The basis must be higher than N bars ago | smoother and later / faster and noisier |
+| `maxCycles` | 3 | Max setups per ticker per day (re-arms included) | — |
+
+**The timeframe changes what the basis means.** The basis is a 20-bar SMA: 20
+minutes on a 1m chart, 40 on 2m, 10 on 30s. The operator's "5–6%" came from 2m
+screenshots, while the alert runs on 1m, so `readyBasis` / `formBasis` are the
+first things to calibrate (bar replay, then grading).
+
+### 5.2 The lines
+
+```pine
+mvwap  = ta.vwap(hlc3, timeframe.change("M"))   // resets on the first bar of each month
+basis  = ta.sma(close, 20)                       // the BB basis line
+crossU = ta.crossover(basis, mvwap)              // computed on EVERY bar — see 5.6
+```
+
+This reproduces TradingView's built-in VWAP with anchor Month and source hlc3,
+and the BB basis. Volume includes extended hours when the chart or alert
+session is Extended.
+
+### 5.3 The top-gainer gate
+
+```pine
+newDay = timeframe.change("D")
+if newDay
+    prevDayClose := lastRegClose      // the last regular-session close of the prior day
+    dayHigh      := high
+else
+    dayHigh := na(dayHigh) ? high : math.max(dayHigh, high)
+if session.ismarket
+    lastRegClose := close
+dayHighGain = (dayHigh / prevDayClose - 1) * 100
+gainer = not na(dayHighGain) and dayHighGain >= minDayGain
+```
+
+The prior close is tracked from the last regular-session bar rather than
+`request.security("D", close[1])`, because during pre-market the daily series'
+"current bar" is ambiguous. This gives the same reference as Finviz's Change.
+It needs at least one prior regular session loaded. The gate uses the **day
+high** on purpose: the setup is a *pullback*, so the stock may currently be well
+off its high.
+
+### 5.4 Distances and conditions
+
+```pine
+pxBelow    = (mvwap - close) / mvwap * 100   // > 0 = price under the line
+basisBelow = (mvwap - basis) / mvwap * 100   // > 0 = basis under the line
+basisUp    = basis > basis[slopeBars]
+gapClosing = basisBelow < basisBelow[slopeBars]
+holding    = close >= basis * (1 - holdTol / 100)
+inZone  = valid and pxBelow > 0 and pxBelow <= maxPxBelow and basisUp and holding
+forming = inZone and basisBelow > readyBasis and basisBelow <= formBasis and gapClosing
+ready   = inZone and basisBelow > 0 and basisBelow <= readyBasis
+go      = valid and crossU
+```
+
+`holding` has a tolerance because at AIXI's higher low (1.47 at ~08:02) price
+sat slightly *under* the 2m basis (~1.49). A strict `close >= basis` would have
+fired READY only after the bounce.
+
+### 5.5 The stage machine
+
+```
+                 forming                ready              basis crosses above mVWAP
+  IDLE (0) ───────────────▶ FORMING (1) ───────▶ READY (2) ──────────────────────▶ GO (3)
+     │  └──────────── ready (skips FORMING) ──────────▲                              │
+     ▲                                                                                │
+     └──── break: close < mVWAP AND close < basis × (1 − failPct%) — from any stage ◀┘
+  new ET day → IDLE and cycles = 0; a setup can start from IDLE only while cycles < maxCycles
+```
+
+- Each stage fires once per setup, and only forward (`target > stage`).
+- **GO requires an earlier FORMING or READY**, so a vertical spike straight
+  through the VWAP is not reported as this setup.
+- A broken setup re-arms and counts as a new cycle (max 3 per ticker per day).
+- On fire, the script sends the alert message and plots a marker (orange
+  circle = FORMING, yellow triangle = READY, green "GO" label). Bar replay on
+  past days therefore shows exactly where it would have fired.
+
+### 5.6 The alert message — a contract with the server
+
+```
+READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1
+```
+
+`stage ticker close | mVWAP <value> (<price vs VWAP %>) | basis <value> (<basis
+vs VWAP %>) | day high +<gain>% | tf <timeframe.period>`. It is built with
+`str.tostring(x, format.mintick)`, which keeps sub-dollar precision (0.1259).
+It is sent with `alert(msg, alert.freq_once_per_bar_close)`, so it arrives at
+the bar close: up to 60 s after the condition on a 1m chart.
+
+**The server parses this text** (`parseTvMessage` in
+`apps/api/src/services/tv-setups.ts`). If you change the message, change the
+parser too and run `npx tsx scripts/verify-tv-setups.ts` from `apps/api`. The
+script's last section reads the `.pine` file and fails if the message parts the
+parser relies on are gone. The parser also accepts:
+- the `alertcondition()` fallbacks, `READY {{ticker}} {{close}} | tf {{interval}}`
+  and `GO …`, for when watchlist alerts don't offer "Any alert() function call";
+- a JSON body with the same field names as `TvSetupSignal`;
+- exchange-prefixed tickers (`NASDAQ:AIXI`), lowercase stages, and the Unicode
+  minus sign.
+
+### 5.7 Pine v6 gotchas (learned writing v1)
+
+- **`and` / `or` are lazy in v6.** A `ta.*` call inside a condition may be
+  skipped on some bars, which corrupts its internal history. So `ta.crossover`
+  is computed at the top level on every bar (`crossU`) and only *combined*
+  inside conditions.
+- **`var` state rolls back on every real-time tick** until the bar closes, so
+  the stage machine effectively commits once per closed bar. Combined with
+  once-per-bar-close alerts, nothing fires on an intrabar wiggle.
+- **History limits are a known risk.** A 1m chart with extended hours has ~960
+  bars a day and 30s has ~1,920. Late in a month the chart, and possibly the
+  alert engine, may not hold bars back to the 1st; the month VWAP then starts
+  at the first loaded bar and drifts off the built-in line. **Check:** the
+  script's yellow line must sit exactly on the built-in "VWAP Month". **Fix if
+  it drifts:** compute the month-to-date part from a 60m
+  `request.security` and only today's part on the chart timeframe.
+- `syminfo.ticker` is the bare ticker (no exchange); the server strips any
+  `EXCH:` prefix anyway.
+- **Alerts snapshot the script.** TradingView alerts keep running the script
+  as it was when the alert was created. After saving a new version, delete and
+  recreate the watchlist alert (§10).
+
+## 6. TradingView setup (operator steps)
+
+Everything is on the dashboard's **📐 VWAP setups** tab (the **How to** button
+repeats these steps).
+
+1. **Copy Pine script** → TradingView Pine Editor → paste → Save → Add to chart.
+   Check that its yellow line sits on the built-in "VWAP Month".
+2. **Download .txt** → watchlist menu → Import list (or paste **Copy list**).
+   Refresh it each morning; it changes as new runners appear.
+3. **Create alert** → Symbols: that watchlist → Condition: *mVWAP-BB* → "Any
+   alert() function call" → interval 1 minute → session Extended → once per bar
+   close.
+4. **Notifications** → tick Webhook URL → `https://pnldash.uz/api/tv/webhook?key=<TV_WEBHOOK_SECRET>`.
+   The key is in the prod `.env`; the full URL was given to the operator on
+   2026-10-03. TradingView may ask for two-factor authentication on the account
+   before it allows webhooks. App push and pop-up are optional, since Telegram
+   and the dashboard already notify.
+
+Premium's second watchlist-alert slot is free for a variant: a 2m alert
+alongside the 1m one, or a separate alert on the READY/GO `alertcondition`s if
+"Any alert() function call" isn't offered for watchlists. A repeated stage from
+a second timeframe is logged but not announced again (§7).
+
+## 7. Our side — how a signal travels
+
+```
+TradingView servers                                   pnldash droplet
+┌──────────────────────────────┐   HTTPS POST       ┌──────────────────────────────────────────┐
+│ watchlist "runners" (≤1000)  │   text/plain        │ nginx  /api/ → api:3001                  │
+│ × mVWAP-BB script, 1m, ETH   │ ─────────────────▶  │ routes/tv.ts       key check, dry=1      │
+│ alert(): FORMING/READY/GO    │   ?key=SECRET       │ services/tv-setups.ts  parse → gate      │
+└──────────────────────────────┘   (answer < 3 s)    │ poller.deliverTvSetup                    │
+                                                     │  ├─ tier_events (alert / tv_setup)       │
+                                                     │  ├─ payload.alerts (engine recent list)  │
+                                                     │  ├─ SSE 'alert' → browser, at once       │
+                                                     │  └─ Telegram (unless muted)              │
+                                                     └──────────────────────────────────────────┘
+```
+
+### 7.1 Endpoints
+
+- **`POST /api/tv/webhook?key=…[&dry=1]`** (no JWT — TradingView can't send
+  headers, so the shared secret rides in the URL).
+  - Unset `TV_WEBHOOK_SECRET` → 503; wrong key → 401 (constant-time compare).
+  - Unparseable message → 400, and the raw text (first 200 chars) is logged.
+  - `dry=1` parses and echoes the signal without storing or sending anything.
+  - The reply goes out immediately; delivery is fire-and-forget behind it
+    (TradingView cancels requests that take over ~3 s).
+  - The body is text/plain for the script's `alert()` text, or JSON, which the
+    global parser has already turned into an object.
+- **`GET /api/tv/watchlist[?days=30&min_chg=30]`** (JWT): every name on today's
+  Momentum screen, then every name that hit ≥ `min_chg`% on our screen in the
+  last `days` days, newest first, max 1,000. Nasdaq names get the `NASDAQ:`
+  prefix (SEC exchange map — the SPRO index-collision fix) and the rest stay
+  bare. It scans a month of `screener_results` (~8 s cold), so the result is
+  cached for 10 min. On 2026-10-03 it returned 389 symbols (24 from today + 365
+  runners), all six examples included.
+
+### 7.2 Duplicate and flood gate (`TV_SETUP` in `tv-setups.ts`)
+
+| Rule | Knob | Effect |
+|---|---|---|
+| Same ticker + stage + timeframe within 2 min | `dup_sec` 120 | `drop` — a re-delivery, not stored |
+| Same ticker + stage from another timeframe within 5 min | `notify_merge_sec` 300 | `log` — stored for grading, not announced |
+| More than 120 webhooks a minute | `max_per_min` 120 | `flood` → 429, so a leaked key or runaway alert can't spam the phone |
+
+### 7.3 What gets stored — `tier_events` row (tier `alert`, event `tv_setup`)
+
+`meta`: `id`, `at`, `stage` (forming/ready/go), `price`, `mvwap`, `px_pct`,
+`basis`, `basis_pct`, `day_gain`, `tf` — all as TradingView reported them —
+plus our context at that moment: `chg`, `grade`, `float_m`, `rv1` (when the
+ticker is on our Momentum screen), `on_screen`, and `notified` (false = a
+repeat from another timeframe). `GET /api/screener/alerts` returns these rows
+with a `setup` object; the boot seeding of the other alert kinds ignores them.
+
+### 7.4 What the operator sees
+
+- **📐 VWAP setups tab** (next to Momentum): one row per ticker with today's
+  stage trail. "→" means the setup advanced, "·" means it broke and re-armed.
+  Repeats from another timeframe are dimmed. It also shows the latest signal's
+  price and levels, "Since" (live Momentum price vs the signal; "off screen"
+  when we have no row), and the current change and grade. Header buttons: Copy
+  list, Download .txt, Copy Pine script, How to.
+- **Toast + sound + browser notification** the moment the webhook lands:
+  - GO: the bright pair (same as 🅰️ A+)
+  - READY: a rising triple
+  - FORMING: a soft single tone
+
+  When alerts arrive together, the loudest one plays. The ⚙ menu has a
+  **📐 VWAP setup** switch; the master Alerts ON/OFF applies too.
+- **Alerts tab** — a "📐 Setup" filter, with each signal showing its stage pill,
+  levels and timeframe.
+- **Momentum row** — a 📐 badge and a cyan left edge for 15 min, pulsing for
+  the first 90 s.
+- **Telegram** — a header line (📐, the stage, the ticker and price), a hint
+  line, the levels, the context, and TradingView + Finviz links. Mute it with
+  `ALERTS_DISABLED`: `tv_setup` mutes all stages, or use `tv_forming` /
+  `tv_ready` / `tv_go`. The bot's `/alerts off` command (a pause until
+  `/alerts on` or the next API restart) applies too.
+
+### 7.5 Files
+
+| File | Role |
+|---|---|
+| `apps/web/src/tv/mvwap-bb-setup.pine` | the detector (the only copy, served by the Copy button) |
+| `apps/api/src/routes/tv.ts` | webhook + watchlist endpoints |
+| `apps/api/src/services/tv-setups.ts` | `parseTvMessage`, `TvSetupGate` + `TV_SETUP` knobs, `formatTvSetupAlert` |
+| `apps/api/src/services/poller.ts` → `deliverTvSetup` | storage, `payload.alerts`, SSE, Telegram |
+| `apps/api/src/services/opportunity-alerts.ts` | the `tv_setup` kind, `TvSetupInfo`, `pushExternal` |
+| `apps/api/src/routes/screener.ts` → `GET /alerts` | returns `setup` for tv_setup rows |
+| `apps/api/src/services/telegram.ts` | mute slugs `tv_setup` / `tv_forming` / `tv_ready` / `tv_go` |
+| `apps/api/scripts/verify-tv-setups.ts` | regression: 39 checks incl. the Pine ↔ parser contract |
+| `apps/web/src/components/screener/TvSetupsPanel.tsx` | the 📐 tab |
+| `apps/web/src/components/common/TvStageTag.tsx` | stage pill, level text, timeframe labels |
+| `apps/web/src/hooks/useScreenerStream.ts` | merges SSE `alert` events into the payload |
+| `apps/web/src/hooks/useScreenerAlerts.ts` | stage sounds + notification text |
+| `AlertToasts.tsx`, `AlertsPanel.tsx`, `ScreenerPanel.tsx`, `AlertKindsMenu.tsx`, `useAlertKinds.ts`, `index.css` | toast colour, Alerts filter, tab + row badge/tone, ⚙ switch |
+
+## 8. Testing and operations
+
+```bash
+# Regression (parser, gate, Telegram format, Pine ↔ parser contract)
+cd apps/api && npx tsx scripts/verify-tv-setups.ts
+
+# Parse-only check against prod — nothing stored or sent
+curl -s -X POST "https://pnldash.uz/api/tv/webhook?key=$TV_WEBHOOK_SECRET&dry=1" \
+  -H 'Content-Type: text/plain' \
+  --data 'READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1'
+
+# Did signals arrive today? (logs reset on every deploy — tier_events is the durable record)
+ssh root@165.245.210.95 'cd /root/projects/pnldash && docker compose -f docker-compose.prod.yml logs --since 12h api | grep tv-setup'
+```
+
+- **A full end-to-end test** (non-dry) stores a row and sends Telegram. Use
+  ticker `TEST`, then delete it so it doesn't pollute grading:
+  `DELETE FROM tier_events WHERE tier='alert' AND event='tv_setup' AND ticker='TEST';`
+- **Rotating the secret:**
+  1. `openssl rand -hex 20`.
+  2. On the droplet, back up `.env`, replace the `TV_WEBHOOK_SECRET` line, and
+     run `docker compose -f docker-compose.prod.yml up -d api`. A changed
+     `env_file` needs the container recreated; `restart` keeps the old value.
+  3. Update the webhook URL in the TradingView alert.
+- **The secret also lands in nginx access logs** (it's in the query string).
+  That's acceptable on our own droplet; never paste it into docs or commits.
+
+## 9. Grading plan (~2026-10-17)
+
+```sql
+SELECT at AT TIME ZONE 'America/New_York' AS et, ticker, meta->>'stage' AS stage,
+       (meta->>'price')::numeric AS price, (meta->>'px_pct')::numeric AS px_pct,
+       (meta->>'basis_pct')::numeric AS basis_pct, (meta->>'day_gain')::numeric AS day_gain,
+       meta->>'tf' AS tf, (meta->>'notified')::boolean AS notified,
+       (meta->>'on_screen')::boolean AS on_screen, meta->>'grade' AS grade
+FROM tier_events
+WHERE tier = 'alert' AND event = 'tv_setup'
+ORDER BY at;
+```
+
+**Forward path.** Take prices after each signal from `screener_results` for
+on-screen names, or from Yahoo 1m bars, whose prices are fine (only the volume
+is missing).
+
+**Per stage, measure:**
+- the race: +10% first vs a close under the basis (or −5%) first;
+- the best move within 30 and 60 min;
+- time to GO, and how often FORMING becomes READY and READY becomes GO.
+
+**Split by:**
+- early month (days 1–3, where the line is ≈ the session VWAP) vs mid/late month;
+- time of day (pre-market, the open, 10:00–11:00, midday);
+- the first setup of the day vs re-arms;
+- on screen vs off;
+- grade at the signal.
+
+**Baselines:** all A+ moments (25.0% up-first / 29.8% down-first in September)
+and the 2026-08 session-VWAP reclaim result.
+
+**Decisions it feeds:**
+- keep or retune `readyBasis` / `formBasis`;
+- whether FORMING earns its sound and Telegram;
+- whether a time-of-day gate helps;
+- whether to try another anchor (§11).
+
+Also ask the operator to import a fresh IBKR `.tlg`. The journal stops at
+2026-06-18, and their real P&L on these trades is the other half of the answer.
+
+## 10. Changing the script — the procedure
+
+1. Edit `apps/web/src/tv/mvwap-bb-setup.pine` and **bump the version** in its
+   header comment.
+2. If the alert message changed: update `parseTvMessage`, extend
+   `verify-tv-setups.ts`, and run it.
+3. `npm run build --workspace=apps/web` (plus `npx tsc --noEmit` in `apps/api`
+   if the server changed), then commit. CI deploys, and the 📐 tab's Copy
+   button now serves the new version.
+4. In TradingView: paste the new version into the Pine Editor → Save, then
+   **delete and recreate the watchlist alert** (alerts keep the old script
+   otherwise).
+5. Add a line to the changelog (§12) with the date, version, commit and why.
+
+## 11. Improvement backlog
+
+Ordered roughly by expected value; most should wait for the first grading.
+
+1. **Calibrate the thresholds on 1m.** `readyBasis` / `formBasis` came from 2m
+   screenshots. Use bar replay on the six examples **and** on top gainers where
+   it failed, then the grading.
+2. **A BROKE stage.** The script re-arms silently today. An explicit "setup
+   broke" alert (close under the basis after READY/GO) would support the
+   operator's fast exits. It would be a fourth message type: parser + UI + slug.
+3. **Rejection confirmation as a stage.** First VWAP test rejected, then a
+   higher low on the basis. It is the operator's preferred structure and is
+   detectable in Pine (track the session's first close above the VWAP and the
+   following low).
+4. **Time-of-day gate**, if grading confirms the clustering at 07:00–10:00 ET
+   and the open.
+5. **Optional MACD confirmation:** the 12/26/9 histogram turning up at READY,
+   as an input toggle.
+6. **Anchor experiments:** session VWAP vs month VWAP vs an anchored VWAP from
+   the spike day or first-seen day. The month anchor is a calendar accident; the
+   crowd's cost basis may be better anchored at the run's start. Test in Pine
+   (one input switching the anchor), grade side by side.
+7. **Month-to-date from 60m bars**, if the yellow line drifts late in the month
+   on 1m (§5.7).
+8. **JSON messages** carrying bar time and volume, if the parser needs more
+   than the text gives. TradingView then shows raw JSON in its own pop-ups, so
+   keep the text format if the operator uses those.
+9. **Merge a ticker's stages into one toast** within a few minutes, if
+   FORMING → READY → GO in quick succession proves noisy (the same open item as
+   the opportunity alerts' cross-cycle merge).
+10. **"Since" for off-screen names** from Yahoo prices, and outcome columns on
+    the 📐 tab once grading exists.
+11. **Webhook hardening:** TradingView publishes its webhook source IPs, so an
+    nginx allowlist on `/api/tv/webhook` would make a leaked key useless from
+    elsewhere.
+
+## 12. Changelog
+
+| Date | Script | Commit | Change |
+|---|---|---|---|
+| 2026-10-03 | v1 | `d50ebbe` | First version: month VWAP + BB basis, top-gainer gate (day high ≥ +20%), FORMING / READY / GO stage machine with re-arm (max 3/day), once-per-bar-close alerts; webhook, 📐 tab, `tv_setup` alert kind, Telegram slugs, regression script. |

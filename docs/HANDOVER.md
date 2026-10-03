@@ -59,7 +59,8 @@ parking), disk 26%.
    event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
    (stage trail per ticker, Copy list / Download .txt / Copy Pine script /
    How to) and Telegram (`ALERTS_DISABLED` `tv_setup` or `tv_forming` /
-   `tv_ready` / `tv_go`). Full reference: detection-layers.md 📐 section.
+   `tv_ready` / `tv_go`). **Full reference: `docs/vwap-setup.md`** (Pine
+   walkthrough, tuning table, change procedure, grading SQL, backlog).
 
 **Parked, code kept** — `COMPONENTS_DISABLED` default
 `ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`:
@@ -90,7 +91,7 @@ webhook key; the full URL was given to the operator). Backups:
    names that failed). Nothing has measured the edge yet — the evidence is
    six hand-picked top gainers; the 2026-08 session-VWAP reclaim layer
    graded as noise. **~2026-10-17: grade the `tv_setup` rows** (SQL in
-   detection-layers 📐). Ask the operator to import a fresh IBKR .tlg (the
+   `docs/vwap-setup.md` §9). Ask the operator to import a fresh IBKR .tlg (the
    journal stops at 06-18) so their real P&L on these trades can be checked.
 1. **~2026-10-15 — re-grade the LIVE grade** from `screener_results.grade`
    with the same label and the first-touch race. Does it hold live? Pipeline:
@@ -158,6 +159,10 @@ Telegram), a 4th alert kind `tv_setup` across the dashboard (Alerts filter,
 toast, stage-aware sounds, ⚙ switch, row badge 📐, cyan row edge) and the
 📐 VWAP setups tab. Regression `scripts/verify-tv-setups.ts` (39 checks incl.
 the .pine ↔ parser contract). Prod `.env`: `TV_WEBHOOK_SECRET` added.
+Then documented it end to end in **`docs/vwap-setup.md`** (definition,
+evidence, findings, design decisions, Pine walkthrough + tuning table, the
+change procedure, grading SQL, backlog, changelog); the script now carries a
+version line (v1) that the changelog tracks.
 
 **2026-10-02 — ALERTS VISIBLE ON THE DASHBOARD.** New **Alerts** tab with
 the day's log (`GET /api/screener/alerts`, regrouped from tier_events
