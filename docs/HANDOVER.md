@@ -53,7 +53,7 @@ parking), disk 26%.
 5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
    detected by TradingView (we can't compute a month VWAP with pre-market
    volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine`
-   (**v3**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
+   (**v4**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
    posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
    a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
    event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
@@ -134,6 +134,22 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-03 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-03 (night) — 📐 SCRIPT v4.** The operator's rule is that a setup
+under the BB basis is no signal; v3 allowed a close 2% under it. They gave
+three ideal setups (NIVF 18:30, SDEV 17:40 and 01:40 UTC+5). Replay found:
+(a) SDEV's after-hours entry was a *reclaim* of the basis after a 2.2–2.5%
+dip, and v3's 3% break never re-armed; (b) AMOD 09-01's first triangle was a
+spike falling back to the line, not an approach. v4 changes:
+- `holdTol` 0;
+- `failPct` 2;
+- `fromBelow` 10 (the previous 10 closes under the line for the fast route);
+- `goMemory` 60 (GO after a break: AIXI 08:12);
+- `maxCycles` 6.
+
+Replay (9 targets + 1 negative): 8/9 on 1m and 8/9 on 2m, 9/9 with both
+alerts, and the negative stays silent. Cost: 1m other signals 14 → 23. The
+script's inputs are walked through in `docs/vwap-setup.md` §5.1.
 
 **2026-10-03 (evening) — 📐 SCRIPT v3.** The operator asked why AMOD showed
 nothing around 02:30 UTC+5 (17:30 ET, after hours). AMOD fell 24% on 10-01,

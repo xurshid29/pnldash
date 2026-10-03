@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v3 (2026-10-03).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v4 (2026-10-03).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // A top gainer pulls back under its month-anchored VWAP while the Bollinger
@@ -7,7 +7,9 @@
 //   FORMING  basis 6–10% under mVWAP, rising, gap closing — or, on a fast approach,
 //            price ≤10% under mVWAP and ≥3% above a rising basis → open the chart
 //   READY    basis ≤6% under mVWAP — or, on a fast approach, price ≤5% under → entry zone
-//   GO       the basis crosses above mVWAP (only after FORMING/READY)
+//   GO       the basis crosses above mVWAP (within 60 bars of a FORMING/READY)
+// Price must close at or above the BB basis: a setup under the basis is no
+// setup, and a close 2% under it ends the setup — the next reclaim is a fresh READY.
 // Run it as TradingView watchlist alerts — one on 1m and one on 2m (Premium allows 2):
 // Symbols = the runners list (dashboard → 📐 tab → Copy list), session Extended,
 // condition = this script → "Any alert() function call", once per bar close,
@@ -23,21 +25,26 @@ useAhGain  = input.bool(true,  "After hours: …or that since today's close", gr
 maxPxBelow = input.float(15.0, "Price at most % under mVWAP", group = "Setup")
 formBasis  = input.float(10.0, "FORMING: basis at most % under mVWAP", group = "Setup")
 readyBasis = input.float(6.0,  "READY: basis at most % under mVWAP", group = "Setup")
-holdTol    = input.float(2.0,  "Price may sit up to % under the basis", group = "Setup")
-failPct    = input.float(3.0,  "Setup breaks: close % under the basis", group = "Setup")
+holdTol    = input.float(0.0,  "Price may sit up to % under the basis (0 = must close above it)", group = "Setup")
+failPct    = input.float(2.0,  "Setup breaks: close % under the basis", group = "Setup")
 slopeBars  = input.int(3,      "Basis rising over N bars", minval = 1, group = "Setup")
 useFast    = input.bool(true,  "Fast approach: price leads, the basis lags", group = "Fast approach")
 fastAbove  = input.float(3.0,  "Price at least % above the basis", group = "Fast approach")
 formPx     = input.float(10.0, "FORMING: price at most % under mVWAP", group = "Fast approach")
 readyPx    = input.float(5.0,  "READY: price at most % under mVWAP", group = "Fast approach")
 maxBasis   = input.float(15.0, "Basis at most % under mVWAP", group = "Fast approach")
-maxCycles  = input.int(4,      "Max setups per ticker per day", minval = 1, group = "Alerts")
+fromBelow  = input.int(10,     "Price under mVWAP for the previous N bars (0 = off)", minval = 0, group = "Fast approach")
+maxCycles  = input.int(6,      "Max setups per ticker per day", minval = 1, group = "Alerts")
+goMemory   = input.int(60,     "GO up to N bars after the last FORMING/READY (0 = only while armed)", minval = 0, group = "Alerts")
 alertWin   = input.session("0400-2000", "Alert window (New York time)", group = "Alerts")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close
 mvwap  = ta.vwap(hlc3, timeframe.change("M"))
 basis  = ta.sma(close, 20)
 crossU = ta.crossover(basis, mvwap)
+// Closes at/above the line in the previous `fromBelow` bars — computed on every
+// bar (v6 evaluates and/or lazily; a skipped math.sum would corrupt its history).
+aboveRecent = math.sum(close >= mvwap ? 1.0 : 0.0, math.max(fromBelow, 1))[1]
 plot(mvwap, "mVWAP", color.yellow)
 plot(basis, "BB basis", color.green)
 
@@ -87,7 +94,10 @@ valid      = gainer and not na(mvwap) and not na(basis)
 // (AIXI, VEEA). FAST: price runs at the line while the 20-bar basis lags far
 // behind (MEDS 09-18, NIVF 09-30) — reached by price distance instead.
 inZone      = valid and pxBelow > 0 and pxBelow <= maxPxBelow and basisUp and holding
-fastApproach = useFast and close >= basis * (1 + fastAbove / 100) and basisBelow <= maxBasis
+// FAST only when approaching from below: a spike that falls back to the line
+// (AMOD 2026-09-01) is not an approach.
+fromBelowOk  = fromBelow == 0 or aboveRecent == 0
+fastApproach = useFast and fromBelowOk and close >= basis * (1 + fastAbove / 100) and basisBelow <= maxBasis
 baseForming = basisBelow > readyBasis and basisBelow <= formBasis
 baseReady   = basisBelow > 0 and basisBelow <= readyBasis
 forming     = inZone and gapClosing and (baseForming or (fastApproach and pxBelow <= formPx))
@@ -97,25 +107,32 @@ inWindow    = not na(time(timeframe.period, alertWin, "America/New_York"))
 
 // Stages: 0 idle, 1 forming, 2 ready, 3 go; each fires once per setup.
 // A setup that breaks (close under mVWAP and failPct under the basis) re-arms.
-// Outside the alert window nothing fires and no stage advances.
-var int stage  = 0
-var int cycles = 0
+// GO also fires within `goMemory` bars of the last FORMING/READY when a break
+// came in between (AIXI 2026-10-02: READY, dip under the basis, then one bar
+// back over both lines). Outside the alert window nothing fires and no stage advances.
+var int stage        = 0
+var int cycles       = 0
+var int lastSetupBar = na
 if newDay
-    stage  := 0
-    cycles := 0
+    stage        := 0
+    cycles       := 0
+    lastSetupBar := na
 if stage > 0 and close < mvwap and close < basis * (1 - failPct / 100)
     stage := 0
+recentSetup = goMemory > 0 and not na(lastSetupBar) and bar_index - lastSetupBar <= goMemory
 int target = 0
-if stage >= 1 and go
+if go and stage < 3 and (stage >= 1 or recentSetup)
     target := 3
 else if ready
     target := 2
 else if forming
     target := 1
-bool fire = inWindow and target > stage and (stage > 0 or cycles < maxCycles)
+bool fire = inWindow and target > stage and (stage > 0 or target == 3 or cycles < maxCycles)
 if fire
-    if stage == 0
+    if stage == 0 and target < 3
         cycles += 1
+    if target < 3
+        lastSetupBar := bar_index
     stage := target
     string stageName = target == 3 ? "GO" : target == 2 ? "READY" : "FORMING"
     string msg = stageName + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)

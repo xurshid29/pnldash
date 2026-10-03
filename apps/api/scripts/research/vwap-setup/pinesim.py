@@ -1,4 +1,4 @@
-"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v3).
+"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v4).
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -16,11 +16,15 @@ import json
 
 ET = datetime.timezone(datetime.timedelta(hours=-4))   # EDT; fine for Sep–Oct examples
 
-# Script inputs, same names and defaults as the .pine file.
-V3 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
-          holdTol=2.0, failPct=3.0, slopeBars=3, useFast=True, fastAbove=3.0, formPx=10.0, readyPx=5.0,
-          maxBasis=15.0, maxCycles=4, window=(240, 1200))  # alert window in ET minutes [04:00, 20:00); None = always
-# Earlier versions are V3 with the newer parts switched off.
+# Script inputs, same names and defaults as the .pine file (fromBelowBars = the script's `fromBelow`).
+V4 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
+          holdTol=0.0, failPct=2.0, slopeBars=3, useFast=True, fastAbove=3.0, formPx=10.0, readyPx=5.0,
+          maxBasis=15.0, maxCycles=6, window=(240, 1200),  # alert window in ET minutes [04:00, 20:00); None = always
+          fromBelowBars=10,  # fast route only if every close of the previous N bars was under the line (0 = off)
+          goMemory=60,       # GO also fires within N bars of the last FORMING/READY, even after a break (0 = off)
+          breakBars=0)       # replica-only experiment: also break after N closes in a row under the basis
+# Earlier versions are V4 with the newer parts switched off / older defaults.
+V3 = dict(V4, holdTol=2.0, failPct=3.0, maxCycles=4, fromBelowBars=0, goMemory=0)
 V2 = dict(V3, useAhGain=False, window=(240, 960))
 V1 = dict(V2, runnerDays=0, useFast=False, maxCycles=3, window=None)
 
@@ -62,10 +66,11 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
     """Run the stage machine. mvwap_of(bar) → month VWAP or None (no signal on that bar).
     Returns fired events: (time, stage, path, close, basis, px_below %, basis_below %, day-high gain %).
     trace(dict) — optional, called on every bar with each condition (the "why didn't it fire" tool)."""
-    p = {**V3, **(params or {})}
-    closes, basis_hist, bbelow_hist, gains = [], [], [], []
+    p = {**V4, **(params or {})}
+    closes, basis_hist, bbelow_hist, gains, mv_hist = [], [], [], [], []
     last_reg = prev_close = day_high = cur_day = ah_high = None
-    stage = cycles = 0
+    stage = cycles = under_basis = 0
+    since_setup = None   # bars since the last FORMING/READY fired today
     prev_basis = prev_mv = None
     fired = []
     for b in bars:
@@ -73,6 +78,7 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
         closes.append(c)
         basis = sum(closes[-20:]) / 20 if len(closes) >= 20 else None
         mv = mvwap_of(b)
+        mv_hist.append(mv)
         new_day = cur_day != t.date()
         if new_day:
             if day_high is not None and prev_close:
@@ -104,6 +110,12 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
         in_zone = valid and 0 < px_below <= p['maxPxBelow'] and basis_up and holding
         fast = (p['useFast'] and basis is not None and b_below is not None
                 and c >= basis * (1 + p['fastAbove'] / 100) and b_below <= p['maxBasis'])
+        if fast and p['fromBelowBars'] > 0:
+            # approaching from below: no close at/above the line in the last N bars
+            # (a spike that falls back to the line is not an approach)
+            n = p['fromBelowBars']
+            prior = list(zip(closes[-1 - n:-1], mv_hist[-1 - n:-1]))
+            fast = len(prior) == n and all(m is not None and cc < m for cc, m in prior)
         base_forming = in_zone and p['readyBasis'] < b_below <= p['formBasis']
         base_ready = in_zone and 0 < b_below <= p['readyBasis']
         forming = in_zone and gap_closing and (base_forming or (fast and px_below <= p['formPx']))
@@ -111,15 +123,23 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
         go = valid and cross_up
         if new_day:
             stage = cycles = 0
-        if stage > 0 and mv is not None and basis is not None and c < mv and c < basis * (1 - p['failPct'] / 100):
+            since_setup = None
+        elif since_setup is not None:
+            since_setup += 1
+        under_basis = under_basis + 1 if (basis is not None and c < basis) else 0
+        if stage > 0 and mv is not None and basis is not None and c < mv and (
+                c < basis * (1 - p['failPct'] / 100) or (p['breakBars'] > 0 and under_basis >= p['breakBars'])):
             stage = 0
-        target = 3 if (stage >= 1 and go) else 2 if ready else 1 if forming else 0
+        recent_setup = p['goMemory'] > 0 and since_setup is not None and since_setup <= p['goMemory']
+        target = 3 if (go and stage < 3 and (stage >= 1 or recent_setup)) else 2 if ready else 1 if forming else 0
         m = t.hour * 60 + t.minute
         in_window = p['window'] is None or p['window'][0] <= m < p['window'][1]
-        fire = in_window and target > stage and (stage > 0 or cycles < p['maxCycles'])
+        fire = in_window and target > stage and (stage > 0 or target == 3 or cycles < p['maxCycles'])
         if fire:
-            if stage == 0:
+            if stage == 0 and target < 3:
                 cycles += 1
+            if target < 3:
+                since_setup = 0
             stage = target
             path = '' if target == 3 else ('base' if (base_ready if target == 2 else base_forming) else 'fast')
             fired.append((t, ['', 'FORMING', 'READY', 'GO'][target], path, c, basis, px_below, b_below, gain))

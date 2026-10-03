@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v3** (history in §12) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v4** (history in §12) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -126,6 +126,20 @@ of the grading plan (§9).
   never armed. The after-hours base under the line (17:00–17:35 ET) was the
   setup, with GO at 17:43 and then 2.10. Finviz and our own screen measure
   after-hours moves against today's close, so v3 does too.
+- **Under the basis is no setup** (operator, 2026-10-03). Their rule: price
+  must sit *above* the BB basis. v1–v3 let a close sit up to 2% under it
+  (`holdTol`), which put a READY triangle under the green line on AMOD
+  2026-09-01. The same chart showed a second flaw: a fast READY right after a
+  spike *fell back* to the line. That's not an approach from below, though the
+  lagging basis made it look like one.
+- **A dip under the basis has to end the setup.** The operator's ideal SDEV
+  after-hours setup (10-01, ~01:40 UTC+5 = 16:40 ET) went like this: v3 gave
+  READY at 15:59 ET, then price dipped 2.2–2.5% under the basis (16:18–16:30)
+  and reclaimed it at 16:34. v3's 3% break never triggered, so the stage stayed
+  READY and the reclaim, the operator's actual entry, fired nothing. v4 breaks
+  at 2% and fires the reclaim as a fresh READY. Breaking on *any* close under
+  the basis doubled the noise, and a "N closes in a row under it" rule lost
+  SOAR, so 2% it is (replay grid, §12).
 - **The timeframe changes which setups exist.** On 1m, NXL's 20-bar basis was
   already *above* the line during its 09:00–09:08 pullback (a 20-minute mean
   that still remembered the run to 7.7). On the operator's 2m chart, the
@@ -200,15 +214,17 @@ Grouped as in the script's settings dialog.
 | Setup | `maxPxBelow` | 15 | Price may be at most this % under the month VWAP | deeper pullbacks qualify / only near-the-line setups |
 | Setup | `formBasis` | 10 | Base FORMING when the basis is within this % under the VWAP | earlier heads-up, noisier / later, fewer |
 | Setup | `readyBasis` | 6 | Base READY when the basis is within this % (the operator's "5–6%") | earlier entries / tighter, later |
-| Setup | `holdTol` | 2 | Price may sit this % under the basis and still count as holding it | allows deeper higher lows / stricter structure |
-| Setup | `failPct` | 3 | The setup breaks on a close this % under the basis (and under the VWAP) | fewer re-arms / faster re-arming |
+| Setup | `holdTol` | 0 (v1–v3: 2) | Price may sit this % under the basis and still count as holding it. 0 = must close at/above it (the operator's rule) | allows higher lows under the basis / — |
+| Setup | `failPct` | 2 (v1–v3: 3) | The setup breaks on a close this % under the basis (and under the VWAP); the next reclaim is a fresh READY | fewer re-arms, may sit on a stale READY / more re-arms, more pings |
 | Setup | `slopeBars` | 3 | The basis must be higher than N bars ago | smoother and later / faster and noisier |
 | Fast approach | `useFast` | on | Price-led route for runs at the line while the basis lags. New in v2 | — / off = v1's base-only behavior |
 | Fast approach | `fastAbove` | 3 | Price must be at least this % above the basis (the momentum test) | only strong runs / more, incl. drifts |
 | Fast approach | `formPx` | 10 | Fast FORMING when price is within this % under the VWAP | earlier heads-up / later |
 | Fast approach | `readyPx` | 5 | Fast READY when price is within this % | earlier, more failed tests / later, closer to the line |
 | Fast approach | `maxBasis` | 15 | …while the basis is at most this % under the VWAP | catches steeper ramps / only moderate lag |
-| Alerts | `maxCycles` | 4 (v1: 3) | Max setups per ticker per day (re-arms included) | later setups survive early chop / fewer repeats |
+| Fast approach | `fromBelow` | 10 | The previous N closes must all be under the VWAP; 0 = off. New in v4 | a longer approach required / spike pull-backs can count |
+| Alerts | `maxCycles` | 6 (v1: 3, v2–v3: 4) | Max setups per ticker per day (re-arms included) | later setups survive early chop / fewer repeats |
+| Alerts | `goMemory` | 60 | GO may fire up to N bars after the last FORMING/READY, even if a break came in between; 0 = only while armed. New in v4 | GO after longer shakeouts / stricter |
 | Alerts | `alertWin` | 0400-2000 (v2: 0400-1600) | **New York time** window in which stages can fire — the whole extended session. New in v2 | — / e.g. 0600-1600 drops early pre-market chop and after-hours pings |
 
 **The timeframe changes what the basis means.** The basis is a 20-bar SMA: 20
@@ -274,7 +290,9 @@ basisUp    = basis > basis[slopeBars]
 gapClosing = basisBelow < basisBelow[slopeBars]
 holding    = close >= basis * (1 - holdTol / 100)
 inZone       = valid and pxBelow > 0 and pxBelow <= maxPxBelow and basisUp and holding
-fastApproach = useFast and close >= basis * (1 + fastAbove / 100) and basisBelow <= maxBasis
+aboveRecent  = math.sum(close >= mvwap ? 1.0 : 0.0, math.max(fromBelow, 1))[1]   // top level, every bar
+fromBelowOk  = fromBelow == 0 or aboveRecent == 0
+fastApproach = useFast and fromBelowOk and close >= basis * (1 + fastAbove / 100) and basisBelow <= maxBasis
 baseForming  = basisBelow > readyBasis and basisBelow <= formBasis
 baseReady    = basisBelow > 0 and basisBelow <= readyBasis
 forming = inZone and gapClosing and (baseForming or (fastApproach and pxBelow <= formPx))
@@ -290,7 +308,10 @@ There are two shapes of the same setup:
 - **Fast** (new in v2): price runs at the line while the basis lags far behind
   (MEDS 09-18, NIVF 09-30). Stages are reached by the **price** distance
   instead. The momentum test is price at least `fastAbove`% over a rising basis,
-  which keeps flat drifts out; in flat chop, price ≈ basis.
+  which keeps flat drifts out; in flat chop, price ≈ basis. Since v4 the
+  previous `fromBelow` (10) closes must also all be under the line. Right after
+  a spike the basis lags far below while price falls back to the line, and v3
+  mistook that for a fast approach (AMOD 2026-09-01).
 
 Each FORMING/READY message says which shape reached it (`path base|fast`, §5.6).
 
@@ -311,7 +332,14 @@ fired READY only after the bounce.
 
 - Each stage fires once per setup, and only forward (`target > stage`).
 - **GO requires an earlier FORMING or READY**, so a vertical spike straight
-  through the VWAP is not reported as this setup.
+  through the VWAP is not reported as this setup. Since v4, "earlier" means
+  the setup is armed now *or* one fired within `goMemory` (60) bars, even if a
+  break came in between. AIXI 2026-10-02 had READY, then a dip under the basis
+  (a break), then one bar straight back over both lines; v4 still gives its GO
+  at 08:12.
+- **The break is now a close 2% under the basis** (and under the VWAP); v1–v3
+  used 3%. It ends a setup that lost its basis, so the reclaim fires a fresh
+  READY (SDEV's after-hours entry, §3).
 - A broken setup re-arms and counts as a new cycle (max 4 per ticker per day).
 - **Outside the alert window (default 04:00–20:00 New York, the whole extended
   session) nothing fires and no stage advances.** At the window's start,
@@ -375,6 +403,8 @@ parser relies on are gone. The parser also accepts:
   recreate the watchlist alert (§10).
 - **Wrapping long expressions:** continuation lines must be indented by a
   number of spaces that is not a multiple of 4 (see `recentGain`).
+- **`math.sum` must stay at the top level** (`aboveRecent`). Inside a lazily
+  evaluated `and`/`or` it would skip bars and miscount.
 
 ### 5.8 Offline replay — score a change before shipping it
 
@@ -647,3 +677,4 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-03 | v1 | `d50ebbe` | First version: month VWAP + BB basis, top-gainer gate (day high ≥ +20%), FORMING / READY / GO stage machine with re-arm (max 3/day), once-per-bar-close alerts; webhook, 📐 tab, `tv_setup` alert kind, Telegram slugs, regression script. |
 | 2026-10-03 | v2 | `dde023d` | The operator's MEDS replay showed v1 missing 09-18 07:00 ET (§3). Added: `runnerDays` (a gainer in the last 2 sessions also qualifies), the fast-approach route (`useFast`, `fastAbove` 3, `formPx` 10, `readyPx` 5, `maxBasis` 15), `alertWin` 04:00–16:00 New York, `maxCycles` 3 → 4, and a `path base|fast` message segment (parsed and stored; a "fast" tag in the UI). Run on 1m **and** 2m. Replay on the six examples: v1 caught 2/6 (1m) and 3/6 (2m) with 4/5 other signals; v2 caught 5/6 (1m, all but NXL) and 6/6 (2m) with 8/9. MEDS is now FORMING 07:01 → READY 07:05 → GO 07:17 on 1m. The offline replay tool was added in `apps/api/scripts/research/vwap-setup/`. |
 | 2026-10-03 | v3 | `88a7093` | The operator asked why AMOD showed nothing around 02:30 UTC+5 (17:30 ET, after hours) (§3). Added `useAhGain`: after hours, the high since today's close also passes the gate (AMOD 10-01: +19.8% day high on TV, +70% after hours). `alertWin` default 0400-1600 → 0400-2000. Message adds `ah ±N%` after hours and writes a negative day high as `-2%` (the parser also reads v1/v2's `+-2%`). AMOD added to the replay as the 7th example. Replay: v3 catches 6/7 on 1m (all but NXL) and 7/7 on 2m, AMOD READY 17:08 / 17:30 ET; other signals 9 / 12 (v2: 8 / 9; the extra are after-hours chop the wider window now reaches). |
+| 2026-10-03 | v4 | see `git log` | Operator: "a setup under the BB basis should not be a signal", plus three ideal setups (NIVF 09-30 18:30, SDEV 10-01 17:40 and 01:40 UTC+5). `holdTol` 2 → 0 (must close at/above the basis); `failPct` 3 → 2 (a basis loss ends the setup; the reclaim is a fresh READY: SDEV after hours 16:34 ET); new `fromBelow` 10 (the fast route needs the previous 10 closes under the line, which blocks spike pull-backs like AMOD 09-01); new `goMemory` 60 (GO after a break: AIXI 08:12, NXL 09:06 on 2m, SOAR 13:40 on 2m); `maxCycles` 4 → 6. Replay grows to 9 targets + 1 negative (SDEV ×2, AMOD-0901). v3 caught 7/9 on 1m and 7/9 on 2m; v4 caught 8/9 (1m, all but NXL) and 8/9 (2m, all but SDEV-AH), so the two alerts together catch 9/9, and the negative is silent on 2m. Other signals: 1m 14 → 23 (re-fired READYs on basis reclaims in chop), 2m 16 → 16. |

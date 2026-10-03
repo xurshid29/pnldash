@@ -1,9 +1,12 @@
 # 📐 VWAP setup — offline replay of the Pine script
 
-`pinesim.py` mirrors `apps/web/src/tv/mvwap-bb-setup.pine` (script v3; `V1`
-and `V2` presets reproduce the earlier versions). `replay.py` scores a script
-version on the examples the setup was defined from, on 1m and 2m bars. There
-are seven now: the six winners plus AMOD's after-hours setup. It shows the first FORMING/READY
+`pinesim.py` mirrors `apps/web/src/tv/mvwap-bb-setup.pine` (script v4; the
+`V1`–`V3` presets reproduce the earlier versions). `replay.py` scores a script
+version on the examples the setup was defined from, on 1m and 2m bars:
+- the six winners;
+- AMOD's after-hours setup;
+- the operator's two "ideal" SDEV setups;
+- one negative that should stay silent (AMOD 09-01, 2m bars only). It shows the first FORMING/READY
 inside the window the operator actually traded ("caught") and counts every
 other FORMING/READY ("noise"). Use it before shipping any change to the
 script's logic or defaults. The full reference is `docs/vwap-setup.md`.
@@ -39,10 +42,14 @@ Yahoo vs +19.8% on TradingView; `TV_ADJUST` in `replay.py` corrects that.
 each condition (gate, distances, slope, holding, zone, fast, stage, window).
 That's how the MEDS and AMOD misses were diagnosed.
 
-**Results on 2026-10-03 (seven examples):**
+**Results on 2026-10-03 (9 targets + 1 negative):**
 
-| | 1m caught | 1m noise | 2m caught | 2m noise |
-|---|---|---|---|---|
-| v1 | 2/7 (AIXI, VEEA) | 4 | 3/7 (+NXL) | 5 |
-| v2 | 5/7 (all but NXL, AMOD) | 8 | 6/7 (all but AMOD) | 9 |
-| v3 | 6/7 (all but NXL) | 9 | 7/7 | 12 |
+| | 1m caught | 1m noise | 2m caught | 2m noise | negative (2m) |
+|---|---|---|---|---|---|
+| v1 | 3/9 | 9 | 3/9 | 9 | silent |
+| v2 | 6/9 | 13 | 6/9 | 12 | silent |
+| v3 | 7/9 | 14 | 7/9 | 16 | 1 signal |
+| v4 | 8/9 (all but NXL) | 23 | 8/9 (all but SDEV-AH) | 16 | silent |
+
+With both alerts (1m + 2m) v4 catches all 9. Its extra 1m signals are fresh
+READYs each time price reclaims the basis during chop.
