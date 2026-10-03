@@ -457,6 +457,39 @@ reproduced). The month VWAP is read off TradingView per example, because
 Yahoo can't build it. Yahoo's 1m bars only reach back ~30 days, so add fresh
 examples (failures too) while they are available. See the folder's README.
 
+### 5.9 Other timeframes (30s, 5m, …)
+
+The script runs on any timeframe, and the webhook and the 📐 tab label any
+interval ("30s", "5m"). Nothing is tied to 1m/2m, but the setup changes with
+the bar size, because these are counted in **bars**, not minutes:
+- the BB basis (20 bars: 10 min on 30s, 20 on 1m, 40 on 2m, 100 on 5m);
+- `slopeBars` 3, `fromBelow` 10, `goWithin` 5 and `goMemory` 60.
+
+The % thresholds were calibrated on 1m/2m charts.
+
+Replay on 5m bars (2026-10-03, v8 defaults; 10 targets):
+
+| | caught | other signals | GO median upside left | GO back under |
+|---|---|---|---|---|
+| 1m | 9/10 | 24 | +15.7% | 2 of 13 |
+| 2m | 9/10 | 16 | +18.7% | 2 of 12 |
+| 5m | 7/10 | 7 | +16.3% | 1 of 8 |
+
+On 5m it's much quieter, but it misses the fast ones (NIVF into the open,
+NXL, SDEV's morning setup): a 5-minute bar is too coarse for them. Shrinking
+the bar counts to match 1m's minutes didn't help (7/10, noisier).
+
+30s can't be replayed (Yahoo has no 30-second bars). Expect a basis that hugs
+price, so more crosses and re-arms, i.e. noisier. The month VWAP may also
+come out shorter late in the month, because a 30s chart holds fewer days, so
+check the yellow line against the built-in "VWAP Month" (§5.7). Whether
+watchlist alerts offer second-based intervals on a given plan is
+TradingView's call; check the alert's interval list.
+
+Premium has two watchlist-alert slots; **1m + 2m together caught 10/10** in
+the replay. For a calmer feed, 2m + 5m is an option. 30s and 5m work fine
+for *viewing* the markers on a chart.
+
 ## 6. TradingView setup (operator steps)
 
 Everything is on the dashboard's **📐 VWAP setups** tab (the **How to** button
