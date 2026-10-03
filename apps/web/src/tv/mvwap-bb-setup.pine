@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v6 (2026-10-03).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v7 (2026-10-03).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // A top gainer pulls back under its month-anchored VWAP while the Bollinger
@@ -22,7 +22,7 @@
 indicator("mVWAP x BB basis setup", shorttitle = "mVWAP-BB", overlay = true)
 
 minDayGain = input.float(20.0, "Gainer: day high at least % above prior close", group = "Top gainer")
-runnerDays = input.int(2,      "…or that in any of the last N sessions (0 = today only)", minval = 0, maxval = 3, group = "Top gainer")
+runnerDays = input.int(3,      "…or that in any of the last N sessions (0 = today only)", minval = 0, maxval = 5, group = "Top gainer")
 useAhGain  = input.bool(true,  "After hours: …or that since today's close", group = "Top gainer")
 maxPxBelow = input.float(15.0, "Price at most % under mVWAP", group = "Setup")
 formBasis  = input.float(10.0, "FORMING: basis at most % under mVWAP", group = "Setup")
@@ -63,14 +63,12 @@ newDay = timeframe.change("D")
 var float lastRegClose = na
 var float prevDayClose = na
 var float dayHigh      = na
-var float gain1        = na   // day-high gain of the last finished session, %
-var float gain2        = na
-var float gain3        = na
+var dayGains = array.new<float>()   // day-high gains of finished sessions, newest first (max 5)
 var float ahHigh       = na   // high since today's close (post-market bars)
 if newDay
-    gain3 := gain2
-    gain2 := gain1
-    gain1 := (dayHigh / prevDayClose - 1) * 100
+    array.unshift(dayGains, (dayHigh / prevDayClose - 1) * 100)
+    if array.size(dayGains) > 5
+        array.pop(dayGains)
     prevDayClose := lastRegClose
     dayHigh      := high
     ahHigh       := na
@@ -82,9 +80,13 @@ if session.ispostmarket
     ahHigh := na(ahHigh) ? high : math.max(ahHigh, high)
 ahGain = session.ispostmarket and not na(ahHigh) ? (ahHigh / lastRegClose - 1) * 100 : na
 dayHighGain = (dayHigh / prevDayClose - 1) * 100
-recentGain  = runnerDays >= 3 ? math.max(nz(gain1, -100), nz(gain2, -100), nz(gain3, -100)) :
-              runnerDays == 2 ? math.max(nz(gain1, -100), nz(gain2, -100)) :
-              runnerDays == 1 ? nz(gain1, -100) : -100.0
+float recentGain = -100.0
+lookback = math.min(runnerDays, array.size(dayGains))
+if lookback > 0
+    for i = 0 to lookback - 1
+        g = array.get(dayGains, i)
+        if not na(g)
+            recentGain := math.max(recentGain, g)
 gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain or
      (useAhGain and not na(ahGain) and ahGain >= minDayGain)
 

@@ -17,7 +17,7 @@ import sys
 import time
 import urllib.request
 
-from pinesim import ET, V1, V2, V3, V4, V5, V6, load, resample, simulate
+from pinesim import ET, V1, V2, V3, V4, V5, V6, V7, load, resample, simulate
 
 DATA = os.environ.get('VWAP_SETUP_DATA', '/tmp/vwap-setup')
 U5 = datetime.timezone(datetime.timedelta(hours=5))   # the operator's clock
@@ -96,6 +96,11 @@ EXAMPLES = [
     ('AMOD-0901', ('2026-08-27', '2026-09-03'), flat((D(9, 1, 15, 58), D(9, 1, 16, 30), 2.94)),
      (D(9, 1, 15, 58), D(9, 1, 16, 30)), None,
      'NEGATIVE: spike to 3.2 then back under the line and the basis'),
+    # 3rd-session runner (operator, 2026-10-03: "why nothing between 13:00-13:20?"): Sep 29 was
+    # +22%, then +5% and +1%; Oct 2 pre-market reclaimed the line 1.25 at 04:21 and ran to 2.26.
+    ('AIXI-1002PM', ('2026-09-25', '2026-10-03'), flat((D(10, 2, 4, 0), D(10, 2, 4, 45), 1.25)),
+     (D(10, 2, 4, 0), D(10, 2, 4, 45)), (D(10, 2, 4, 0), D(10, 2, 4, 21)),
+     'pre-market base under the line, READY ~04:06, GO ~04:21 (needs runnerDays 3)'),
     # Should NOT give GO (operator, 2026-10-03): the 09:38 ET crash bar pulled the 1st-of-month
     # VWAP under a flat basis — a "cross" with price below both lines.
     ('AIXI-1001', ('2026-09-25', '2026-10-03'), None, (D(10, 1, 9, 0), D(10, 1, 10, 30)), None,
@@ -117,7 +122,8 @@ def params_for(ticker, params):
     return {**params, **TV_ADJUST.get(ticker, {})}
 
 
-FILES = {'SDEV-AH': 'sdev_1m.json', 'AMOD-0901': 'amod_sep_2m.json', 'AIXI-1001': 'aixi_1m.json'}   # second windows on the same bars; 2m-only data
+FILES = {'SDEV-AH': 'sdev_1m.json', 'AMOD-0901': 'amod_sep_2m.json', 'AIXI-1001': 'aixi_1m.json',
+         'AIXI-1002PM': 'aixi_1m.json'}   # second windows on the same bars; 2m-only data
 BAR_MINUTES = {'AMOD-0901': 2}
 
 
@@ -198,7 +204,7 @@ def go_report(variants, minutes):
 
 
 if __name__ == '__main__':
-    variants = [('v1', V1), ('v2', V2), ('v3', V3), ('v4', V4), ('v5', V5), ('v6', V6)]
+    variants = [('v1', V1), ('v2', V2), ('v3', V3), ('v4', V4), ('v5', V5), ('v6', V6), ('v7', V7)]
     if len(sys.argv) >= 2 and sys.argv[1] == 'go':
         for minutes in (1, 2):
             go_report(variants[2:], minutes)

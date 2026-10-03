@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v6** (history in §12) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v7** (history in §12) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -147,6 +147,13 @@ of the grading plan (§9).
   on the basis cross left a median +6% (1m) of upside in the next 30 min.
   GOs on a decisive price reclaim left +16%, and only 2 of 12 fell back
   under the line within 10 min. v5 fires GO on whichever comes first.
+- **Third-session runners are runners too** (operator, AIXI 10-02: "why
+  nothing between 13:00–13:20?"). AIXI's +22% day was 09-29, then it went +5%
+  and +1%. Its 10-02 pre-market base under the line (1.25) reclaimed at 04:21
+  ET and ran to 2.26. With a 2-session look-back the gate was shut until 04:55
+  (+20% on the day). With 3 sessions the replay gives READY 04:06 and GO
+  04:21, and adds no noise anywhere else in the replay. v7 defaults to 3
+  (max 5).
 - **Early in a month the line can fall through the basis** (operator, AIXI
   10-01 replay: GO on a crash bar). On the 1st, AIXI's month VWAP rested on a
   few hundred pre-market shares and a ~30K-share opening bar. The 09:38 ET bar
@@ -225,7 +232,7 @@ Grouped as in the script's settings dialog.
 | Group | Input | Default | Meaning | Higher → / Lower → |
 |---|---|---|---|---|
 | Top gainer | `minDayGain` | 20 | Day high vs the prior regular close, % | fewer, stronger names / more names |
-| Top gainer | `runnerDays` | 2 | …or that held in any of the last N sessions (0 = today only, max 3). New in v2 | second- and third-day runners qualify / today's gainers only |
+| Top gainer | `runnerDays` | 3 (v2–v6: 2) | …or that held in any of the last N sessions (0 = today only, max 5). New in v2 | older runners qualify / today's gainers only |
 | Top gainer | `useAhGain` | on | After hours, …or the high since today's close is up `minDayGain`%. New in v3 | — / off = after-hours names need a +20% day too |
 | Setup | `maxPxBelow` | 15 | Price may be at most this % under the month VWAP | deeper pullbacks qualify / only near-the-line setups |
 | Setup | `formBasis` | 10 | Base FORMING when the basis is within this % under the VWAP | earlier heads-up, noisier / later, fewer |
@@ -268,10 +275,8 @@ session is Extended.
 ```pine
 newDay = timeframe.change("D")
 if newDay
-    gain3 := gain2
-    gain2 := gain1
-    gain1 := (dayHigh / prevDayClose - 1) * 100   // the session that just ended
-    prevDayClose := lastRegClose                   // the last regular-session close of the prior day
+    array.unshift(dayGains, (dayHigh / prevDayClose - 1) * 100)   // the session that just ended (newest first, keep 5)
+    prevDayClose := lastRegClose                                   // the last regular-session close of the prior day
     dayHigh      := high
 else
     dayHigh := na(dayHigh) ? high : math.max(dayHigh, high)
@@ -282,7 +287,7 @@ if session.ispostmarket
     ahHigh := na(ahHigh) ? high : math.max(ahHigh, high)       // reset with the day
 ahGain = session.ispostmarket and not na(ahHigh) ? (ahHigh / lastRegClose - 1) * 100 : na
 gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain or
-     (useAhGain and not na(ahGain) and ahGain >= minDayGain)   // recentGain = max of gain1..N
+     (useAhGain and not na(ahGain) and ahGain >= minDayGain)   // recentGain = max of the newest runnerDays entries
 ```
 
 A second- or third-day runner sets up *before* it is up on the day. MEDS on
@@ -710,3 +715,4 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-03 | v4 | `3c0076a` | Operator: "a setup under the BB basis should not be a signal", plus three ideal setups (NIVF 09-30 18:30, SDEV 10-01 17:40 and 01:40 UTC+5). `holdTol` 2 → 0 (must close at/above the basis); `failPct` 3 → 2 (a basis loss ends the setup; the reclaim is a fresh READY: SDEV after hours 16:34 ET); new `fromBelow` 10 (the fast route needs the previous 10 closes under the line, which blocks spike pull-backs like AMOD 09-01); new `goMemory` 60 (GO after a break: AIXI 08:12, NXL 09:06 on 2m, SOAR 13:40 on 2m); `maxCycles` 4 → 6. Replay grows to 9 targets + 1 negative (SDEV ×2, AMOD-0901). v3 caught 7/9 on 1m and 7/9 on 2m; v4 caught 8/9 (1m, all but NXL) and 8/9 (2m, all but SDEV-AH), so the two alerts together catch 9/9, and the negative is silent on 2m. Other signals: 1m 14 → 23 (re-fired READYs on basis reclaims in chop), 2m 16 → 16. |
 | 2026-10-03 | v5 | `c4a15a3` | Operator: "GO is not accurate" (NIVF 1m: GO at 09:38 ET, near the top of the spike). New `goOn` (Either / Price reclaim / Basis cross, default Either), `goAbovePct` 2, `goWithin` 5. GO now fires on a decisive price reclaim (close ≥2% above the line, at/under it within 5 bars, basis rising) or the basis cross, whichever comes first. The message adds `via reclaim|cross`; it is stored as `go_via`, and Telegram and the notification say which. FORMING/READY are unchanged from v4. Replay GO quality (`python3 replay.py go`): v4 → v5 median upside left over the next 30 min +5.9% → +15.7% (1m) and +11.6% → +18.7% (2m); fell back under the line within 10 min 1 → 2 (1m) and 0 → 2 (2m: AIXI's rejected first push, a MEDS after-hours poke). NIVF GO 18:38 → 18:31 UTC+5 (2m 18:42 → 18:30). |
 | 2026-10-03 | v6 | `17f70ab` | Operator: "this one also is not accurate" (AIXI 10-01 1m: GO on the 09:38 ET crash bar). The month-start line, built on thin volume, fell under a flat basis on one 26K-share red bar, and v5 counted that as the basis crossing above it. v6: the cross needs `basisUp` (`crossOk`), and no GO prints on a bar that closes below the previous close. Replay: GOs unchanged except NXL 09:06 on 2m (NXL keeps its 09:12 reclaim GO). The replica gained `python3 pinesim.py`, a synthetic crash test: v5 gives GO, v6 doesn't. AIXI-1001 was added as a should-not-fire replay case (its pre-market line is approximated, since Yahoo has no pre-market volume). |
+| 2026-10-03 | v7 | see `git log` | Operator: "why nothing between 13:00–13:20?" (AIXI 10-02 pre-market). AIXI was a third-session runner (+22% on 09-29), so the 2-session look-back kept the gate shut. `runnerDays` default 2 → 3, max 3 → 5; the gains now live in a 5-entry array instead of gain1..3. Replay with the new AIXI-1002PM case: v6 caught 8/10 on 1m and 8/10 on 2m, v7 caught 9/10 on both (READY 04:06 / 04:08 ET, GO 04:21). Other signals unchanged (24 / 16). |

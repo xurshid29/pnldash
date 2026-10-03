@@ -1,12 +1,14 @@
 # 📐 VWAP setup — offline replay of the Pine script
 
-`pinesim.py` mirrors `apps/web/src/tv/mvwap-bb-setup.pine` (script v6; the
-`V1`–`V5` presets reproduce the earlier versions). `replay.py` scores a script
+`pinesim.py` mirrors `apps/web/src/tv/mvwap-bb-setup.pine` (script v7; the
+`V1`–`V6` presets reproduce the earlier versions). `replay.py` scores a script
 version on the examples the setup was defined from, on 1m and 2m bars:
 - the six winners;
 - AMOD's after-hours setup;
 - the operator's two "ideal" SDEV setups;
-- one negative that should stay silent (AMOD 09-01, 2m bars only). It shows the first FORMING/READY
+- AIXI's 10-02 pre-market setup (a third-session runner);
+- two negatives that should stay silent: AMOD 09-01 (2m bars only) and
+  AIXI's 10-01 opening crash. It shows the first FORMING/READY
 inside the window the operator actually traded ("caught") and counts every
 other FORMING/READY ("noise"). Use it before shipping any change to the
 script's logic or defaults. The full reference is `docs/vwap-setup.md`.

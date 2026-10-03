@@ -1,4 +1,4 @@
-"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v6).
+"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v7).
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -17,7 +17,7 @@ import json
 ET = datetime.timezone(datetime.timedelta(hours=-4))   # EDT; fine for Sep–Oct examples
 
 # Script inputs, same names and defaults as the .pine file (fromBelowBars = the script's `fromBelow`).
-V6 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
+V7 = dict(minDayGain=20.0, runnerDays=3, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
           holdTol=0.0, failPct=2.0, slopeBars=3, useFast=True, fastAbove=3.0, formPx=10.0, readyPx=5.0,
           maxBasis=15.0, maxCycles=6, window=(240, 1200),  # alert window in ET minutes [04:00, 20:00); None = always
           fromBelowBars=10,  # fast route only if every close of the previous N bars was under the line (0 = off)
@@ -30,7 +30,8 @@ V6 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBa
           crossRule='rising',  # extra test on a basis-cross GO: 'none' (v5) | 'rising' (basis rising, v6) |
                                # 'rising_up' (rising, close >= previous close) | 'full' (rising, close above line and basis)
           goNotFalling=True)   # v6: no GO of either kind on a bar that closes below the previous close
-# Earlier versions: V6 with the newer parts switched off / older defaults.
+# Earlier versions: V7 with the newer parts switched off / older defaults.
+V6 = dict(V7, runnerDays=2)
 V5 = dict(V6, crossRule='none', goNotFalling=False)
 V4 = dict(V5, goOn='basis', goAbovePct=0.0, goWithin=1)
 V3 = dict(V4, holdTol=2.0, failPct=3.0, maxCycles=4, fromBelowBars=0, goMemory=0)
@@ -75,7 +76,7 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
     """Run the stage machine. mvwap_of(bar) → month VWAP or None (no signal on that bar).
     Returns fired events: (time, stage, path, close, basis, px_below %, basis_below %, day-high gain %).
     trace(dict) — optional, called on every bar with each condition (the "why didn't it fire" tool)."""
-    p = {**V6, **(params or {})}
+    p = {**V7, **(params or {})}
     closes, basis_hist, bbelow_hist, gains, mv_hist = [], [], [], [], []
     last_reg = prev_close = day_high = cur_day = ah_high = None
     stage = cycles = under_basis = 0

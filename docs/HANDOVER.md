@@ -53,7 +53,7 @@ parking), disk 26%.
 5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
    detected by TradingView (we can't compute a month VWAP with pre-market
    volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine`
-   (**v6**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
+   (**v7**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
    posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
    a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
    event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
@@ -134,6 +134,12 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-03 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-03 (late night) — 📐 SCRIPT v7.** "Why nothing between
+13:00–13:20?" (AIXI 10-02 pre-market): AIXI was a third-session runner
+(+22% on 09-29, then +5%, +1%), outside the 2-session look-back, so the gate
+was shut. `runnerDays` default 2 → 3 (max 5, now a 5-entry array). Replay:
+READY 04:06, GO 04:21 ET; no added noise.
 
 **2026-10-03 (late night) — 📐 SCRIPT v6.** The operator found a GO on AIXI's
 10-01 opening crash bar. Early in the month the line rests on thin volume,
