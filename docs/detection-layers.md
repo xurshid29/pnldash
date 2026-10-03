@@ -526,7 +526,7 @@ In one paragraph: a session top gainer pulls back under its month-anchored
 VWAP while the BB basis (SMA 20) curls up beneath it. We can't draw that line
 ourselves (it needs the month's pre-market volume, and Yahoo's extended-hours
 bars carry zero volume), so a Pine v6 script
-(`apps/web/src/tv/mvwap-bb-setup.pine`, v2) runs as two TradingView watchlist
+(`apps/web/src/tv/mvwap-bb-setup.pine`, v3) runs as two TradingView watchlist
 alerts (1m and 2m) and posts FORMING → READY → GO to `POST /api/tv/webhook`. Each signal is a
 `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert` event
 (toast + sound), a 📐 row badge, a row in the 📐 VWAP setups tab, and a

@@ -1,4 +1,4 @@
-"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v2).
+"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v3).
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -17,10 +17,11 @@ import json
 ET = datetime.timezone(datetime.timedelta(hours=-4))   # EDT; fine for Sep–Oct examples
 
 # Script inputs, same names and defaults as the .pine file.
-V2 = dict(minDayGain=20.0, runnerDays=2, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0, holdTol=2.0,
-          failPct=3.0, slopeBars=3, useFast=True, fastAbove=3.0, formPx=10.0, readyPx=5.0, maxBasis=15.0,
-          maxCycles=4, window=(240, 960))   # alert window in ET minutes [04:00, 16:00); None = always
-# Script v1 is v2 with the new parts switched off.
+V3 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
+          holdTol=2.0, failPct=3.0, slopeBars=3, useFast=True, fastAbove=3.0, formPx=10.0, readyPx=5.0,
+          maxBasis=15.0, maxCycles=4, window=(240, 1200))  # alert window in ET minutes [04:00, 20:00); None = always
+# Earlier versions are V3 with the newer parts switched off.
+V2 = dict(V3, useAhGain=False, window=(240, 960))
 V1 = dict(V2, runnerDays=0, useFast=False, maxCycles=3, window=None)
 
 
@@ -57,12 +58,13 @@ def is_market(t):
     return 570 <= m < 960
 
 
-def simulate(bars, mvwap_of, params=None, start=None, end=None):
+def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
     """Run the stage machine. mvwap_of(bar) → month VWAP or None (no signal on that bar).
-    Returns fired events: (time, stage, path, close, basis, px_below %, basis_below %, day-high gain %)."""
-    p = {**V2, **(params or {})}
+    Returns fired events: (time, stage, path, close, basis, px_below %, basis_below %, day-high gain %).
+    trace(dict) — optional, called on every bar with each condition (the "why didn't it fire" tool)."""
+    p = {**V3, **(params or {})}
     closes, basis_hist, bbelow_hist, gains = [], [], [], []
-    last_reg = prev_close = day_high = cur_day = None
+    last_reg = prev_close = day_high = cur_day = ah_high = None
     stage = cycles = 0
     prev_basis = prev_mv = None
     fired = []
@@ -75,14 +77,20 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None):
         if new_day:
             if day_high is not None and prev_close:
                 gains.append((day_high / prev_close - 1) * 100)       # gain1..3 in the script
-            cur_day, prev_close, day_high = t.date(), last_reg, b['h']
+            cur_day, prev_close, day_high, ah_high = t.date(), last_reg, b['h'], None
         else:
             day_high = max(day_high, b['h'])
         if is_market(t):
             last_reg = c
+        post = t.hour >= 16
+        if post:
+            ah_high = b['h'] if ah_high is None else max(ah_high, b['h'])
+        # after hours, "top gainer" = the move since today's close (Finviz's AH change)
+        ah_gain = (ah_high / last_reg - 1) * 100 if (post and ah_high is not None and last_reg) else None
         gain = (day_high / prev_close - 1) * 100 if prev_close else None
         recent = max(gains[-p['runnerDays']:]) if p['runnerDays'] > 0 and gains else None
-        gainer = (gain is not None and gain >= p['minDayGain']) or (recent is not None and recent >= p['minDayGain'])
+        gainer = ((gain is not None and gain >= p['minDayGain']) or (recent is not None and recent >= p['minDayGain'])
+                  or (p['useAhGain'] and ah_gain is not None and ah_gain >= p['minDayGain']))
         valid = gainer and mv is not None and basis is not None
         px_below = (mv - c) / mv * 100 if mv and basis else None
         b_below = (mv - basis) / mv * 100 if mv and basis else None
@@ -115,5 +123,10 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None):
             stage = target
             path = '' if target == 3 else ('base' if (base_ready if target == 2 else base_forming) else 'fast')
             fired.append((t, ['', 'FORMING', 'READY', 'GO'][target], path, c, basis, px_below, b_below, gain))
+        if trace:
+            trace(dict(t=t, c=c, basis=basis, mv=mv, px_below=px_below, b_below=b_below, gain=gain, recent=recent, ah_gain=ah_gain,
+                       gainer=gainer, basis_up=basis_up, gap_closing=gap_closing, holding=holding, in_zone=in_zone,
+                       fast=fast, forming=forming, ready=ready, go=go, in_window=in_window, stage=stage,
+                       cycles=cycles, fired=fired[-1][1] if fire else ''))
         prev_basis, prev_mv = basis, mv
     return [e for e in fired if (start is None or e[0] >= start) and (end is None or e[0] <= end)]

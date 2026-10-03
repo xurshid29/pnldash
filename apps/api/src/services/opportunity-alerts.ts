@@ -46,6 +46,7 @@ export interface TvSetupInfo {
   basis: number | null;
   basis_pct: number | null;   // BB basis vs mVWAP, %
   day_gain: number | null;    // day high vs prior close, %
+  ah_gain: number | null;     // after hours: high since today's close, % (script v3+)
   tf: string | null;
   path: TvPath | null;        // 'base' | 'fast' — which shape reached FORMING/READY (script v2+)
   on_screen: boolean;         // on our Momentum screen at the signal

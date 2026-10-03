@@ -32,6 +32,13 @@ console.log('Parse — the Pine alert() message');
   check('v2 fast path', fast?.path === 'fast' && fast.basis_pct === -11.5 && fast.day_gain === 0 && fast.tf === '1', JSON.stringify(fast));
   const base = parseTvMessage('FORMING VEEA 2.94 | mVWAP 3.06 (-4.0%) | basis 2.89 (-5.7%) | day high +101% | tf 2 | path base');
   check('v2 base path', base?.path === 'base' && base.stage === 'forming', JSON.stringify(base));
+  const ah = parseTvMessage('READY AMOD 1.38 | mVWAP 1.42 (-2.5%) | basis 1.35 (-4.6%) | day high +20% | ah +34% | tf 1 | path base');
+  check('v3 after-hours gain', ah?.ah_gain === 34 && ah.day_gain === 20 && ah.path === 'base' && ah.tf === '1', JSON.stringify(ah));
+  check('no after-hours gain outside after hours', fast?.ah_gain === null, JSON.stringify(fast));
+  const neg = parseTvMessage('FORMING MEDS 4.47 | mVWAP 4.94 (-9.5%) | basis 4.31 (-12.8%) | day high -2% | tf 1 | path fast');
+  check('v3 negative day high', neg?.day_gain === -2, JSON.stringify(neg));
+  const legacyNeg = parseTvMessage('FORMING MEDS 4.47 | mVWAP 4.94 (-9.5%) | basis 4.31 (-12.8%) | day high +-2% | tf 1 | path fast');
+  check('v1/v2 "+-2%" reads as -2', legacyNeg?.day_gain === -2, JSON.stringify(legacyNeg));
 }
 
 console.log('Parse — fallbacks and JSON');
@@ -61,7 +68,7 @@ console.log('Gate — duplicates, other timeframes, flood');
 {
   const T0 = 1_790_000_000;
   const sig = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
-    stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, tf: '1', path: 'base', ...over,
+    stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, ah_gain: null, tf: '1', path: 'base', ...over,
   });
   const g = new TvSetupGate();
   check('first READY notifies', g.admit(sig(), T0) === 'notify');
@@ -82,7 +89,7 @@ console.log('Gate — duplicates, other timeframes, flood');
 console.log('Telegram format');
 {
   const html = formatTvSetupAlert(
-    { stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, tf: '1', path: 'fast' },
+    { stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, ah_gain: 34, tf: '1', path: 'fast' },
     'NASDAQ:AIXI',
     { change_pct: 21.8, grade: 'B+', float_m: 3.2 },
   );
@@ -91,7 +98,8 @@ console.log('Telegram format');
   check('context line', html.includes('day high +41%') && html.includes('now +21.8%') && html.includes('grade B+') && html.includes('tf 1'), html);
   check('chart link is exchange-qualified', html.includes('symbol=NASDAQ%3AAIXI'), html);
   check('fast path is named in the hint', html.includes('fast approach'), html);
-  const bare = formatTvSetupAlert({ stage: 'go', ticker: 'NXL', price: null, mvwap: null, px_pct: null, basis: null, basis_pct: null, day_gain: null, tf: null, path: null }, 'NXL', null);
+  check('after-hours gain shown', html.includes('after hours +34%'), html);
+  const bare = formatTvSetupAlert({ stage: 'go', ticker: 'NXL', price: null, mvwap: null, px_pct: null, basis: null, basis_pct: null, day_gain: null, ah_gain: null, tf: null, path: null }, 'NXL', null);
   check('fallback message renders without levels', bare.includes('<b>GO</b>') && !bare.includes('mVWAP $') && !bare.includes('undefined') && !bare.includes('null'), bare);
 }
 
@@ -99,7 +107,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const pine = readFileSync(resolve(here, '../../web/src/tv/mvwap-bb-setup.pine'), 'utf8');
-  for (const part of ['" | mVWAP "', '" | basis "', '" | day high +"', '" | tf "', '" | path "', '"base"', '"fast"', '"FORMING"', '"READY"', '"GO"']) {
+  for (const part of ['" | mVWAP "', '" | basis "', '" | day high "', '" | ah "', '" | tf "', '" | path "', '"base"', '"fast"', '"FORMING"', '"READY"', '"GO"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

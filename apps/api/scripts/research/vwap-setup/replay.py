@@ -1,7 +1,7 @@
-"""Score the 📐 VWAP-setup script on the six examples it was built from.
+"""Score the 📐 VWAP-setup script on the examples it was built from.
 
-  python3 replay.py              # scorecard: v1 vs v2 on 1m and 2m
-  python3 replay.py MEDS 1       # every signal for one example (1m), v1 and v2
+  python3 replay.py              # scorecard: v1 vs v2 vs v3 on 1m and 2m
+  python3 replay.py MEDS 1       # every signal for one example (1m), per version
 
 A FORMING/READY inside the example's real entry window = caught; every other
 FORMING/READY in the report window = noise. Bars come from Yahoo (1m reaches
@@ -16,7 +16,7 @@ import sys
 import time
 import urllib.request
 
-from pinesim import ET, V1, V2, load, resample, simulate
+from pinesim import ET, V1, V2, V3, load, resample, simulate
 
 DATA = os.environ.get('VWAP_SETUP_DATA', '/tmp/vwap-setup')
 U5 = datetime.timezone(datetime.timedelta(hours=5))   # the operator's clock
@@ -58,7 +58,22 @@ EXAMPLES = [
     ('SOAR', ('2026-09-24', '2026-09-30'), flat((D(9, 29, 4, 0), D(9, 29, 15, 30), 0.336)),
      (D(9, 29, 4, 0), D(9, 29, 15, 30)), (D(9, 29, 10, 0), D(9, 29, 13, 30)),
      '2nd-day runner: chop, then the base that ran to 0.42 by 15:30'),
+    # Added 2026-10-03 from the operator's question "why nothing around 02:30?" (UTC+5):
+    # fell 24% on the day (+19.8% day high on TV), then +70% after hours from 1.19.
+    ('AMOD', ('2026-09-25', '2026-10-03'), flat((D(10, 1, 16, 0), D(10, 1, 18, 40), 1.415)),
+     (D(10, 1, 16, 0), D(10, 1, 18, 40)), (D(10, 1, 16, 50), D(10, 1, 17, 40)),
+     'after-hours base under the line 17:00-17:35, GO 17:43, then 2.10'),
 ]
+
+
+# Where Yahoo's bars sit on the other side of a gate than TradingView's do.
+# AMOD 10-01: Yahoo's high 1.88 = +20.1% vs the prior close; the operator's TV
+# chart peaked ~1.875 = +19.8%, under the 20% line. Nudge the gate to match TV.
+TV_ADJUST = {'AMOD': {'minDayGain': 20.2}}
+
+
+def params_for(ticker, params):
+    return {**params, **TV_ADJUST.get(ticker, {})}
 
 
 def bars_for(ticker, rng, minutes):
@@ -88,7 +103,8 @@ def scorecard(variants, minutes):
     for name, params in variants:
         cells, caught, noise = [], 0, 0
         for tk, rng, mv, (s, e), (a, z), _ in EXAMPLES:
-            ev = [x for x in simulate(bars_for(tk, rng, minutes), mv, params, start=s, end=e) if x[1] != 'GO']
+            ev = [x for x in simulate(bars_for(tk, rng, minutes), mv, params_for(tk, params), start=s, end=e)
+                  if x[1] != 'GO']
             hit = [x for x in ev if a <= x[0] <= z]
             other = len(ev) - len(hit)
             caught += bool(hit); noise += other
@@ -97,7 +113,7 @@ def scorecard(variants, minutes):
 
 
 if __name__ == '__main__':
-    variants = [('v1', V1), ('v2', V2)]
+    variants = [('v1', V1), ('v2', V2), ('v3', V3)]
     if len(sys.argv) >= 2:
         tk = sys.argv[1].upper()
         minutes = int(sys.argv[2]) if len(sys.argv) > 2 else 1
@@ -106,7 +122,7 @@ if __name__ == '__main__':
                 print(f"{t} {minutes}m — {note}")
                 for name, params in variants:
                     print(f"  {name}:")
-                    show(simulate(bars_for(t, rng, minutes), mv, params, start=s, end=e))
+                    show(simulate(bars_for(t, rng, minutes), mv, params_for(t, params), start=s, end=e))
     else:
         for minutes in (1, 2):
             scorecard(variants, minutes)

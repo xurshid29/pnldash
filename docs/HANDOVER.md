@@ -53,7 +53,7 @@ parking), disk 26%.
 5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
    detected by TradingView (we can't compute a month VWAP with pre-market
    volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine`
-   (**v2**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
+   (**v3**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
    posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
    a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
    event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
@@ -134,6 +134,17 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-03 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-03 (evening) — 📐 SCRIPT v3.** The operator asked why AMOD showed
+nothing around 02:30 UTC+5 (17:30 ET, after hours). AMOD fell 24% on 10-01,
+then ran +70% after hours. Its day high vs the prior close was +19.8% on
+TradingView's bars (Yahoo's say +20.1%), so the 20% gate stayed shut. v3 adds
+`useAhGain`: after hours, the high since today's close also counts, like
+Finviz's AH change. The alert window default becomes 04:00–20:00 (the operator
+had set 0015-2345 by hand; the field is New York time). The message gains
+`ah ±N%` and writes negative day highs properly. Replay with AMOD as the 7th
+example: v3 catches 6/7 (1m) and 7/7 (2m); AMOD READY 17:08 / 17:30 ET.
+The replica gained a `trace=` hook for "why didn't it fire" questions.
 
 **2026-10-03 (later) — 📐 SCRIPT v2.** The operator replayed v1 on MEDS (1m)
 and it missed the 09-18 07:00 ET move. Diagnosis with an offline replica of the

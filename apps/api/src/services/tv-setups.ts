@@ -36,6 +36,7 @@ export interface TvSetupSignal {
   basis: number | null;
   basis_pct: number | null;   // BB basis vs mVWAP, %
   day_gain: number | null;    // day high vs the prior close, %
+  ah_gain: number | null;     // after hours only (script v3+): high since today's close, %
   tf: string | null;          // TradingView interval: "1", "2", "30S", …
   path: TvPath | null;
 }
@@ -72,6 +73,7 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     basis: toNum(o.basis),
     basis_pct: toNum(o.basis_pct),
     day_gain: toNum(o.day_gain),
+    ah_gain: toNum(o.ah_gain),
     tf: typeof o.tf === 'string' || typeof o.tf === 'number' ? String(o.tf) : null,
     path: toPath(o.path),
   };
@@ -82,8 +84,10 @@ function toPath(v: unknown): TvPath | null {
   return p === 'base' || p === 'fast' ? p : null;
 }
 
-// The Pine script's alert() message (v2 appends the path on FORMING/READY):
+// The Pine script's alert() message (v2 appends the path on FORMING/READY;
+// v3 adds the after-hours gain and writes a negative day high as "-2%"):
 //   READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base
+//   READY AMOD 1.38 | mVWAP 1.42 (-2.5%) | basis 1.35 (-4.6%) | day high +20% | ah +34% | tf 1 | path base
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -106,7 +110,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const line = (label: string) => new RegExp(`${label}\\s+\\$?(\\d*\\.?\\d+)\\s*\\(\\s*([-+]?\\d*\\.?\\d+)\\s*%\\s*\\)`, 'i').exec(text);
   const mv = line('mVWAP');
   const bb = line('basis');
-  const day = /day\s+high\s+([-+]?\d*\.?\d+)\s*%/i.exec(text);
+  const day = /day\s+high\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);   // v1/v2 wrote "+-2%" for a negative day
+  const ah = /\bah\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const tf = /\btf\s+([0-9A-Za-z]+)/i.exec(text);
   const path = /\bpath\s+(base|fast)\b/i.exec(text);
   return {
@@ -118,6 +123,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     basis: toNum(bb?.[1]),
     basis_pct: toNum(bb?.[2]),
     day_gain: toNum(day?.[1]),
+    ah_gain: toNum(ah?.[1]),
     tf: tf?.[1] ?? null,
     path: toPath(path?.[1]),
   };
@@ -184,7 +190,8 @@ export function formatTvSetupAlert(
   if (sig.basis != null) lvl.push(`basis ${fmtPx(sig.basis)} (${fmtSigned(sig.basis_pct)})`);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
   const ctx: string[] = [];
-  if (sig.day_gain != null) ctx.push(`day high +${Math.round(sig.day_gain)}%`);
+  if (sig.day_gain != null) ctx.push(`day high ${fmtSigned(Math.round(sig.day_gain)).replace('.0%', '%')}`);
+  if (sig.ah_gain != null) ctx.push(`after hours ${fmtSigned(Math.round(sig.ah_gain)).replace('.0%', '%')}`);
   if (row?.change_pct != null) ctx.push(`now ${fmtSigned(row.change_pct)}`);
   if (row?.grade) ctx.push(`grade ${escapeHtml(row.grade)}`);
   if (row?.float_m != null) ctx.push(`float ${row.float_m.toFixed(1)}M`);

@@ -215,7 +215,8 @@ export function opportunityBody(a: OpportunityAlert): string {
     const bits = [fmtAlertPrice(a.price)];
     if (s.mvwap != null) bits.push(`mVWAP ${fmtAlertPrice(s.mvwap)}`);
     if (s.basis != null) bits.push(`basis ${fmtAlertPrice(s.basis)}`);
-    if (s.day_gain != null) bits.push(`day high +${Math.round(s.day_gain)}%`);
+    if (s.day_gain != null) bits.push(`day high ${s.day_gain >= 0 ? '+' : ''}${Math.round(s.day_gain)}%`);
+    if (s.ah_gain != null) bits.push(`after hours +${Math.round(s.ah_gain)}%`);
     if (a.grade) bits.push(`grade ${a.grade}`);
     if (s.tf) bits.push(`tf ${s.tf}`);
     return bits.filter(Boolean).join(' · ');

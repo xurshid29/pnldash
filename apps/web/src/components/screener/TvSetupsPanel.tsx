@@ -142,7 +142,12 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
           {fmtPrice(g.latest.price)}{' '}
           <Text type="secondary" style={{ fontSize: 11 }}>{tvLevelsText(g.latest.setup)}</Text>
           {g.latest.setup.day_gain != null && (
-            <Text type="secondary" style={{ fontSize: 10, marginLeft: 6 }}>day high +{Math.round(g.latest.setup.day_gain)}%</Text>
+            <Text type="secondary" style={{ fontSize: 10, marginLeft: 6 }}>
+              day high {g.latest.setup.day_gain >= 0 ? '+' : '\u2212'}{Math.abs(Math.round(g.latest.setup.day_gain))}%
+            </Text>
+          )}
+          {g.latest.setup.ah_gain != null && (
+            <Text type="secondary" style={{ fontSize: 10, marginLeft: 6 }}>after hours +{Math.round(g.latest.setup.ah_gain)}%</Text>
           )}
         </span>
       ),

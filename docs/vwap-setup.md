@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v2** (v1 shipped 2026-10-03 `d50ebbe`) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v3** (history in §12) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -119,6 +119,13 @@ of the grading plan (§9).
   gate off and widening the bands only reached 4/6 with ~2× the noise, and it
   still missed MEDS: earlier pre-market signals used up the day's setups first.
   That's why v2 changed the logic rather than the settings (§5, §12).
+- **After hours, "top gainer" means the move since today's close** (found
+  2026-10-03 on AMOD: "why nothing around 02:30?", i.e. 17:30 ET). AMOD fell
+  24% on 10-01 (1.565 → 1.19), then ran +70% after hours. Its day high vs the
+  prior close was +19.8% on TradingView's bars, just under the 20% gate, so v2
+  never armed. The after-hours base under the line (17:00–17:35 ET) was the
+  setup, with GO at 17:43 and then 2.10. Finviz and our own screen measure
+  after-hours moves against today's close, so v3 does too.
 - **The timeframe changes which setups exist.** On 1m, NXL's 20-bar basis was
   already *above* the line during its 09:00–09:08 pullback (a 20-minute mean
   that still remembered the run to 7.7). On the operator's 2m chart, the
@@ -189,6 +196,7 @@ Grouped as in the script's settings dialog.
 |---|---|---|---|---|
 | Top gainer | `minDayGain` | 20 | Day high vs the prior regular close, % | fewer, stronger names / more names |
 | Top gainer | `runnerDays` | 2 | …or that held in any of the last N sessions (0 = today only, max 3). New in v2 | second- and third-day runners qualify / today's gainers only |
+| Top gainer | `useAhGain` | on | After hours, …or the high since today's close is up `minDayGain`%. New in v3 | — / off = after-hours names need a +20% day too |
 | Setup | `maxPxBelow` | 15 | Price may be at most this % under the month VWAP | deeper pullbacks qualify / only near-the-line setups |
 | Setup | `formBasis` | 10 | Base FORMING when the basis is within this % under the VWAP | earlier heads-up, noisier / later, fewer |
 | Setup | `readyBasis` | 6 | Base READY when the basis is within this % (the operator's "5–6%") | earlier entries / tighter, later |
@@ -201,7 +209,7 @@ Grouped as in the script's settings dialog.
 | Fast approach | `readyPx` | 5 | Fast READY when price is within this % | earlier, more failed tests / later, closer to the line |
 | Fast approach | `maxBasis` | 15 | …while the basis is at most this % under the VWAP | catches steeper ramps / only moderate lag |
 | Alerts | `maxCycles` | 4 (v1: 3) | Max setups per ticker per day (re-arms included) | later setups survive early chop / fewer repeats |
-| Alerts | `alertWin` | 0400-1600 | New York time window in which stages can fire. New in v2 | — / e.g. 0600-1600 drops early pre-market chop |
+| Alerts | `alertWin` | 0400-2000 (v2: 0400-1600) | **New York time** window in which stages can fire — the whole extended session. New in v2 | — / e.g. 0600-1600 drops early pre-market chop and after-hours pings |
 
 **The timeframe changes what the basis means.** The basis is a 20-bar SMA: 20
 minutes on a 1m chart, 40 on 2m, 10 on 30s. The operator's "5–6%" came from 2m
@@ -235,12 +243,20 @@ else
 if session.ismarket
     lastRegClose := close
 dayHighGain = (dayHigh / prevDayClose - 1) * 100
-gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain   // recentGain = max of gain1..N
+if session.ispostmarket
+    ahHigh := na(ahHigh) ? high : math.max(ahHigh, high)       // reset with the day
+ahGain = session.ispostmarket and not na(ahHigh) ? (ahHigh / lastRegClose - 1) * 100 : na
+gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain or
+     (useAhGain and not na(ahGain) and ahGain >= minDayGain)   // recentGain = max of gain1..N
 ```
 
 A second- or third-day runner sets up *before* it is up on the day. MEDS on
 09-18 was −2% until its move began, but +655% two sessions earlier. The
 lookback needs those sessions loaded on the chart; on 1m and 2m they are.
+After hours (v3), the high since today's regular close also counts, which is
+the same reference as Finviz's AH change. AMOD 10-01 qualified that way.
+Because the base gate is a hard 20% line, the data feed matters near the edge:
+Yahoo's bars put AMOD at +20.1% and TradingView's at +19.8%.
 
 The prior close is tracked from the last regular-session bar rather than
 `request.security("D", close[1])`, because during pre-market the daily series'
@@ -297,10 +313,12 @@ fired READY only after the bounce.
 - **GO requires an earlier FORMING or READY**, so a vertical spike straight
   through the VWAP is not reported as this setup.
 - A broken setup re-arms and counts as a new cycle (max 4 per ticker per day).
-- **Outside the alert window (04:00–16:00 New York) nothing fires and no stage
-  advances.** At the window's start, conditions fire fresh. Breaks still
-  re-arm outside it. This keeps after-hours chop from pinging the operator at
-  night (UTC+5).
+- **Outside the alert window (default 04:00–20:00 New York, the whole extended
+  session) nothing fires and no stage advances.** At the window's start,
+  conditions fire fresh, and breaks still re-arm outside it. v2's default was
+  04:00–16:00 to keep after-hours pings off the operator's night (UTC+5); the
+  operator wants after-hours setups, so v3 opens it. The field is **New York
+  time**, not UTC+5.
 - On fire, the script sends the alert message and plots a marker (orange
   circle = FORMING, yellow triangle = READY, green "GO" label). Bar replay on
   past days therefore shows exactly where it would have fired.
@@ -309,12 +327,16 @@ fired READY only after the bounce.
 
 ```
 READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base
+READY AMOD 1.38 | mVWAP 1.42 (-2.5%) | basis 1.35 (-4.6%) | day high +20% | ah +34% | tf 1 | path base
 ```
 
 `stage ticker close | mVWAP <value> (<price vs VWAP %>) | basis <value> (<basis
-vs VWAP %>) | day high +<gain>% | tf <timeframe.period> | path <base|fast>`.
-The `path` segment is new in v2 and only on FORMING/READY, so v1 messages
-still parse (`path` = null). It is built with
+vs VWAP %>) | day high <±gain>% [| ah <±gain>%] | tf <timeframe.period> | path <base|fast>`.
+- `path` (v2) appears only on FORMING/READY.
+- `ah` (v3) appears only after hours.
+- v3 writes a negative day high as `-2%`; v1/v2 wrote `+-2%`, which the parser
+  also reads.
+- Older messages still parse; missing parts become null. It is built with
 `str.tostring(x, format.mintick)`, which keeps sub-dollar precision (0.1259).
 It is sent with `alert(msg, alert.freq_once_per_bar_close)`, so it arrives at
 the bar close: up to 60 s after the condition on a 1m chart.
@@ -435,8 +457,8 @@ TradingView servers                                   pnldash droplet
 ### 7.3 What gets stored — `tier_events` row (tier `alert`, event `tv_setup`)
 
 `meta`: `id`, `at`, `stage` (forming/ready/go), `price`, `mvwap`, `px_pct`,
-`basis`, `basis_pct`, `day_gain`, `tf`, `path` (v2: `base` / `fast`) — all
-as TradingView reported them —
+`basis`, `basis_pct`, `day_gain`, `ah_gain` (v3, after hours), `tf`, `path`
+(v2: `base` / `fast`) — all as TradingView reported them —
 plus our context at that moment: `chg`, `grade`, `float_m`, `rv1` (when the
 ticker is on our Momentum screen), `on_screen`, and `notified` (false = a
 repeat from another timeframe). `GET /api/screener/alerts` returns these rows
@@ -624,3 +646,4 @@ Ordered roughly by expected value; most should wait for the first grading.
 |---|---|---|---|
 | 2026-10-03 | v1 | `d50ebbe` | First version: month VWAP + BB basis, top-gainer gate (day high ≥ +20%), FORMING / READY / GO stage machine with re-arm (max 3/day), once-per-bar-close alerts; webhook, 📐 tab, `tv_setup` alert kind, Telegram slugs, regression script. |
 | 2026-10-03 | v2 | `dde023d` | The operator's MEDS replay showed v1 missing 09-18 07:00 ET (§3). Added: `runnerDays` (a gainer in the last 2 sessions also qualifies), the fast-approach route (`useFast`, `fastAbove` 3, `formPx` 10, `readyPx` 5, `maxBasis` 15), `alertWin` 04:00–16:00 New York, `maxCycles` 3 → 4, and a `path base|fast` message segment (parsed and stored; a "fast" tag in the UI). Run on 1m **and** 2m. Replay on the six examples: v1 caught 2/6 (1m) and 3/6 (2m) with 4/5 other signals; v2 caught 5/6 (1m, all but NXL) and 6/6 (2m) with 8/9. MEDS is now FORMING 07:01 → READY 07:05 → GO 07:17 on 1m. The offline replay tool was added in `apps/api/scripts/research/vwap-setup/`. |
+| 2026-10-03 | v3 | see `git log` | The operator asked why AMOD showed nothing around 02:30 UTC+5 (17:30 ET, after hours) (§3). Added `useAhGain`: after hours, the high since today's close also passes the gate (AMOD 10-01: +19.8% day high on TV, +70% after hours). `alertWin` default 0400-1600 → 0400-2000. Message adds `ah ±N%` after hours and writes a negative day high as `-2%` (the parser also reads v1/v2's `+-2%`). AMOD added to the replay as the 7th example. Replay: v3 catches 6/7 on 1m (all but NXL) and 7/7 on 2m, AMOD READY 17:08 / 17:30 ET; other signals 9 / 12 (v2: 8 / 9; the extra are after-hours chop the wider window now reaches). |

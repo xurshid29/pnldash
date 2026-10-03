@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v2 (2026-10-03).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v3 (2026-10-03).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // A top gainer pulls back under its month-anchored VWAP while the Bollinger
@@ -19,6 +19,7 @@ indicator("mVWAP x BB basis setup", shorttitle = "mVWAP-BB", overlay = true)
 
 minDayGain = input.float(20.0, "Gainer: day high at least % above prior close", group = "Top gainer")
 runnerDays = input.int(2,      "…or that in any of the last N sessions (0 = today only)", minval = 0, maxval = 3, group = "Top gainer")
+useAhGain  = input.bool(true,  "After hours: …or that since today's close", group = "Top gainer")
 maxPxBelow = input.float(15.0, "Price at most % under mVWAP", group = "Setup")
 formBasis  = input.float(10.0, "FORMING: basis at most % under mVWAP", group = "Setup")
 readyBasis = input.float(6.0,  "READY: basis at most % under mVWAP", group = "Setup")
@@ -31,7 +32,7 @@ formPx     = input.float(10.0, "FORMING: price at most % under mVWAP", group = "
 readyPx    = input.float(5.0,  "READY: price at most % under mVWAP", group = "Fast approach")
 maxBasis   = input.float(15.0, "Basis at most % under mVWAP", group = "Fast approach")
 maxCycles  = input.int(4,      "Max setups per ticker per day", minval = 1, group = "Alerts")
-alertWin   = input.session("0400-1600", "Alert window (New York time)", group = "Alerts")
+alertWin   = input.session("0400-2000", "Alert window (New York time)", group = "Alerts")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close
 mvwap  = ta.vwap(hlc3, timeframe.change("M"))
@@ -42,7 +43,9 @@ plot(basis, "BB basis", color.green)
 
 // Top gainer: today's high vs the prior regular-session close (like Finviz
 // Change), or the same in any of the last `runnerDays` sessions — a second- or
-// third-day runner sets up BEFORE it is up on the day (MEDS 2026-09-18).
+// third-day runner sets up BEFORE it is up on the day (MEDS 2026-09-18) — or,
+// after hours, the high since today's close (Finviz's AH change: AMOD fell 24%
+// on 2026-10-01, then ran +70% after hours from a +19.8% day high).
 newDay = timeframe.change("D")
 var float lastRegClose = na
 var float prevDayClose = na
@@ -50,21 +53,27 @@ var float dayHigh      = na
 var float gain1        = na   // day-high gain of the last finished session, %
 var float gain2        = na
 var float gain3        = na
+var float ahHigh       = na   // high since today's close (post-market bars)
 if newDay
     gain3 := gain2
     gain2 := gain1
     gain1 := (dayHigh / prevDayClose - 1) * 100
     prevDayClose := lastRegClose
     dayHigh      := high
+    ahHigh       := na
 else
     dayHigh := na(dayHigh) ? high : math.max(dayHigh, high)
 if session.ismarket
     lastRegClose := close
+if session.ispostmarket
+    ahHigh := na(ahHigh) ? high : math.max(ahHigh, high)
+ahGain = session.ispostmarket and not na(ahHigh) ? (ahHigh / lastRegClose - 1) * 100 : na
 dayHighGain = (dayHigh / prevDayClose - 1) * 100
 recentGain  = runnerDays >= 3 ? math.max(nz(gain1, -100), nz(gain2, -100), nz(gain3, -100)) :
               runnerDays == 2 ? math.max(nz(gain1, -100), nz(gain2, -100)) :
               runnerDays == 1 ? nz(gain1, -100) : -100.0
-gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain
+gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain or
+     (useAhGain and not na(ahGain) and ahGain >= minDayGain)
 
 // Distances, positive = under mVWAP
 pxBelow    = (mvwap - close) / mvwap * 100
@@ -112,7 +121,9 @@ if fire
     string msg = stageName + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
     msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + str.tostring(-pxBelow, "#.0") + "%)"
     msg += " | basis " + str.tostring(basis, format.mintick) + " (" + str.tostring(-basisBelow, "#.0") + "%)"
-    msg += " | day high +" + str.tostring(dayHighGain, "#") + "%"
+    msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
+    if not na(ahGain)
+        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
     msg += " | tf " + timeframe.period
     if target < 3
         msg += " | path " + ((target == 2 ? baseReady : baseForming) ? "base" : "fast")
