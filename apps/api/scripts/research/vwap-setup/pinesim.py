@@ -1,4 +1,4 @@
-"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v4).
+"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v5).
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -17,13 +17,18 @@ import json
 ET = datetime.timezone(datetime.timedelta(hours=-4))   # EDT; fine for Sep–Oct examples
 
 # Script inputs, same names and defaults as the .pine file (fromBelowBars = the script's `fromBelow`).
-V4 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
+V5 = dict(minDayGain=20.0, runnerDays=2, useAhGain=True, maxPxBelow=15.0, formBasis=10.0, readyBasis=6.0,
           holdTol=0.0, failPct=2.0, slopeBars=3, useFast=True, fastAbove=3.0, formPx=10.0, readyPx=5.0,
           maxBasis=15.0, maxCycles=6, window=(240, 1200),  # alert window in ET minutes [04:00, 20:00); None = always
           fromBelowBars=10,  # fast route only if every close of the previous N bars was under the line (0 = off)
           goMemory=60,       # GO also fires within N bars of the last FORMING/READY, even after a break (0 = off)
-          breakBars=0)       # replica-only experiment: also break after N closes in a row under the basis
-# Earlier versions are V4 with the newer parts switched off / older defaults.
+          breakBars=0,       # replica-only experiment: also break after N closes in a row under the basis
+          goOn='either',     # GO trigger: 'basis' = basis crosses above the line; 'price' = price reclaims the
+                             # line (basis rising); 'either' = whichever comes first (the script's "Either")
+          goAbovePct=2.0,    # price reclaim must close this % above the line…
+          goWithin=5)        # …having been at/under it within the previous N bars
+# Earlier versions: V5 with the newer parts switched off / older defaults.
+V4 = dict(V5, goOn='basis', goAbovePct=0.0, goWithin=1)
 V3 = dict(V4, holdTol=2.0, failPct=3.0, maxCycles=4, fromBelowBars=0, goMemory=0)
 V2 = dict(V3, useAhGain=False, window=(240, 960))
 V1 = dict(V2, runnerDays=0, useFast=False, maxCycles=3, window=None)
@@ -66,7 +71,7 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
     """Run the stage machine. mvwap_of(bar) → month VWAP or None (no signal on that bar).
     Returns fired events: (time, stage, path, close, basis, px_below %, basis_below %, day-high gain %).
     trace(dict) — optional, called on every bar with each condition (the "why didn't it fire" tool)."""
-    p = {**V4, **(params or {})}
+    p = {**V5, **(params or {})}
     closes, basis_hist, bbelow_hist, gains, mv_hist = [], [], [], [], []
     last_reg = prev_close = day_high = cur_day = ah_high = None
     stage = cycles = under_basis = 0
@@ -107,6 +112,11 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
                        and b_below < bbelow_hist[-1 - sb])
         holding = basis is not None and c >= basis * (1 - p['holdTol'] / 100)
         cross_up = (None not in (prev_basis, prev_mv, basis, mv)) and basis > mv and prev_basis <= prev_mv
+        k = p['goWithin']
+        was_under = any(m is not None and cc <= m for cc, m in zip(closes[-1 - k:-1], mv_hist[-1 - k:-1]))
+        reclaim = (mv is not None and basis is not None and basis_up and was_under
+                   and c > mv * (1 + p['goAbovePct'] / 100))
+        trig = {'basis': cross_up, 'price': reclaim, 'either': cross_up or reclaim}[p['goOn']]
         in_zone = valid and 0 < px_below <= p['maxPxBelow'] and basis_up and holding
         fast = (p['useFast'] and basis is not None and b_below is not None
                 and c >= basis * (1 + p['fastAbove'] / 100) and b_below <= p['maxBasis'])
@@ -120,7 +130,7 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
         base_ready = in_zone and 0 < b_below <= p['readyBasis']
         forming = in_zone and gap_closing and (base_forming or (fast and px_below <= p['formPx']))
         ready = in_zone and (base_ready or (fast and px_below <= p['readyPx']))
-        go = valid and cross_up
+        go = valid and trig
         if new_day:
             stage = cycles = 0
             since_setup = None

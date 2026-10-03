@@ -2,6 +2,7 @@
 
   python3 replay.py              # scorecard: every version on 1m and 2m
   python3 replay.py MEDS 1       # every signal for one example (1m), per version
+  python3 replay.py go           # GO quality: upside left (30m), drawdown (10m), back under the line
 
 A FORMING/READY inside the example's real entry window = caught; every other
 FORMING/READY in the report window = noise. Bars come from Yahoo (1m reaches
@@ -16,7 +17,7 @@ import sys
 import time
 import urllib.request
 
-from pinesim import ET, V1, V2, V3, V4, load, resample, simulate
+from pinesim import ET, V1, V2, V3, V4, V5, load, resample, simulate
 
 DATA = os.environ.get('VWAP_SETUP_DATA', '/tmp/vwap-setup')
 U5 = datetime.timezone(datetime.timedelta(hours=5))   # the operator's clock
@@ -138,9 +139,41 @@ def scorecard(variants, minutes):
         print(f"{name:12s}" + ''.join(f"{c:>13s}" for c in cells) + f"   {caught}/{scored}    {noise}")
 
 
+def go_report(variants, minutes):
+    """Every GO: how much upside was left (max high, next ~30 min), the drawdown
+    (min low, next ~10 min), and whether price closed 2% back under the line within ~10 min."""
+    print(f"\n=== GO quality, {minutes}m")
+    for name, params in variants:
+        rows = []
+        for tk, rng, mv, (s, e), _, _ in EXAMPLES:
+            bars = bars_for(tk, rng, minutes)
+            if bars is None:
+                continue
+            idx = {b['t']: i for i, b in enumerate(bars)}
+            for ev in simulate(bars, mv, params_for(tk, params), start=s, end=e):
+                if ev[1] != 'GO':
+                    continue
+                i, px = idx[ev[0]], ev[3]
+                nxt, nxt10 = bars[i + 1:i + 1 + 30 // minutes], bars[i + 1:i + 1 + max(1, 10 // minutes)]
+                up = (max(b['h'] for b in nxt) / px - 1) * 100 if nxt else 0.0
+                dd = (min(b['l'] for b in nxt10) / px - 1) * 100 if nxt10 else 0.0
+                lvl = mv(bars[i])
+                back = any(lvl and b['c'] < lvl * 0.98 for b in nxt10)
+                rows.append((tk, ev[0], up, dd, back))
+        if not rows:
+            print(f"{name:6s} no GOs"); continue
+        med = lambda xs: sorted(xs)[len(xs) // 2]
+        print(f"{name:6s} {len(rows):2d} GOs | median upside left +{med([r[2] for r in rows]):.1f}% | "
+              f"median drawdown {med([r[3] for r in rows]):+.1f}% | back under {sum(r[4] for r in rows)} | "
+              + ' '.join(f"{r[0][:4]}@{r[1].astimezone(U5):%H:%M}{'*' if r[4] else ''}" for r in rows))
+
+
 if __name__ == '__main__':
-    variants = [('v1', V1), ('v2', V2), ('v3', V3), ('v4', V4)]
-    if len(sys.argv) >= 2:
+    variants = [('v1', V1), ('v2', V2), ('v3', V3), ('v4', V4), ('v5', V5)]
+    if len(sys.argv) >= 2 and sys.argv[1] == 'go':
+        for minutes in (1, 2):
+            go_report(variants[2:], minutes)
+    elif len(sys.argv) >= 2:
         tk = sys.argv[1].upper()
         minutes = int(sys.argv[2]) if len(sys.argv) > 2 else 1
         for t, rng, mv, (s, e), _, note in EXAMPLES:

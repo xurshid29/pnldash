@@ -121,7 +121,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     news: { source: string; title: string; url: string; published_at: string | null; score: number; direction: string; type: string } | null;
     setup: {
       stage: string; mvwap: number | null; px_pct: number | null; basis: number | null; basis_pct: number | null;
-      day_gain: number | null; ah_gain: number | null; tf: string | null; path: string | null; on_screen: boolean; notified: boolean;
+      day_gain: number | null; ah_gain: number | null; tf: string | null; path: string | null; go_via: string | null;
+      on_screen: boolean; notified: boolean;
     } | null;
   };
   const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -150,7 +151,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     if (r.event === 'tv_setup' && str(m.stage)) {
       a.setup = {
         stage: str(m.stage)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct), basis: num(m.basis), basis_pct: num(m.basis_pct),
-        day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf), path: str(m.path), on_screen: m.on_screen === true, notified: m.notified !== false,
+        day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf), path: str(m.path), go_via: str(m.go_via),
+        on_screen: m.on_screen === true, notified: m.notified !== false,
       };
     }
     if (r.event === 'news' && str(m.news_title)) {

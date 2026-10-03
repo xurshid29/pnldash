@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v4** (history in §12) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v5** (history in §12) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -140,6 +140,13 @@ of the grading plan (§9).
   at 2% and fires the reclaim as a fresh READY. Breaking on *any* close under
   the basis doubled the noise, and a "N closes in a row under it" rule lost
   SOAR, so 2% it is (replay grid, §12).
+- **A basis-cross GO comes too late on fast moves** (operator, NIVF 1m replay:
+  "GO is not accurate"). The 20-bar basis lags price, so on NIVF 09-30 it
+  crossed the line at 09:38 ET, after a +40% spike, close to the top (0.243 vs
+  the 0.255 high). Price itself broke the line at 09:31. Across the replay, GOs
+  on the basis cross left a median +6% (1m) of upside in the next 30 min.
+  GOs on a decisive price reclaim left +16%, and only 2 of 12 fell back
+  under the line within 10 min. v5 fires GO on whichever comes first.
 - **The timeframe changes which setups exist.** On 1m, NXL's 20-bar basis was
   already *above* the line during its 09:00–09:08 pullback (a 20-minute mean
   that still remembered the run to 7.7). On the operator's 2m chart, the
@@ -225,6 +232,9 @@ Grouped as in the script's settings dialog.
 | Fast approach | `fromBelow` | 10 | The previous N closes must all be under the VWAP; 0 = off. New in v4 | a longer approach required / spike pull-backs can count |
 | Alerts | `maxCycles` | 6 (v1: 3, v2–v3: 4) | Max setups per ticker per day (re-arms included) | later setups survive early chop / fewer repeats |
 | Alerts | `goMemory` | 60 | GO may fire up to N bars after the last FORMING/READY, even if a break came in between; 0 = only while armed. New in v4 | GO after longer shakeouts / stricter |
+| GO | `goOn` | Either | What fires GO: Either (whichever first), Price reclaim, or Basis cross (v1–v4 behavior). New in v5 | — |
+| GO | `goAbovePct` | 2 | Price reclaim: the close must be at least this % above the VWAP | fewer pokes, later GO / earlier, more false starts |
+| GO | `goWithin` | 5 | …having been at/under the VWAP within the previous N bars | reclaims after longer holds count / only fresh crossings |
 | Alerts | `alertWin` | 0400-2000 (v2: 0400-1600) | **New York time** window in which stages can fire — the whole extended session. New in v2 | — / e.g. 0600-1600 drops early pre-market chop and after-hours pings |
 
 **The timeframe changes what the basis means.** The basis is a 20-bar SMA: 20
@@ -331,6 +341,11 @@ fired READY only after the bounce.
 ```
 
 - Each stage fires once per setup, and only forward (`target > stage`).
+- **What fires GO (v5):** a decisive **price reclaim** or the **basis cross**,
+  whichever comes first. A decisive reclaim is a close at least 2% above the
+  line, at/under it within the previous 5 bars, with the basis rising. The
+  message says which one fired (`via reclaim|cross`). The basis cross alone
+  fired near the top of fast moves (§3).
 - **GO requires an earlier FORMING or READY**, so a vertical spike straight
   through the VWAP is not reported as this setup. Since v4, "earlier" means
   the setup is armed now *or* one fired within `goMemory` (60) bars, even if a
@@ -362,6 +377,7 @@ READY AMOD 1.38 | mVWAP 1.42 (-2.5%) | basis 1.35 (-4.6%) | day high +20% | ah +
 vs VWAP %>) | day high <±gain>% [| ah <±gain>%] | tf <timeframe.period> | path <base|fast>`.
 - `path` (v2) appears only on FORMING/READY.
 - `ah` (v3) appears only after hours.
+- `via` (v5) appears only on GO: `reclaim` or `cross`.
 - v3 writes a negative day high as `-2%`; v1/v2 wrote `+-2%`, which the parser
   also reads.
 - Older messages still parse; missing parts become null. It is built with
@@ -488,7 +504,8 @@ TradingView servers                                   pnldash droplet
 
 `meta`: `id`, `at`, `stage` (forming/ready/go), `price`, `mvwap`, `px_pct`,
 `basis`, `basis_pct`, `day_gain`, `ah_gain` (v3, after hours), `tf`, `path`
-(v2: `base` / `fast`) — all as TradingView reported them —
+(v2: `base` / `fast`), `go_via` (v5: `reclaim` / `cross`) — all as
+TradingView reported them —
 plus our context at that moment: `chg`, `grade`, `float_m`, `rv1` (when the
 ticker is on our Momentum screen), `on_screen`, and `notified` (false = a
 repeat from another timeframe). `GET /api/screener/alerts` returns these rows
@@ -678,3 +695,4 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-03 | v2 | `dde023d` | The operator's MEDS replay showed v1 missing 09-18 07:00 ET (§3). Added: `runnerDays` (a gainer in the last 2 sessions also qualifies), the fast-approach route (`useFast`, `fastAbove` 3, `formPx` 10, `readyPx` 5, `maxBasis` 15), `alertWin` 04:00–16:00 New York, `maxCycles` 3 → 4, and a `path base|fast` message segment (parsed and stored; a "fast" tag in the UI). Run on 1m **and** 2m. Replay on the six examples: v1 caught 2/6 (1m) and 3/6 (2m) with 4/5 other signals; v2 caught 5/6 (1m, all but NXL) and 6/6 (2m) with 8/9. MEDS is now FORMING 07:01 → READY 07:05 → GO 07:17 on 1m. The offline replay tool was added in `apps/api/scripts/research/vwap-setup/`. |
 | 2026-10-03 | v3 | `88a7093` | The operator asked why AMOD showed nothing around 02:30 UTC+5 (17:30 ET, after hours) (§3). Added `useAhGain`: after hours, the high since today's close also passes the gate (AMOD 10-01: +19.8% day high on TV, +70% after hours). `alertWin` default 0400-1600 → 0400-2000. Message adds `ah ±N%` after hours and writes a negative day high as `-2%` (the parser also reads v1/v2's `+-2%`). AMOD added to the replay as the 7th example. Replay: v3 catches 6/7 on 1m (all but NXL) and 7/7 on 2m, AMOD READY 17:08 / 17:30 ET; other signals 9 / 12 (v2: 8 / 9; the extra are after-hours chop the wider window now reaches). |
 | 2026-10-03 | v4 | `3c0076a` | Operator: "a setup under the BB basis should not be a signal", plus three ideal setups (NIVF 09-30 18:30, SDEV 10-01 17:40 and 01:40 UTC+5). `holdTol` 2 → 0 (must close at/above the basis); `failPct` 3 → 2 (a basis loss ends the setup; the reclaim is a fresh READY: SDEV after hours 16:34 ET); new `fromBelow` 10 (the fast route needs the previous 10 closes under the line, which blocks spike pull-backs like AMOD 09-01); new `goMemory` 60 (GO after a break: AIXI 08:12, NXL 09:06 on 2m, SOAR 13:40 on 2m); `maxCycles` 4 → 6. Replay grows to 9 targets + 1 negative (SDEV ×2, AMOD-0901). v3 caught 7/9 on 1m and 7/9 on 2m; v4 caught 8/9 (1m, all but NXL) and 8/9 (2m, all but SDEV-AH), so the two alerts together catch 9/9, and the negative is silent on 2m. Other signals: 1m 14 → 23 (re-fired READYs on basis reclaims in chop), 2m 16 → 16. |
+| 2026-10-03 | v5 | see `git log` | Operator: "GO is not accurate" (NIVF 1m: GO at 09:38 ET, near the top of the spike). New `goOn` (Either / Price reclaim / Basis cross, default Either), `goAbovePct` 2, `goWithin` 5. GO now fires on a decisive price reclaim (close ≥2% above the line, at/under it within 5 bars, basis rising) or the basis cross, whichever comes first. The message adds `via reclaim|cross`; it is stored as `go_via`, and Telegram and the notification say which. FORMING/READY are unchanged from v4. Replay GO quality (`python3 replay.py go`): v4 → v5 median upside left over the next 30 min +5.9% → +15.7% (1m) and +11.6% → +18.7% (2m); fell back under the line within 10 min 1 → 2 (1m) and 0 → 2 (2m: AIXI's rejected first push, a MEDS after-hours poke). NIVF GO 18:38 → 18:31 UTC+5 (2m 18:42 → 18:30). |

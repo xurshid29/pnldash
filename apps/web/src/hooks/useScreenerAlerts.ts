@@ -200,7 +200,7 @@ export function opportunityTitle(a: OpportunityAlert): string {
   if (a.kinds.includes('tv_setup') && a.setup) {
     const s = a.setup;
     const where = s.stage === 'go'
-      ? 'basis crossed above mVWAP'
+      ? (s.go_via === 'reclaim' ? 'price reclaimed mVWAP' : 'basis crossed above mVWAP')
       : `${fmtSignedPct(s.px_pct)} vs mVWAP · basis ${fmtSignedPct(s.basis_pct)}`;
     return `📐 ${TV_STAGE_TITLE[s.stage]}${s.path === 'fast' ? ' (fast)' : ''} ${a.ticker} — ${where}`;
   }

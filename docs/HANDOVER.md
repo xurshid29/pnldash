@@ -53,7 +53,7 @@ parking), disk 26%.
 5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
    detected by TradingView (we can't compute a month VWAP with pre-market
    volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine`
-   (**v4**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
+   (**v5**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
    posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
    a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
    event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
@@ -134,6 +134,15 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-03 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-03 (late night) — 📐 SCRIPT v5.** The operator said "GO is not
+accurate": on NIVF 1m, GO (the basis crossing the line) came at 09:38 ET, near
+the top of a +40% spike. The lagging 20-bar basis crosses after fast moves.
+v5 adds a GO trigger that fires on the decisive price reclaim (close ≥2% above
+the line, at/under it within 5 bars, basis rising) or the basis cross,
+whichever first. The message carries `via reclaim|cross` (stored as
+`go_via`). Replay GO quality: median upside left +5.9% → +15.7% (1m); fell
+back under 1 → 2. New tool: `python3 replay.py go`.
 
 **2026-10-03 (night) — 📐 SCRIPT v4.** The operator's rule is that a setup
 under the BB basis is no signal; v3 allowed a close 2% under it. They gave

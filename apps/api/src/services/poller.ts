@@ -3932,12 +3932,13 @@ class PollerService {
       news: null,
       setup: {
         stage: sig.stage, mvwap: sig.mvwap, px_pct: sig.px_pct, basis: sig.basis, basis_pct: sig.basis_pct,
-        day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf, path: sig.path, on_screen: row != null, notified: mode === 'notify',
+        day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf, path: sig.path, go_via: sig.go_via,
+        on_screen: row != null, notified: mode === 'notify',
       },
     };
     recordTierEvent('alert', 'tv_setup', sig.ticker, {
       id: alert.id, at, stage: sig.stage, price: alert.price, mvwap: sig.mvwap, px_pct: sig.px_pct,
-      basis: sig.basis, basis_pct: sig.basis_pct, day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf, path: sig.path,
+      basis: sig.basis, basis_pct: sig.basis_pct, day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf, path: sig.path, go_via: sig.go_via,
       chg: alert.change_pct, grade: alert.grade, float_m: alert.float_m, rv1: alert.rel_vol_1min,
       on_screen: row != null, notified: mode === 'notify',
     });
@@ -3945,7 +3946,7 @@ class PollerService {
       `[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · mVWAP ${sig.mvwap ?? '?'} (${sig.px_pct ?? '?'}%)` +
       ` · basis ${sig.basis ?? '?'} (${sig.basis_pct ?? '?'}%) · day ${sig.day_gain ?? '?'}%` +
       (sig.ah_gain != null ? ` · AH ${sig.ah_gain}%` : '') + ` · tf ${sig.tf ?? '?'}` +
-      (sig.path ? ` · ${sig.path}` : '') +
+      (sig.path ? ` · ${sig.path}` : '') + (sig.go_via ? ` · via ${sig.go_via}` : '') +
       `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}${mode === 'log' ? ' · repeat (logged only)' : ''}`,
     );
     if (mode === 'notify') {

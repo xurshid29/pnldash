@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v4 (2026-10-03).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v5 (2026-10-03).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // A top gainer pulls back under its month-anchored VWAP while the Bollinger
@@ -7,7 +7,8 @@
 //   FORMING  basis 6–10% under mVWAP, rising, gap closing — or, on a fast approach,
 //            price ≤10% under mVWAP and ≥3% above a rising basis → open the chart
 //   READY    basis ≤6% under mVWAP — or, on a fast approach, price ≤5% under → entry zone
-//   GO       the basis crosses above mVWAP (within 60 bars of a FORMING/READY)
+//   GO       price reclaims mVWAP decisively (close ≥2% above it, under it within 5 bars)
+//            or the basis crosses above it — whichever first, within 60 bars of a FORMING/READY
 // Price must close at or above the BB basis: a setup under the basis is no
 // setup, and a close 2% under it ends the setup — the next reclaim is a fresh READY.
 // Run it as TradingView watchlist alerts — one on 1m and one on 2m (Premium allows 2):
@@ -36,6 +37,9 @@ maxBasis   = input.float(15.0, "Basis at most % under mVWAP", group = "Fast appr
 fromBelow  = input.int(10,     "Price under mVWAP for the previous N bars (0 = off)", minval = 0, group = "Fast approach")
 maxCycles  = input.int(6,      "Max setups per ticker per day", minval = 1, group = "Alerts")
 goMemory   = input.int(60,     "GO up to N bars after the last FORMING/READY (0 = only while armed)", minval = 0, group = "Alerts")
+goOn       = input.string("Either", "GO when", options = ["Either", "Price reclaim", "Basis cross"], group = "GO")
+goAbovePct = input.float(2.0,  "Price reclaim: close at least % above mVWAP", group = "GO")
+goWithin   = input.int(5,      "…having been at/under it within the previous N bars", minval = 1, group = "GO")
 alertWin   = input.session("0400-2000", "Alert window (New York time)", group = "Alerts")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close
@@ -45,6 +49,7 @@ crossU = ta.crossover(basis, mvwap)
 // Closes at/above the line in the previous `fromBelow` bars — computed on every
 // bar (v6 evaluates and/or lazily; a skipped math.sum would corrupt its history).
 aboveRecent = math.sum(close >= mvwap ? 1.0 : 0.0, math.max(fromBelow, 1))[1]
+underRecent = math.sum(close <= mvwap ? 1.0 : 0.0, goWithin)[1]
 plot(mvwap, "mVWAP", color.yellow)
 plot(basis, "BB basis", color.green)
 
@@ -102,7 +107,12 @@ baseForming = basisBelow > readyBasis and basisBelow <= formBasis
 baseReady   = basisBelow > 0 and basisBelow <= readyBasis
 forming     = inZone and gapClosing and (baseForming or (fastApproach and pxBelow <= formPx))
 ready       = inZone and (baseReady or (fastApproach and pxBelow <= readyPx))
-go          = valid and crossU
+// GO: the basis cross alone fires late on fast moves — the 20-bar basis lags,
+// so it crossed near the top on NIVF 2026-09-30 (+40% after the break). The
+// decisive price reclaim marks the breakout itself.
+reclaim     = basisUp and underRecent > 0 and close > mvwap * (1 + goAbovePct / 100)
+goTrig      = goOn == "Basis cross" ? crossU : goOn == "Price reclaim" ? reclaim : (crossU or reclaim)
+go          = valid and goTrig
 inWindow    = not na(time(timeframe.period, alertWin, "America/New_York"))
 
 // Stages: 0 idle, 1 forming, 2 ready, 3 go; each fires once per setup.
@@ -144,6 +154,8 @@ if fire
     msg += " | tf " + timeframe.period
     if target < 3
         msg += " | path " + ((target == 2 ? baseReady : baseForming) ? "base" : "fast")
+    else
+        msg += " | via " + (reclaim and goOn != "Basis cross" ? "reclaim" : "cross")
     alert(msg, alert.freq_once_per_bar_close)
 
 plotshape(fire and target == 1, "Forming", shape.circle, location.belowbar, color.orange, size = size.tiny)

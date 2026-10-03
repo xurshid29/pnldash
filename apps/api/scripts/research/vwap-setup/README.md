@@ -1,7 +1,7 @@
 # 📐 VWAP setup — offline replay of the Pine script
 
-`pinesim.py` mirrors `apps/web/src/tv/mvwap-bb-setup.pine` (script v4; the
-`V1`–`V3` presets reproduce the earlier versions). `replay.py` scores a script
+`pinesim.py` mirrors `apps/web/src/tv/mvwap-bb-setup.pine` (script v5; the
+`V1`–`V4` presets reproduce the earlier versions). `replay.py` scores a script
 version on the examples the setup was defined from, on 1m and 2m bars:
 - the six winners;
 - AMOD's after-hours setup;
@@ -15,6 +15,7 @@ script's logic or defaults. The full reference is `docs/vwap-setup.md`.
 cd apps/api/scripts/research/vwap-setup
 python3 replay.py            # scorecard, v1 vs v2 vs v3, 1m and 2m
 python3 replay.py MEDS 1     # every signal for one example on 1m
+python3 replay.py go         # GO quality: upside left / drawdown / back under the line
 ```
 
 No dependencies beyond Python 3. Bars come from Yahoo's chart API and are
@@ -52,4 +53,10 @@ That's how the MEDS and AMOD misses were diagnosed.
 | v4 | 8/9 (all but NXL) | 23 | 8/9 (all but SDEV-AH) | 16 | silent |
 
 With both alerts (1m + 2m) v4 catches all 9. Its extra 1m signals are fresh
-READYs each time price reclaims the basis during chop.
+READYs each time price reclaims the basis during chop. v5 has the same
+FORMING/READY as v4 and only changes GO:
+
+| GO | 1m GOs | upside left (30m) | back under (10m) | 2m GOs | upside left | back under |
+|---|---|---|---|---|---|---|
+| v4 basis cross | 9 | +5.9% | 1 | 8 | +11.6% | 0 |
+| v5 reclaim or cross | 12 | +15.7% | 2 | 12 | +18.7% | 2 |

@@ -26,6 +26,9 @@ export type TvStage = 'forming' | 'ready' | 'go';
 // until the basis converged under the line; 'fast' = price ran at the line
 // while the basis lagged. Null for GO and for v1 / fallback messages.
 export type TvPath = 'base' | 'fast';
+// What triggered GO (script v5+): 'reclaim' = price closed decisively back above
+// the line; 'cross' = the basis crossed above it. Null on FORMING/READY and older messages.
+export type TvGoVia = 'reclaim' | 'cross';
 
 export interface TvSetupSignal {
   stage: TvStage;
@@ -39,6 +42,7 @@ export interface TvSetupSignal {
   ah_gain: number | null;     // after hours only (script v3+): high since today's close, %
   tf: string | null;          // TradingView interval: "1", "2", "30S", …
   path: TvPath | null;
+  go_via: TvGoVia | null;
 }
 
 export const TV_SETUP = {
@@ -76,7 +80,13 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     ah_gain: toNum(o.ah_gain),
     tf: typeof o.tf === 'string' || typeof o.tf === 'number' ? String(o.tf) : null,
     path: toPath(o.path),
+    go_via: toVia(o.go_via),
   };
+}
+
+function toVia(v: unknown): TvGoVia | null {
+  const p = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return p === 'reclaim' || p === 'cross' ? p : null;
 }
 
 function toPath(v: unknown): TvPath | null {
@@ -88,6 +98,7 @@ function toPath(v: unknown): TvPath | null {
 // v3 adds the after-hours gain and writes a negative day high as "-2%"):
 //   READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base
 //   READY AMOD 1.38 | mVWAP 1.42 (-2.5%) | basis 1.35 (-4.6%) | day high +20% | ah +34% | tf 1 | path base
+//   GO NIVF 0.1961 | mVWAP 0.188 (4.3%) | basis 0.169 (-10.1%) | day high +38% | tf 1 | via reclaim   (v5)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -114,6 +125,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const ah = /\bah\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const tf = /\btf\s+([0-9A-Za-z]+)/i.exec(text);
   const path = /\bpath\s+(base|fast)\b/i.exec(text);
+  const via = /\bvia\s+(reclaim|cross)\b/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -126,6 +138,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     ah_gain: toNum(ah?.[1]),
     tf: tf?.[1] ?? null,
     path: toPath(path?.[1]),
+    go_via: toVia(via?.[1]),
   };
 }
 
@@ -183,7 +196,7 @@ export function formatTvSetupAlert(
 ): string {
   const lines = [
     `📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>${STAGE_HINT[sig.stage]}${sig.path === 'fast' ? ' · fast approach (price leads, basis lagging)' : ''}</i>`,
+    `<i>${sig.stage === 'go' && sig.go_via === 'reclaim' ? 'price reclaimed mVWAP' : STAGE_HINT[sig.stage]}${sig.path === 'fast' ? ' · fast approach (price leads, basis lagging)' : ''}</i>`,
   ];
   const lvl: string[] = [];
   if (sig.mvwap != null) lvl.push(`mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})`);

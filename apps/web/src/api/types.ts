@@ -340,6 +340,7 @@ export interface TvSetupInfo {
   ah_gain?: number | null;    // after hours: high since today's close, % (script v3+)
   tf: string | null;          // TradingView interval of the alert
   path?: 'base' | 'fast' | null; // which shape reached FORMING/READY (script v2+)
+  go_via?: 'reclaim' | 'cross' | null; // what fired GO (script v5+)
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }
