@@ -14,6 +14,7 @@ import newsRouter from './routes/news.js';
 import prefsRouter from './routes/prefs.js';
 import tradesRouter from './routes/trades.js';
 import edgeRouter from './routes/edge.js';
+import tvRouter from './routes/tv.js';
 import { poller } from './services/poller.js';
 import { universe } from './services/universe.js';
 import { shelf } from './services/shelf.js';
@@ -69,6 +70,7 @@ app.use('/api/news', newsRouter);
 app.use('/api/prefs', prefsRouter);
 app.use('/api/trades', tradesRouter);
 app.use('/api/edge', edgeRouter);
+app.use('/api/tv', tvRouter);
 
 app.use((_req, res) => {
   res.status(404).json({ error: 'Not found' });

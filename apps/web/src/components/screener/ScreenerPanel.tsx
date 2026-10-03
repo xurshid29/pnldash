@@ -26,6 +26,7 @@ import { EdgePanel } from './EdgePanel';
 import { WatchlistPanel } from './WatchlistPanel';
 import { useWatchlist } from '../../hooks/useWatchlist';
 import { AlertsPanel } from './AlertsPanel';
+import { TvSetupsPanel } from './TvSetupsPanel';
 import { useAlertLog } from '../../hooks/useAlertLog';
 
 const { Text } = Typography;
@@ -56,7 +57,7 @@ const SESSION_COLOR: Record<TradingSession, string> = {
   closed: '#8c8c8c',
 };
 
-type ScreenerTab = 'momo' | 'setups' | 'ema' | 'momentum' | 'edge' | 'swing' | 'outcomes' | 'continuation' | 'history' | 'watchlist' | 'alerts';
+type ScreenerTab = 'momo' | 'setups' | 'ema' | 'momentum' | 'tv' | 'edge' | 'swing' | 'outcomes' | 'continuation' | 'history' | 'watchlist' | 'alerts';
 
 // First-appeared time in the operator's TZ (UTC+5), HH:MM, plus how long ago.
 // The "ago" is the staleness cue: a top-of-list +600% name first seen 9h ago is
@@ -159,9 +160,14 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
     }
     return m;
   }, [payload]);
+  // Tickers with a 📐 TradingView setup signal today (the tab label's count).
+  const tvSetupTickers = useMemo(
+    () => new Set(alertLog.filter((a) => a.kinds.includes('tv_setup')).map((a) => a.ticker)).size,
+    [alertLog],
+  );
   // Row highlight for alerted tickers: a pulse for the first 90s, then a
   // colored left edge until the 15-min badge window ends. Color = the
-  // strongest kind that fired (A+ green > fast amber > news blue).
+  // strongest kind that fired (A+ green > fast amber > 📐 setup cyan > news blue).
   const alertRowClass = useMemo(() => {
     const m = new Map<string, string>();
     const now = Date.now();
@@ -171,7 +177,7 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
       if (now - t <= 90_000) latest.set(a.ticker, Math.max(latest.get(a.ticker) ?? 0, t));
     }
     for (const [ticker, kinds] of recentAlertKinds) {
-      const tone = kinds.has('grade_aplus') ? 'aplus' : kinds.has('fast_move') ? 'fast' : 'news';
+      const tone = kinds.has('grade_aplus') ? 'aplus' : kinds.has('fast_move') ? 'fast' : kinds.has('tv_setup') ? 'setup' : 'news';
       m.set(ticker, `screener-row-alert screener-row-alert-${tone}${latest.has(ticker) ? ' screener-row-alert-pulse' : ''}`);
     }
     return m;
@@ -220,6 +226,7 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
                 {recentAlertKinds.get(t)!.has('grade_aplus') && '🅰️'}
                 {recentAlertKinds.get(t)!.has('fast_move') && '⚡'}
                 {recentAlertKinds.get(t)!.has('news') && '📰'}
+                {recentAlertKinds.get(t)!.has('tv_setup') && '📐'}
               </span>
             )}
             {row.is_fresh_news && <span> 🚨</span>}
@@ -580,6 +587,13 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
                 />
               </div>
             ),
+          },
+          {
+            // The operator's VWAP edge (2026-10-03): TradingView detects it
+            // (Pine script + watchlist alert), the webhook brings it here.
+            key: 'tv',
+            label: `📐 VWAP setups${tvSetupTickers ? ` · ${tvSetupTickers}` : ''}`,
+            children: <TvSetupsPanel alerts={alertLog} payload={payload} />,
           },
           {
             key: 'edge',

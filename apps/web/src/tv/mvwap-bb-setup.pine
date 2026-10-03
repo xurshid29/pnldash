@@ -1,0 +1,93 @@
+//@version=6
+// mVWAP × BB basis setup — the operator's VWAP edge (2026-10-03).
+// A top gainer pulls back under its month-anchored VWAP while the Bollinger
+// basis (SMA 20) curls up beneath it; the trade is the reclaim.
+//   FORMING  basis 6–10% under mVWAP, rising, gap closing → open the chart
+//   READY    basis ≤6% under mVWAP, rising, price holding the basis → entry zone
+//   GO       the basis crosses above mVWAP (only after FORMING/READY)
+// Run it as ONE TradingView watchlist alert: Symbols = the runners list
+// (dashboard → 📐 tab → Copy list), timeframe 1m, session Extended,
+// condition = this script → "Any alert() function call", once per bar close,
+// webhook = https://pnldash.uz/api/tv/webhook?key=<TV_WEBHOOK_SECRET>.
+// The alert message format below is parsed by apps/api/src/services/tv-setups.ts —
+// keep the two in step.
+indicator("mVWAP x BB basis setup", shorttitle = "mVWAP-BB", overlay = true)
+
+minDayGain = input.float(20.0, "Gainer: day high at least % above prior close")
+maxPxBelow = input.float(15.0, "Price at most % under mVWAP")
+formBasis  = input.float(10.0, "FORMING: basis at most % under mVWAP")
+readyBasis = input.float(6.0,  "READY: basis at most % under mVWAP")
+holdTol    = input.float(2.0,  "Price may sit up to % under the basis")
+failPct    = input.float(3.0,  "Setup breaks: close % under the basis")
+slopeBars  = input.int(3,      "Basis rising over N bars", minval = 1)
+maxCycles  = input.int(3,      "Max setups per ticker per day", minval = 1)
+
+// Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close
+mvwap  = ta.vwap(hlc3, timeframe.change("M"))
+basis  = ta.sma(close, 20)
+crossU = ta.crossover(basis, mvwap)
+plot(mvwap, "mVWAP", color.yellow)
+plot(basis, "BB basis", color.green)
+
+// Today's gain vs the prior regular-session close (like Finviz Change)
+newDay = timeframe.change("D")
+var float lastRegClose = na
+var float prevDayClose = na
+var float dayHigh      = na
+if newDay
+    prevDayClose := lastRegClose
+    dayHigh      := high
+else
+    dayHigh := na(dayHigh) ? high : math.max(dayHigh, high)
+if session.ismarket
+    lastRegClose := close
+dayHighGain = (dayHigh / prevDayClose - 1) * 100
+gainer = not na(dayHighGain) and dayHighGain >= minDayGain
+
+// Distances, positive = under mVWAP
+pxBelow    = (mvwap - close) / mvwap * 100
+basisBelow = (mvwap - basis) / mvwap * 100
+basisUp    = basis > basis[slopeBars]
+gapClosing = basisBelow < basisBelow[slopeBars]
+holding    = close >= basis * (1 - holdTol / 100)
+valid      = gainer and not na(mvwap) and not na(basis)
+
+inZone  = valid and pxBelow > 0 and pxBelow <= maxPxBelow and basisUp and holding
+forming = inZone and basisBelow > readyBasis and basisBelow <= formBasis and gapClosing
+ready   = inZone and basisBelow > 0 and basisBelow <= readyBasis
+go      = valid and crossU
+
+// Stages: 0 idle, 1 forming, 2 ready, 3 go; each fires once per setup.
+// A setup that breaks (close under mVWAP and failPct under the basis) re-arms.
+var int stage  = 0
+var int cycles = 0
+if newDay
+    stage  := 0
+    cycles := 0
+if stage > 0 and close < mvwap and close < basis * (1 - failPct / 100)
+    stage := 0
+int target = 0
+if stage >= 1 and go
+    target := 3
+else if ready
+    target := 2
+else if forming
+    target := 1
+bool fire = target > stage and (stage > 0 or cycles < maxCycles)
+if fire
+    if stage == 0
+        cycles += 1
+    stage := target
+    string stageName = target == 3 ? "GO" : target == 2 ? "READY" : "FORMING"
+    string msg = stageName + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
+    msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + str.tostring(-pxBelow, "#.0") + "%)"
+    msg += " | basis " + str.tostring(basis, format.mintick) + " (" + str.tostring(-basisBelow, "#.0") + "%)"
+    msg += " | day high +" + str.tostring(dayHighGain, "#") + "%"
+    msg += " | tf " + timeframe.period
+    alert(msg, alert.freq_once_per_bar_close)
+
+plotshape(fire and target == 1, "Forming", shape.circle, location.belowbar, color.orange, size = size.tiny)
+plotshape(fire and target == 2, "Ready", shape.triangleup, location.belowbar, color.yellow, size = size.small)
+plotshape(fire and target == 3, "Go", shape.labelup, location.belowbar, color.lime, text = "GO", textcolor = color.black, size = size.small)
+alertcondition(fire and target == 2, "READY", "READY {{ticker}} {{close}} | tf {{interval}}")
+alertcondition(fire and target == 3, "GO", "GO {{ticker}} {{close}} | tf {{interval}}")

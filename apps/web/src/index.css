@@ -131,6 +131,7 @@ body {
 .screener-row-alert > td { --alert-rgb: 82, 196, 26; }
 .screener-row-alert-fast > td { --alert-rgb: 250, 173, 20; }
 .screener-row-alert-news > td { --alert-rgb: 24, 144, 255; }
+.screener-row-alert-setup > td { --alert-rgb: 19, 194, 194; } /* 📐 TradingView VWAP setup (2026-10-03) */
 .screener-row-alert > td:first-child {
   box-shadow: inset 3px 0 0 rgb(var(--alert-rgb));
 }

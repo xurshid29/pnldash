@@ -35,7 +35,11 @@ export type AlertComponent =
   | 'vwap_reclaim'  // ↑ session-VWAP reclaim CONFIRMED on a closed 1m candle (Live Ticks list)
   | 'grade_aplus'   // 🅰️ first A+ of the day for a Momentum ticker (opportunity-alerts.ts)
   | 'fast_move'     // ⚡ Momentum ticker +10% within ~60s on volume
-  | 'news';         // 📰 fresh headline on a Momentum ticker (phone: catalyst ≥40)
+  | 'news'          // 📰 fresh headline on a Momentum ticker (phone: catalyst ≥40)
+  | 'tv_setup'      // 📐 TradingView VWAP setup, every stage (tv-setups.ts)
+  | 'tv_forming'    // 📐 … only the FORMING stage
+  | 'tv_ready'      // 📐 … only the READY stage
+  | 'tv_go';        // 📐 … only the GO stage
 let disabledAlerts: Set<string> | null = null;
 export function alertDisabled(component: AlertComponent): boolean {
   if (!disabledAlerts) {

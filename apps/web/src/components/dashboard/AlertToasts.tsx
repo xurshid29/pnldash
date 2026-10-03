@@ -10,6 +10,7 @@ const KIND_COLOR: Record<OpportunityKind, string> = {
   grade_aplus: '#52c41a',
   fast_move: '#faad14',
   news: '#1890ff',
+  tv_setup: '#13c2c2',
 };
 
 // In-page toast for every new opportunity alert (2026-10-02) — the same events

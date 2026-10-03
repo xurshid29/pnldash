@@ -325,8 +325,22 @@ export interface TickCatch {
 }
 
 // Opportunity alert (server: opportunity-alerts.ts) — the same set the phone
-// receives. One per ticker per cycle; `kinds` says what fired.
-export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news';
+// receives. One per ticker per cycle; `kinds` says what fired. 📐 tv_setup
+// (2026-10-03) is the operator's VWAP setup reported by a TradingView
+// watchlist alert through POST /api/tv/webhook — it arrives between cycles.
+export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
+export type TvStage = 'forming' | 'ready' | 'go';
+export interface TvSetupInfo {
+  stage: TvStage;
+  mvwap: number | null;
+  px_pct: number | null;      // price vs month-anchored VWAP, %
+  basis: number | null;
+  basis_pct: number | null;   // BB basis (SMA 20) vs mVWAP, %
+  day_gain: number | null;    // day high vs prior close, %
+  tf: string | null;          // TradingView interval of the alert
+  on_screen: boolean;
+  notified: boolean;          // false = same stage already announced from another timeframe
+}
 export interface OpportunityAlert {
   id: string;
   ticker: string;
@@ -344,6 +358,7 @@ export interface OpportunityAlert {
     source: string; title: string; url: string; published_at: string | null;
     score: number; direction: string; type: string;
   } | null;
+  setup?: TvSetupInfo | null;  // tv_setup only
 }
 
 // ↑ VWAP reclaim — a LIVE TICKS sub-list (2026-08-21): a session mover that

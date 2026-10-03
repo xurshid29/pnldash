@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { getAlertKinds } from './useAlertKinds';
-import type { CyclePayload, OpportunityAlert } from '../api/types';
+import type { CyclePayload, OpportunityAlert, TvStage } from '../api/types';
 
 // Browser equivalent of the bash script's audio + voice alerts. Events:
 // • Tick WATCH (👀) — soft single ping, price-led early flag from the tick feed
@@ -141,6 +141,14 @@ function crossConfirmPing() {
   beep(1480, 240, 0.18, 0.5);  // F#6
 }
 
+function setupReadyPing() {
+  // 📐 READY — the VWAP setup's entry zone: three quick rising tones, between
+  // the soft FORMING heads-up (watchPing) and the bright GO pair.
+  beep(784, 130, 0, 0.45);     // G5
+  beep(988, 130, 0.14, 0.45);  // B5
+  beep(1175, 190, 0.28, 0.45); // D6
+}
+
 export function edgeAlertPing(kind: 'armed' | 'entry' | 'bailout') {
   if (kind === 'armed') {
     // Soft preparation cue: the chart has reached a decision zone.
@@ -183,13 +191,35 @@ function fmtAlertPrice(p: number | null): string {
   return p == null ? '' : `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
 }
 
+const TV_STAGE_TITLE: Record<TvStage, string> = { forming: 'FORMING', ready: 'READY', go: 'GO' };
+function fmtSignedPct(p: number | null): string {
+  return p == null ? '?' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
+}
+
 export function opportunityTitle(a: OpportunityAlert): string {
+  if (a.kinds.includes('tv_setup') && a.setup) {
+    const s = a.setup;
+    const where = s.stage === 'go'
+      ? 'basis crossed above mVWAP'
+      : `${fmtSignedPct(s.px_pct)} vs mVWAP · basis ${fmtSignedPct(s.basis_pct)}`;
+    return `📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — ${where}`;
+  }
   if (a.kinds.includes('grade_aplus')) return `🅰️ ${a.ticker} — ${a.new_on_screen ? 'new A+' : `A+ (was ${a.prev_grade ?? '—'})`}`;
   if (a.kinds.includes('fast_move')) return `⚡ ${a.ticker} +${a.move_pct}% in 60s`;
   return `📰 ${a.ticker}${a.news?.direction === 'bearish' ? ' ⚠️' : ''} — ${a.news?.title.slice(0, 60) ?? 'news'}`;
 }
 
 export function opportunityBody(a: OpportunityAlert): string {
+  if (a.kinds.includes('tv_setup') && a.setup) {
+    const s = a.setup;
+    const bits = [fmtAlertPrice(a.price)];
+    if (s.mvwap != null) bits.push(`mVWAP ${fmtAlertPrice(s.mvwap)}`);
+    if (s.basis != null) bits.push(`basis ${fmtAlertPrice(s.basis)}`);
+    if (s.day_gain != null) bits.push(`day high +${Math.round(s.day_gain)}%`);
+    if (a.grade) bits.push(`grade ${a.grade}`);
+    if (s.tf) bits.push(`tf ${s.tf}`);
+    return bits.filter(Boolean).join(' · ');
+  }
   const parts = [fmtAlertPrice(a.price)];
   if (a.change_pct != null) parts.push(`${a.change_pct >= 0 ? '+' : ''}${a.change_pct.toFixed(1)}%`);
   if (a.grade) parts.push(`grade ${a.grade}`);
@@ -262,10 +292,15 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k]) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
+      // Loudest wins: A+ / 📐 GO bright pair > fast-move radar > 📐 READY
+      // triple > news chime > 📐 FORMING soft single tone.
+      const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st);
       try {
-        if (audible.some((a) => a.kinds.includes('grade_aplus'))) crossConfirmPing();
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('go')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
-        else chime();
+        else if (tvStage('ready')) setupReadyPing();
+        else if (audible.some((a) => a.kinds.includes('news'))) chime();
+        else watchPing();
       } catch { /* audio context not unlocked */ }
       for (const a of audible.slice(0, 4)) notify(opportunityTitle(a), opportunityBody(a));
       if (audible.length > 4) notify(`+${audible.length - 4} more alerts`, audible.slice(4).map((a) => a.ticker).join(', '));

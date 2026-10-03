@@ -8,6 +8,7 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
   { kind: 'grade_aplus', label: '🅰️ New A+', hint: 'first time a ticker reaches A+ today' },
   { kind: 'fast_move', label: '⚡ Fast move', hint: '+10% within 60s on volume' },
   { kind: 'news', label: '📰 Fresh news', hint: 'headline published in the last 30 min' },
+  { kind: 'tv_setup', label: '📐 VWAP setup', hint: 'TradingView alert: forming → ready → go' },
 ];
 
 // Click-to-open switches for which opportunity alerts make a sound and a

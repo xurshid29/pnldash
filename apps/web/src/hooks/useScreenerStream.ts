@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CyclePayload } from '../api/types';
+import type { CyclePayload, OpportunityAlert } from '../api/types';
 
 // Empty → EventSource uses the page's origin. Dev: vite proxy. Prod: nginx.
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -43,6 +43,21 @@ export function useScreenerStream(): { payload: CyclePayload | null; connected: 
     es.addEventListener('cycle', (ev) => {
       try {
         setPayload(JSON.parse((ev as MessageEvent).data));
+      } catch {
+        // ignore malformed events
+      }
+    });
+    // 📐 TradingView setup alerts arrive between cycles (webhook → SSE
+    // 'alert'). Fold each into the current payload so the toast, sound, row
+    // badge and Alerts log react now; the cycle_id suffix lets the
+    // per-cycle sound hook treat it as a new delivery. The next real cycle
+    // replaces the payload and already carries the alert in payload.alerts.
+    es.addEventListener('alert', (ev) => {
+      try {
+        const alert = JSON.parse((ev as MessageEvent).data) as OpportunityAlert;
+        setPayload((cur) => (cur && !(cur.alerts ?? []).some((a) => a.id === alert.id)
+          ? { ...cur, cycle_id: `${cur.cycle_id}#${alert.id}`, alerts: [alert, ...(cur.alerts ?? [])] }
+          : cur));
       } catch {
         // ignore malformed events
       }

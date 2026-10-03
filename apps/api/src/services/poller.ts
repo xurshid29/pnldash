@@ -19,7 +19,8 @@ import { fetchBenzingaDelta } from './benzinga.js';
 import { fetchEdgarFilings, type EdgarFiling, tvSymbol } from './edgar.js';
 import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
-import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled } from './telegram.js';
+import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
+import { formatTvSetupAlert, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3901,6 +3902,59 @@ class PollerService {
     } catch (err) {
       console.error('[alerts] seeding failed — first cycle will not deliver:', err instanceof Error ? err.message : err);
     }
+  }
+
+  // 📐 TradingView VWAP-setup signal (POST /api/tv/webhook → tv-setups.ts),
+  // delivered like a cycle's opportunity alerts but immediately: a
+  // tier_events row for grading, the engine's recent list (payload.alerts →
+  // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
+  // and sound land now instead of at the next cycle, and Telegram
+  // (ALERTS_DISABLED tv_setup, or per stage tv_forming / tv_ready / tv_go).
+  // mode 'log' = the same stage was already announced from another
+  // timeframe in the last 5 min: recorded for grading, not re-announced.
+  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'log'): OpportunityAlert {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const at = new Date(nowSec * 1000).toISOString();
+    const row = this.lastPayload?.rows.find((r) => r.ticker === sig.ticker) ?? null;
+    const alert: OpportunityAlert = {
+      id: `${sig.ticker}:${nowSec}:tv_setup:${sig.stage}${sig.tf ? `:${sig.tf}` : ''}`,
+      ticker: sig.ticker,
+      kinds: ['tv_setup'],
+      at,
+      price: sig.price ?? row?.price ?? null,
+      change_pct: row?.change_pct ?? null,
+      grade: row?.grade ?? null,
+      prev_grade: null,
+      new_on_screen: false,
+      move_pct: null,
+      rel_vol_1min: row?.rel_vol_1min ?? null,
+      float_m: row?.float_m ?? null,
+      news: null,
+      setup: {
+        stage: sig.stage, mvwap: sig.mvwap, px_pct: sig.px_pct, basis: sig.basis, basis_pct: sig.basis_pct,
+        day_gain: sig.day_gain, tf: sig.tf, on_screen: row != null, notified: mode === 'notify',
+      },
+    };
+    recordTierEvent('alert', 'tv_setup', sig.ticker, {
+      id: alert.id, at, stage: sig.stage, price: alert.price, mvwap: sig.mvwap, px_pct: sig.px_pct,
+      basis: sig.basis, basis_pct: sig.basis_pct, day_gain: sig.day_gain, tf: sig.tf,
+      chg: alert.change_pct, grade: alert.grade, float_m: alert.float_m, rv1: alert.rel_vol_1min,
+      on_screen: row != null, notified: mode === 'notify',
+    });
+    console.log(
+      `[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · mVWAP ${sig.mvwap ?? '?'} (${sig.px_pct ?? '?'}%)` +
+      ` · basis ${sig.basis ?? '?'} (${sig.basis_pct ?? '?'}%) · day +${sig.day_gain ?? '?'}% · tf ${sig.tf ?? '?'}` +
+      `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}${mode === 'log' ? ' · repeat (logged only)' : ''}`,
+    );
+    if (mode === 'notify') {
+      this.opportunity.pushExternal(alert);
+      broadcast('alert', alert);
+      const stageSlug = `tv_${sig.stage}` as AlertComponent;
+      if (telegramEnabled() && !this.alertsMuted && !alertDisabled('tv_setup') && !alertDisabled(stageSlug)) {
+        void sendTelegram(formatTvSetupAlert(sig, tvSymbol(sig.ticker), row));
+      }
+    }
+    return alert;
   }
 
   // Phone delivery for opportunity alerts. Per-kind mutes via ALERTS_DISABLED

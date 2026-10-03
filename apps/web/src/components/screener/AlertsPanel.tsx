@@ -6,6 +6,7 @@ import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
 import { fmtFloat, fmtPct, fmtPrice } from '../../utils/format';
+import { TvStageTag, tvLevelsText, fmtTf } from '../common/TvStageTag';
 
 const { Text } = Typography;
 const LOCAL_TZ = 'Asia/Tashkent'; // same clock as the Momentum "Appeared" column (UTC+5)
@@ -70,6 +71,14 @@ export function AlertsPanel({ alerts, payload }: { alerts: OpportunityAlert[]; p
           {a.kinds.includes('fast_move') && (
             <span style={{ color: '#ffc53d', fontWeight: 700 }}>⚡ +{a.move_pct}% in 60s</span>
           )}
+          {a.kinds.includes('tv_setup') && a.setup && (
+            <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
+              <span style={{ color: '#5cdbd3', fontWeight: 700 }}>📐</span>
+              <TvStageTag stage={a.setup.stage} dim={!a.setup.notified} />
+              <span style={{ color: '#d9d9d9', fontSize: 12 }}>{tvLevelsText(a.setup)}</span>
+              {a.setup.tf && <Text type="secondary" style={{ fontSize: 10 }}>{fmtTf(a.setup.tf)}</Text>}
+            </span>
+          )}
           {a.kinds.includes('news') && a.news && (
             <span style={{ minWidth: 0 }}>
               <span style={{ color: a.news.direction === 'bearish' ? '#ff7875' : '#69c0ff', fontWeight: 700 }}>
@@ -129,6 +138,7 @@ export function AlertsPanel({ alerts, payload }: { alerts: OpportunityAlert[]; p
             { label: `🅰️ A+ · ${count('grade_aplus')}`, value: 'grade_aplus' },
             { label: `⚡ Fast · ${count('fast_move')}`, value: 'fast_move' },
             { label: `📰 News · ${count('news')}`, value: 'news' },
+            { label: `📐 Setup · ${count('tv_setup')}`, value: 'tv_setup' },
           ]}
         />
       </div>

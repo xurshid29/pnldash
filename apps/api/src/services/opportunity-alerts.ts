@@ -26,11 +26,30 @@
 // sees ~63/day (busiest hour 09:00–10:00 ET ≈ 10), the dashboard ~88/day.
 // Per-type mutes: Telegram via ALERTS_DISABLED slugs (grade_aplus,
 // fast_move, news); dashboard via the header's per-type switches.
+//
+// A fourth kind arrives from outside the cycle (2026-10-03): 📐 tv_setup, the
+// operator's VWAP setup as detected by a TradingView watchlist alert and
+// posted to our webhook (tv-setups.ts). The poller hands it to pushExternal()
+// so it rides in payload.alerts with the rest.
 
 import type { NewsSource } from '../db/types.js';
 import { classifyByRules } from './catalyst-rules.js';
+import type { TvStage } from './tv-setups.js';
 
-export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news';
+export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
+
+// 📐 tv_setup details — the levels TradingView reported at the signal.
+export interface TvSetupInfo {
+  stage: TvStage;
+  mvwap: number | null;
+  px_pct: number | null;      // price vs mVWAP, %
+  basis: number | null;
+  basis_pct: number | null;   // BB basis vs mVWAP, %
+  day_gain: number | null;    // day high vs prior close, %
+  tf: string | null;
+  on_screen: boolean;         // on our Momentum screen at the signal
+  notified: boolean;          // false = same stage already announced from another timeframe
+}
 
 export const OPPORTUNITY = {
   fast_move_pct: 10,          // % above the price ~60s earlier
@@ -90,6 +109,7 @@ export interface OpportunityAlert {
   rel_vol_1min: number | null;
   float_m: number | null;
   news: OpportunityNews | null;
+  setup?: TvSetupInfo | null;  // tv_setup only
 }
 
 export function normTitle(t: string): string {
@@ -128,6 +148,12 @@ export class OpportunityAlerts {
     this.priceHist.clear();
     this.seenTitles.clear();
     this.recent = [];
+  }
+
+  // An alert produced outside the cycle (📐 tv_setup) — kept in the recent
+  // list so payload.alerts carries it like the cycle's own alerts.
+  pushExternal(a: OpportunityAlert): void {
+    this.recent.push(a);
   }
 
   recentAlerts(nowMs: number): OpportunityAlert[] {

@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-10-02
+# Session Handover — updated 2026-10-03
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -8,13 +8,16 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-02 (last code commit `8b97f89`)
+## START HERE — state at 2026-10-03 (last code commit `HASH_PLACEHOLDER`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every
 20s) sorted by the **A+…D grade**, plus the History, Watchlist and Alerts
 tabs, Quote Details, the news room and 0–4 TradingView charts. Manual
 trading off 1-minute charts, Ross-Cameron-style selection: catalyst first,
-low float, mostly 07:00–11:00 ET. Everything else is parked (below). Prod
+low float, mostly 07:00–11:00 ET. **The operator's current entry (since
+~10-01): the VWAP/BB setup** — a session top gainer under its month-anchored
+VWAP while the BB basis (SMA 20) curls up within ~6% beneath it; exits fast
+when it fails (📐, item 5 below). Everything else is parked (below). Prod
 `/health` ok; ~0.8 GB of 3.9 GB RAM used (was ~3 GB + swap before the
 parking), disk 26%.
 
@@ -47,6 +50,16 @@ parking), disk 26%.
 4. **CI rollout runs `dbmate up` BEFORE `docker compose up -d`** (fixed
    10-01). The old API briefly runs on the new schema, so keep migrations
    additive.
+5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
+   detected by TradingView (we can't compute a month VWAP with pre-market
+   volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine` runs
+   as ONE watchlist alert (operator is on Premium = 2 watchlist alerts) and
+   posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
+   a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
+   event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
+   (stage trail per ticker, Copy list / Download .txt / Copy Pine script /
+   How to) and Telegram (`ALERTS_DISABLED` `tv_setup` or `tv_forming` /
+   `tv_ready` / `tv_go`). Full reference: detection-layers.md 📐 section.
 
 **Parked, code kept** — `COMPONENTS_DISABLED` default
 `ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`:
@@ -62,10 +75,23 @@ catalyst classification is rules-only. News = Finviz + Yahoo + SEC + halts.
 default above); `ALERTS_DISABLED=momentum,ignition,new_ignition,fresh_burst,
 accum,tick_watch,radar,dual_signal,swing,vwap_reclaim` (so `grade_aplus`,
 `fast_move`, `news` are on; `tick_catch` is unmuted but has no producer);
-`TICKFEED_ENABLED=true` but inert. Backups: `.env.bak-20260821`,
-`.env.bak-20260821b`, `.env.bak-20261001`.
+`TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03 (the
+webhook key; the full URL was given to the operator). Backups:
+`.env.bak-20260821`, `.env.bak-20260821b`, `.env.bak-20261001`,
+`.env.bak-20261003`.
 
 **Open items, ranked:**
+0. **Mon 2026-10-05 — first live session of the 📐 setup.** The operator
+   sets up the TradingView side over the weekend (script on a chart, check
+   its yellow line sits on their "VWAP Month"; runners watchlist; one
+   watchlist alert with the webhook). Confirm signals arrive
+   (`docker compose … logs api | grep tv-setup`, or the 📐 tab), then tune
+   the Pine inputs with the operator (bar replay on past days, including
+   names that failed). Nothing has measured the edge yet — the evidence is
+   six hand-picked top gainers; the 2026-08 session-VWAP reclaim layer
+   graded as noise. **~2026-10-17: grade the `tv_setup` rows** (SQL in
+   detection-layers 📐). Ask the operator to import a fresh IBKR .tlg (the
+   journal stops at 06-18) so their real P&L on these trades can be checked.
 1. **~2026-10-15 — re-grade the LIVE grade** from `screener_results.grade`
    with the same label and the first-touch race. Does it hold live? Pipeline:
    `apps/api/scripts/research/momentum-grade/` (export SQL → `study.py` →
@@ -104,9 +130,34 @@ accum,tick_watch,radar,dual_signal,swing,vwap_reclaim` (so `grade_aplus`,
   (`apps/web/dist/assets/index-*.js` vs `/usr/share/nginx/html/assets/` in
   the web container), not by CI status alone.
 
-## Session log 2026-10-01 → 10-02 (newest first)
+## Session log 2026-10-01 → 10-03 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-03 — 📐 TRADINGVIEW VWAP SETUP (the operator's edge, wired in).**
+Operator described the edge they trade since ~10-01: a session top gainer
+(per the operator: it need not be A+ at the entry) under TradingView's month-anchored
+VWAP (yellow) while the BB basis (SMA 20, green) curls up 5–6% below it,
+often after a first VWAP test was rejected; MACD as confirmation; 1m/30s
+charts; quick exits. Findings from the first look: at the entry the grade
+was usually not A+ (AIXI showed B+ through its 07:56–08:05 ET pullback —
+first the fade cap, then a cooling score; VEEA A/A−), all six examples had
+been on our screen in the prior 2–3 weeks, the month anchor equals the
+session VWAP on the 1st (NXL/VEEA 10-01), and Yahoo's pre/post bars have
+ZERO volume (1m and 2m) — so neither Yahoo nor our snapshots can reproduce
+the operator's line (AIXI 10-02 close: Yahoo-RTH 1.81 vs TV 1.77; the BB
+basis matched to the cent, 1.63). Operator asked about a headless browser +
+screenshots + LLM to watch more charts; advised against it (an LLM reading
+line distances is the least precise step, scraping TradingView is against
+its terms, and it's slow) in favour of letting TradingView run the rule:
+Pine v6 script + one watchlist alert → webhook. Built: `routes/tv.ts`
+(webhook with key + dry run, runners watchlist export), `services/
+tv-setups.ts` (message parser, dup/flood gate, Telegram format),
+`poller.deliverTvSetup` (tier_events + payload.alerts + SSE `alert` +
+Telegram), a 4th alert kind `tv_setup` across the dashboard (Alerts filter,
+toast, stage-aware sounds, ⚙ switch, row badge 📐, cyan row edge) and the
+📐 VWAP setups tab. Regression `scripts/verify-tv-setups.ts` (39 checks incl.
+the .pine ↔ parser contract). Prod `.env`: `TV_WEBHOOK_SECRET` added.
 
 **2026-10-02 — ALERTS VISIBLE ON THE DASHBOARD.** New **Alerts** tab with
 the day's log (`GET /api/screener/alerts`, regrouped from tier_events

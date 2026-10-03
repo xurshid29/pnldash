@@ -1,10 +1,13 @@
 # Momentum Screener — Web Dashboard
 
-Status as of 2026-10-02. The bash scanner (`screener-poll_breakout.sh`) and the web dashboard are both functional; the bash version remains the reference implementation. The web port lives in `apps/api` + `apps/web` and runs in parallel without sharing state with it.
+Status as of 2026-10-03. The bash scanner (`screener-poll_breakout.sh`) and the web dashboard are both functional; the bash version remains the reference implementation. The web port lives in `apps/api` + `apps/web` and runs in parallel without sharing state with it.
 
 **Current operating profile — lean manual-playbook desk.** The active UI is
 Momentum (with the A+…D grade, default sort) + Momentum History, plus the
-Watchlist and Alerts tabs and opportunity alerts (phone + dashboard). Ignition, MOMO, SETUPS, EMA, Swing,
+Watchlist and Alerts tabs, opportunity alerts (phone + dashboard) and, since
+2026-10-03, the **📐 VWAP setups** tab — the operator's VWAP/BB edge as
+detected by a TradingView watchlist alert and posted to `POST /api/tv/webhook`
+(see detection-layers.md 📐). Ignition, MOMO, SETUPS, EMA, Swing,
 Outcomes, Faders/Continuation, Edge (since 2026-08-21), the ↑ VWAP reclaim
 tick layer (since 2026-08-22) and Live Ticks itself (since 2026-10-01 — no
 Databento connection; the left rail is gone and the Watchlist is a screener

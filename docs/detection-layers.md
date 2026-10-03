@@ -515,6 +515,82 @@ control. No sound or Telegram promotion before that comparison matures.
 
 ---
 
+## 📐 TradingView VWAP setup (operator's edge; detected by TradingView, delivered by webhook; shipped 2026-10-03)
+
+**What/why.** The operator's discretionary edge as of October 2026: a session
+top gainer pulls back UNDER its month-anchored VWAP (TradingView "VWAP",
+anchor Month, hlc3, extended hours on) while the Bollinger basis (SMA 20 of
+close) curls up beneath it; the trade is the reclaim, exited fast if it
+fails. The six examples it was defined on (AIXI 10-02, NXL + VEEA 10-01, NIVF
+09-30, MEDS 09-18, SOAR 09-29) had all been on our Momentum screen in the 2–3
+weeks before. **We do not compute this line ourselves:** it needs the whole
+month's volume including pre-market, Yahoo's extended-hours bars carry zero
+volume, and our Finviz snapshots start only when a name hits the screen (the
+`vwap` column is anchored at first sight). So TradingView runs the rule and
+posts the result here; the numbers match the operator's chart by construction.
+
+**Detection — `apps/web/src/tv/mvwap-bb-setup.pine`** (Pine v6, copied from
+the 📐 tab), run as ONE TradingView watchlist alert (Premium allows 2):
+Symbols = the runners watchlist, 1 minute, session Extended, condition = the
+script → "Any alert() function call", once per bar close, webhook
+`https://pnldash.uz/api/tv/webhook?key=<TV_WEBHOOK_SECRET>`. Gates (script
+inputs, defaults): top gainer = day high ≥ +20% vs the prior regular close;
+price ≤15% under mVWAP and ≥ basis −2%; basis rising over 3 bars.
+- **FORMING** — basis 6–10% under mVWAP and the gap closing → open the chart.
+- **READY** — basis ≤6% under mVWAP → the entry zone.
+- **GO** — the basis crosses above mVWAP (only after FORMING/READY).
+A setup breaks on a close under mVWAP and 3% under the basis → re-arms, max 3
+setups per ticker per day. The script also plots the two lines and stage
+markers, so bar replay on past days shows where it would have fired.
+
+**Watchlist — `GET /api/tv/watchlist`** (📐 tab: Copy list / Download .txt):
+today's Momentum names + every name that hit ≥ +30% on our screen in the last
+30 days (390 names on 2026-10-03), Nasdaq names `NASDAQ:`-prefixed. Refresh
+the TradingView list each morning; the script's own gainer gate keeps a wide
+list quiet.
+
+**Delivery — `POST /api/tv/webhook`** (`routes/tv.ts` → `services/tv-setups.ts`
+→ `poller.deliverTvSetup`). Key in the query string (TradingView can't send
+headers; unset `TV_WEBHOOK_SECRET` = 503); `dry=1` parses and echoes without
+delivering. Message contract: `READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis
+1.49 (-5.1%) | day high +41% | tf 1` (the alertcondition fallback `READY AIXI
+1.48 | tf 1` and JSON also parse). Gate: same ticker+stage+tf within 2 min =
+re-delivery, dropped; same ticker+stage from another timeframe within 5 min =
+logged, not re-announced; >120 webhooks/min = flood, 429. A delivered signal
+is a `tier_events` row (tier `alert`, event `tv_setup`, meta = stage, price,
+mvwap, px_pct, basis, basis_pct, day_gain, tf, chg/grade/float at the time,
+on_screen, notified), joins `payload.alerts` (row badge 📐, Alerts tab filter)
+and goes out at once as an SSE `alert` event (toast + sound: GO bright pair,
+READY rising triple, FORMING soft single). Telegram unless `ALERTS_DISABLED`
+has `tv_setup` (all stages) or `tv_forming` / `tv_ready` / `tv_go`.
+Regression: `npx tsx scripts/verify-tv-setups.ts` (also checks the .pine file
+still emits what the parser reads).
+
+**Caveats.** (1) The month anchor is two different lines: on the 1st trading
+day it IS the session VWAP, early in a month a 1–2-day VWAP; mid-month the
+spike day's volume dominates it. (2) Late in a month a 1m/30s chart (and
+possibly the alert engine) may not hold bars back to the 1st — if the script's
+yellow line drifts off the built-in "VWAP Month", move the month-to-date part
+to a 60m `request.security`. (3) The grade is usually NOT A+ at the entry
+(AIXI showed B+ through its 10-02 pullback); the gate is "top gainer today",
+by the operator's definition.
+
+**Grading (after ~2 weeks).**
+```sql
+SELECT at AT TIME ZONE 'America/New_York' AS et, ticker, meta->>'stage' AS stage,
+       (meta->>'price')::numeric AS price, (meta->>'px_pct')::numeric AS px_pct,
+       (meta->>'basis_pct')::numeric AS basis_pct, meta->>'tf' AS tf,
+       (meta->>'notified')::boolean AS notified, (meta->>'on_screen')::boolean AS on_screen
+FROM tier_events WHERE tier = 'alert' AND event = 'tv_setup' ORDER BY at;
+```
+Forward path from `screener_results` (on-screen names) or Yahoo 1m bars
+(prices are fine there; only the volume is missing): +10% vs a stop under
+the basis first, max favorable move in 30/60 min, per stage, split by early-
+vs mid-month and time of day. Compare against all A+ moments (25.0% up-first /
+29.8% down-first in September).
+
+---
+
 ## ⚡ Screens (the established layer — pointers only)
 
 Momentum (change+relvol gated), Ignition (volume-led sub-$10, runner_score,
