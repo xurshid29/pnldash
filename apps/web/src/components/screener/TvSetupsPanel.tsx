@@ -50,6 +50,10 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
   const { selected, setSelected } = useSelection();
   const [busy, setBusy] = useState(false);
 
+  const rowByTicker = useMemo(() => new Map((payload?.rows ?? []).map((r) => [r.ticker, r])), [payload]);
+
+  // Priority (operator, 2026-10-04): tickers on our Momentum list right now come
+  // first (⭐), then the rest, each newest first; off-list rows are dimmed.
   const groups = useMemo<TickerSetups[]>(() => {
     const byTicker = new Map<string, Signal[]>();
     for (const a of alerts) {
@@ -63,10 +67,10 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
       signals.sort((x, y) => x.at.localeCompare(y.at));
       out.push({ ticker, signals, latest: signals[signals.length - 1] });
     }
-    return out.sort((x, y) => y.latest.at.localeCompare(x.latest.at));
-  }, [alerts]);
-
-  const rowByTicker = useMemo(() => new Map((payload?.rows ?? []).map((r) => [r.ticker, r])), [payload]);
+    const on = (g: TickerSetups) => (rowByTicker.has(g.ticker) ? 1 : 0);
+    return out.sort((x, y) => on(y) - on(x) || y.latest.at.localeCompare(x.latest.at));
+  }, [alerts, rowByTicker]);
+  const onMomentum = groups.filter((g) => rowByTicker.has(g.ticker)).length;
 
   const withList = async (use: (list: TvWatchlist) => Promise<void> | void) => {
     setBusy(true);
@@ -110,6 +114,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <TickerLinks ticker={g.ticker} />
           <TickerLink ticker={g.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
+          {rowByTicker.has(g.ticker) && <span style={{ color: '#fadb14' }}>⭐</span>}
         </span>
       ),
     },
@@ -188,6 +193,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
       <div style={{ padding: '6px 8px', borderBottom: '1px solid #303030', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
           TradingView watchlist alert → 📐 forming · ready · go
+          {groups.length > 0 && <> · ⭐ {onMomentum} on Momentum · {groups.length - onMomentum} other</>}
         </Text>
         <Space size={6}>
           <Button size="small" icon={<CopyOutlined />} loading={busy} onClick={copyList}>Copy list</Button>
@@ -207,7 +213,10 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
           pagination={false}
           sticky
           locale={{ emptyText: 'No setups yet today — signals appear here when the TradingView alert fires (see How to)' }}
-          onRow={(g) => ({ onClick: () => setSelected(g.ticker), style: { cursor: 'pointer' } })}
+          onRow={(g) => ({
+            onClick: () => setSelected(g.ticker),
+            style: { cursor: 'pointer', opacity: rowByTicker.has(g.ticker) ? 1 : 0.6 },
+          })}
           rowClassName={(g) => (g.ticker === selected ? 'ant-table-row-selected' : '')}
         />
       </div>

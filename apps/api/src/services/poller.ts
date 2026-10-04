@@ -20,7 +20,7 @@ import { fetchEdgarFilings, type EdgarFiling, tvSymbol } from './edgar.js';
 import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
-import { formatTvSetupAlert, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
+import { formatTvSetupAlert, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3954,7 +3954,9 @@ class PollerService {
       broadcast('alert', alert);
       const stageSlug = `tv_${sig.stage}` as AlertComponent;
       if (telegramEnabled() && !this.alertsMuted && !alertDisabled('tv_setup') && !alertDisabled(stageSlug)) {
-        void sendTelegram(formatTvSetupAlert(sig, tvSymbol(sig.ticker), row));
+        // Priority: on our Momentum list → normal push; off the list → silent message.
+        void sendTelegram(formatTvSetupAlert(sig, tvSymbol(sig.ticker), row),
+          { disableNotification: row == null && TV_SETUP.offscreen_silent });
       }
     }
     return alert;

@@ -570,6 +570,19 @@ with a `setup` object; the boot seeding of the other alert kinds ignores them.
 
 ### 7.4 What the operator sees
 
+**Priority (2026-10-04, operator's call): a setup on a ticker that is on our
+Momentum list is the one to act on.** "On the list" means in the Momentum
+rows of the latest cycle; at signal time that is stored as `on_screen`.
+- **Telegram:** priority setups get a ⭐ header and a "⭐ on Momentum · grade …
+  · now … · float …" line, and push normally (they buzz). Off-list setups say
+  "not on our Momentum list" and arrive as **silent** messages (knob:
+  `TV_SETUP.offscreen_silent` in `tv-setups.ts`).
+- **Dashboard sound and toast:** priority setups get the stage sounds and a
+  gold-edged 20 s toast. Off-list ones get a soft single tone and an 8 s toast.
+- **📐 tab:** tickers on Momentum *right now* sort first with ⭐; the rest
+  are dimmed. The header counts both.
+- **Alerts tab:** ⭐📐 marks a priority setup.
+
 - **📐 VWAP setups tab** (next to Momentum): one row per ticker with today's
   stage trail. "→" means the setup advanced, "·" means it broke and re-armed.
   Repeats from another timeframe are dimmed, and a cyan **fast** tag marks the

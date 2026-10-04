@@ -135,6 +135,15 @@ webhook key; the full URL was given to the operator). Backups:
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-04 — 📐 PRIORITY FOR SETUPS ON THE MOMENTUM LIST.** The operator
+has both webhook alerts (1m + 2m) live and wants setups on tickers that are
+in our current Momentum list ranked higher. On-list (`on_screen`) setups get
+⭐, a buzzing Telegram push with grade/change/float, stage sounds and a gold
+20 s toast, and sort first on the 📐 tab. Off-list setups get a silent
+Telegram message, a soft tone, an 8 s toast and a dimmed row
+(`TV_SETUP.offscreen_silent`). No Pine change. No live signal had arrived
+yet (weekend).
+
 **2026-10-03 (late night) — 📐 SCRIPT v8 (names only).** The operator asked
 which screener identifies the "top gainers". None does: it's a per-ticker
 filter from the ticker's own bars, run on every symbol of the attached

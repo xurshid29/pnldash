@@ -49,6 +49,10 @@ export const TV_SETUP = {
   dup_sec: 120,           // same ticker + stage + timeframe again within 2 min = a re-delivery → dropped
   notify_merge_sec: 300,  // same ticker + stage from another timeframe within 5 min → logged, not re-notified
   max_per_min: 120,       // flood guard: a leaked key or a runaway alert must not spam the phone
+  // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
+  // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
+  // Off-list setups still go out, but as silent messages.
+  offscreen_silent: true,
 } as const;
 
 const STAGES: Record<string, TvStage> = { forming: 'forming', ready: 'ready', go: 'go' };
@@ -188,26 +192,33 @@ function fmtSigned(p: number | null): string {
 }
 
 // Telegram message. `tvSym` is the exchange-qualified chart symbol (edgar.tvSymbol)
-// and `row` the Momentum row when the ticker is on our screen right now.
+// and `row` the Momentum row when the ticker is on our screen right now — those
+// get ⭐ and an "on Momentum" line (they are the priority signals).
 export function formatTvSetupAlert(
   sig: TvSetupSignal,
   tvSym: string,
   row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
 ): string {
   const lines = [
-    `📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
     `<i>${sig.stage === 'go' && sig.go_via === 'reclaim' ? 'price reclaimed mVWAP' : STAGE_HINT[sig.stage]}${sig.path === 'fast' ? ' · fast approach (price leads, basis lagging)' : ''}</i>`,
   ];
   const lvl: string[] = [];
   if (sig.mvwap != null) lvl.push(`mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})`);
   if (sig.basis != null) lvl.push(`basis ${fmtPx(sig.basis)} (${fmtSigned(sig.basis_pct)})`);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
+  if (row) {
+    const mom = ['⭐ <b>on Momentum</b>'];
+    if (row.grade) mom.push(`grade ${escapeHtml(row.grade)}`);
+    if (row.change_pct != null) mom.push(`now ${fmtSigned(row.change_pct)}`);
+    if (row.float_m != null) mom.push(`float ${row.float_m.toFixed(1)}M`);
+    lines.push(mom.join(' · '));
+  } else {
+    lines.push('<i>not on our Momentum list</i>');
+  }
   const ctx: string[] = [];
   if (sig.day_gain != null) ctx.push(`day high ${fmtSigned(Math.round(sig.day_gain)).replace('.0%', '%')}`);
   if (sig.ah_gain != null) ctx.push(`after hours ${fmtSigned(Math.round(sig.ah_gain)).replace('.0%', '%')}`);
-  if (row?.change_pct != null) ctx.push(`now ${fmtSigned(row.change_pct)}`);
-  if (row?.grade) ctx.push(`grade ${escapeHtml(row.grade)}`);
-  if (row?.float_m != null) ctx.push(`float ${row.float_m.toFixed(1)}M`);
   if (sig.tf) ctx.push(`tf ${escapeHtml(sig.tf)}`);
   if (ctx.length > 0) lines.push(ctx.join(' · '));
   const finviz = `https://finviz.com/quote.ashx?t=${encodeURIComponent(sig.ticker)}`;

@@ -43,16 +43,20 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
       const kinds = a.kinds.filter((k) => kindsOn[k]);
       if (kinds.length === 0) continue;
       const shown = { ...a, kinds };
+      // 📐 priority: a setup on a ticker that was on our Momentum list gets a gold
+      // edge and stays longer; an off-list setup is a short plain toast.
+      const setupOnly = kinds.length === 1 && kinds[0] === 'tv_setup';
+      const priority = setupOnly && a.setup?.on_screen === true;
       notification.open({
         key: a.id,
         title: opportunityTitle(shown),
         description: <span style={{ whiteSpace: 'pre-line' }}>{opportunityBody(shown)}</span>,
         placement: 'topRight',
-        duration: 12,
+        duration: setupOnly ? (priority ? 20 : 8) : 12,
         showProgress: true,
         pauseOnHover: true,
         onClick: () => setSelected(a.ticker),
-        style: { cursor: 'pointer', borderLeft: `4px solid ${KIND_COLOR[kinds[0]]}` },
+        style: { cursor: 'pointer', borderLeft: `4px solid ${priority ? '#fadb14' : KIND_COLOR[kinds[0]]}` },
       });
     }
   }, [payload, armed, notification, setSelected]);

@@ -202,7 +202,7 @@ export function opportunityTitle(a: OpportunityAlert): string {
     const where = s.stage === 'go'
       ? (s.go_via === 'reclaim' ? 'price reclaimed mVWAP' : 'basis crossed above mVWAP')
       : `${fmtSignedPct(s.px_pct)} vs mVWAP · basis ${fmtSignedPct(s.basis_pct)}`;
-    return `📐 ${TV_STAGE_TITLE[s.stage]}${s.path === 'fast' ? ' (fast)' : ''} ${a.ticker} — ${where}`;
+    return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]}${s.path === 'fast' ? ' (fast)' : ''} ${a.ticker} — ${where}`;
   }
   if (a.kinds.includes('grade_aplus')) return `🅰️ ${a.ticker} — ${a.new_on_screen ? 'new A+' : `A+ (was ${a.prev_grade ?? '—'})`}`;
   if (a.kinds.includes('fast_move')) return `⚡ ${a.ticker} +${a.move_pct}% in 60s`;
@@ -294,8 +294,10 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
       // Loudest wins: A+ / 📐 GO bright pair > fast-move radar > 📐 READY
-      // triple > news chime > 📐 FORMING soft single tone.
-      const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st);
+      // triple > news chime > soft single tone (📐 FORMING, and every 📐 stage
+      // on a ticker that is NOT on our Momentum list — those are lower priority).
+      const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
+        && a.setup?.on_screen === true);
       try {
         if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('go')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
