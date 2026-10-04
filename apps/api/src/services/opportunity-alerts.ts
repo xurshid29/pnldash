@@ -34,7 +34,7 @@
 
 import type { NewsSource } from '../db/types.js';
 import { classifyByRules } from './catalyst-rules.js';
-import type { TvGoVia, TvPath, TvStage } from './tv-setups.js';
+import type { TvGoVia, TvPath, TvStage, TvStrength } from './tv-setups.js';
 
 export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 
@@ -50,6 +50,9 @@ export interface TvSetupInfo {
   tf: string | null;
   path: TvPath | null;        // 'base' | 'fast' — which shape reached FORMING/READY (script v2+)
   go_via: TvGoVia | null;     // 'reclaim' | 'cross' — what fired GO (script v5+)
+  vol_x: number | null;       // script v9+: signal-bar volume ÷ previous-20-bar average
+  run_pct: number | null;     // script v9+: run-up over the previous 10 bars, %
+  strength: TvStrength | null; // GO only: morning / run-up / volume / on Momentum checks
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe
 }

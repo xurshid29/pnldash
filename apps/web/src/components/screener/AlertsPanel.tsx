@@ -6,7 +6,7 @@ import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
 import { fmtFloat, fmtPct, fmtPrice } from '../../utils/format';
-import { TvStageTag, tvLevelsText, fmtTf } from '../common/TvStageTag';
+import { TvStageTag, StrengthTag, tvLevelsText, fmtTf } from '../common/TvStageTag';
 
 const { Text } = Typography;
 const LOCAL_TZ = 'Asia/Tashkent'; // same clock as the Momentum "Appeared" column (UTC+5)
@@ -75,6 +75,7 @@ export function AlertsPanel({ alerts, payload }: { alerts: OpportunityAlert[]; p
             <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: 6 }}>
               <span style={{ color: '#5cdbd3', fontWeight: 700 }}>{a.setup.on_screen ? '⭐ ' : ''}📐</span>
               <TvStageTag stage={a.setup.stage} dim={!a.setup.notified} path={a.setup.path} />
+              {a.setup.strength && <StrengthTag st={a.setup.strength} />}
               <span style={{ color: '#d9d9d9', fontSize: 12 }}>{tvLevelsText(a.setup)}</span>
               {a.setup.tf && <Text type="secondary" style={{ fontSize: 10 }}>{fmtTf(a.setup.tf)}</Text>}
             </span>

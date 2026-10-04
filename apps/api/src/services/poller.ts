@@ -20,7 +20,7 @@ import { fetchEdgarFilings, type EdgarFiling, tvSymbol } from './edgar.js';
 import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
-import { formatTvSetupAlert, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
+import { formatTvSetupAlert, goStrength, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3916,6 +3916,8 @@ class PollerService {
     const nowSec = Math.floor(Date.now() / 1000);
     const at = new Date(nowSec * 1000).toISOString();
     const row = this.lastPayload?.rows.find((r) => r.ticker === sig.ticker) ?? null;
+    // GO only: morning window, run-up, GO-bar volume, on Momentum (tv-setups.ts goStrength)
+    const strength = goStrength(sig, new Date(nowSec * 1000), row != null);
     const alert: OpportunityAlert = {
       id: `${sig.ticker}:${nowSec}:tv_setup:${sig.stage}${sig.tf ? `:${sig.tf}` : ''}`,
       ticker: sig.ticker,
@@ -3933,12 +3935,14 @@ class PollerService {
       setup: {
         stage: sig.stage, mvwap: sig.mvwap, px_pct: sig.px_pct, basis: sig.basis, basis_pct: sig.basis_pct,
         day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf, path: sig.path, go_via: sig.go_via,
+        vol_x: sig.vol_x, run_pct: sig.run_pct, strength,
         on_screen: row != null, notified: mode === 'notify',
       },
     };
     recordTierEvent('alert', 'tv_setup', sig.ticker, {
       id: alert.id, at, stage: sig.stage, price: alert.price, mvwap: sig.mvwap, px_pct: sig.px_pct,
       basis: sig.basis, basis_pct: sig.basis_pct, day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf, path: sig.path, go_via: sig.go_via,
+      vol_x: sig.vol_x, run_pct: sig.run_pct, strength,
       chg: alert.change_pct, grade: alert.grade, float_m: alert.float_m, rv1: alert.rel_vol_1min,
       on_screen: row != null, notified: mode === 'notify',
     });
@@ -3947,6 +3951,8 @@ class PollerService {
       ` · basis ${sig.basis ?? '?'} (${sig.basis_pct ?? '?'}%) · day ${sig.day_gain ?? '?'}%` +
       (sig.ah_gain != null ? ` · AH ${sig.ah_gain}%` : '') + ` · tf ${sig.tf ?? '?'}` +
       (sig.path ? ` · ${sig.path}` : '') + (sig.go_via ? ` · via ${sig.go_via}` : '') +
+      (sig.vol_x != null ? ` · vol ${sig.vol_x}x` : '') + (sig.run_pct != null ? ` · run ${sig.run_pct}%` : '') +
+      (strength ? ` · strength ${strength.score}/${strength.max}` : '') +
       `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}${mode === 'log' ? ' · repeat (logged only)' : ''}`,
     );
     if (mode === 'notify') {
@@ -3955,7 +3961,7 @@ class PollerService {
       const stageSlug = `tv_${sig.stage}` as AlertComponent;
       if (telegramEnabled() && !this.alertsMuted && !alertDisabled('tv_setup') && !alertDisabled(stageSlug)) {
         // Priority: on our Momentum list → normal push; off the list → silent message.
-        void sendTelegram(formatTvSetupAlert(sig, tvSymbol(sig.ticker), row),
+        void sendTelegram(formatTvSetupAlert(sig, tvSymbol(sig.ticker), row, strength),
           { disableNotification: row == null && TV_SETUP.offscreen_silent });
       }
     }

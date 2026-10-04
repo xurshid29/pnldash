@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v8** (history in §12) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v9** (history in §12) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -402,6 +402,9 @@ vs VWAP %>) | day high <±gain>% [| ah <±gain>%] | tf <timeframe.period> | path
 - `path` (v2) appears only on FORMING/READY.
 - `ah` (v3) appears only after hours.
 - `via` (v5) appears only on GO: `reclaim` or `cross`.
+- `vol <N>x` and `run <±N>%` (v9) appear on every signal: the signal bar's
+  volume ÷ the average of the previous 20 bars, and the close vs 10 bars
+  earlier. They feed the GO strength score (§7.5).
 - v3 writes a negative day high as `-2%`; v1/v2 wrote `+-2%`, which the parser
   also reads.
 - Older messages still parse; missing parts become null. It is built with
@@ -607,7 +610,33 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   `tv_ready` / `tv_go`. The bot's `/alerts off` command (a pause until
   `/alerts on` or the next API restart) applies too.
 
-### 7.5 Files
+### 7.5 GO strength (v9, 2026-10-05)
+
+The operator asked how to avoid entering weak GOs (moves under 10%). Every GO
+is scored on four checks (`goStrength` in `tv-setups.ts`, knobs in `TV_SETUP`):
+
+| Check | Passes when | Why |
+|---|---|---|
+| morning | received 04:00–10:30 ET (pre-market + first hour) | replay: 8/8 unique GOs here ran 10%+ in the next hour; afternoon/after hours 3/7 |
+| run-up | price up ≥5% over the 10 bars before the GO (`run`) | replay: 16/18 strong GO alerts vs 4/7 weak |
+| volume | GO-bar volume ≥2× the previous-20-bar average (`vol`) | the classic breakout confirmation; NIVF 09-30 (big spike, +30%) vs 10-01 (tiny, ~9%). **Unvalidated:** the replay has no pre-market volume |
+| on Momentum | the ticker is on our Momentum list (⭐) | the operator's priority (§7.4) |
+
+It shows as **💪3/4** next to GO in the 📐 tab and the Alerts tab, with the
+checks spelled out under "Latest signal". Telegram adds a "💪 GO strength
+3/4 · morning ✓ · run-up +8.1% ✓ · volume 3.2× ✓ · on Momentum ✗" line, and
+the browser notification adds "strength 3/4". A v8 message has no
+volume/run-up, so those checks are skipped (`max` 2).
+
+**It is a tag, not a filter.** Nothing is suppressed. The score, `vol_x`,
+`run_pct` and the per-check flags are stored on every signal, so after ~2
+weeks of live signals the grading (§9) can tell which checks actually predict
+a 10%+ run before any of them becomes a filter. MACD isn't a check: every
+GO in the replay already had MACD above zero, so it separates nothing.
+Practical rule meanwhile: exit a GO that closes back under the line or makes
+no new high within ~3–5 bars. Weak GOs stall at once.
+
+### 7.6 Files
 
 | File | Role |
 |---|---|
@@ -675,6 +704,8 @@ is missing).
 - time to GO, and how often FORMING becomes READY and READY becomes GO.
 
 **Split by:**
+- GO strength: score and each check (morning, run-up, volume, on Momentum) —
+  which ones actually predict a 10%+ run? (v9, §7.5);
 - `path`: base vs fast (v2) — did the fast route add winners or chop?
 - timeframe: 1m vs 2m;
 - early month (days 1–3, where the line is ≈ the session VWAP) vs mid/late month;
@@ -769,3 +800,4 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-03 | v6 | `17f70ab` | Operator: "this one also is not accurate" (AIXI 10-01 1m: GO on the 09:38 ET crash bar). The month-start line, built on thin volume, fell under a flat basis on one 26K-share red bar, and v5 counted that as the basis crossing above it. v6: the cross needs `basisUp` (`crossOk`), and no GO prints on a bar that closes below the previous close. Replay: GOs unchanged except NXL 09:06 on 2m (NXL keeps its 09:12 reclaim GO). The replica gained `python3 pinesim.py`, a synthetic crash test: v5 gives GO, v6 doesn't. AIXI-1001 was added as a should-not-fire replay case (its pre-market line is approximated, since Yahoo has no pre-market volume). |
 | 2026-10-03 | v7 | `90d580a` | Operator: "why nothing between 13:00–13:20?" (AIXI 10-02 pre-market). AIXI was a third-session runner (+22% on 09-29), so the 2-session look-back kept the gate shut. `runnerDays` default 2 → 3, max 3 → 5; the gains now live in a 5-entry array instead of gain1..3. Replay with the new AIXI-1002PM case: v6 caught 8/10 on 1m and 8/10 on 2m, v7 caught 9/10 on both (READY 04:06 / 04:08 ET, GO 04:21). Other signals unchanged (24 / 16). |
 | 2026-10-03 | v8 | `cbd90a8` | Clarity only, no logic change. The settings group "Top gainer" is renamed "Gainer filter (this ticker's own move)", with titles "Up at least % (day high vs prior close; -100 = filter off)", "…today, or on any of the last N sessions", and "After hours, also count the move since today's close". The operator had asked which screener picks the "top gainers"; none does — it's a per-ticker filter. Renamed inputs may come back at their defaults after the update. |
+| 2026-10-05 | v9 | see `git log` | Operator: "how not to enter the weak GOs (under 10%)?" No signal logic change. Every message now carries `vol <N>x` (signal-bar volume ÷ previous-20-bar average) and `run <±N>%` (close vs 10 bars earlier). The server scores each GO 0–4 (morning 04:00–10:30 ET, run-up ≥5%, volume ≥2×, on Momentum) and shows 💪N/M on the 📐 and Alerts tabs, in Telegram and in the notification; all of it is stored for grading (§7.5). A tag, not a filter, until live data says which checks matter. Regression: 71 checks. |

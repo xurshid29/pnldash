@@ -7,7 +7,7 @@ import { tvApi, type TvWatchlist } from '../../api/tv';
 import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, tvLevelsText, fmtTf, TV_STAGE_RANK } from '../common/TvStageTag';
+import { TvStageTag, StrengthTag, strengthText, tvLevelsText, fmtTf, TV_STAGE_RANK } from '../common/TvStageTag';
 import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
 
@@ -132,6 +132,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
                 </Text>
               )}
               <TvStageTag stage={s.setup.stage} dim={!s.setup.notified} path={s.setup.path} />
+              {s.setup.strength && <StrengthTag st={s.setup.strength} />}
               <Text type="secondary" style={{ fontSize: 10 }}>{hhmm(s.at)}{s.setup.tf ? ` ${fmtTf(s.setup.tf)}` : ''}</Text>
             </span>
           ))}
@@ -153,6 +154,9 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
           )}
           {g.latest.setup.ah_gain != null && (
             <Text type="secondary" style={{ fontSize: 10, marginLeft: 6 }}>after hours +{Math.round(g.latest.setup.ah_gain)}%</Text>
+          )}
+          {g.latest.setup.strength && (
+            <div style={{ fontSize: 10, color: '#bfbfbf' }}>💪 {strengthText(g.latest.setup)}</div>
           )}
         </span>
       ),

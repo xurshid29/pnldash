@@ -6,7 +6,7 @@
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, type TvSetupSignal } from '../src/services/tv-setups.js';
+import { parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, type TvSetupSignal } from '../src/services/tv-setups.js';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail = ''): void {
@@ -69,6 +69,27 @@ console.log('Parse — rejects');
   check('array body', parseTvMessage(['READY', 'AIXI']) == null);
 }
 
+console.log('GO strength (v9)');
+{
+  const go = parseTvMessage('GO NIVF 0.1961 | mVWAP 0.188 (4.3%) | basis 0.169 (-10.1%) | day high +38% | vol 3.2x | run +8.1% | tf 2 | via reclaim');
+  check('parses volume and run-up', go?.vol_x === 3.2 && go.run_pct === 8.1 && go.go_via === 'reclaim', JSON.stringify(go));
+  const neg = parseTvMessage('GO X 1.00 | vol 0.4x | run -2.5% | tf 1 | via cross');
+  check('negative run-up', neg?.run_pct === -2.5 && neg.vol_x === 0.4, JSON.stringify(neg));
+  const morning = new Date('2026-10-02T13:30:00Z');   // 09:30 ET
+  const evening = new Date('2026-10-02T21:00:00Z');   // 17:00 ET
+  const st = goStrength(go!, morning, true);
+  check('all four checks pass', st?.score === 4 && st.max === 4 && st.morning && st.run_up === true && st.volume === true && st.on_momentum, JSON.stringify(st));
+  const weak = goStrength(neg!, evening, false);
+  check('weak GO scores 0/4', weak?.score === 0 && weak.max === 4 && !weak.morning, JSON.stringify(weak));
+  const old = goStrength(parseTvMessage('GO X 1.00 | tf 1 | via cross')!, morning, false);
+  check('v8 message: volume/run-up skipped (max 2)', old?.max === 2 && old.score === 1 && old.volume === null && old.run_up === null, JSON.stringify(old));
+  check('no strength for READY', goStrength(parseTvMessage('READY X 1.00 | vol 3x | run +9%')!, morning, true) === null);
+  const window = goStrength(go!, new Date('2026-10-02T14:31:00Z'), true);   // 10:31 ET — just past the window
+  check('10:31 ET is outside the morning window', window?.morning === false && window.score === 3, JSON.stringify(window));
+  const html = formatTvSetupAlert(go!, 'NASDAQ:NIVF', { change_pct: 30, grade: 'A+', float_m: 2 }, st);
+  check('Telegram strength line', html.includes('GO strength 4/4') && html.includes('run-up +8.1% ✓') && html.includes('volume 3.2× ✓') && html.includes('on Momentum ✓'), html);
+}
+
 console.log('Gate — duplicates, other timeframes, flood');
 {
   const T0 = 1_790_000_000;
@@ -117,7 +138,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
   const here = dirname(fileURLToPath(import.meta.url));
   const pine = readFileSync(resolve(here, '../../web/src/tv/mvwap-bb-setup.pine'), 'utf8');
   for (const part of ['" | mVWAP "', '" | basis "', '" | day high "', '" | ah "', '" | tf "', '" | path "', '"base"', '"fast"',
-    '" | via "', '"reclaim"', '"cross"', '"FORMING"', '"READY"', '"GO"']) {
+    '" | via "', '"reclaim"', '"cross"', '" | vol "', '" | run "', '"FORMING"', '"READY"', '"GO"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

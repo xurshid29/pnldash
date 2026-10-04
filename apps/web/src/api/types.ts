@@ -330,6 +330,16 @@ export interface TickCatch {
 // watchlist alert through POST /api/tv/webhook — it arrives between cycles.
 export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 export type TvStage = 'forming' | 'ready' | 'go';
+// GO strength: morning window (04:00–10:30 ET), run-up ≥5% into the GO,
+// GO-bar volume ≥2× the previous 20 bars, ticker on our Momentum list.
+export interface TvStrength {
+  score: number;
+  max: number;
+  morning: boolean;
+  run_up: boolean | null;
+  volume: boolean | null;
+  on_momentum: boolean;
+}
 export interface TvSetupInfo {
   stage: TvStage;
   mvwap: number | null;
@@ -341,6 +351,9 @@ export interface TvSetupInfo {
   tf: string | null;          // TradingView interval of the alert
   path?: 'base' | 'fast' | null; // which shape reached FORMING/READY (script v2+)
   go_via?: 'reclaim' | 'cross' | null; // what fired GO (script v5+)
+  vol_x?: number | null;      // script v9+: signal-bar volume ÷ previous-20-bar average
+  run_pct?: number | null;    // script v9+: run-up over the previous 10 bars, %
+  strength?: TvStrength | null; // GO only (server: tv-setups.ts goStrength)
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

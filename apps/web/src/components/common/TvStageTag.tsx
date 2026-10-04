@@ -1,4 +1,4 @@
-import type { TvSetupInfo, TvStage } from '../../api/types';
+import type { TvSetupInfo, TvStage, TvStrength } from '../../api/types';
 
 // 📐 VWAP setup stage pill (TradingView webhook, 2026-10-03). Amber → orange →
 // green as the setup matures; shared by the Alerts log and the 📐 tab.
@@ -41,6 +41,24 @@ export function TvStageTag({ stage, dim, path }: { stage: TvStage; dim?: boolean
       {path === 'fast' && <span style={{ color: '#5cdbd3', fontSize: 10, fontWeight: 700, marginLeft: 3 }}>fast</span>}
     </span>
   );
+}
+
+// GO strength "3/4" pill: green at full marks, amber one short, grey below.
+export function StrengthTag({ st }: { st: TvStrength }) {
+  const color = st.score === st.max ? '#95de64' : st.score === st.max - 1 ? '#ffd666' : '#8c8c8c';
+  return <span style={{ color, fontSize: 10, fontWeight: 700, whiteSpace: 'nowrap' }}>💪{st.score}/{st.max}</span>;
+}
+
+// "morning ✓ · run-up +8.1% ✓ · volume 3.2× ✓ · ⭐ ✗" — which checks a GO passed.
+export function strengthText(s: TvSetupInfo): string {
+  const st = s.strength;
+  if (!st) return '';
+  const mark = (b: boolean | null | undefined) => (b ? '✓' : '✗');
+  const parts = [`morning ${mark(st.morning)}`];
+  if (st.run_up != null) parts.push(`run-up ${fmtSignedPct(s.run_pct).replace('-', '\u2212')} ${mark(st.run_up)}`);
+  if (st.volume != null && s.vol_x != null) parts.push(`volume ${s.vol_x.toFixed(1)}× ${mark(st.volume)}`);
+  parts.push(`⭐ ${mark(st.on_momentum)}`);
+  return parts.join(' · ');
 }
 
 // "−5.7% vs mVWAP · basis −5.1%" — where price and the basis sat at the signal.

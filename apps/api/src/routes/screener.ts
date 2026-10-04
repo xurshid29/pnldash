@@ -122,6 +122,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     setup: {
       stage: string; mvwap: number | null; px_pct: number | null; basis: number | null; basis_pct: number | null;
       day_gain: number | null; ah_gain: number | null; tf: string | null; path: string | null; go_via: string | null;
+      vol_x: number | null; run_pct: number | null; strength: Record<string, unknown> | null;
       on_screen: boolean; notified: boolean;
     } | null;
   };
@@ -152,6 +153,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
       a.setup = {
         stage: str(m.stage)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct), basis: num(m.basis), basis_pct: num(m.basis_pct),
         day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf), path: str(m.path), go_via: str(m.go_via),
+        vol_x: num(m.vol_x), run_pct: num(m.run_pct),
+        strength: m.strength && typeof m.strength === 'object' ? (m.strength as Record<string, unknown>) : null,
         on_screen: m.on_screen === true, notified: m.notified !== false,
       };
     }

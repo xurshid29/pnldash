@@ -43,6 +43,8 @@ export interface TvSetupSignal {
   tf: string | null;          // TradingView interval: "1", "2", "30S", …
   path: TvPath | null;
   go_via: TvGoVia | null;
+  vol_x: number | null;       // script v9+: signal bar volume ÷ average of the previous 20 bars
+  run_pct: number | null;     // script v9+: close vs 10 bars earlier, %
 }
 
 export const TV_SETUP = {
@@ -53,7 +55,42 @@ export const TV_SETUP = {
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
   offscreen_silent: true,
+  // GO strength (operator, 2026-10-05: "how not to enter the weak ones?"). Each
+  // GO is scored on four checks; the first two came out of the replay (§ GO
+  // strength in docs/vwap-setup.md), volume is the classic breakout test and
+  // is unvalidated until the live log is graded. A tag to read, not a filter.
+  strength_window_et: [240, 630] as const,  // 04:00–10:30 ET: pre-market + first hour (8/8 strong in replay)
+  strength_run_min: 5,    // % run-up over the previous 10 bars into the GO (16/18 strong vs 4/7 weak)
+  strength_vol_min: 2,    // GO-bar volume at least 2× the previous-20-bar average
 } as const;
+
+export interface TvStrength {
+  score: number;              // checks passed
+  max: number;                // checks with data (volume/run-up need script v9)
+  morning: boolean;
+  run_up: boolean | null;     // null = no data
+  volume: boolean | null;
+  on_momentum: boolean;
+}
+
+function etMinutes(d: Date): number {
+  const parts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+    .formatToParts(d);
+  const n = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  return n('hour') * 60 + n('minute');
+}
+
+// Strength of a GO: morning window, a run-up into it, volume on the GO bar, and
+// whether the ticker is on our Momentum list. Null for FORMING/READY.
+export function goStrength(sig: TvSetupSignal, at: Date, onMomentum: boolean): TvStrength | null {
+  if (sig.stage !== 'go') return null;
+  const m = etMinutes(at);
+  const morning = m >= TV_SETUP.strength_window_et[0] && m < TV_SETUP.strength_window_et[1];
+  const runUp = sig.run_pct == null ? null : sig.run_pct >= TV_SETUP.strength_run_min;
+  const volume = sig.vol_x == null ? null : sig.vol_x >= TV_SETUP.strength_vol_min;
+  const checks = [morning, runUp, volume, onMomentum].filter((c): c is boolean => c !== null);
+  return { score: checks.filter(Boolean).length, max: checks.length, morning, run_up: runUp, volume, on_momentum: onMomentum };
+}
 
 const STAGES: Record<string, TvStage> = { forming: 'forming', ready: 'ready', go: 'go' };
 
@@ -85,6 +122,8 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     tf: typeof o.tf === 'string' || typeof o.tf === 'number' ? String(o.tf) : null,
     path: toPath(o.path),
     go_via: toVia(o.go_via),
+    vol_x: toNum(o.vol_x),
+    run_pct: toNum(o.run_pct),
   };
 }
 
@@ -130,6 +169,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const tf = /\btf\s+([0-9A-Za-z]+)/i.exec(text);
   const path = /\bpath\s+(base|fast)\b/i.exec(text);
   const via = /\bvia\s+(reclaim|cross)\b/i.exec(text);
+  const vol = /\bvol\s+(\d*\.?\d+)\s*x\b/i.exec(text);
+  const run = /\brun\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -143,6 +184,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     tf: tf?.[1] ?? null,
     path: toPath(path?.[1]),
     go_via: toVia(via?.[1]),
+    vol_x: toNum(vol?.[1]),
+    run_pct: toNum(run?.[1]),
   };
 }
 
@@ -198,6 +241,7 @@ export function formatTvSetupAlert(
   sig: TvSetupSignal,
   tvSym: string,
   row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
+  strength: TvStrength | null = null,
 ): string {
   const lines = [
     `${row ? '⭐ ' : ''}📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
@@ -216,6 +260,7 @@ export function formatTvSetupAlert(
   } else {
     lines.push('<i>not on our Momentum list</i>');
   }
+  if (strength) lines.push(strengthLine(strength, sig));
   const ctx: string[] = [];
   if (sig.day_gain != null) ctx.push(`day high ${fmtSigned(Math.round(sig.day_gain)).replace('.0%', '%')}`);
   if (sig.ah_gain != null) ctx.push(`after hours ${fmtSigned(Math.round(sig.ah_gain)).replace('.0%', '%')}`);
@@ -225,4 +270,14 @@ export function formatTvSetupAlert(
   const tv = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym)}`;
   lines.push(`<a href="${tv}">TradingView</a> · <a href="${finviz}">Finviz</a>`);
   return lines.join('\n');
+}
+
+// "💪 GO strength 3/4 · morning ✓ · run-up +8.1% ✓ · volume 3.2× ✓ · on Momentum ✗"
+export function strengthLine(st: TvStrength, sig: TvSetupSignal): string {
+  const mark = (b: boolean | null) => (b ? '✓' : '✗');
+  const parts = [`💪 <b>GO strength ${st.score}/${st.max}</b>`, `morning ${mark(st.morning)}`];
+  if (st.run_up !== null) parts.push(`run-up ${fmtSigned(sig.run_pct)} ${mark(st.run_up)}`);
+  if (st.volume !== null) parts.push(`volume ${sig.vol_x!.toFixed(1)}× ${mark(st.volume)}`);
+  parts.push(`on Momentum ${mark(st.on_momentum)}`);
+  return parts.join(' · ');
 }

@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v8 (2026-10-03).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v9 (2026-10-05).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // A top gainer pulls back under its month-anchored VWAP while the Bollinger
@@ -53,6 +53,12 @@ crossU = ta.crossover(basis, mvwap)
 // bar (v6 evaluates and/or lazily; a skipped math.sum would corrupt its history).
 aboveRecent = math.sum(close >= mvwap ? 1.0 : 0.0, math.max(fromBelow, 1))[1]
 underRecent = math.sum(close <= mvwap ? 1.0 : 0.0, goWithin)[1]
+// Strength inputs sent with every signal (v9): the signal bar's volume vs the
+// average of the previous 20 bars, and the run-up over the previous 10 bars.
+// The server scores GOs with them (services/tv-setups.ts goStrength).
+volAvg20 = ta.sma(volume, 20)[1]
+volX     = volAvg20 > 0 ? volume / volAvg20 : na
+runUp10  = (close / close[10] - 1) * 100
 plot(mvwap, "mVWAP", color.yellow)
 plot(basis, "BB basis", color.green)
 
@@ -160,6 +166,10 @@ if fire
     msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
     if not na(ahGain)
         msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
+    if not na(volX)
+        msg += " | vol " + str.tostring(volX, "#.#") + "x"
+    if not na(runUp10)
+        msg += " | run " + (runUp10 >= 0 ? "+" : "") + str.tostring(runUp10, "#.#") + "%"
     msg += " | tf " + timeframe.period
     if target < 3
         msg += " | path " + ((target == 2 ? baseReady : baseForming) ? "base" : "fast")
