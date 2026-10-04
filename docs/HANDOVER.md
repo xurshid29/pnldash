@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-10-03
+# Session Handover — updated 2026-10-05
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -8,16 +8,17 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-03 (last code commit `d50ebbe`)
+## START HERE — state at 2026-10-05 (last code commit `bf8eff4`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every
 20s) sorted by the **A+…D grade**, plus the History, Watchlist and Alerts
 tabs, Quote Details, the news room and 0–4 TradingView charts. Manual
 trading off 1-minute charts, Ross-Cameron-style selection: catalyst first,
 low float, mostly 07:00–11:00 ET. **The operator's current entry (since
-~10-01): the VWAP/BB setup** — a session top gainer under its month-anchored
-VWAP while the BB basis (SMA 20) curls up within ~6% beneath it; exits fast
-when it fails (📐, item 5 below). Everything else is parked (below). Prod
+~10-01): the VWAP/BB setup.** A recent big gainer sits under its
+month-anchored VWAP while the BB basis (SMA 20) curls up beneath it; the
+operator exits fast when it fails. TradingView detects it and our webhook
+delivers it (📐, item 5 below). Everything else is parked (below). Prod
 `/health` ok; ~0.8 GB of 3.9 GB RAM used (was ~3 GB + swap before the
 parking), disk 26%.
 
@@ -50,17 +51,29 @@ parking), disk 26%.
 4. **CI rollout runs `dbmate up` BEFORE `docker compose up -d`** (fixed
    10-01). The old API briefly runs on the new schema, so keep migrations
    additive.
-5. **📐 TradingView VWAP setups (2026-10-03)** — the operator's edge,
-   detected by TradingView (we can't compute a month VWAP with pre-market
-   volume ourselves). Pine script `apps/web/src/tv/mvwap-bb-setup.pine`
-   (**v8**) runs as TWO watchlist alerts, 1m and 2m (Premium = 2), and
-   posts FORMING → READY → GO to `POST /api/tv/webhook?key=…`; each signal is
-   a `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert`
-   event (toast + sound at once), a 📐 row badge, the **📐 VWAP setups** tab
-   (stage trail per ticker, Copy list / Download .txt / Copy Pine script /
-   How to) and Telegram (`ALERTS_DISABLED` `tv_setup` or `tv_forming` /
-   `tv_ready` / `tv_go`). **Full reference: `docs/vwap-setup.md`** (Pine
-   walkthrough, tuning table, change procedure, grading SQL, backlog).
+5. **📐 TradingView VWAP setups** — the operator's edge, detected by
+   TradingView. We can't build a month VWAP with pre-market volume ourselves:
+   Yahoo's extended-hours bars have zero volume.
+   - **Script:** `apps/web/src/tv/mvwap-bb-setup.pine`, **v9**. FORMING →
+     READY → GO; GO = a decisive price reclaim or a rising-basis cross;
+     gainer filter = +20% today or in the last 3 sessions, or after hours
+     since today's close.
+   - **Alerts:** the operator runs **two watchlist alerts, 1m and 2m**
+     (Premium = 2), webhook set 10-04, on a "runners" watchlist from the 📐
+     tab's Copy list. A stage repeated on the other timeframe within 5 min
+     is logged, not re-announced.
+   - **Delivery:** `POST /api/tv/webhook?key=…` → `tier_events` (tier
+     `alert`, event `tv_setup`), an SSE `alert` event, the **📐 VWAP setups**
+     tab and Telegram (`ALERTS_DISABLED` `tv_setup` / `tv_forming` /
+     `tv_ready` / `tv_go`).
+   - **Priority (10-04):** a ticker on our Momentum list gets ⭐, a buzzing
+     push and sorts first; off-list ones are silent and dimmed.
+   - **GO strength (10-05):** 💪0–4 = morning 04:00–10:30 ET, run-up ≥5%,
+     GO-bar volume ≥2×, on Momentum. A tag, not a filter.
+   - **Offline replay:** `apps/api/scripts/research/vwap-setup/`
+     (`python3 replay.py`, `replay.py go`, `pinesim.py`).
+   - **Full reference: `docs/vwap-setup.md`** (Pine walkthrough, tuning table,
+     changelog v1–v9, change procedure, grading SQL, backlog).
 
 **Parked, code kept** — `COMPONENTS_DISABLED` default
 `ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`:
@@ -82,17 +95,29 @@ webhook key; the full URL was given to the operator). Backups:
 `.env.bak-20261003`.
 
 **Open items, ranked:**
-0. **Mon 2026-10-05 — first live session of the 📐 setup.** The operator
-   sets up the TradingView side over the weekend (script on a chart, check
-   its yellow line sits on their "VWAP Month"; runners watchlist; one
-   watchlist alert with the webhook). Confirm signals arrive
-   (`docker compose … logs api | grep tv-setup`, or the 📐 tab), then tune
-   the Pine inputs with the operator (bar replay on past days, including
-   names that failed). Nothing has measured the edge yet — the evidence is
-   six hand-picked top gainers; the 2026-08 session-VWAP reclaim layer
-   graded as noise. **~2026-10-17: grade the `tv_setup` rows** (SQL in
-   `docs/vwap-setup.md` §9). Ask the operator to import a fresh IBKR .tlg (the
-   journal stops at 06-18) so their real P&L on these trades can be checked.
+0. **📐 live from Mon 2026-10-05.** No signal had arrived by the end of
+   10-04 (weekend).
+   - **Before the session:** the operator must paste **v9** (📐 tab → Copy
+     Pine script) and **delete + recreate both alerts**. TradingView alerts
+     snapshot the script and settings; v9 adds the `vol`/`run` fields that
+     the strength score needs.
+   - **First days:** confirm signals arrive (📐 tab, or
+     `docker compose … logs api | grep tv-setup`). Answer "why no signal
+     here?" with the replica's trace (`pinesim.simulate(..., trace=)`). The
+     gainer filter was the cause twice (AMOD after hours, AIXI third
+     session).
+   - **~2026-10-17 — grade the `tv_setup` rows** (SQL in
+     `docs/vwap-setup.md` §9): per stage, path, timeframe, and per GO-strength
+     check. Which checks predict a 10%+ run? Only then turn any into a filter.
+     The edge itself is still unmeasured: the evidence is hand-picked winners,
+     and the 08-2026 session-VWAP reclaim layer graded as noise.
+   - **Before ~10-18:** add the operator's *failed* setups to `replay.py`.
+     Yahoo 1m bars only reach back ~30 days, and 1m requests are capped at
+     8 days.
+   - **Optional:** a week with 30s instead of 1m (if TradingView offers 30s
+     for watchlist alerts), then compare per timeframe (`tf` is stored).
+   - Ask the operator to import a fresh IBKR .tlg (the journal stops at
+     06-18) so their real P&L on these trades can be checked.
 1. **~2026-10-15 — re-grade the LIVE grade** from `screener_results.grade`
    with the same label and the first-touch race. Does it hold live? Pipeline:
    `apps/api/scripts/research/momentum-grade/` (export SQL → `study.py` →
@@ -114,6 +139,13 @@ webhook key; the full URL was given to the operator). Backups:
    entry time; more interesting now that grades persist.
 
 **Gotchas before touching things:**
+- 📐: the Pine message format and `parseTvMessage` are a contract
+  (`npx tsx scripts/verify-tv-setups.ts` checks both). Every script change
+  needs a version bump, the replica mirrored (`pinesim.py`), a changelog row
+  in `docs/vwap-setup.md` §12, and the operator recreating both alerts.
+- 📐: early in a month the month VWAP rests on thin volume. One heavy bar can
+  move it a lot (the AIXI 10-01 false GO, fixed in v6). The replay's mVWAP
+  levels are read off the operator's screenshots, not computed.
 - A deploy resets in-memory state. Seeded on boot: firstSeen, VWAP, the
   fade-cap price history (last 10 min), alert dedup (tier_events +
   24h news URLs). Not seeded: the 6-cycle grade smoothing ring, which
@@ -131,9 +163,21 @@ webhook key; the full URL was given to the operator). Backups:
   (`apps/web/dist/assets/index-*.js` vs `/usr/share/nginx/html/assets/` in
   the web container), not by CI status alone.
 
-## Session log 2026-10-01 → 10-03 (newest first)
+## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-05 — 📐 GO STRENGTH (script v9).** The operator asked how to
+avoid weak GOs (under 10%). Replay: time of day separated best (all 8 unique
+morning GOs ran 10%+, against 3/7 afternoon/after hours), then a run-up into
+the GO (16/18 strong vs 4/7 weak); MACD separated nothing. v9 sends
+`vol <N>x` (signal-bar volume ÷ previous-20-bar average) and `run <±N>%` on
+every signal. The server scores GOs 0–4 (morning 04:00–10:30 ET, run-up ≥5%,
+volume ≥2×, on Momentum) and shows 💪N/M on the tabs, in Telegram and in the
+notification. A tag, not a filter; it's stored for grading. Also on
+10-04/05: the operator added the webhook to both alerts (1m + 2m); priority
+for on-Momentum setups (⭐, silent off-list); explained that 1m misses
+NXL-type pullbacks by design (2m and 30s catch them).
 
 **2026-10-04 — 📐 PRIORITY FOR SETUPS ON THE MOMENTUM LIST.** The operator
 has both webhook alerts (1m + 2m) live and wants setups on tickers that are
