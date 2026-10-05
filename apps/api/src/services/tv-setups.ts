@@ -89,7 +89,7 @@ export interface TvSetupSignal {
 
 export const TV_SETUP = {
   dup_sec: 120,           // same ticker + stage + timeframe again within 2 min = a re-delivery → dropped
-  notify_merge_sec: 300,  // same event from another timeframe within 5 min → logged; one announcement per ticker + stage per 5 min
+  notify_merge_sec: 300,  // same event from another timeframe within 5 min → logged; one announcement per ticker + stage (PULLBACK: per line) per 5 min
   max_per_min: 120,       // flood guard: a leaked key or a runaway alert must not spam the phone
   // Noise cut (operator, 2026-10-05: "I hide broken, held, forming setups, and
   // READY also can be limited" — the chart markers they switched off). Quiet
@@ -281,13 +281,14 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
 // (1m and 30s), so one event arrives twice: the first copy counts, the second
 // is only logged. A first copy is then 'quiet' (stored and shown in the 📐
 // sidebar, not announced) for a quiet stage or a READY repeat, else announced
-// — at most once per ticker + stage per 5 min; the rest are logged.
+// — at most once per ticker + stage (PULLBACK: per line) per 5 min; the rest
+// are logged.
 export type TvVerdict = 'notify' | 'quiet' | 'log' | 'drop' | 'flood';
 
 export class TvSetupGate {
   private lastExact = new Map<string, number>();   // ticker|stage|tf|line → epoch sec
   private lastEvent = new Map<string, number>();   // ticker|stage|line → epoch sec of the event's first copy
-  private lastNotify = new Map<string, number>();  // ticker|stage → epoch sec of the last announcement
+  private lastNotify = new Map<string, number>();  // ticker|stage (PULLBACK: ticker|pullback|line) → last announcement
   private readyDay = '';                            // the ET day readyLines belongs to
   private readyLines = new Set<string>();           // ticker|line with a READY announced that day
   private recent: number[] = [];
@@ -320,12 +321,22 @@ export class TvSetupGate {
       if (readyKeys.every((k) => this.readyLines.has(k))) return 'quiet';
     }
 
-    // A quiet event doesn't use up the slot: a month READY repeat must not
-    // swallow the day's first year READY a minute later.
-    const key = `${sig.ticker}|${sig.stage}`;
-    const prevNotify = this.lastNotify.get(key);
-    if (prevNotify != null && nowSec - prevNotify < TV_SETUP.notify_merge_sec) return 'log';
-    this.lastNotify.set(key, nowSec);
+    // One announcement per ticker + stage per 5 min. A quiet event doesn't use
+    // up the slot: a month READY repeat must not swallow the day's first year
+    // READY a minute later. PULLBACK counts per line (operator, 2026-10-05):
+    // each line is its own level and setup — MI's 15:21 session pullback,
+    // +10% two minutes later, was only logged because a year-line PULLBACK
+    // had pinged 3½ min earlier. A line already announced in another
+    // combination (session+month, then session) is the same level → logged.
+    const keys = sig.stage === 'pullback' && tokens.length > 0
+      ? tokens.map((t) => `${sig.ticker}|pullback|${t}`)
+      : [`${sig.ticker}|${sig.stage}`];
+    const announcedLately = (k: string) => {
+      const t = this.lastNotify.get(k);
+      return t != null && nowSec - t < TV_SETUP.notify_merge_sec;
+    };
+    if (keys.some(announcedLately)) return 'log';
+    for (const k of keys) this.lastNotify.set(k, nowSec);
     for (const k of readyKeys) this.readyLines.add(k);
     return 'notify';
   }

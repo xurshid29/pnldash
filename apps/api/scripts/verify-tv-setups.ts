@@ -125,7 +125,7 @@ console.log('PULLBACK setup (v10)');
   const g = new TvSetupGate();
   check('session PULLBACK notifies', g.admit(pb!, T0) === 'notify');
   check('same line + tf again within 2 min is a duplicate', g.admit(pb!, T0 + 20) === 'drop');
-  check('the month line minutes later is logged, not dropped', g.admit({ ...pb!, line: 'month' }, T0 + 60) === 'log');
+  check('a PULLBACK on another line a minute later is its own announcement', g.admit({ ...pb!, line: 'month' }, T0 + 60) === 'notify');
   check('BROKEN is its own stage → stored quietly (2026-10-05)', g.admit(br!, T0 + 70) === 'quiet');
 }
 
@@ -236,6 +236,33 @@ console.log('Gate — quiet stages, READY once per line per day (2026-10-05)');
     seeded.admit(sig(), T0 + 60) === 'quiet' && seeded.admit(sig({ ticker: 'APUS' }), T0 + 70) === 'quiet'
       && seeded.admit(sig({ ticker: 'JAGX', line: 'year' }), T0 + 80) === 'quiet');
   check('…while a line not announced yet still notifies', seeded.admit(sig({ line: 'year' }), T0 + 400) === 'notify');
+}
+
+console.log('Gate — the 5-min PULLBACK limit counts per line (2026-10-05)');
+{
+  const T0 = 1_791_227_851;   // 2026-10-05 15:17:31 ET, MI's year-line PULLBACK
+  const pb = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
+    stage: 'pullback', ticker: 'MI', price: 5.86, mvwap: null, px_pct: null, basis: null, basis_pct: null, day_gain: null, ah_gain: null,
+    tf: '30S', path: null, go_via: null, vol_x: null, run_pct: null, line: 'year', touch: 6, ...over,
+  });
+  const g = new TvSetupGate();
+  check('MI 15:17 year-line PULLBACK notifies', g.admit(pb(), T0) === 'notify');
+  check('…its 1m copy is logged', g.admit(pb({ tf: '1' }), T0 + 31) === 'log');
+  check('MI 15:21 BROKEN on the year line is quiet', g.admit(pb({ stage: 'broken', tf: '1' }), T0 + 214) === 'quiet');
+  check('MI 15:21 session-line PULLBACK 3½ min later notifies (it was logged before)',
+    g.admit(pb({ line: 'session', tf: '1', price: 5.61, touch: 3 }), T0 + 214) === 'notify');
+  check('…and its 30s copy is logged', g.admit(pb({ line: 'session', price: 5.61, touch: 3 }), T0 + 214) === 'log');
+
+  const a = new TvSetupGate();
+  const apus = (over: Partial<TvSetupSignal>) => pb({ ticker: 'APUS', ...over });
+  check('APUS 08:04 session+month PULLBACK notifies', a.admit(apus({ line: 'session+month', tf: '1' }), T0) === 'notify');
+  check('…the 2m alert\'s session-only copy is the same level → logged', a.admit(apus({ line: 'session', tf: '2' }), T0) === 'log');
+  check('…a month-line PULLBACK 4 min later is still that level → logged', a.admit(apus({ line: 'month', tf: '2' }), T0 + 240) === 'log');
+  check('…the year line within those 5 min is a new level → notifies', a.admit(apus({ line: 'year', tf: '2' }), T0 + 250) === 'notify');
+  check('…the month line again after the window notifies', a.admit(apus({ line: 'month', tf: '2' }), T0 + 600) === 'notify');
+  check('READY keeps one announcement per ticker per 5 min across lines',
+    a.admit(apus({ stage: 'ready', line: 'month', tf: '1' }), T0 + 700) === 'notify'
+      && a.admit(apus({ stage: 'ready', line: 'year', tf: '1' }), T0 + 760) === 'log');
 }
 
 console.log('Telegram format');
