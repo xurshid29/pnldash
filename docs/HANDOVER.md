@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-05 (last code commit `9d3a4f9`)
+## START HERE — state at 2026-10-05 (last code commit `50280d1`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every
 20s) sorted by the **A+…D grade**, plus the History, Watchlist and Alerts
@@ -114,8 +114,8 @@ webhook key; the full URL was given to the operator). Backups:
 `.env.bak-20261003`.
 
 **Open items, ranked:**
-0. **📐 v11 (year line) — deployed after the 10-05 session; the operator must
-   switch again.** Paste v11, Save, delete and recreate both alerts. Check the
+0. **📐 v11 (year line) — deployed 10-05 07:18 ET (the operator asked for it
+   mid-session); the operator must switch again.** Paste v11, Save, delete and recreate both alerts. Check the
    blue yVWAP line sits on their "VWAP Year" on BOTH 1m and 2m (intraday
    history doesn't reach Jan 1, so the "year" line starts at the first loaded
    bar — `docs/vwap-setup.md` §5.2). Compare the `yvwap` in the first year-line
