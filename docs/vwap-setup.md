@@ -624,23 +624,39 @@ TradingView servers                                   pnldash droplet
   cached for 10 min. On 2026-10-03 it returned 389 symbols (24 from today + 365
   runners), all six examples included.
 
-### 7.2 Duplicate and flood gate (`TV_SETUP` in `tv-setups.ts`)
+### 7.2 Duplicate, flood and noise gate (`TV_SETUP` in `tv-setups.ts`)
 
 | Rule | Knob | Effect |
 |---|---|---|
-| Same ticker + stage + timeframe within 2 min | `dup_sec` 120 | `drop` — a re-delivery, not stored |
-| Same ticker + stage from another timeframe within 5 min | `notify_merge_sec` 300 | `log` — stored for grading, not announced |
+| Same ticker + stage + timeframe + line within 2 min | `dup_sec` 120 | `drop` — a re-delivery, not stored |
+| Same event (ticker + stage + line) from another timeframe within 5 min | `notify_merge_sec` 300 | `log` — stored for grading, not announced |
+| FORMING, BROKEN, HELD (since 2026-10-05) | `quiet_stages` | `quiet` — stored, graded and shown in the 📐 sidebar; no toast, sound, notification or Telegram |
+| A READY on a line that already had a READY announced today (ET day; since 2026-10-05) | `ready_once_per_day` | `quiet`. Before the first webhook after a deploy, the gate reloads today's announced READYs from `tier_events` |
+| The ticker had this stage announced in the last 5 min (a month READY, then a year READY a minute later) | `notify_merge_sec` 300 | `log`. Only announcements count, so a quiet event never blocks the next one |
 | More than 120 webhooks a minute | `max_per_min` 120 | `flood` → 429, so a leaked key or runaway alert can't spam the phone |
+
+**The noise cut (operator, 2026-10-05):** "we need to cut noise a little bit
+… I hide broken, held, forming setups, and READY also can be limited" — the
+chart markers they had switched off. TradingView still sends every stage, so
+the cut is ours. Replayed on 10-05 it takes 372 announcements to 154 (READY
+145 → 63) and buzzing pushes from 106 to 55; 46 of the 49 GOs had their READY
+announced earlier that day. GO and PULLBACK announce every time. To bring a
+stage back, take it off `quiet_stages` (BROKEN/HELD then go out as silent
+messages, as before).
 
 ### 7.3 What gets stored — `tier_events` row (tier `alert`, event `tv_setup`)
 
-`meta`: `id`, `at`, `stage` (forming/ready/go), `price`, `mvwap`, `px_pct`,
+`meta`: `id`, `at`, `stage` (forming/ready/go; pullback/broken/held since
+v10), `price`, `mvwap`, `px_pct`,
 `basis`, `basis_pct`, `day_gain`, `ah_gain` (v3, after hours), `tf`, `path`
 (v2: `base` / `fast`), `go_via` (v5: `reclaim` / `cross`) — all as
 TradingView reported them —
 plus our context at that moment: `chg`, `grade`, `float_m`, `rv1` (when the
-ticker is on our Momentum screen), `on_screen`, and `notified` (false = a
-repeat from another timeframe). `GET /api/screener/alerts` returns these rows
+ticker is on our Momentum screen), `on_screen`, `notified` (false = not
+announced) and `quiet` (since 2026-10-05: true = a quiet stage or a READY
+repeat, the first copy of its event). `notified` false with `quiet` false is
+a copy from another timeframe, or a second announcement for the ticker and
+stage within 5 min. `GET /api/screener/alerts` returns these rows
 with a `setup` object; the boot seeding of the other alert kinds ignores them.
 
 ### 7.4 What the operator sees
@@ -654,8 +670,12 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   `TV_SETUP.offscreen_silent` in `tv-setups.ts`).
 - **Dashboard sound and toast:** priority setups get the stage sounds and a
   gold-edged 20 s toast. Off-list ones get a soft single tone and an 8 s toast.
+- **Quiet (since 2026-10-05, §7.2):** FORMING, BROKEN, HELD and repeat READYs
+  reach neither Telegram nor the toast, sound and notification. They're
+  still in the sidebar and the Alerts tab.
 - **📐 sidebar:** ⭐ marks tickers on Momentum *right now*; off-list rows are
-  dimmed. Each section is sorted newest first (the operator asked on 10-05 to
+  dimmed. A dimmed stage pill means "not announced" (quiet, or a copy).
+  Each section is sorted newest first (the operator asked on 10-05 to
   order by alert time, so ⭐ names no longer jump the list).
 - **Alerts tab:** ⭐📐 marks a priority setup.
 
@@ -689,8 +709,9 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   ([TradingView](https://www.tradingview.com/support/solutions/43000739708-watchlist-alerts-your-trading-edge/)).
 - **Toast + sound + browser notification** the moment the webhook lands:
   - GO: the bright pair (same as 🅰️ A+)
-  - READY: a rising triple
-  - FORMING: a soft single tone
+  - READY (the first per ticker and line each day) and PULLBACK: a rising triple
+  - FORMING, BROKEN, HELD and repeat READYs: nothing since 2026-10-05 (before
+    that, FORMING played a soft single tone)
 
   When alerts arrive together, the loudest one plays. The ⚙ menu has a
   **📐 VWAP setup** switch; the master Alerts ON/OFF applies too.
@@ -815,7 +836,7 @@ and the 2026-08 session-VWAP reclaim result.
 
 **Decisions it feeds:**
 - keep or retune `readyBasis` / `formBasis`;
-- whether FORMING earns its sound and Telegram;
+- whether FORMING (quiet since 10-05) should be announced again;
 - whether a time-of-day gate helps;
 - whether to try another anchor (§11).
 
@@ -919,6 +940,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-05 | v13 | `b8d338c` | Chart markers only. The year line's FORMING / READY / GO markers are drawn in blue, like its line, so a chart shows which line fired (the operator's AMOD chart had a cluster of unlabeled year-line READYs). No alert logic change, so the alerts don't need recreating. Also answered: `maxCycles` (6) counts per line, so up to 6 month-line and 6 year-line setups per ticker per day; GO isn't capped. |
 | 2026-10-05 | v14 | `73aacf4` | Operator, two findings. **SDEV:** a year-line GO on the 30s chart (line 4.36) never reached us, because the 2m alert's year line was 4.70. **MI:** a 12:40 ET pullback to the year line, after a run to 6.6, then +90%, and the PULLBACK setup didn't watch that line. (MI also wasn't on the TradingView watchlist; the sidebar's "not in your TV list" nudge, shipped the same day, covers that.) Changes: the year line is built from this year's hourly bars (extended hours) up to yesterday plus today's chart bars (`request.security`, §5.2), so every timeframe shares one line. PULLBACK gets the year line (`pbSession` / `pbMonth` / `pbYear`). Lines that fire the same event on one bar are named together (`session+month`, `month+year`, …; the legacy `both` still parses). PULLBACK messages carry `yVWAP`, and `tv_year` mutes any year-only message. The replica's `simulate_pullback` takes any set of lines. Regression: 132 checks. |
 | 2026-10-05 | v15 | `e34f892` | Operator: "no PULLBACK around the year VWAP" (MI 21:37, i.e. 12:37 ET, after v14). The replica on MI's bars: the year line had six touches; the two alerted ones (10:19, 10:31) both HELD, 10:52 went straight through, and the cap of 2 touches then blocked 11:44, 12:37 and 12:57, which all held +10%. The cap (`pbMax`, still 2) now counts *failed* pullbacks (BROKEN or straight through) instead of every touch, so a line that keeps holding keeps alerting and a line that failed twice stops. Four months of session-line data: at least as good on every exit rule (stop +10%: −0.06% → +0.00%), 14.5 → 16.3 alerts/day (§13.5). Messages unchanged. Replica: `cap_on='failures'` (default) plus a held-held-held self-test. |
+| 2026-10-05 | server | `6bc9437` | Noise cut, no script change, so no alert recreation. Operator: "we need to cut noise a little bit … I hide broken, held, forming setups, and READY also can be limited". FORMING, BROKEN and HELD are now quiet (stored with `quiet: true`, graded and shown in the sidebar, never announced), and READY is announced once per ticker and line per ET day (§7.2). The gate spots timeframe copies per line, and its 5-min limit only counts announcements. Replayed on 10-05: 372 → 154 announcements, buzzing pushes 106 → 55. Regression: 153 checks. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -969,10 +991,12 @@ The operator's examples (screenshots):
 - **Delivery.**
   - A PULLBACK is treated like the other stages: on our Momentum list → ⭐ and a
     buzzing push; off the list → a silent message and a dimmed row.
-  - BROKEN and HELD are always silent messages and short toasts.
+  - BROKEN and HELD are quiet since 2026-10-05 (§7.2): stored for grading and
+    shown in the sidebar, never announced. Before that they were silent
+    messages and short toasts.
   - On the dashboard, a PULLBACK on a Momentum name plays the READY triple tone.
-  - Mutes: `ALERTS_DISABLED` `tv_pullback` / `tv_broken` / `tv_held` (or
-    `tv_setup` for all 📐).
+  - Mutes: `ALERTS_DISABLED` `tv_pullback` (or `tv_setup` for all 📐);
+    `tv_broken` / `tv_held` only matter if those stages leave `quiet_stages`.
   - The 📐 sidebar shows one row per ticker, with its current stage carrying
     the line (S purple / M yellow / S+M) and the touch number.
 

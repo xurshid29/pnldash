@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-05 evening (last code commit `e34f892`)
+## START HERE — state at 2026-10-05 evening (last code commit `6bc9437`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every 20s)
 sorted by the **A+…D grade**, the **📐 setups sidebar** in the left rail, the
@@ -117,14 +117,19 @@ ask.
      `peak` (PULLBACK) · day high · `ah` · `vol` · `run` · `tf` · `path` /
      `via`. `line` names every line that fired together (`session+month`,
      `month+year`, …); the legacy `both` still parses. Contract:
-     `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts` (132 checks).
+     `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts` (153 checks).
    - **Delivery:** `POST /api/tv/webhook` → `tier_events` (tier `alert`, event
      `tv_setup`), an SSE `alert` event, the 📐 sidebar and Telegram.
      - Priority: a ticker on our Momentum list gets ⭐ and a buzzing push;
-       off-list ones are silent; BROKEN/HELD are always silent.
-     - Mutes: `tv_setup` (all), `tv_forming` / `tv_ready` / `tv_go`,
-       `tv_pullback` / `tv_broken` / `tv_held`, `tv_year` (messages about the
-       year line alone).
+       off-list ones are silent.
+     - **Quiet since 10-05 (`6bc9437`):** FORMING, BROKEN, HELD, and every
+       READY after the first per ticker and line each ET day, are stored and
+       shown in the sidebar (dimmed pill) but never announced: no toast,
+       sound, notification or Telegram. GO and PULLBACK announce every time.
+       Knobs: `TV_SETUP.quiet_stages` / `ready_once_per_day`.
+     - Mutes: `tv_setup` (all), `tv_ready` / `tv_go` / `tv_pullback`,
+       `tv_year` (messages about the year line alone). `tv_forming` /
+       `tv_broken` / `tv_held` only matter if a stage leaves `quiet_stages`.
    - **What our data says** (`apps/api/scripts/research/vwap-pullback/`, session
      line only, 06-12 → 10-05):
      - PULLBACK is a good heads-up: 26–30% of alerts reach +10% before
@@ -175,6 +180,12 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 
    v14 added a `request.security` call. If TradingView shows a compile error
    or warning on paste, fix it first.
+
+   Checked 15:00 ET: the 1m alert carries v14+ fingerprints since ~14:54
+   (RETO's yVWAP jumped 17.72 → 18.26 while trading at $1.95, which volume
+   can't do), and 1m and 30s agree on yVWAP since 14:57 (GOW 4.32, TNMG
+   6.21; VRAX at 14:06 was 6.89 vs 7.04). v14 and v15 send identical
+   messages, so only the operator can confirm v15.
 1. **~2026-10-17/19 — grade the 📐 rows** (SQL: `docs/vwap-setup.md` §9 and
    §13.6). Both edges are still unmeasured live.
    - RECLAIM by line (month vs year), stage, path, timeframe (1m vs 30s; 30s
@@ -193,10 +204,23 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
    the operator. Dials: the +10% fast threshold, cooldowns, the news phone
    floor — `alert_study.py` re-measures them.
 4. **Noise is the failure mode.** The operator muted alerts for noise twice
-   before (07-22, 08-21). 📐 volume grew on 10-05: PULLBACK alone is ~16/day on
-   the session line, plus the month and year lines and the 30s alert. Treat
-   "too many pings" as a tuning request (the 📐 mutes above, `pbArm`, the
-   cap).
+   before (07-22, 08-21). On 10-05 they asked to cut 📐 noise, and the quiet
+   stages shipped (`6bc9437`, session log). Replayed on 10-05 that takes 372
+   📐 announcements to 154, and buzzing pushes 106 → 55. **On 10-06, count
+   the real day:**
+
+   ```sql
+   SELECT count(*) FILTER (WHERE (meta->>'notified')::boolean) AS announced,
+          count(*) FILTER (WHERE (meta->>'notified')::boolean AND (meta->>'on_screen')::boolean
+                           AND meta->>'stage' NOT IN ('broken','held')) AS buzzing,
+          count(*) FILTER (WHERE (meta->>'quiet')::boolean) AS quiet
+   FROM tier_events WHERE tier = 'alert' AND event = 'tv_setup'
+     AND (at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date;
+   ```
+
+   If it's still too much, the next levers are: off-list stages to the
+   sidebar only, GO once per ticker and line a day, then `pbArm` and the cap.
+   Treat "too many pings" as a tuning request.
 5. **Before ~10-18:** add the operator's *failed* setups to `replay.py`.
    Yahoo 1m bars only reach back ~30 days, and 1m requests are capped at 8 days.
 6. **Ask for a fresh IBKR .tlg.** The journal stops at 06-18; their real P&L
@@ -224,6 +248,10 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
   - end a method with a value, not with a reassignment;
   - keep `request.security` and `ta.*` calls at the top level, or inside a
     function that's called on every bar.
+- **📐 hiding a marker on the chart doesn't stop its alert.** The Style tab
+  only hides the plotted shape; `alert()` still fires and reaches the webhook.
+  What gets announced is decided on our side (`TV_SETUP.quiet_stages`,
+  `ready_once_per_day` in `tv-setups.ts`), with no alert recreation.
 - **📐 names missing from the TradingView watchlist never alert** (MI 10-05,
   +634%). The sidebar nudge covers it; the operator copies, then adds to the
   list.
@@ -272,6 +300,27 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-05 (evening) — 📐 NOISE CUT (`6bc9437`, server only).** The operator
+showed their chart's Style tab, with the Broken, Held, Forming (month) and
+Forming (year) markers switched off: "we need to cut noise a little bit …
+READY also can be limited I think". The day so far: 531 📐 rows, 372
+announced (106 buzzing pushes, the rest silent Telegram messages, each also a
+dashboard toast and sound), 168 timeframe copies logged.
+- FORMING / BROKEN / HELD → `quiet`: stored with `quiet: true`, graded, and in
+  the sidebar with a dimmed pill, never announced.
+- READY → announced once per ticker and line per ET day. A day rule beat a
+  cooldown on 10-05's data: a 60-min cooldown kept 110 of 145 READYs, the day
+  rule 63, because a name sitting at its line re-fires READY all day (RETO:
+  8 announced). 46 of the 49 GOs had their READY announced earlier, so a GO
+  rarely arrives cold.
+- The gate reloads today's announced READYs on the first webhook after a
+  deploy (146 rows on 10-05).
+- Found in the gate while there: the 5-min merge key was ticker + stage (any
+  line). Now copies are spotted per line, and the 5-min limit only counts
+  announcements, so a quiet month READY can't swallow a first year READY.
+- Replayed on 10-05: 372 → 154 announcements, buzzing 106 → 55. Regression:
+  153 checks. Route smoke-tested end to end (dead DB: seed fails soft).
 
 **2026-10-05 (afternoon) — 📐 v12 → v15, the 📐 sidebar, 1m + 30s alerts.**
 - **v12 (07:29 ET).** v11's year line was blank on liquid names:
