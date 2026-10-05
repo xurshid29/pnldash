@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-05 evening (last code commit `6bc9437`)
+## START HERE — state at 2026-10-05 evening (last code commit `a5a5520`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every 20s)
 sorted by the **A+…D grade**, the **📐 setups sidebar** in the left rail, the
@@ -117,7 +117,7 @@ ask.
      `peak` (PULLBACK) · day high · `ah` · `vol` · `run` · `tf` · `path` /
      `via`. `line` names every line that fired together (`session+month`,
      `month+year`, …); the legacy `both` still parses. Contract:
-     `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts` (153 checks).
+     `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts` (164 checks).
    - **Delivery:** `POST /api/tv/webhook` → `tier_events` (tier `alert`, event
      `tv_setup`), an SSE `alert` event, the 📐 sidebar and Telegram.
      - Priority: a ticker on our Momentum list gets ⭐ and a buzzing push;
@@ -127,6 +127,9 @@ ask.
        shown in the sidebar (dimmed pill) but never announced: no toast,
        sound, notification or Telegram. GO and PULLBACK announce every time.
        Knobs: `TV_SETUP.quiet_stages` / `ready_once_per_day`.
+     - **5-min limit:** one announcement per ticker and stage per 5 min, but
+       PULLBACK counts per line (`a5a5520`): a pullback to a line not
+       announced in the last 5 min pings (MI 15:21, session after year).
      - Mutes: `tv_setup` (all), `tv_ready` / `tv_go` / `tv_pullback`,
        `tv_year` (messages about the year line alone). `tv_forming` /
        `tv_broken` / `tv_held` only matter if a stage leaves `quiet_stages`.
@@ -332,6 +335,15 @@ dashboard toast and sound), 168 timeframe copies logged.
   cancelled the queued run. Live check: `gate seeded — 146 READYs announced
   today, 65 ticker lines`; the first rows after it (SCKT BROKEN, LONA
   FORMING) carry `quiet: true`.
+- **Then the PULLBACK limit per line (`a5a5520`).** The operator asked "why is
+  MI not in Live?" Its latest event was a HELD, which is resolved by design
+  (Live = FORMING/READY ≤30 min, GO ≤15, an open PULLBACK ≤60). The real
+  miss: MI's 15:21 session-line pullback (5.61 over 5.36, HELD +10% at
+  15:23) never pinged, because the 5-min limit allowed one PULLBACK per
+  ticker on any line, and a year-line one (5.68) had pinged at 15:17. Now
+  PULLBACK counts per line; a line already announced in another
+  combination stays logged. Replayed on 10-05: 169 → 174, all five
+  extra on ⭐ names. 164 checks.
 
 **2026-10-05 (afternoon) — 📐 v12 → v15, the 📐 sidebar, 1m + 30s alerts.**
 - **v12 (07:29 ET).** v11's year line was blank on liquid names:

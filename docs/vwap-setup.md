@@ -632,7 +632,7 @@ TradingView servers                                   pnldash droplet
 | Same event (ticker + stage + line) from another timeframe within 5 min | `notify_merge_sec` 300 | `log` — stored for grading, not announced |
 | FORMING, BROKEN, HELD (since 2026-10-05) | `quiet_stages` | `quiet` — stored, graded and shown in the 📐 sidebar; no toast, sound, notification or Telegram |
 | A READY on a line that already had a READY announced today (ET day; since 2026-10-05) | `ready_once_per_day` | `quiet`. Before the first webhook after a deploy, the gate reloads today's announced READYs from `tier_events` |
-| The ticker had this stage announced in the last 5 min (a month READY, then a year READY a minute later) | `notify_merge_sec` 300 | `log`. Only announcements count, so a quiet event never blocks the next one |
+| The ticker had this stage announced in the last 5 min (a month READY, then a year READY a minute later). **PULLBACK counts per line** (since 2026-10-05, `a5a5520`): only a line announced in the last 5 min blocks it, in any combination | `notify_merge_sec` 300 | `log`. Only announcements count, so a quiet event never blocks the next one |
 | More than 120 webhooks a minute | `max_per_min` 120 | `flood` → 429, so a leaked key or runaway alert can't spam the phone |
 
 **The noise cut (operator, 2026-10-05):** "we need to cut noise a little bit
@@ -643,6 +643,15 @@ the cut is ours. Replayed on 10-05 it takes 372 announcements to 154 (READY
 announced earlier that day. GO and PULLBACK announce every time. To bring a
 stage back, take it off `quiet_stages` (BROKEN/HELD then go out as silent
 messages, as before).
+
+**PULLBACK per line (operator, 2026-10-05, after MI).** The 5-min limit used
+to allow one PULLBACK per ticker on any line. MI's 15:21 ET session-line
+pullback (5.61 over a 5.36 line, +10% two minutes later) was only logged,
+because a year-line PULLBACK (5.68, ~6% higher) had pinged at 15:17. Now a
+line that wasn't announced in the last 5 min pings. A line already
+announced in another combination is the same level and stays logged (APUS
+08:04: `session+month` on 1m, then `session` on 2m, then `month` at 08:08).
+Replayed on 10-05: 169 → 174 announcements, all five extra on Momentum names.
 
 ### 7.3 What gets stored — `tier_events` row (tier `alert`, event `tv_setup`)
 
@@ -941,6 +950,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-05 | v14 | `73aacf4` | Operator, two findings. **SDEV:** a year-line GO on the 30s chart (line 4.36) never reached us, because the 2m alert's year line was 4.70. **MI:** a 12:40 ET pullback to the year line, after a run to 6.6, then +90%, and the PULLBACK setup didn't watch that line. (MI also wasn't on the TradingView watchlist; the sidebar's "not in your TV list" nudge, shipped the same day, covers that.) Changes: the year line is built from this year's hourly bars (extended hours) up to yesterday plus today's chart bars (`request.security`, §5.2), so every timeframe shares one line. PULLBACK gets the year line (`pbSession` / `pbMonth` / `pbYear`). Lines that fire the same event on one bar are named together (`session+month`, `month+year`, …; the legacy `both` still parses). PULLBACK messages carry `yVWAP`, and `tv_year` mutes any year-only message. The replica's `simulate_pullback` takes any set of lines. Regression: 132 checks. |
 | 2026-10-05 | v15 | `e34f892` | Operator: "no PULLBACK around the year VWAP" (MI 21:37, i.e. 12:37 ET, after v14). The replica on MI's bars: the year line had six touches; the two alerted ones (10:19, 10:31) both HELD, 10:52 went straight through, and the cap of 2 touches then blocked 11:44, 12:37 and 12:57, which all held +10%. The cap (`pbMax`, still 2) now counts *failed* pullbacks (BROKEN or straight through) instead of every touch, so a line that keeps holding keeps alerting and a line that failed twice stops. Four months of session-line data: at least as good on every exit rule (stop +10%: −0.06% → +0.00%), 14.5 → 16.3 alerts/day (§13.5). Messages unchanged. Replica: `cap_on='failures'` (default) plus a held-held-held self-test. |
 | 2026-10-05 | server | `6bc9437` | Noise cut, no script change, so no alert recreation. Operator: "we need to cut noise a little bit … I hide broken, held, forming setups, and READY also can be limited". FORMING, BROKEN and HELD are now quiet (stored with `quiet: true`, graded and shown in the sidebar, never announced), and READY is announced once per ticker and line per ET day (§7.2). The gate spots timeframe copies per line, and its 5-min limit only counts announcements. Replayed on 10-05: 372 → 154 announcements, buzzing pushes 106 → 55. Regression: 153 checks. |
+| 2026-10-05 | server | `a5a5520` | The 5-min PULLBACK limit counts per line (§7.2). Operator: "lets do what you suggested" after MI's 15:21 ET session-line pullback (+10% two minutes later) was only logged behind a year-line PULLBACK 3½ min earlier. A line already announced in another combination stays logged. Replayed on 10-05: 169 → 174 announcements. Regression: 164 checks. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
