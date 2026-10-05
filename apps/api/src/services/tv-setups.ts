@@ -36,10 +36,22 @@ import { escapeHtml } from './telegram.js';
 export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held';
 // The PULLBACK setup's stages (script v10); the rest belong to the reclaim setup.
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
-// Which VWAP a message is about. PULLBACK setup: session / month; reclaim
-// setup (v11): month / year. 'both' = the setup's two lines fired the same
-// stage on one bar (session + month for PULLBACK, month + year for reclaim).
-export type TvLine = 'session' | 'month' | 'year' | 'both';
+// Which VWAP line(s) a message is about. PULLBACK setup: session / month /
+// year (v14); reclaim setup: month / year (v11). Lines that fired the same
+// stage on one bar are named together in script order, e.g. "session+month".
+// The legacy 'both' (v10–v13) meant session + month for PULLBACK and month +
+// year for reclaim.
+export type TvLineName = 'session' | 'month' | 'year';
+export type TvLine = TvLineName | 'both' | 'session+month' | 'session+year' | 'month+year' | 'session+month+year';
+const LINE_ORDER: TvLineName[] = ['session', 'month', 'year'];
+
+// The individual lines of a message; a reclaim message without a line (before
+// v11) is the month line.
+export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvLineName[] {
+  if (!line) return PULLBACK_STAGES.has(stage) ? [] : ['month'];
+  if (line === 'both') return PULLBACK_STAGES.has(stage) ? ['session', 'month'] : ['month', 'year'];
+  return line.split('+') as TvLineName[];
+}
 // Which shape reached FORMING/READY (script v2+): 'base' = price consolidated
 // until the basis converged under the line; 'fast' = price ran at the line
 // while the basis lagged. Null for GO and for v1 / fallback messages.
@@ -126,7 +138,10 @@ const STAGES: Record<string, TvStage> = {
 
 function toLine(v: unknown): TvLine | null {
   const p = typeof v === 'string' ? v.trim().toLowerCase() : '';
-  return p === 'session' || p === 'month' || p === 'year' || p === 'both' ? p : null;
+  if (p === 'both') return 'both';
+  const parts = new Set(p.split('+').map((x) => x.trim()));
+  const tokens = LINE_ORDER.filter((t) => parts.has(t));
+  return tokens.length > 0 && tokens.length === parts.size ? (tokens.join('+') as TvLine) : null;
 }
 
 function toNum(v: unknown): number | null {
@@ -186,6 +201,7 @@ function toPath(v: unknown): TvPath | null {
 //   GO NIVF 0.1961 | mVWAP 0.188 (4.3%) | basis 0.169 (-10.1%) | day high +38% | tf 1 | via reclaim   (v5)
 //   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | tf 1   (v10)
 //   READY SAIQ 6.5 | mVWAP 4.1 (+58.5%) | yVWAP 7.0 (-7.1%) | basis 6.3 (-10.0%) | line year | day high +336% | tf 1 | path base   (v11)
+//   PULLBACK MI 5.31 | sVWAP 4.67 (+13.7%) | mVWAP 4.65 (+14.2%) | yVWAP 5.2 (+2.1%) | line year | touch 1 | peak +27% | tf 1   (v14)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -217,7 +233,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const via = /\bvia\s+(reclaim|cross)\b/i.exec(text);
   const vol = /\bvol\s+(\d*\.?\d+)\s*x\b/i.exec(text);
   const run = /\brun\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
-  const ln = /\bline\s+(session|month|year|both)\b/i.exec(text);
+  const ln = /\bline\s+((?:session|month|year)(?:\+(?:session|month|year)){0,2}|both)\b/i.exec(text);
   const touch = /\btouch\s+(\d+)\b/i.exec(text);
   const peak = /\bpeak\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   return {
@@ -289,14 +305,15 @@ const STAGE_HINT: Record<TvStage, string> = {
   broken: 'closed under VWAP — setup broken',
   held: 'held — ran +10% from the pullback',
 };
-// The line(s) a message is about, in words; 'both' depends on the setup.
+// The line(s) a message is about, in words: "session + month VWAP".
 function lineName(sig: TvSetupSignal): string {
-  if (sig.line === 'both') return PULLBACK_STAGES.has(sig.stage) ? 'session + month VWAP' : 'month + year VWAP';
-  return { session: 'session VWAP', month: 'month VWAP', year: 'year VWAP' }[sig.line ?? 'month'];
+  const tokens = lineTokens(sig.stage, sig.line);
+  return `${(tokens.length > 0 ? tokens : ['month']).join(' + ')} VWAP`;
 }
-// The reclaim setup's line, short: mVWAP (the default), yVWAP, or both.
+// The reclaim setup's line(s), short: "mVWAP", "yVWAP", "mVWAP + yVWAP".
+const SHORT: Record<TvLineName, string> = { session: 'sVWAP', month: 'mVWAP', year: 'yVWAP' };
 function reclaimLine(sig: TvSetupSignal): string {
-  return sig.line === 'year' ? 'yVWAP' : sig.line === 'both' ? 'mVWAP + yVWAP' : 'mVWAP';
+  return lineTokens(sig.stage, sig.line).map((t) => SHORT[t]).join(' + ');
 }
 
 // "touch 1 (first)" — the operator rates the first pullback after the first big move highest.
@@ -321,7 +338,8 @@ export function formatTvSetupAlert(
   strength: TvStrength | null = null,
 ): string {
   const pb = PULLBACK_STAGES.has(sig.stage);
-  const yearish = !pb && (sig.line === 'year' || sig.line === 'both');
+  const tokens = lineTokens(sig.stage, sig.line);
+  const yearish = !pb && tokens.includes('year');
   // PULLBACK / BROKEN name the line: "back near the session VWAP after the run — be ready".
   // Reclaim stages on the year line (v11) say so: "price reclaimed yVWAP", "entry zone · year VWAP".
   const hint = sig.stage === 'go' ? (sig.go_via === 'reclaim' ? `price reclaimed ${reclaimLine(sig)}` : `basis crossed above ${reclaimLine(sig)}`)
@@ -337,12 +355,14 @@ export function formatTvSetupAlert(
     if (sig.stage === 'pullback' && sig.peak_pct != null) what.push(`ran +${Math.round(sig.peak_pct)}% above the line first`);
     if (what.some(Boolean)) lines.push(what.filter(Boolean).join(' · '));
   }
-  const lvl: string[] = [];
-  const yLvl = sig.yvwap != null ? `yVWAP ${fmtPx(sig.yvwap)} (${fmtSigned(sig.ypx_pct ?? null)})` : null;
-  if (sig.line === 'year' && yLvl) lvl.push(yLvl);   // the setup's own line first
-  if (sig.svwap != null) lvl.push(`sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})`);
-  if (sig.mvwap != null) lvl.push(`mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})`);
-  if (sig.line !== 'year' && yLvl && !pb) lvl.push(yLvl);
+  // Levels: the setup's own line(s) first, then the others the message carries.
+  const lvlOf: Record<TvLineName, string | null> = {
+    session: sig.svwap != null ? `sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})` : null,
+    month: sig.mvwap != null ? `mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})` : null,
+    year: sig.yvwap != null ? `yVWAP ${fmtPx(sig.yvwap)} (${fmtSigned(sig.ypx_pct ?? null)})` : null,
+  };
+  const lvl: string[] = [...tokens, ...LINE_ORDER.filter((t) => !tokens.includes(t))]
+    .map((t) => lvlOf[t]).filter((x): x is string => x != null);
   if (sig.basis != null) lvl.push(`basis ${fmtPx(sig.basis)} (${fmtSigned(sig.basis_pct)})`);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
   if (row) {

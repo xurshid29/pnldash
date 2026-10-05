@@ -20,7 +20,7 @@ import { fetchEdgarFilings, type EdgarFiling, tvSymbol } from './edgar.js';
 import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
-import { formatTvSetupAlert, goStrength, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
+import { formatTvSetupAlert, goStrength, lineTokens, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3998,7 +3998,9 @@ class PollerService {
       this.opportunity.pushExternal(alert);
       broadcast('alert', alert);
       const stageSlug = `tv_${sig.stage}` as AlertComponent;
-      const yearMuted = sig.line === 'year' && !PULLBACK_STAGES.has(sig.stage) && alertDisabled('tv_year');
+      // tv_year mutes messages about the year line alone (reclaim v11, PULLBACK v14).
+      const yearOnly = lineTokens(sig.stage, sig.line).join('+') === 'year';
+      const yearMuted = yearOnly && alertDisabled('tv_year');
       if (telegramEnabled() && !this.alertsMuted && !alertDisabled('tv_setup') && !alertDisabled(stageSlug) && !yearMuted) {
         // Priority: on our Momentum list → normal push; off the list → silent message.
         // A pullback's outcome (BROKEN / HELD) is never a buzzing push.

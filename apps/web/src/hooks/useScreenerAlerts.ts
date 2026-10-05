@@ -1,3 +1,4 @@
+import { lineTokens } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { getAlertKinds } from './useAlertKinds';
@@ -194,7 +195,7 @@ function fmtAlertPrice(p: number | null): string {
 const TV_STAGE_TITLE: Record<TvStage, string> = {
   forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD',
 };
-const TV_LINE_TITLE = { session: 'session VWAP', month: 'month VWAP', year: 'year VWAP', both: 'session + month VWAP' } as const;
+const SHORT_LINE = { session: 'sVWAP', month: 'mVWAP', year: 'yVWAP' } as const;
 function fmtSignedPct(p: number | null): string {
   return p == null ? '?' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
 }
@@ -203,18 +204,21 @@ export function opportunityTitle(a: OpportunityAlert): string {
   if (a.kinds.includes('tv_setup') && a.setup) {
     const s = a.setup;
     if (s.stage === 'pullback' || s.stage === 'broken' || s.stage === 'held') {
-      const lineName = s.line ? TV_LINE_TITLE[s.line] : 'VWAP';
-      const pct = s.line === 'month' ? s.px_pct : s.spx_pct;
+      const tokens = lineTokens(s.stage, s.line);
+      const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
+      const first = tokens[0] ?? 'session';
+      const pct = first === 'session' ? s.spx_pct : first === 'month' ? s.px_pct : s.ypx_pct;
       const what = s.stage === 'pullback' ? `${fmtSignedPct(pct ?? null)} vs ${lineName}${s.touch != null ? ` · touch ${s.touch}` : ''}`
         : s.stage === 'broken' ? `closed under the ${lineName}` : '+10% from the pullback';
       return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — ${what}`;
     }
     // v11: the reclaim setup also runs on the year VWAP
-    const ln = s.line === 'year' ? 'yVWAP' : s.line === 'both' ? 'mVWAP + yVWAP' : 'mVWAP';
-    const pct = s.line === 'year' ? s.ypx_pct ?? null : s.px_pct;
+    const rcTokens = lineTokens(s.stage, s.line);
+    const ln = rcTokens.map((t) => SHORT_LINE[t]).join(' + ');
+    const pct = rcTokens[0] === 'year' ? s.ypx_pct ?? null : s.px_pct;
     const where = s.stage === 'go'
       ? (s.go_via === 'reclaim' ? `price reclaimed ${ln}` : `basis crossed above ${ln}`)
-      : `${fmtSignedPct(pct)} vs ${s.line === 'year' ? 'yVWAP' : 'mVWAP'} · basis ${fmtSignedPct(s.basis_pct)}`;
+      : `${fmtSignedPct(pct)} vs ${SHORT_LINE[rcTokens[0] ?? 'month']} · basis ${fmtSignedPct(s.basis_pct)}`;
     return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]}${s.path === 'fast' ? ' (fast)' : ''} ${a.ticker} — ${where}`;
   }
   if (a.kinds.includes('grade_aplus')) return `🅰️ ${a.ticker} — ${a.new_on_screen ? 'new A+' : `A+ (was ${a.prev_grade ?? '—'})`}`;

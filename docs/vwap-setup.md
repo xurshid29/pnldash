@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v13** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v14** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -277,8 +277,9 @@ This reproduces TradingView's built-in VWAP with anchor Month and source hlc3,
 and the BB basis. Volume includes extended hours when the chart or alert
 session is Extended.
 
-**v11 adds the year line** (`yvwap = ta.vwap(hlc3, timeframe.change("12M"))`,
-plotted blue), the same construction as the built-in VWAP with anchor Year.
+**v11 adds the year line** (plotted blue). v11–v13 built it like the built-in
+VWAP with anchor Year, `ta.vwap(hlc3, timeframe.change("12M"))`; **v14 builds it
+from hourly bars** (see below).
 The reclaim rules run on each line separately, through `reclaimConds(line)` for
 the conditions and `RcLine.advance()` for the stages (a broken month setup
 doesn't reset the year one). The same stage on one bar from both lines is one
@@ -294,6 +295,24 @@ lines. Each message carries `yVWAP`, so the alert engine's value can be checked
 against the operator's chart. If it drifts, build the year-to-date part from
 60m or daily bars (`request.security`) plus today's part from the chart's bars,
 like the month-line fix in §5.7.
+
+**v14: the year line from hourly bars.** The year line now comes from this
+year's 60-minute bars, extended hours included, up to the end of yesterday,
+fetched with `request.security(ticker.new(prefix, ticker, session.extended),
+"60", yearBefore(), lookahead_on)`. Today's part comes from the chart's own
+bars:
+- `yearBefore()` keeps running sums and returns the totals at the start of the
+  current day. They don't depend on the current hour, so `lookahead_on` can't
+  leak future data.
+- A year of hourly bars is ~4,000. That's within the history a request gets,
+  so the line really starts at January 1 (or at listing) on every timeframe.
+- The 30s chart, the 1m alert and the 30s alert share one line. (SDEV 10-05:
+  30s showed 4.36 and the 2m alert 4.70 before v14.)
+- The price is hourly hlc3 for past days, so it's an approximation within a
+  fraction of a percent of a minute-built VWAP.
+- On liquid names it no longer matches TradingView's built-in "VWAP Year" on an
+  intraday chart, because the built-in has the history problem. The script's
+  blue line is the reference.
 
 **Every line restarts on the first loaded bar (v12).** This is exactly what
 TradingView's built-in VWAP does (`if na(src[1]) … isNewPeriod := true`):
@@ -441,7 +460,7 @@ the bar close: up to 60 s after the condition on a 1m chart.
 
 **v11** (the year line):
 - every reclaim message adds `yVWAP <value> (<price vs it %>)` and
-  `line month|year|both`;
+  `line month|year|both` (v14 writes `month+year` for both; see below);
 - `basis (%)` is measured against the setup's own line (the month line on
   `month` and `both`);
 - the mVWAP percentage gets a `+` when price is above the line.
@@ -455,7 +474,13 @@ The server stores `yvwap`, `ypx_pct` and `line`; older messages without
 `ALERTS_DISABLED=tv_year`.
 
 The PULLBACK setup (v10) has its own message, PULLBACK / BROKEN / HELD with
-`sVWAP`, `line`, `touch` and `peak` (§13.4).
+`sVWAP`, `line`, `touch` and `peak` (§13.4). **v14:**
+- lines that fire the same stage on one bar are named together in script
+  order: `session+month`, `session+year`, `month+year`, `session+month+year`;
+- the parser still reads the legacy `both` (session + month for PULLBACK,
+  month + year for reclaim);
+- PULLBACK messages also carry `yVWAP`;
+- Telegram `tv_year` mutes any message about the year line alone.
 
 **The server parses this text** (`parseTvMessage` in
 `apps/api/src/services/tv-setups.ts`). If you change the message, change the
@@ -859,7 +884,8 @@ Ordered roughly by expected value; most should wait for the first grading.
      spike stopped at the year VWAP (~7.0), based under it while the basis
      curled up, then reclaimed it at ~04:22 and ran past 13. Only a live trial
      can grade it. **Shipped as that trial in v11** (§5.2); grade it alongside the
-     month line (§9, split by `line`).
+     month line (§9, split by `line`). v14 rebuilt the line from hourly bars so
+     every timeframe agrees, and added it to PULLBACK too.
 9. **Month-to-date from 60m bars**, if the yellow line drifts late in the month
    on 1m (§5.7).
 10. **JSON messages** carrying bar time and volume, if the parser needs more
@@ -891,6 +917,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-05 | v11 | `50280d1` | Operator: "could we do the same with other VWAP anchors, such as session and yearly?" The session line was measured first: the script's own reclaim logic on our stored session VWAP over four months fired GO 37 times a day, and the average trade was −1.2% (§11 item 8), so it was not added. The year line can't be measured from our data. It's added as a live trial: `yvwap = ta.vwap(hlc3, timeframe.change("12M"))` (blue), new input `rcLines` (Month + Year by default), the reclaim conditions moved into `reclaimConds(line)` and the stages into a per-line `RcLine`. The month line's logic is unchanged. Messages add `yVWAP` and `line month|year|both`; `basis %` is against the setup's line. The server stores `yvwap` / `ypx_pct`; the 📐 tab gets a "year" row and a Y / M+Y tag; Telegram mute `tv_year`. Replica: `simulate_lines()` plus a two-line self-test. Regression: 118 checks. |
 | 2026-10-05 | v12 | `02f39eb` | Operator: "yearly VWAP is visible only for SAIQ, but not for others". v11's year line was na until the loaded history reached January. TradingView's built-in VWAP also restarts on the first loaded bar, and the script didn't, so the line showed only on thin names whose sparse bars reach back that far (SAIQ 1m yes; VEEA, PCVX 30s no). All three lines now restart on the first loaded bar like the built-in: `ta.vwap(hlc3, timeframe.change(...) or firstBar)`. No other change. |
 | 2026-10-05 | v13 | `b8d338c` | Chart markers only. The year line's FORMING / READY / GO markers are drawn in blue, like its line, so a chart shows which line fired (the operator's AMOD chart had a cluster of unlabeled year-line READYs). No alert logic change, so the alerts don't need recreating. Also answered: `maxCycles` (6) counts per line, so up to 6 month-line and 6 year-line setups per ticker per day; GO isn't capped. |
+| 2026-10-05 | v14 | (this commit) | Operator, two findings. **SDEV:** a year-line GO on the 30s chart (line 4.36) never reached us, because the 2m alert's year line was 4.70. **MI:** a 12:40 ET pullback to the year line, after a run to 6.6, then +90%, and the PULLBACK setup didn't watch that line. (MI also wasn't on the TradingView watchlist; the sidebar's "not in your TV list" nudge, shipped the same day, covers that.) Changes: the year line is built from this year's hourly bars (extended hours) up to yesterday plus today's chart bars (`request.security`, §5.2), so every timeframe shares one line. PULLBACK gets the year line (`pbSession` / `pbMonth` / `pbYear`). Lines that fire the same event on one bar are named together (`session+month`, `month+year`, …; the legacy `both` still parses). PULLBACK messages carry `yVWAP`, and `tv_year` mutes any year-only message. The replica's `simulate_pullback` takes any set of lines. Regression: 132 checks. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -926,7 +953,11 @@ The operator's examples (screenshots):
   under the month line. The pullback buys a return to a line from above. v4
   stopped the reclaim setup from firing on "a spike falling back to the line"
   (AMOD 09-01); that case is this setup.
-- **Two lines.** The session line is TradingView's VWAP with anchor Session
+- **Three lines since v14.** v14 added the year line after the operator's MI
+  example (10-05, 12:40 ET: after a run to 6.6, price pulled back to the year
+  line at ~5.2 while the session and month lines sat ~13% lower, then ran to
+  10). Switches: `pbSession` / `pbMonth` / `pbYear`, all on.
+- **Two lines (v10–v13).** The session line is TradingView's VWAP with anchor Session
   (`ta.vwap(hlc3, timeframe.change("D"))`; it resets at 04:00 ET on an Extended
   chart), plotted purple. The month line is the existing yellow one. When both
   fire the same event on one bar (early in a month they sit close together),

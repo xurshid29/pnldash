@@ -184,8 +184,8 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
 def simulate_lines(bars, lines, params=None, start=None, end=None):
     """Script v11: the reclaim setup on several lines at once, e.g. {'month': mvwap_of, 'year': yvwap_of}
     (pass the month line first). Each line keeps its own stages — exactly simulate() per line — and the
-    same stage on the same bar from both lines is one 'both' event with the first line's path, like
-    the script's "line both" message. Returns (time, stage, line, path, close)."""
+    same stage on the same bar from both lines is one event named after both ("month+year", v14; v11–v13
+    said "both") with the first line's path. Returns (time, stage, line, path, close)."""
     by_key = {}
     for name, line_of in lines.items():
         for e in simulate(bars, line_of, params, start, end):
@@ -193,7 +193,7 @@ def simulate_lines(bars, lines, params=None, start=None, end=None):
     out = []
     for (t, stage), hits in sorted(by_key.items(), key=lambda kv: (kv[0][0], ['FORMING', 'READY', 'GO'].index(kv[0][1]))):
         name, e = hits[0]
-        out.append((t, stage, 'both' if len(hits) > 1 else name, e[2], e[3]))
+        out.append((t, stage, '+'.join(n for n, _ in hits), e[2], e[3]))
     return out
 
 
@@ -248,35 +248,36 @@ class PullbackLine:
         return ev
 
 
-def simulate_pullback(bars, session_of, month_of, params=None, lines='both', gainer_of=None):
-    """Both lines of the PULLBACK setup over bars (dicts with t, h, c). session_of / month_of(bar) → the
-    line or None; gainer_of(bar) → bool (default: always a gainer). Returns the script's messages:
-    (time, PULLBACK|BROKEN|HELD, line session|month|both, touch, close, line value, % vs line, peak %)."""
+def simulate_pullback(bars, lines, params=None, gainer_of=None):
+    """The PULLBACK setup on several lines, e.g. {'session': svwap_of, 'month': mvwap_of, 'year': yvwap_of}
+    (in that order, like the script; v14 added the year line). Each line keeps its own state; the lines
+    that fire the same event on one bar are one message named after all of them ("session+month"),
+    with the lowest touch number and the highest peak. gainer_of(bar) → bool (default: always a gainer).
+    Returns the script's messages: (time, PULLBACK|BROKEN|HELD, line, touch, close, first line's value,
+    % vs it, peak %)."""
     p = {**PB, **(params or {})}
-    sl, ml = PullbackLine(p), PullbackLine(p)
+    state = {name: PullbackLine(p) for name in lines}
     out, day = [], None
     names = {1: 'PULLBACK', 2: 'BROKEN', 3: 'HELD'}
     for i, b in enumerate(bars):
         t = b['t']
         if t.date() != day:
             day = t.date()
-            sl.new_day(); ml.new_day()
+            for st in state.values():
+                st.new_day()
         m = t.hour * 60 + t.minute
         if p['window'] is not None and not (p['window'][0] <= m < p['window'][1]):
             continue
         ok = True if gainer_of is None else gainer_of(b)
-        sv, mv = session_of(b), month_of(b)
-        ev_s = sl.step(i, b['h'], b['c'], sv, ok) if lines != 'month' else 0
-        ev_m = ml.step(i, b['h'], b['c'], mv, ok) if lines != 'session' else 0
-        pct = lambda ln: (b['c'] / ln - 1) * 100 if ln else None
-        if ev_s and ev_s == ev_m:
-            out.append((t, names[ev_s], 'both', min(sl.touches, ml.touches), b['c'], sv, pct(sv),
-                        max(sl.peak_pct, ml.peak_pct) if ev_s == 1 else None))
-            continue
-        if ev_s:
-            out.append((t, names[ev_s], 'session', sl.touches, b['c'], sv, pct(sv), sl.peak_pct if ev_s == 1 else None))
-        if ev_m:
-            out.append((t, names[ev_m], 'month', ml.touches, b['c'], mv, pct(mv), ml.peak_pct if ev_m == 1 else None))
+        ev = {name: state[name].step(i, b['h'], b['c'], line_of(b), ok) for name, line_of in lines.items()}
+        for e in (1, 2, 3):
+            hit = [name for name in lines if ev[name] == e]
+            if not hit:
+                continue
+            ln = lines[hit[0]](b)
+            out.append((t, names[e], '+'.join(hit), min(state[n].touches for n in hit), b['c'], ln,
+                        (b['c'] / ln - 1) * 100 if ln else None,
+                        max(state[n].peak_pct for n in hit) if e == 1 else None))
     return out
 
 
@@ -293,13 +294,17 @@ def selftest_pullback():
             1.25, 1.02,                           # re-armed, back near: touch 4 > max 2 → nothing
             1.30, 1.01]                           # still nothing (touches exhausted for the day)
     bars = [{'t': t0 + dt.timedelta(minutes=k), 'h': c, 'c': c} for k, c in enumerate(path)]
-    got = [(e[1], e[3], e[4]) for e in simulate_pullback(bars, lambda b: 1.00, lambda b: None)]
+    got = [(e[1], e[3], e[4]) for e in simulate_pullback(bars, {'session': lambda b: 1.00})]
     want = [('PULLBACK', 1, 1.04), ('HELD', 1, 1.16), ('PULLBACK', 2, 1.03), ('BROKEN', 2, 0.98)]
     ok = got == want
     print('pullback state machine:', got, '→', 'OK' if ok else f'UNEXPECTED (want {want})')
-    both = simulate_pullback(bars[:6], lambda b: 1.00, lambda b: 1.00)
-    ok_both = [(e[1], e[2]) for e in both] == [('PULLBACK', 'both')]
-    print('same event on both lines → one "both" message:', [(e[1], e[2]) for e in both], '→', 'OK' if ok_both else 'UNEXPECTED')
+    flat = lambda b: 1.00
+    both = simulate_pullback(bars[:6], {'session': flat, 'month': flat})
+    three = simulate_pullback(bars[:6], {'session': flat, 'month': lambda b: None, 'year': flat})
+    ok_both = ([(e[1], e[2]) for e in both] == [('PULLBACK', 'session+month')]
+               and [(e[1], e[2]) for e in three] == [('PULLBACK', 'session+year')])
+    print('same event on several lines → one message naming them:', [(e[1], e[2]) for e in both + three], '→',
+          'OK' if ok_both else 'UNEXPECTED')
     return ok and ok_both
 
 
@@ -333,14 +338,14 @@ def selftest():
         out[name] = ('armed ' if armed else 'not armed ') + ','.join(e[1] for e in ev if e[0] == crash[-1]['t'])
     ok = out['v5'] == 'armed GO' and out['v6'] == 'armed '
     print('crash-bar GO by version:', out, '→', 'OK' if ok else 'UNEXPECTED')
-    # v11: two lines. The same line twice → every event is "both"; a missing second line → all "month".
+    # v11: two lines. The same line twice → every event is "month+year"; a missing second line → all "month".
     one = simulate(crash, line, dict(V7, **gate))
     same = simulate_lines(crash, {'month': line, 'year': line}, dict(V7, **gate))
     solo = simulate_lines(crash, {'month': line, 'year': lambda b: None}, dict(V7, **gate))
-    ok_lines = (len(same) == len(one) > 0 and all(e[2] == 'both' for e in same)
+    ok_lines = (len(same) == len(one) > 0 and all(e[2] == 'month+year' for e in same)
                 and [(e[0], e[1]) for e in solo] == [(e[0], e[1]) for e in one] and all(e[2] == 'month' for e in solo))
-    print('two lines (v11): same line twice → "both", no year line → "month":',
-          f"{len(same)} both / {len(solo)} month", '→', 'OK' if ok_lines else 'UNEXPECTED')
+    print('two lines (v11): same line twice → "month+year", no year line → "month":',
+          f"{len(same)} month+year / {len(solo)} month", '→', 'OK' if ok_lines else 'UNEXPECTED')
     return ok and ok_lines
 
 

@@ -332,9 +332,12 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // PULLBACK / BROKEN / HELD belong to the PULLBACK setup (script v10, 2026-10-05):
 // price back near the session or month VWAP after a run, then its outcome.
 export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held';
-// PULLBACK setup: session / month; reclaim setup (script v11): month / year.
-// 'both' = the setup's two lines fired the same stage on one bar.
-export type TvLine = 'session' | 'month' | 'year' | 'both';
+// PULLBACK setup: session / month / year (v14); reclaim setup: month / year
+// (v11). Lines firing the same stage on one bar are named together in script
+// order ("session+month"); the legacy 'both' (v10–v13) meant session + month
+// for PULLBACK and month + year for reclaim.
+export type TvLineName = 'session' | 'month' | 'year';
+export type TvLine = TvLineName | 'both' | 'session+month' | 'session+year' | 'month+year' | 'session+month+year';
 // GO strength: morning window (04:00–10:30 ET), run-up ≥5% into the GO,
 // GO-bar volume ≥2× the previous 20 bars, ticker on our Momentum list.
 export interface TvStrength {

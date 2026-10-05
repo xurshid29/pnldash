@@ -120,8 +120,18 @@ webhook key; the full URL was given to the operator). Backups:
 `.env.bak-20260821`, `.env.bak-20260821b`, `.env.bak-20261001`,
 `.env.bak-20261003`.
 
+**Operator's focus (10-05):** "polish/improve our dashboard and
+strategies/setups". Expect UI tweaks and setup refinements; keep each one
+small, measured where our data allows, and shipped the same day.
+
 **Open items, ranked:**
-0. **📐 v12 (year line fixed) — deployed 10-05 07:29 ET; the operator must
+0. **📐 v14 (year line from hourly bars; PULLBACK on the year line) — deployed
+   10-05 after the session; the operator must paste v14 and recreate both alerts
+   (1m + 30s).** Check the first messages: `yvwap` should now agree between the 1m
+   and 30s alerts, and `line year` PULLBACKs should start arriving. Also on
+   10-05: the 📐 sidebar flags today's names missing from the TradingView list
+   (MI case). Watchlist alerts follow the list, so Copy + add is enough.
+   Previous step: **📐 v12 (year line fixed) — deployed 10-05 07:29 ET; the operator must
    switch again.** v11 (07:18 ET) left the year line blank on liquid names: its
    VWAP waited for a January bar in the loaded history. v12 restarts every line on
    the first loaded bar, like the built-in VWAP. Paste v12, Save, delete and
@@ -141,7 +151,9 @@ webhook key; the full URL was given to the operator). Backups:
      (pre-market was the weak spot), on/off Momentum.
    - **Also ~10-19 — the reclaim setup by line:** month vs year (v11 trial).
      The session line was measured and rejected (−1.2%/trade, 37 GOs/day).
-   - **v14 deferred (10-05, operator asked "will it be useful?").** The plan was
+   - **v14 shipped later on 10-05** (operator: "lets do both" after the MI and
+     SDEV cases); see item 0. Earlier note, kept for the record: **v14 deferred
+     (10-05, operator asked "will it be useful?").** The plan was
      a true year-to-date line from 60m bars, so 1m and 2m see the same line,
      plus an optional year-line cap of 3/day. In the first hour on v12
      (07:36–08:43 ET), 9 of the 10 tickers seen by both alerts agreed within

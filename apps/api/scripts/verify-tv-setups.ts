@@ -6,7 +6,7 @@
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, type TvSetupSignal } from '../src/services/tv-setups.js';
+import { parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, lineTokens, type TvSetupSignal } from '../src/services/tv-setups.js';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail = ''): void {
@@ -158,6 +158,29 @@ console.log('Reclaim setup on the year line (v11)');
   check('year READY a minute later is logged, not dropped', g.admit({ ...month!, line: 'year' }, T0 + 60) === 'log');
 }
 
+console.log('Line combos (v14)');
+{
+  const pb3 = parseTvMessage('PULLBACK MI 5.31 | sVWAP 4.67 (+13.7%) | mVWAP 4.65 (+14.2%) | yVWAP 5.2 (+2.1%) | line year | touch 1 | peak +27% | day high +600% | tf 1');
+  check('PULLBACK on the year line', pb3?.stage === 'pullback' && pb3.line === 'year' && pb3.yvwap === 5.2 && pb3.ypx_pct === 2.1 && pb3.peak_pct === 27, JSON.stringify(pb3));
+  const all3 = parseTvMessage('BROKEN X 1.00 | sVWAP 1.01 (-1.0%) | mVWAP 1.02 (-2.0%) | yVWAP 1.01 (-1.0%) | line session+month+year | touch 1 | tf 30S');
+  check('three lines at once', all3?.line === 'session+month+year' && all3.tf === '30S', JSON.stringify(all3));
+  const my = parseTvMessage('GO NXL 7.2 | mVWAP 7.0 (+2.9%) | yVWAP 7.05 (+2.1%) | basis 6.9 (-1.4%) | line month+year | day high +60% | tf 1 | via reclaim');
+  check('reclaim month+year (v14 spelling of "both")', my?.line === 'month+year' && my.go_via === 'reclaim', JSON.stringify(my));
+  const js = parseTvMessage({ stage: 'pullback', ticker: 'MI', line: 'YEAR+session' });
+  check('JSON line normalised to script order', js?.line === 'session+year', JSON.stringify(js));
+  check('an unknown line part is rejected', parseTvMessage({ stage: 'pullback', ticker: 'MI', line: 'session+week' })?.line === null);
+  check('lineTokens: legacy both, combos, a v10 reclaim message',
+    JSON.stringify(lineTokens('pullback', 'both')) === '["session","month"]' && JSON.stringify(lineTokens('go', 'both')) === '["month","year"]'
+      && JSON.stringify(lineTokens('broken', 'session+month+year')) === '["session","month","year"]' && JSON.stringify(lineTokens('ready', null)) === '["month"]');
+  const yHtml = formatTvSetupAlert(pb3!, 'AMEX:MI', null);
+  check('Telegram: year-line PULLBACK names the line, year level first',
+    yHtml.includes('back near the year VWAP after the run') && yHtml.indexOf('yVWAP $5.20') < yHtml.indexOf('sVWAP $4.67'), yHtml);
+  const myHtml = formatTvSetupAlert(my!, 'NASDAQ:NXL', null);
+  check('Telegram: month+year GO', myHtml.includes('price reclaimed mVWAP + yVWAP'), myHtml);
+  const allHtml = formatTvSetupAlert(all3!, 'X', null);
+  check('Telegram: three-line BROKEN', allHtml.includes('closed under the session + month + year VWAP'), allHtml);
+}
+
 console.log('Gate — duplicates, other timeframes, flood');
 {
   const T0 = 1_790_000_000;
@@ -208,7 +231,10 @@ console.log('Contract — the Pine script still emits what the parser reads');
   for (const part of ['" | mVWAP "', '" | basis "', '" | day high "', '" | ah "', '" | tf "', '" | path "', '"base"', '"fast"',
     '" | via "', '"reclaim"', '"cross"', '" | vol "', '" | run "', '"FORMING"', '"READY"', '"GO"',
     '"PULLBACK"', '"BROKEN"', '"HELD"', '" | sVWAP "', '" | line "', '" | touch "', '" | peak +"', '"session"', '"month"', '"both"',
-    '" | yVWAP "', '"year"', 'timeframe.change("12M") or firstBar', 'timeframe.change("M") or firstBar', 'firstBar = na(hlc3[1])']) {
+    '" | yVWAP "', '"year"', 'timeframe.change("M") or firstBar', 'firstBar = na(hlc3[1])',
+    // v14: the year line from this year's hourly bars + today's chart bars; merged lines are named together
+    'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", yearBefore()', 'timeframe.change("12M")',
+    '"month+year"', 'pbJoin(names, "year")']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

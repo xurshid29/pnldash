@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v13 (2026-10-05).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v14 (2026-10-05).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Two setups in one script, so the same two watchlist alerts carry both.
@@ -17,15 +17,15 @@
 // Price must close at or above the BB basis: a setup under the basis is no
 // setup, and a close 2% under it ends the setup — the next reclaim is a fresh READY.
 // 2) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
-// session VWAP or the month VWAP — and it comes back down to it.
+// session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
 //   BROKEN    a close under the line → the setup is over (the operator's exit)
 //   HELD      price runs +10% from the PULLBACK close first
 // Each line runs its own setup, and every message carries its touch number (the
 // operator rates the first pullback after the first big move highest; our own
 // data found the second as good — docs/vwap-setup.md §13.5).
-// Run it as TradingView watchlist alerts — one on 1m and one on 2m (Premium allows 2):
-// Symbols = the runners list (dashboard → 📐 tab → Copy list), session Extended,
+// Run it as TradingView watchlist alerts — one on 1m and one on 30s (Premium allows 2):
+// Symbols = the runners list (dashboard → 📐 sidebar ⋯ → Copy list), session Extended,
 // condition = this script → "Any alert() function call", once per bar close,
 // webhook = https://pnldash.uz/api/tv/webhook?key=<TV_WEBHOOK_SECRET>.
 // The alert message format below is parsed by apps/api/src/services/tv-setups.ts —
@@ -58,7 +58,9 @@ goAbovePct = input.float(2.0,  "Price reclaim: close at least % above mVWAP", gr
 goWithin   = input.int(5,      "…having been at/under it within the previous N bars", minval = 1, group = "GO")
 alertWin   = input.session("0400-2000", "Alert window (New York time)", group = "Alerts")
 pbOn       = input.bool(true,   "Pullback setup on", group = "Pullback to VWAP (v10)")
-pbLines    = input.string("Both", "Lines", options = ["Both", "Session", "Month"], group = "Pullback to VWAP (v10)")
+pbSession  = input.bool(true,   "Lines: session VWAP", inline = "pbl", group = "Pullback to VWAP (v10)")
+pbMonth    = input.bool(true,   "month VWAP", inline = "pbl", group = "Pullback to VWAP (v10)")
+pbYear     = input.bool(true,   "year VWAP (v14)", inline = "pbl", group = "Pullback to VWAP (v10)")
 pbArm      = input.float(15.0,  "Armed: a bar high at least % above the line (the big move)", group = "Pullback to VWAP (v10)")
 pbNear     = input.float(5.0,   "PULLBACK: a close back within % above the line", group = "Pullback to VWAP (v10)")
 pbBreak    = input.float(0.0,   "BROKEN: a close at least % under the line (0 = any close under it)", group = "Pullback to VWAP (v10)")
@@ -67,18 +69,49 @@ pbMax      = input.int(2,       "Pullbacks per line per day (touches; a close st
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
-// (v11) VWAP anchor Year — TradingView's own VWAP uses timeframe.change("12M") —
-// and (v10, PULLBACK only) VWAP anchor Session, which resets at
-// timeframe.change("D"), the 04:00 ET pre-market open on an Extended chart.
-// Each line also restarts on the first loaded bar, exactly like TradingView's
-// built-in VWAP (`if na(src[1]) … isNewPeriod := true`). Without that the line is
-// na until its anchor shows up in the loaded history: v11's year line was blank on
-// every liquid name (VEEA, PCVX on 30s, 2026-10-05; a 1m chart holds weeks, not a
-// year), and the month line could go blank late in a month on short timeframes.
+// and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
+// the 04:00 ET pre-market open on an Extended chart. Each restarts on the first
+// loaded bar too, exactly like TradingView's built-in VWAP
+// (`if na(src[1]) … isNewPeriod := true`), so a line never goes blank when its
+// anchor isn't in the loaded history (the month line late in a month on 30s).
 firstBar = na(hlc3[1])
 mvwap  = ta.vwap(hlc3, timeframe.change("M") or firstBar)
-yvwap  = ta.vwap(hlc3, timeframe.change("12M") or firstBar)
 svwap  = ta.vwap(hlc3, timeframe.change("D") or firstBar)
+
+// The year line (v11; v14 builds it from hourly bars). An intraday chart loads
+// weeks of history, not a year, so a year VWAP from the chart's own bars started
+// wherever the history began and differed by timeframe: SDEV 2026-10-05 was 4.36
+// on the 30s chart and 4.70 on the 2m alert. v14 takes this year's 60-minute bars
+// (extended hours) up to the end of yesterday, from a request that reaches back
+// to January, and adds today's bars from the chart, so the 30s chart, the 1m alert
+// and the 30s alert share one line. `yearBefore` returns the sums up to the start
+// of the current day; they don't depend on the current hour, which is why
+// lookahead_on is safe here.
+yearBefore() =>
+    var float pv    = 0.0
+    var float v     = 0.0
+    var float pvDay = 0.0
+    var float vDay  = 0.0
+    if timeframe.change("D")
+        pvDay := pv
+        vDay  := v
+    if timeframe.change("12M")
+        pv    := 0.0
+        v     := 0.0
+        pvDay := 0.0
+        vDay  := 0.0
+    pv := pv + hlc3 * volume
+    v  := v + volume
+    [pvDay, vDay]
+[yPrevPV, yPrevV] = request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", yearBefore(), lookahead = barmerge.lookahead_on)
+var float yDayPV = 0.0
+var float yDayV  = 0.0
+if timeframe.change("D")
+    yDayPV := 0.0
+    yDayV  := 0.0
+yDayPV := yDayPV + hlc3 * volume
+yDayV  := yDayV + volume
+yvwap = na(yPrevV) or yPrevV + yDayV <= 0 ? na : (yPrevPV + yDayPV) / (yPrevV + yDayV)
 basis  = ta.sma(close, 20)
 // Strength inputs sent with every signal (v9): the signal bar's volume vs the
 // average of the previous 20 bars, and the run-up over the previous 10 bars.
@@ -245,9 +278,10 @@ rcMsg(int target, string lineName, float bBelow, bool bForm, bool bReady, bool r
     msg
 
 // Both lines firing the same stage on one bar (they can sit close together) is
-// one "line both" message, with the month line's basis distance.
+// one "line month+year" message (v11–v13 said "both"), with the month line's
+// basis distance.
 if fireM > 0 and fireM == fireY
-    alert(rcMsg(fireM, "both", mBasisBelow, mBaseForm, mBaseReady, mRecl), alert.freq_once_per_bar_close)
+    alert(rcMsg(fireM, "month+year", mBasisBelow, mBaseForm, mBaseReady, mRecl), alert.freq_once_per_bar_close)
 else
     if fireM > 0
         alert(rcMsg(fireM, "month", mBasisBelow, mBaseForm, mBaseReady, mRecl), alert.freq_once_per_bar_close)
@@ -257,7 +291,8 @@ else
 // ── 2) PULLBACK (v10) ─────────────────────────────────────────────────────────
 // A fast run stretches price well above a VWAP line and it comes back down to it
 // (operator, 2026-10-05: SAIQ and SDEV on the session line, VEEA 2026-09-15 on
-// the month line). Each line keeps its own state, reset every day:
+// the month line, MI 2026-10-05 12:40 ET on the year line). Each line keeps its
+// own state, reset every day:
 //   armed     by a bar high ≥ pbArm% above the line (gainers only)
 //   PULLBACK  on a LATER close within pbNear% above the line ("be ready")
 //   BROKEN    then a close pbBreak% under the line — the operator's exit — or
@@ -308,6 +343,7 @@ method step(PbLine s, float ln, bool canArm) =>
 
 var PbLine pbS = PbLine.new()
 var PbLine pbM = PbLine.new()
+var PbLine pbY = PbLine.new()
 if newDay
     pbS.armed   := false
     pbS.open    := false
@@ -315,13 +351,19 @@ if newDay
     pbM.armed   := false
     pbM.open    := false
     pbM.touches := 0
+    pbY.armed   := false
+    pbY.open    := false
+    pbY.touches := 0
 int evS = 0
 int evM = 0
+int evY = 0
 if pbOn and inWindow
-    if pbLines != "Month"
+    if pbSession
         evS := pbS.step(svwap, gainer)
-    if pbLines != "Session"
+    if pbMonth
         evM := pbM.step(mvwap, gainer)
+    if pbYear
+        evY := pbY.step(yvwap, gainer)
 
 // The message — a contract with services/tv-setups.ts parseTvMessage, like the RECLAIM one:
 //   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
@@ -329,6 +371,8 @@ pbMsg(int ev, string lineName, int touch, float peak) =>
     string msg = (ev == 1 ? "PULLBACK" : ev == 2 ? "BROKEN" : "HELD") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
     msg += " | sVWAP " + str.tostring(svwap, format.mintick) + " (" + pctVs(svwap) + "%)"
     msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + pctVs(mvwap) + "%)"
+    if not na(yvwap)
+        msg += " | yVWAP " + str.tostring(yvwap, format.mintick) + " (" + pctVs(yvwap) + "%)"
     msg += " | line " + lineName + " | touch " + str.tostring(touch)
     if ev == 1 and not na(peak)
         msg += " | peak +" + str.tostring(peak, "#") + "%"
@@ -341,19 +385,41 @@ pbMsg(int ev, string lineName, int touch, float peak) =>
         msg += " | run " + (runUp10 >= 0 ? "+" : "") + str.tostring(runUp10, "#.#") + "%"
     msg + " | tf " + timeframe.period
 
-// Both lines firing the same event on one bar (they sit close together early in
-// a month) is one "line both" message.
-if evS > 0 and evS == evM
-    alert(pbMsg(evS, "both", math.min(pbS.touches, pbM.touches), math.max(pbS.peakPct, pbM.peakPct)), alert.freq_once_per_bar_close)
-else
-    if evS > 0
-        alert(pbMsg(evS, "session", pbS.touches, pbS.peakPct), alert.freq_once_per_bar_close)
-    if evM > 0
-        alert(pbMsg(evM, "month", pbM.touches, pbM.peakPct), alert.freq_once_per_bar_close)
+// Lines firing the same event on one bar (they sit close together early in a
+// month) are one message naming all of them, e.g. "line session+month" (v10–v13
+// said "both" for session + month): the lowest touch number, the highest peak.
+pbJoin(string acc, string name) => acc == "" ? name : acc + "+" + name
+pbFire(int e) =>
+    string names = ""
+    int touch = 999
+    float peak = na
+    if evS == e
+        names := pbJoin(names, "session")
+        touch := math.min(touch, pbS.touches)
+        peak  := na(peak) ? pbS.peakPct : math.max(peak, nz(pbS.peakPct, peak))
+    if evM == e
+        names := pbJoin(names, "month")
+        touch := math.min(touch, pbM.touches)
+        peak  := na(peak) ? pbM.peakPct : math.max(peak, nz(pbM.peakPct, peak))
+    if evY == e
+        names := pbJoin(names, "year")
+        touch := math.min(touch, pbY.touches)
+        peak  := na(peak) ? pbY.peakPct : math.max(peak, nz(pbY.peakPct, peak))
+    [names, touch, peak]
 
-plotshape(evS == 1 or evM == 1, "Pullback", shape.diamond, location.belowbar, color.aqua, size = size.tiny)
-plotshape(evS == 2 or evM == 2, "Broken", shape.xcross, location.abovebar, color.red, size = size.tiny)
-plotshape(evS == 3 or evM == 3, "Held", shape.flag, location.abovebar, color.lime, size = size.tiny)
+[pbN1, pbT1, pbP1] = pbFire(1)
+[pbN2, pbT2, pbP2] = pbFire(2)
+[pbN3, pbT3, pbP3] = pbFire(3)
+if pbN1 != ""
+    alert(pbMsg(1, pbN1, pbT1, pbP1), alert.freq_once_per_bar_close)
+if pbN2 != ""
+    alert(pbMsg(2, pbN2, pbT2, pbP2), alert.freq_once_per_bar_close)
+if pbN3 != ""
+    alert(pbMsg(3, pbN3, pbT3, pbP3), alert.freq_once_per_bar_close)
+
+plotshape(evS == 1 or evM == 1 or evY == 1, "Pullback", shape.diamond, location.belowbar, color.aqua, size = size.tiny)
+plotshape(evS == 2 or evM == 2 or evY == 2, "Broken", shape.xcross, location.abovebar, color.red, size = size.tiny)
+plotshape(evS == 3 or evM == 3 or evY == 3, "Held", shape.flag, location.abovebar, color.lime, size = size.tiny)
 // Reclaim markers: the month line orange / yellow / green as before, the year line
 // (v13) the same shapes in blue like its line. A stage that fires on both lines on
 // one bar shows the month marker.

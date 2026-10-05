@@ -8,7 +8,7 @@ import { useAlertLog } from '../../hooks/useAlertLog';
 import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, StrengthTag, tvLevelsText, fmtTf, fmtSignedPct, isPullbackStage } from '../common/TvStageTag';
+import { TvStageTag, StrengthTag, tvLevelsText, fmtTf, isPullbackStage, lineTokens, lineDistanceText } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
 import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
@@ -38,11 +38,11 @@ interface TickerCard {
   live: boolean;
 }
 
-// One setup thread per line: reclaim (month / year / both) and pullback
-// (session / month / both). A pullback's BROKEN / HELD on a line also closes a
-// "both" pullback.
+// One setup thread per line combination: reclaim (month / year / month+year)
+// and pullback (session / month / year and combinations). A pullback's BROKEN
+// / HELD also closes an open pullback on any combination sharing one of its lines.
 function threadOf(s: TvSetupInfo): string {
-  return `${isPullbackStage(s.stage) ? 'pb' : 'rc'}:${s.line ?? 'month'}`;
+  return `${isPullbackStage(s.stage) ? 'pb' : 'rc'}:${lineTokens(s.stage, s.line).join('+') || 'none'}`;
 }
 
 function buildCards(alerts: OpportunityAlert[], now: number): TickerCard[] {
@@ -69,9 +69,12 @@ function buildCards(alerts: OpportunityAlert[], now: number): TickerCard[] {
     for (const e of events) {
       const th = threadOf(e.setup);
       latest.set(th, e);
-      if ((e.setup.stage === 'broken' || e.setup.stage === 'held') && e.setup.line !== 'both') {
-        const both = latest.get('pb:both');
-        if (both && both.setup.stage === 'pullback' && both.at < e.at) latest.set('pb:both', e);
+      if (e.setup.stage === 'broken' || e.setup.stage === 'held') {
+        const lines = lineTokens(e.setup.stage, e.setup.line);
+        for (const [k, open] of latest) {
+          if (k !== th && open.setup.stage === 'pullback' && open.at < e.at
+            && lineTokens(open.setup.stage, open.setup.line).some((t) => lines.includes(t))) latest.set(k, e);
+        }
       }
     }
     let live: SetupEvent | null = null;
@@ -86,10 +89,8 @@ function buildCards(alerts: OpportunityAlert[], now: number): TickerCard[] {
 
 // "+1.2% vs sVWAP" — where price sat against the setup's own line at the signal.
 function lineDistance(s: TvSetupInfo): string {
-  if (isPullbackStage(s.stage)) {
-    return s.line === 'month' ? `${fmtSignedPct(s.px_pct)} vs mVWAP` : `${fmtSignedPct(s.spx_pct)} vs sVWAP`;
-  }
-  return s.line === 'year' ? `${fmtSignedPct(s.ypx_pct)} vs yVWAP` : `${fmtSignedPct(s.px_pct)} vs mVWAP`;
+  const first = lineTokens(s.stage, s.line)[0] ?? 'session';
+  return lineDistanceText(s, first) ?? '';
 }
 
 function age(ms: number): string {
@@ -111,9 +112,9 @@ function hhmm(ms: number): string {
 
 const HOW_TO = (
   <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-    <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month”, its purple line on your “VWAP Session” and its blue line on your “VWAP Year”.</div>
+    <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month” and its purple line on your “VWAP Session”. Its blue line is this year's VWAP built from hourly bars (v14). On liquid names it can differ from TradingView's own “VWAP Year” on an intraday chart, which only reaches back as far as the chart has loaded. Trust the blue one.</div>
     <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning. During the day the sidebar flags new names missing from it — <b>Copy</b> and add them to the watchlist (the alerts pick up added symbols by themselves).</div>
-    <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>2 minutes</b>.</div>
+    <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>30 seconds</b>.</div>
     <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
   </div>
