@@ -330,6 +330,39 @@ async function applyAfterHoursQuotes(rows: ScreenerRow[]): Promise<void> {
   }
 }
 
+// Live quotes for any tickers (2026-10-05: the 📐 setups that aren't on the
+// Momentum screen, so the sidebar can show every setup's change %). One
+// batched custom-view export: c=1 Ticker · c=65 Price · c=66 Change, and after
+// hours c=71 After-Hours Close · c=72 After-Hours Change, matching the Momentum
+// rows' after-hours overlay. Best-effort: a failed fetch returns an empty map.
+export interface TickerQuote {
+  price: number | null;
+  change_pct: number | null;
+}
+export async function fetchQuotes(tickers: string[], afterHours: boolean): Promise<Map<string, TickerQuote>> {
+  const out = new Map<string, TickerQuote>();
+  if (tickers.length === 0) return out;
+  const url = `${FINVIZ_BASE}/export?v=152&t=${tickers.map(encodeURIComponent).join(',')}&c=${afterHours ? '1,65,66,71,72' : '1,65,66'}&auth=${token()}`;
+  let csv: string[][];
+  try {
+    csv = await fetchCsv(url);
+  } catch {
+    return out;
+  }
+  for (let i = 1; i < csv.length; i++) {
+    const r = csv[i];
+    if (r.length < 3 || !r[0]) continue;
+    let price = num(r[1]);
+    let change = num(r[2]);
+    if (afterHours && r.length >= 5) {
+      price = num(r[3]) ?? price;
+      change = num(r[4]) ?? change;
+    }
+    out.set(r[0], { price, change_pct: change });
+  }
+  return out;
+}
+
 // Batch news fetch. Returns ticker → { title, url, published_at } where
 // published_at is the Finviz date string (ET-local, no TZ).
 export interface FinvizNewsItem {

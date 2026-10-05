@@ -13,7 +13,7 @@ import type {
   Classifier,
   TradingSession,
 } from '../db/types.js';
-import { fetchScreener, fetchFinvizNews, type ScreenerRow } from './finviz.js';
+import { fetchScreener, fetchFinvizNews, type ScreenerRow, fetchQuotes, type TickerQuote } from './finviz.js';
 import { fetchYahooNews } from './yahoo.js';
 import { fetchBenzingaDelta } from './benzinga.js';
 import { fetchEdgarFilings, type EdgarFiling, tvSymbol } from './edgar.js';
@@ -607,6 +607,9 @@ export interface CyclePayload {
   ema_crosses: EmaCrossItem[];
   macd_momo: MacdMomoItem[];
   momo_setups: MomoSetupItem[];
+  // 📐 setup tickers that aren't on the Momentum screen → their live quote,
+  // refreshed about once a minute (the 📐 sidebar's change % and "since").
+  tv_quotes: Record<string, TickerQuote>;
 }
 
 export interface EnrichedRow extends ScreenerRow {
@@ -903,6 +906,13 @@ class PollerService {
   // first cycle rather than re-ping the whole day.
   private opportunity = new OpportunityAlerts();
   private opportunitySeeded = false;
+  // 📐 tickers with a TradingView setup today, and live quotes for the ones
+  // that aren't on the Momentum screen (every 3rd cycle, one batched Finviz
+  // export) — so the 📐 sidebar shows every setup's change %. ET-day state:
+  // seeded from tier_events on boot, cleared at midnight ET.
+  private tvTickersToday = new Set<string>();
+  private tvQuotes = new Map<string, TickerQuote>();
+  private tvQuoteCycle = 0;
 
   // Last full payload, served by /api/screener/latest for new clients.
   private lastPayload: CyclePayload | null = null;
@@ -1985,6 +1995,8 @@ class PollerService {
       // *don't* clear it (see lastSession block below).
       this.vwapState.clear();
       this.prevAboveVwap.clear();
+      this.tvTickersToday.clear();
+      this.tvQuotes.clear();
       // Reset the SEC/halt delta watermarks so the new day's first cycle
       // doesn't replay the whole backlog as "fresh".
       this.secWatermark = Math.floor(now.getTime() / 1000);
@@ -3291,6 +3303,15 @@ class PollerService {
       );
     }
 
+    // 📐 setups off our screen: one batched quote every 3rd cycle (~1 min).
+    // A failed fetch keeps the last quotes rather than blanking the sidebar.
+    const onScreen = new Set(momentumRows.map((r) => r.ticker));
+    const offScreenTv = [...this.tvTickersToday].filter((t) => !onScreen.has(t)).slice(0, 100);
+    if (offScreenTv.length > 0 && this.tvQuoteCycle++ % 3 === 0) {
+      const q = await fetchQuotes(offScreenTv, session === 'afterhours');
+      if (q.size > 0) this.tvQuotes = q;
+    }
+
     const payload: CyclePayload = {
       cycle_id: cycleId,
       polled_at: new Date().toISOString(),
@@ -3307,6 +3328,7 @@ class PollerService {
       ema_crosses: components.ema ? emaCrossDisplay : [],
       macd_momo: components.momo ? macdMomoDisplay : [],
       momo_setups: components.setups ? momoSetupDisplay : [],
+      tv_quotes: Object.fromEntries([...this.tvQuotes].filter(([t]) => !onScreen.has(t))),
       banners: { new_with_catalyst: newWithCatalyst, fresh_news: freshList },
       alerts: this.opportunity.recentAlerts(Date.now()),
       fresh_news: enriched
@@ -3891,6 +3913,7 @@ class PollerService {
         .select(['l.ticker', 'a.title'])
         .where(sql<boolean>`(a.fetched_at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`)
         .execute();
+      for (const r of alerts) if (r.event === 'tv_setup') this.tvTickersToday.add(r.ticker);
       this.opportunity.seed({
         aplus: alerts.filter((r) => r.event === 'grade_aplus').map((r) => r.ticker),
         fast: alerts.filter((r) => r.event === 'fast_move').map((r) => [r.ticker, Math.floor(new Date(r.at).getTime() / 1000)] as [string, number]),
@@ -3917,6 +3940,7 @@ class PollerService {
   // timeframe in the last 5 min: recorded for grading, not re-announced.
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'log'): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
+    this.tvTickersToday.add(sig.ticker);
     const at = new Date(nowSec * 1000).toISOString();
     const row = this.lastPayload?.rows.find((r) => r.ticker === sig.ticker) ?? null;
     // GO only: morning window, run-up, GO-bar volume, on Momentum (tv-setups.ts goStrength)

@@ -548,6 +548,8 @@ export interface MomoSetupItem {
 }
 
 export interface CyclePayload {
+  // 📐 setup tickers that aren't on the Momentum screen → live quote (~1 min old)
+  tv_quotes?: Record<string, { price: number | null; change_pct: number | null }>;
   cycle_id: string;
   polled_at: string | null;
   session: TradingSession;

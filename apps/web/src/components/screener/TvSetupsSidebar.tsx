@@ -8,6 +8,7 @@ import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
 import { TvStageTag, StrengthTag, tvLevelsText, fmtTf, fmtSignedPct, isPullbackStage } from '../common/TvStageTag';
+import { GradeCell } from '../common/GradeCell';
 import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
 
@@ -203,7 +204,11 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     const e = c.current;
     const s = e.setup;
     const r = rowByTicker.get(c.ticker);
-    const nowPx = r?.price != null ? Number(r.price) : null;
+    // Current price / change: the Momentum row when the name is on our screen,
+    // otherwise the server's ~1-min quote for 📐 tickers off it (no grade there).
+    const q = r ? null : payload?.tv_quotes?.[c.ticker] ?? null;
+    const nowPx = r?.price != null ? Number(r.price) : q?.price ?? null;
+    const nowChg = r?.change_pct != null ? Number(r.change_pct) : q?.change_pct ?? null;
     const since = nowPx != null && e.price != null && e.price > 0 ? (nowPx / e.price - 1) * 100 : null;
     const expanded = open.has(c.ticker);
     const resolved = s.stage === 'go' || s.stage === 'held' || s.stage === 'broken';
@@ -226,14 +231,21 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           {s.strength && <StrengthTag st={s.strength} />}
           <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{age(now - e.at)}</Text>
         </div>
-        <div style={{ fontSize: 11, color: '#8c8c8c', paddingLeft: 59, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-          {resolved
-            ? (since != null
-              ? <span style={{ color: since >= 0 ? '#52c41a' : '#ff4d4f' }}>since {since >= 0 ? '+' : ''}{since.toFixed(1)}%</span>
-              : 'off screen')
-            : lineDistance(s)}
-          {r && <> · {fmtPct(r.change_pct)}{r.grade ? ` ${r.grade.replace('-', '−')}` : ''}</>}
-          {e.tfs.length > 0 && <> · {[...e.tfs].sort(byTf).map(fmtTf).join('+')}</>}
+        <div style={{ fontSize: 11, color: '#8c8c8c', paddingLeft: 59, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 5 }}>
+          <span style={{ color: nowChg == null ? '#595959' : nowChg >= 0 ? '#52c41a' : '#ff4d4f', fontWeight: 700, fontSize: 12 }}>
+            {nowChg == null ? '—' : fmtPct(nowChg)}
+          </span>
+          <span style={{ transform: 'scale(0.9)', transformOrigin: 'left center' }}>
+            <GradeCell grade={r?.grade} faded={r?.grade_faded} offHigh={r?.off_high_pct} />
+          </span>
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {resolved
+              ? (since != null
+                ? <span style={{ color: since >= 0 ? '#52c41a' : '#ff4d4f' }}>since {since >= 0 ? '+' : ''}{since.toFixed(1)}%</span>
+                : 'since —')
+              : lineDistance(s)}
+            {e.tfs.length > 0 && <> · {[...e.tfs].sort(byTf).map(fmtTf).join('+')}</>}
+          </span>
         </div>
         {expanded && (
           <div style={{ paddingLeft: 59, paddingTop: 4, fontSize: 11 }} onClick={(ev) => ev.stopPropagation()}>

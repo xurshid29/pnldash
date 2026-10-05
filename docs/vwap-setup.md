@@ -638,9 +638,13 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   it replaced the 📐 tab). There's one row per ticker with its *current* state:
   - the stage pill with its line (S session / M month / Y year) and touch #;
   - 💪 strength on a GO, and how long ago it fired;
-  - the distance to the line for a setup still in play, or "since" (live price
-    vs the signal) once it's resolved;
-  - the current change and grade.
+  - on the second line, the **current change %** (bold, green/red) and the
+    **grade badge** (as in the Momentum table), then the distance to the line
+    for a setup still in play, or "since" (live price vs the signal) once
+    it's resolved. Names off the Momentum screen have no grade ("—"). Their
+    change % and price come from the server's batched Finviz quote for
+    today's 📐 tickers off the screen, every 3rd cycle (~1 min), `payload.tv_quotes`,
+    after-hours values after 16:00 ET.
 
   It has two sections, both newest first. **Live** holds FORMING/READY under
   30 min old, a GO under 15 min, and a PULLBACK with no BROKEN/HELD yet (under

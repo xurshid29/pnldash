@@ -65,7 +65,7 @@ Postgres, migrations via `dbmate` in `db/migrations/`.
 
 `apps/api/src/services/poller.ts` is a long-lived singleton. On API startup it begins a 20s loop:
 
-1. Fetch Finviz `v=131` (ownership: gives float, mcap, price, change, volume) **and** `v=110` (overview: gives country) in parallel. Join by ticker. Post-filter `float < FLOAT_MAX_M` (default 35M).
+1. Fetch Finviz `v=131` (ownership: gives float, mcap, price, change, volume) **and** `v=110` (overview: gives country) in parallel. Join by ticker. Post-filter `float < FLOAT_MAX_M` (default 35M). Every 3rd cycle (~1 min) one more batched `v=152` quote covers today's 📐 setup tickers that aren't on the screen (`payload.tv_quotes`, for the 📐 sidebar's change %).
 2. Per cycle, fetch news from five sources:
    - **Finviz** `news_export?v=3&t=<batch>` — one call for all current tickers, today only
    - **Yahoo RSS** `feeds.finance.yahoo.com/rss/2.0/headline?s=<ticker>` — per-ticker fan-out, today only
