@@ -290,6 +290,11 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
   Committing them would have rolled the 📐 script back on the next deploy.
   After a rewind, and before every commit, read `git status` / `git diff --stat`.
   Add files by name, not `git add -A`.
+- **CI stuck in "queued"** (a GitHub Actions incident, 10-05): once both
+  images have built, run the deploy job's Roll out script by hand over SSH
+  (`.github/workflows/build-images.yml`). Check `:latest` against
+  `:sha-<short>` first, then cancel the queued run so it can't restart
+  nginx later, inside 07:00–11:00 ET.
 - The droplet's `git pull` once failed mid-deploy with "expected flush
   after ref listing" (a GitHub HTTPS hiccup); rerunning the deploy job fixed
   it.
@@ -321,6 +326,12 @@ dashboard toast and sound), 168 timeframe copies logged.
   announcements, so a quiet month READY can't swallow a first year READY.
 - Replayed on 10-05: 372 → 154 announcements, buzzing 106 → 55. Regression:
   153 checks. Route smoke-tested end to end (dead DB: seed fails soft).
+- **Rolled out by hand** (15:36 ET): a GitHub Actions incident left the deploy
+  job queued after both images built. I ran the workflow's Roll out steps
+  over SSH, checked `:latest` == `:sha-6bc9437` for api and web, and
+  cancelled the queued run. Live check: `gate seeded — 146 READYs announced
+  today, 65 ticker lines`; the first rows after it (SCKT BROKEN, LONA
+  FORMING) carry `quiet: true`.
 
 **2026-10-05 (afternoon) — 📐 v12 → v15, the 📐 sidebar, 1m + 30s alerts.**
 - **v12 (07:29 ET).** v11's year line was blank on liquid names:
