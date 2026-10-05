@@ -62,10 +62,15 @@ parking), disk 26%.
      READY → GO; GO = a decisive price reclaim or a rising-basis cross;
      gainer filter = +20% today or in the last 3 sessions, or after hours
      since today's close.
-   - **Alerts:** the operator runs **two watchlist alerts, 1m and 2m**
-     (Premium = 2), webhook set 10-04, on a "runners" watchlist from the 📐
-     tab's Copy list. A stage repeated on the other timeframe within 5 min
-     is logged, not re-announced.
+   - **Alerts:** the operator runs **two watchlist alerts, 1m and 30s** since
+     10-05 ~11:40 ET (1m and 2m before; Premium = 2), webhook set 10-04, on a
+     "runners" watchlist from the 📐 Copy list. A stage repeated on the other
+     timeframe within 5 min is logged, not re-announced. Why 30s: the operator
+     watches 30s charts. On SDEV 10-05 the 30s chart showed a year-line GO at
+     10:59 ET (line 4.36) that no alert fired: the 2m alert's year line was 4.70.
+     Expect 30s to be noisier (a 10-min basis). Compare signal counts and
+     outcomes by `tf` at the grading. v14 (one year line on every timeframe)
+     is still open.
    - **Delivery:** `POST /api/tv/webhook?key=…` → `tier_events` (tier
      `alert`, event `tv_setup`), an SSE `alert` event, the **📐 VWAP setups**
      tab and Telegram (`ALERTS_DISABLED` `tv_setup` / `tv_forming` /
