@@ -3934,11 +3934,15 @@ class PollerService {
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_forming / tv_ready / tv_go /
   // tv_pullback / tv_broken / tv_held, and tv_year for the reclaim setup on
-  // the year line). BROKEN and HELD — a pullback's outcome — always go out as
-  // silent messages.
-  // mode 'log' = the same stage was already announced from another
-  // timeframe in the last 5 min: recorded for grading, not re-announced.
-  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'log'): OpportunityAlert {
+  // the year line). BROKEN and HELD — a pullback's outcome — are quiet by
+  // default; taken off TV_SETUP.quiet_stages they go out as silent messages.
+  // mode 'log' = a copy from another timeframe within 5 min (or the ticker
+  // had this stage announced in the last 5 min): recorded for grading, not
+  // re-announced. mode 'quiet' (2026-10-05) = FORMING / BROKEN / HELD, or a
+  // READY on a line already announced today (TV_SETUP.quiet_stages /
+  // ready_once_per_day): recorded and shown in the 📐 sidebar (it reads
+  // tier_events), never announced. Rows carry `quiet: true`.
+  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log'): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
     const at = new Date(nowSec * 1000).toISOString();
@@ -3977,7 +3981,7 @@ class PollerService {
       touch: sig.touch ?? null, peak_pct: sig.peak_pct ?? null,
       yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
       chg: alert.change_pct, grade: alert.grade, float_m: alert.float_m, rv1: alert.rel_vol_1min,
-      on_screen: row != null, notified: mode === 'notify',
+      on_screen: row != null, notified: mode === 'notify', quiet: mode === 'quiet',
     });
     const pb = PULLBACK_STAGES.has(sig.stage);
     console.log(
@@ -3992,7 +3996,9 @@ class PollerService {
       (sig.path ? ` · ${sig.path}` : '') + (sig.go_via ? ` · via ${sig.go_via}` : '') +
       (sig.vol_x != null ? ` · vol ${sig.vol_x}x` : '') + (sig.run_pct != null ? ` · run ${sig.run_pct}%` : '') +
       (strength ? ` · strength ${strength.score}/${strength.max}` : '') +
-      `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}${mode === 'log' ? ' · repeat (logged only)' : ''}`,
+      `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
+      (mode === 'log' ? ' · repeat (logged only)'
+        : mode === 'quiet' ? (sig.stage === 'ready' ? ' · quiet (READY already announced on this line today)' : ' · quiet stage') : ''),
     );
     if (mode === 'notify') {
       this.opportunity.pushExternal(alert);

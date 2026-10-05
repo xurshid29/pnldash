@@ -11,6 +11,29 @@ import { parseTvMessage, TvSetupGate } from '../services/tv-setups.js';
 const router = Router();
 const gate = new TvSetupGate();
 
+// A deploy restarts the gate empty. Before the first webhook, reload today's
+// announced READYs once, so a READY already announced today stays quiet.
+// Never rejects: on a DB error the gate just starts empty.
+let gateSeed: Promise<void> | null = null;
+function seedGate(): Promise<void> {
+  gateSeed ??= getDb()
+    .selectFrom('tier_events')
+    .select(['ticker', sql<string | null>`meta->>'line'`.as('line')])
+    .where('tier', '=', 'alert')
+    .where('event', '=', 'tv_setup')
+    .where(sql<boolean>`(at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`)
+    .where(sql<boolean>`meta->>'stage' = 'ready' AND (meta->>'notified')::boolean`)
+    .execute()
+    .then((rows) => {
+      const lines = gate.seedReady(rows, Math.floor(Date.now() / 1000));
+      console.log(`[tv-setup] gate seeded — ${rows.length} READYs announced today, ${lines} ticker lines`);
+    })
+    .catch((err) => {
+      console.error('[tv-setup] gate seeding failed (a READY announced earlier today may be announced again):', err instanceof Error ? err.message : err);
+    });
+  return gateSeed;
+}
+
 function keyMatches(given: string, secret: string): boolean {
   const a = Buffer.from(given);
   const b = Buffer.from(secret);
@@ -24,7 +47,7 @@ function keyMatches(given: string, secret: string): boolean {
 // (the global JSON parser has already turned that into an object). TradingView
 // waits ~3s for an answer, so delivery (DB row, SSE, Telegram) is fire-and-
 // forget behind an immediate reply. dry=1 parses and echoes without delivering.
-router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), (req, res) => {
+router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async (req, res) => {
   const secret = process.env.TV_WEBHOOK_SECRET;
   if (!secret) return res.status(503).json({ error: 'TradingView webhook disabled (TV_WEBHOOK_SECRET unset)' });
   const key = typeof req.query.key === 'string' ? req.query.key : '';
@@ -38,14 +61,21 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), (req,
   }
   if (req.query.dry === '1') return res.json({ data: { dry_run: true, signal: sig } });
 
-  const verdict = gate.admit(sig, Math.floor(Date.now() / 1000));
-  if (verdict === 'flood') {
-    console.warn(`[tv-setup] flood guard — dropped ${sig.stage} ${sig.ticker}`);
-    return res.status(429).json({ error: 'Too many alerts' });
+  await seedGate();
+  // Express 4 doesn't catch errors thrown after an await — answer them here.
+  try {
+    const verdict = gate.admit(sig, Math.floor(Date.now() / 1000));
+    if (verdict === 'flood') {
+      console.warn(`[tv-setup] flood guard — dropped ${sig.stage} ${sig.ticker}`);
+      return res.status(429).json({ error: 'Too many alerts' });
+    }
+    if (verdict === 'drop') return res.json({ data: { duplicate: true } });
+    const alert = poller.deliverTvSetup(sig, verdict);
+    res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
+  } catch (err) {
+    console.error(`[tv-setup] delivery failed for ${sig.stage} ${sig.ticker}:`, err instanceof Error ? err.message : err);
+    res.status(500).json({ error: 'Delivery failed' });
   }
-  if (verdict === 'drop') return res.json({ data: { duplicate: true } });
-  const alert = poller.deliverTvSetup(sig, verdict);
-  res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
 });
 
 // GET /api/tv/watchlist[?days=30&min_chg=30] — the symbols for the TradingView

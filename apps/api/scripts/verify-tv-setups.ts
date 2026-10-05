@@ -126,7 +126,7 @@ console.log('PULLBACK setup (v10)');
   check('session PULLBACK notifies', g.admit(pb!, T0) === 'notify');
   check('same line + tf again within 2 min is a duplicate', g.admit(pb!, T0 + 20) === 'drop');
   check('the month line minutes later is logged, not dropped', g.admit({ ...pb!, line: 'month' }, T0 + 60) === 'log');
-  check('BROKEN is its own stage → notifies', g.admit(br!, T0 + 70) === 'notify');
+  check('BROKEN is its own stage → stored quietly (2026-10-05)', g.admit(br!, T0 + 70) === 'quiet');
 }
 
 console.log('Reclaim setup on the year line (v11)');
@@ -194,13 +194,48 @@ console.log('Gate — duplicates, other timeframes, flood');
   check('GO is a new stage → notifies', g.admit(sig({ stage: 'go' }), T0 + 90) === 'notify');
   check('another ticker is independent', g.admit(sig({ ticker: 'NXL' }), T0 + 95) === 'notify');
   check('READY again after the dup window (1m) is logged, not re-announced', g.admit(sig(), T0 + TV_SETUP.dup_sec + 10) === 'log');
-  check('READY after the notify window notifies again', g.admit(sig(), T0 + TV_SETUP.notify_merge_sec + 140) === 'notify');
+  check('READY after the merge window is a repeat on that line → quiet', g.admit(sig(), T0 + TV_SETUP.notify_merge_sec + 140) === 'quiet');
   const flood = new TvSetupGate();
   let verdicts: string[] = [];
   for (let i = 0; i < TV_SETUP.max_per_min + 5; i++) verdicts.push(flood.admit(sig({ ticker: `T${i}` }), T0));
   check('flood guard trips after max_per_min', verdicts.slice(0, TV_SETUP.max_per_min).every((v) => v === 'notify') && verdicts.slice(TV_SETUP.max_per_min).every((v) => v === 'flood'));
   verdicts = [flood.admit(sig({ ticker: 'LATER' }), T0 + 61)];
   check('…and recovers a minute later', verdicts[0] === 'notify');
+}
+
+console.log('Gate — quiet stages, READY once per line per day (2026-10-05)');
+{
+  const T0 = 1_791_200_000;   // 2026-10-05 07:33 ET; T0 + 10,700 s is still that day
+  const sig = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
+    stage: 'ready', ticker: 'RETO', price: 1.95, mvwap: 2.05, px_pct: -4.9, basis: 1.94, basis_pct: -5.4, day_gain: 30, ah_gain: null,
+    tf: '1', path: 'base', go_via: null, vol_x: null, run_pct: null, line: 'month', ...over,
+  });
+  check('quiet stages are FORMING / BROKEN / HELD', JSON.stringify(TV_SETUP.quiet_stages) === '["forming","broken","held"]');
+  const g = new TvSetupGate();
+  check('FORMING is quiet', g.admit(sig({ stage: 'forming' }), T0) === 'quiet');
+  check('…its 30s copy is logged as a copy', g.admit(sig({ stage: 'forming', tf: '30S' }), T0 + 40) === 'log');
+  check('the first month READY of the day notifies', g.admit(sig(), T0 + 600) === 'notify');
+  check('…its 30s copy is logged', g.admit(sig({ tf: '30S' }), T0 + 630) === 'log');
+  check('a month READY an hour later is quiet', g.admit(sig(), T0 + 4200) === 'quiet');
+  check('…and its 30s copy is logged, not quiet', g.admit(sig({ tf: '30S' }), T0 + 4230) === 'log');
+  check('the first year READY a minute after a quiet month READY notifies', g.admit(sig({ line: 'year' }), T0 + 4290) === 'notify');
+  check('a month+year READY after both lines were announced is quiet', g.admit(sig({ line: 'month+year' }), T0 + 9000) === 'quiet');
+  check('legacy "both" reads as month + year → quiet', g.admit(sig({ line: 'both' }), T0 + 9600) === 'quiet');
+  check('a READY without a line (before v11) is the month line → quiet', g.admit(sig({ line: null }), T0 + 10200) === 'quiet');
+  check('GO still announces', g.admit(sig({ stage: 'go' }), T0 + 10300) === 'notify');
+  check('PULLBACK still announces', g.admit(sig({ stage: 'pullback', line: 'session' }), T0 + 10400) === 'notify');
+  check('BROKEN and HELD are quiet', g.admit(sig({ stage: 'broken', line: 'session' }), T0 + 10500) === 'quiet'
+    && g.admit(sig({ stage: 'held', line: 'month' }), T0 + 10600) === 'quiet');
+  check("another ticker's first READY notifies", g.admit(sig({ ticker: 'QNME' }), T0 + 10700) === 'notify');
+  check('the next ET day starts fresh', g.admit(sig(), T0 + 86_400) === 'notify');
+
+  const seeded = new TvSetupGate();
+  check('seeding reads stored lines (null = month, legacy both = month + year)',
+    seeded.seedReady([{ ticker: 'RETO', line: 'month' }, { ticker: 'APUS', line: null }, { ticker: 'JAGX', line: 'both' }], T0) === 4);
+  check('after a deploy, a READY announced earlier today stays quiet',
+    seeded.admit(sig(), T0 + 60) === 'quiet' && seeded.admit(sig({ ticker: 'APUS' }), T0 + 70) === 'quiet'
+      && seeded.admit(sig({ ticker: 'JAGX', line: 'year' }), T0 + 80) === 'quiet');
+  check('…while a line not announced yet still notifies', seeded.admit(sig({ line: 'year' }), T0 + 400) === 'notify');
 }
 
 console.log('Telegram format');

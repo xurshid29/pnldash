@@ -315,9 +315,10 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
       // Loudest wins: A+ / 📐 GO bright pair > fast-move radar > 📐 READY or
-      // PULLBACK triple > news chime > soft single tone (📐 FORMING, a pullback's
-      // BROKEN / HELD, and every 📐 stage on a ticker that is NOT on our
-      // Momentum list — those are lower priority).
+      // PULLBACK triple > news chime > soft single tone (every 📐 stage on a
+      // ticker that is NOT on our Momentum list — lower priority). 📐 FORMING,
+      // BROKEN / HELD and READY repeats never arrive here: the server stores
+      // them quietly (2026-10-05, TV_SETUP.quiet_stages in tv-setups.ts).
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {

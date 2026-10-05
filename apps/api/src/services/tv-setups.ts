@@ -89,8 +89,17 @@ export interface TvSetupSignal {
 
 export const TV_SETUP = {
   dup_sec: 120,           // same ticker + stage + timeframe again within 2 min = a re-delivery → dropped
-  notify_merge_sec: 300,  // same ticker + stage from another timeframe within 5 min → logged, not re-notified
+  notify_merge_sec: 300,  // same event from another timeframe within 5 min → logged; one announcement per ticker + stage per 5 min
   max_per_min: 120,       // flood guard: a leaked key or a runaway alert must not spam the phone
+  // Noise cut (operator, 2026-10-05: "I hide broken, held, forming setups, and
+  // READY also can be limited" — the chart markers they switched off). Quiet
+  // stages are stored, graded and shown in the 📐 sidebar, but never announced:
+  // no toast, sound, browser notification or Telegram.
+  quiet_stages: ['forming', 'broken', 'held'] as readonly TvStage[],
+  // READY is announced once per ticker and line per ET day; a later READY on
+  // that line is quiet. GO and PULLBACK announce every time. On 10-05 this
+  // kept 63 of 145 READYs; 46 of the 49 GOs had their READY announced earlier.
+  ready_once_per_day: true,
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
@@ -118,6 +127,12 @@ function etMinutes(d: Date): number {
     .formatToParts(d);
   const n = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
   return n('hour') * 60 + n('minute');
+}
+
+// "2026-10-05" — the New York trading day an epoch second falls on.
+function etDay(nowSec: number): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date(nowSec * 1000));
 }
 
 // Strength of a GO: morning window, a run-up into it, volume on the GO bar, and
@@ -261,22 +276,29 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   };
 }
 
-// Duplicate + flood gate. TradingView can deliver the same alert twice, and an
-// operator running the watchlist alert on two timeframes (1m and 2m) gets the
-// same stage twice: the first notifies, the second is only logged.
-export type TvVerdict = 'notify' | 'log' | 'drop' | 'flood';
+// Duplicate + flood gate, and which signals get announced. TradingView can
+// deliver the same alert twice, and the watchlist alert runs on two timeframes
+// (1m and 30s), so one event arrives twice: the first copy counts, the second
+// is only logged. A first copy is then 'quiet' (stored and shown in the 📐
+// sidebar, not announced) for a quiet stage or a READY repeat, else announced
+// — at most once per ticker + stage per 5 min; the rest are logged.
+export type TvVerdict = 'notify' | 'quiet' | 'log' | 'drop' | 'flood';
 
 export class TvSetupGate {
-  private lastExact = new Map<string, number>();   // ticker|stage|tf → epoch sec
-  private lastNotify = new Map<string, number>();  // ticker|stage → epoch sec
+  private lastExact = new Map<string, number>();   // ticker|stage|tf|line → epoch sec
+  private lastEvent = new Map<string, number>();   // ticker|stage|line → epoch sec of the event's first copy
+  private lastNotify = new Map<string, number>();  // ticker|stage → epoch sec of the last announcement
+  private readyDay = '';                            // the ET day readyLines belongs to
+  private readyLines = new Set<string>();           // ticker|line with a READY announced that day
   private recent: number[] = [];
 
   admit(sig: TvSetupSignal, nowSec: number): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
     if (this.recent.length >= TV_SETUP.max_per_min) return 'flood';
     this.recent.push(nowSec);
-    for (const [k, t] of this.lastExact) if (nowSec - t > 600) this.lastExact.delete(k);
-    for (const [k, t] of this.lastNotify) if (nowSec - t > 600) this.lastNotify.delete(k);
+    for (const m of [this.lastExact, this.lastEvent, this.lastNotify]) {
+      for (const [k, t] of m) if (nowSec - t > 600) m.delete(k);
+    }
 
     // The line is part of the exact key: a PULLBACK on the month line two
     // minutes after one on the session line is a second event, not a re-delivery.
@@ -285,11 +307,47 @@ export class TvSetupGate {
     if (prev != null && nowSec - prev < TV_SETUP.dup_sec) return 'drop';
     this.lastExact.set(exact, nowSec);
 
+    const tokens = lineTokens(sig.stage, sig.line);
+    const event = `${sig.ticker}|${sig.stage}|${tokens.join('+')}`;
+    const first = this.lastEvent.get(event);
+    if (first != null && nowSec - first < TV_SETUP.notify_merge_sec) return 'log';
+    this.lastEvent.set(event, nowSec);
+
+    if (TV_SETUP.quiet_stages.includes(sig.stage)) return 'quiet';
+    const readyKeys = sig.stage === 'ready' && TV_SETUP.ready_once_per_day ? tokens.map((t) => `${sig.ticker}|${t}`) : [];
+    if (readyKeys.length > 0) {
+      this.rollDay(nowSec);
+      if (readyKeys.every((k) => this.readyLines.has(k))) return 'quiet';
+    }
+
+    // A quiet event doesn't use up the slot: a month READY repeat must not
+    // swallow the day's first year READY a minute later.
     const key = `${sig.ticker}|${sig.stage}`;
     const prevNotify = this.lastNotify.get(key);
     if (prevNotify != null && nowSec - prevNotify < TV_SETUP.notify_merge_sec) return 'log';
     this.lastNotify.set(key, nowSec);
+    for (const k of readyKeys) this.readyLines.add(k);
     return 'notify';
+  }
+
+  // A deploy restarts the gate empty: reload today's announced READYs
+  // (tier_events rows) so a READY already announced today stays quiet.
+  // `line` as stored in meta. Returns how many ticker lines were seeded.
+  seedReady(rows: Array<{ ticker: string; line: string | null }>, nowSec: number): number {
+    this.rollDay(nowSec);
+    const before = this.readyLines.size;
+    for (const r of rows) {
+      for (const t of lineTokens('ready', toLine(r.line))) this.readyLines.add(`${r.ticker}|${t}`);
+    }
+    return this.readyLines.size - before;
+  }
+
+  private rollDay(nowSec: number): void {
+    const day = etDay(nowSec);
+    if (day !== this.readyDay) {
+      this.readyDay = day;
+      this.readyLines.clear();
+    }
   }
 }
 
