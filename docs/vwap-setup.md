@@ -778,6 +778,20 @@ Ordered roughly by expected value; most should wait for the first grading.
    the spike day or first-seen day. The month anchor is a calendar accident; the
    crowd's cost basis may be better anchored at the run's start. Test in Pine
    (one input switching the anchor), grade side by side.
+   - **Session line: measured 2026-10-05, no.** `research/vwap-pullback/
+     reclaim_session.py` runs the script's own reclaim logic (`pinesim.simulate`)
+     with our stored session VWAP as the line (06-12 → 10-05, names on our
+     screen). GO fired 37 times a day. 16% reached +10% before a stop 0.5% under
+     the line, and the average trade was −1.2% (−1.5% held 60 min with no
+     stop). Any plain reclaim of the session line did −0.8% (165 a day). Same
+     verdict as the August ↑ VWAP reclaim layer. The likely reason: the session
+     line follows the day's own price, so crossing it is routine. A month or
+     year line is a slow level, and reclaiming it is a rarer event.
+   - **Year line: not measurable from our data** (like the month line, it needs
+     volume we never saw). The operator's SAIQ 2026-10-05 chart: the 04:07 ET
+     spike stopped at the year VWAP (~7.0), based under it while the basis
+     curled up, then reclaimed it at ~04:22 and ran past 13. Only a live trial
+     can grade it.
 9. **Month-to-date from 60m bars**, if the yellow line drifts late in the month
    on 1m (§5.7).
 10. **JSON messages** carrying bar time and volume, if the parser needs more
