@@ -22,7 +22,7 @@ interface Signal {
 }
 interface TickerSetups {
   ticker: string;
-  family: 'reclaim' | 'pullback';   // which of the script's two setups (v10)
+  family: 'reclaim' | 'reclaim-year' | 'pullback';   // the script's setups; the year-line reclaim (v11) gets its own row
   signals: Signal[];   // oldest first
   latest: Signal;
 }
@@ -33,7 +33,7 @@ function hhmm(iso: string): string {
 
 const HOW_TO = (
   <div style={{ maxWidth: 420, fontSize: 12, lineHeight: 1.5 }}>
-    <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month”, its purple line on your “VWAP Session”.</div>
+    <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month”, its purple line on your “VWAP Session” and its blue line on your “VWAP Year”.</div>
     <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning.</div>
     <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>2 minutes</b>.</div>
     <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts.</div>
@@ -45,7 +45,8 @@ const HOW_TO = (
 // (Pine script + one watchlist alert) and posted to our webhook. One row per
 // ticker and setup with its stage trail for today: the reclaim setup's
 // FORMING → READY → GO, and (script v10) the PULLBACK setup's PULLBACK →
-// BROKEN / HELD, each tagged with its line (S session / M month) and touch #.
+// BROKEN / HELD, each tagged with its line (S session / M month) and touch #,
+// and (v11) the reclaim setup on the year VWAP in a row of its own ("year").
 // A broken setup re-arms, so a row can show more than one trail. "Since"
 // compares the live Momentum price with the latest signal's price.
 export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[]; payload: CyclePayload | null }) {
@@ -61,7 +62,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
     const byKey = new Map<string, { ticker: string; family: TickerSetups['family']; signals: Signal[] }>();
     for (const a of alerts) {
       if (!a.kinds.includes('tv_setup') || !a.setup) continue;
-      const family = isPullbackStage(a.setup.stage) ? 'pullback' : 'reclaim';
+      const family = isPullbackStage(a.setup.stage) ? 'pullback' : a.setup.line === 'year' ? 'reclaim-year' : 'reclaim';
       const key = `${a.ticker}|${family}`;
       const g = byKey.get(key) ?? { ticker: a.ticker, family, signals: [] };
       g.signals.push({ id: a.id, at: a.at, price: a.price, setup: a.setup });
@@ -122,6 +123,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
           <TickerLink ticker={g.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
           {rowByTicker.has(g.ticker) && <span style={{ color: '#fadb14' }}>⭐</span>}
           {g.family === 'pullback' && <span style={{ color: '#69c0ff', fontSize: 10, fontWeight: 700 }}>pullback</span>}
+          {g.family === 'reclaim-year' && <span style={{ color: '#4096ff', fontSize: 10, fontWeight: 700 }}>year</span>}
         </span>
       ),
     },
@@ -203,7 +205,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={{ padding: '6px 8px', borderBottom: '1px solid #303030', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          TradingView watchlist alert → 📐 forming · ready · go, and pullback → broken · held
+          TradingView watchlist alert → 📐 forming · ready · go (month and year VWAP), and pullback → broken · held
           {tickers.size > 0 && <> · ⭐ {onMomentum} on Momentum · {tickers.size - onMomentum} other</>}
         </Text>
         <Space size={6}>

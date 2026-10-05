@@ -3910,8 +3910,9 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_forming / tv_ready / tv_go /
-  // tv_pullback / tv_broken / tv_held). BROKEN and HELD — a pullback's
-  // outcome — always go out as silent messages.
+  // tv_pullback / tv_broken / tv_held, and tv_year for the reclaim setup on
+  // the year line). BROKEN and HELD — a pullback's outcome — always go out as
+  // silent messages.
   // mode 'log' = the same stage was already announced from another
   // timeframe in the last 5 min: recorded for grading, not re-announced.
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'log'): OpportunityAlert {
@@ -3940,6 +3941,7 @@ class PollerService {
         vol_x: sig.vol_x, run_pct: sig.run_pct, strength,
         svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, line: sig.line ?? null,
         touch: sig.touch ?? null, peak_pct: sig.peak_pct ?? null,
+        yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
         on_screen: row != null, notified: mode === 'notify',
       },
     };
@@ -3949,6 +3951,7 @@ class PollerService {
       vol_x: sig.vol_x, run_pct: sig.run_pct, strength,
       svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, line: sig.line ?? null,
       touch: sig.touch ?? null, peak_pct: sig.peak_pct ?? null,
+      yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
       chg: alert.change_pct, grade: alert.grade, float_m: alert.float_m, rv1: alert.rel_vol_1min,
       on_screen: row != null, notified: mode === 'notify',
     });
@@ -3957,7 +3960,9 @@ class PollerService {
       `[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'}` +
       (pb ? ` · ${sig.line ?? '?'} line · touch ${sig.touch ?? '?'}` + (sig.peak_pct != null ? ` · peak +${sig.peak_pct}%` : '') +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` : '') +
+      (!pb && sig.line ? ` · ${sig.line} line` : '') +
       ` · mVWAP ${sig.mvwap ?? '?'} (${sig.px_pct ?? '?'}%)` +
+      (sig.yvwap != null ? ` · yVWAP ${sig.yvwap} (${sig.ypx_pct ?? '?'}%)` : '') +
       (pb ? '' : ` · basis ${sig.basis ?? '?'} (${sig.basis_pct ?? '?'}%)`) + ` · day ${sig.day_gain ?? '?'}%` +
       (sig.ah_gain != null ? ` · AH ${sig.ah_gain}%` : '') + ` · tf ${sig.tf ?? '?'}` +
       (sig.path ? ` · ${sig.path}` : '') + (sig.go_via ? ` · via ${sig.go_via}` : '') +
@@ -3969,7 +3974,8 @@ class PollerService {
       this.opportunity.pushExternal(alert);
       broadcast('alert', alert);
       const stageSlug = `tv_${sig.stage}` as AlertComponent;
-      if (telegramEnabled() && !this.alertsMuted && !alertDisabled('tv_setup') && !alertDisabled(stageSlug)) {
+      const yearMuted = sig.line === 'year' && !PULLBACK_STAGES.has(sig.stage) && alertDisabled('tv_year');
+      if (telegramEnabled() && !this.alertsMuted && !alertDisabled('tv_setup') && !alertDisabled(stageSlug) && !yearMuted) {
         // Priority: on our Momentum list → normal push; off the list → silent message.
         // A pullback's outcome (BROKEN / HELD) is never a buzzing push.
         const outcome = sig.stage === 'broken' || sig.stage === 'held';

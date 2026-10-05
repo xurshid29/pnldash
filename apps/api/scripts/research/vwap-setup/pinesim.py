@@ -1,5 +1,6 @@
 """Offline replica of apps/web/src/tv/mvwap-bb-setup.pine — the reclaim setup (v9 logic = v7 + message
-fields) in simulate(), and the PULLBACK setup (script v10) in PullbackLine / simulate_pullback().
+fields) in simulate() for one line and (v11) simulate_lines() for the month + year lines, and the
+PULLBACK setup (script v10) in PullbackLine / simulate_pullback().
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -180,6 +181,22 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
     return [e for e in fired if (start is None or e[0] >= start) and (end is None or e[0] <= end)]
 
 
+def simulate_lines(bars, lines, params=None, start=None, end=None):
+    """Script v11: the reclaim setup on several lines at once, e.g. {'month': mvwap_of, 'year': yvwap_of}
+    (pass the month line first). Each line keeps its own stages — exactly simulate() per line — and the
+    same stage on the same bar from both lines is one 'both' event with the first line's path, like
+    the script's "line both" message. Returns (time, stage, line, path, close)."""
+    by_key = {}
+    for name, line_of in lines.items():
+        for e in simulate(bars, line_of, params, start, end):
+            by_key.setdefault((e[0], e[1]), []).append((name, e))
+    out = []
+    for (t, stage), hits in sorted(by_key.items(), key=lambda kv: (kv[0][0], ['FORMING', 'READY', 'GO'].index(kv[0][1]))):
+        name, e = hits[0]
+        out.append((t, stage, 'both' if len(hits) > 1 else name, e[2], e[3]))
+    return out
+
+
 # ── PULLBACK setup (script v10) ────────────────────────────────────────────────
 # Inputs, same meaning and defaults as the script's "Pullback to VWAP (v10)" group.
 PB = dict(arm=15.0,        # armed: a bar high at least % above the line (the big move)
@@ -316,7 +333,15 @@ def selftest():
         out[name] = ('armed ' if armed else 'not armed ') + ','.join(e[1] for e in ev if e[0] == crash[-1]['t'])
     ok = out['v5'] == 'armed GO' and out['v6'] == 'armed '
     print('crash-bar GO by version:', out, '→', 'OK' if ok else 'UNEXPECTED')
-    return ok
+    # v11: two lines. The same line twice → every event is "both"; a missing second line → all "month".
+    one = simulate(crash, line, dict(V7, **gate))
+    same = simulate_lines(crash, {'month': line, 'year': line}, dict(V7, **gate))
+    solo = simulate_lines(crash, {'month': line, 'year': lambda b: None}, dict(V7, **gate))
+    ok_lines = (len(same) == len(one) > 0 and all(e[2] == 'both' for e in same)
+                and [(e[0], e[1]) for e in solo] == [(e[0], e[1]) for e in one] and all(e[2] == 'month' for e in solo))
+    print('two lines (v11): same line twice → "both", no year line → "month":',
+          f"{len(same)} both / {len(solo)} month", '→', 'OK' if ok_lines else 'UNEXPECTED')
+    return ok and ok_lines
 
 
 if __name__ == '__main__':

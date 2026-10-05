@@ -16,6 +16,9 @@
 // tagged with the line (session / month / both) and the touch number. The
 // operator rates the first pullback after the first big move highest; on our
 // own data (research/vwap-pullback, 2026-10-05) touch 2 did as well.
+// Script v11 (2026-10-05) runs the reclaim setup on the YEAR VWAP too, each
+// line with its own stages; reclaim messages then say `line month|year|both`
+// and carry `yVWAP`.
 //
 // Why TradingView computes it and we don't: the line is a VWAP anchored at the
 // 1st of the month INCLUDING pre-market volume. Yahoo's extended-hours bars
@@ -33,9 +36,10 @@ import { escapeHtml } from './telegram.js';
 export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held';
 // The PULLBACK setup's stages (script v10); the rest belong to the reclaim setup.
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
-// Which VWAP a PULLBACK-setup message is about: 'both' = the session and month
-// lines fired the same event on one bar (they sit close together early in a month).
-export type TvLine = 'session' | 'month' | 'both';
+// Which VWAP a message is about. PULLBACK setup: session / month; reclaim
+// setup (v11): month / year. 'both' = the setup's two lines fired the same
+// stage on one bar (session + month for PULLBACK, month + year for reclaim).
+export type TvLine = 'session' | 'month' | 'year' | 'both';
 // Which shape reached FORMING/READY (script v2+): 'base' = price consolidated
 // until the basis converged under the line; 'fast' = price ran at the line
 // while the basis lagged. Null for GO and for v1 / fallback messages.
@@ -59,10 +63,14 @@ export interface TvSetupSignal {
   go_via: TvGoVia | null;
   vol_x: number | null;       // script v9+: signal bar volume ÷ average of the previous 20 bars
   run_pct: number | null;     // script v9+: close vs 10 bars earlier, %
-  // PULLBACK setup only (script v10); null on the reclaim setup's messages.
+  // PULLBACK setup (script v10): session VWAP; null on the reclaim setup's messages.
   svwap?: number | null;      // session VWAP (anchor Session, 04:00 ET on an Extended chart)
   spx_pct?: number | null;    // price vs the session VWAP, %
-  line?: TvLine | null;
+  // Reclaim setup (script v11): year VWAP (anchor Year). basis_pct is then measured
+  // against the setup's own line (month or year); px_pct stays price vs mVWAP.
+  yvwap?: number | null;
+  ypx_pct?: number | null;    // price vs the year VWAP, %
+  line?: TvLine | null;       // null on older messages = the month line
   touch?: number | null;      // pullbacks to this line today, this one included
   peak_pct?: number | null;   // PULLBACK: highest bar high above the line before it, %
 }
@@ -118,7 +126,7 @@ const STAGES: Record<string, TvStage> = {
 
 function toLine(v: unknown): TvLine | null {
   const p = typeof v === 'string' ? v.trim().toLowerCase() : '';
-  return p === 'session' || p === 'month' || p === 'both' ? p : null;
+  return p === 'session' || p === 'month' || p === 'year' || p === 'both' ? p : null;
 }
 
 function toNum(v: unknown): number | null {
@@ -153,6 +161,8 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     run_pct: toNum(o.run_pct),
     svwap: toNum(o.svwap),
     spx_pct: toNum(o.spx_pct),
+    yvwap: toNum(o.yvwap),
+    ypx_pct: toNum(o.ypx_pct),
     line: toLine(o.line),
     touch: toNum(o.touch),
     peak_pct: toNum(o.peak_pct),
@@ -175,6 +185,7 @@ function toPath(v: unknown): TvPath | null {
 //   READY AMOD 1.38 | mVWAP 1.42 (-2.5%) | basis 1.35 (-4.6%) | day high +20% | ah +34% | tf 1 | path base
 //   GO NIVF 0.1961 | mVWAP 0.188 (4.3%) | basis 0.169 (-10.1%) | day high +38% | tf 1 | via reclaim   (v5)
 //   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | tf 1   (v10)
+//   READY SAIQ 6.5 | mVWAP 4.1 (+58.5%) | yVWAP 7.0 (-7.1%) | basis 6.3 (-10.0%) | line year | day high +336% | tf 1 | path base   (v11)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -197,6 +208,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const line = (label: string) => new RegExp(`${label}\\s+\\$?(\\d*\\.?\\d+)\\s*\\(\\s*([-+]?\\d*\\.?\\d+)\\s*%\\s*\\)`, 'i').exec(text);
   const mv = line('mVWAP');
   const sv = line('sVWAP');
+  const yv = line('yVWAP');
   const bb = line('basis');
   const day = /day\s+high\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);   // v1/v2 wrote "+-2%" for a negative day
   const ah = /\bah\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
@@ -205,7 +217,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const via = /\bvia\s+(reclaim|cross)\b/i.exec(text);
   const vol = /\bvol\s+(\d*\.?\d+)\s*x\b/i.exec(text);
   const run = /\brun\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
-  const ln = /\bline\s+(session|month|both)\b/i.exec(text);
+  const ln = /\bline\s+(session|month|year|both)\b/i.exec(text);
   const touch = /\btouch\s+(\d+)\b/i.exec(text);
   const peak = /\bpeak\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   return {
@@ -225,6 +237,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     run_pct: toNum(run?.[1]),
     svwap: toNum(sv?.[1]),
     spx_pct: toNum(sv?.[2]),
+    yvwap: toNum(yv?.[1]),
+    ypx_pct: toNum(yv?.[2]),
     line: toLine(ln?.[1]),
     touch: toNum(touch?.[1]),
     peak_pct: toNum(peak?.[1]),
@@ -275,7 +289,15 @@ const STAGE_HINT: Record<TvStage, string> = {
   broken: 'closed under VWAP — setup broken',
   held: 'held — ran +10% from the pullback',
 };
-const LINE_NAME: Record<TvLine, string> = { session: 'session VWAP', month: 'month VWAP', both: 'session + month VWAP' };
+// The line(s) a message is about, in words; 'both' depends on the setup.
+function lineName(sig: TvSetupSignal): string {
+  if (sig.line === 'both') return PULLBACK_STAGES.has(sig.stage) ? 'session + month VWAP' : 'month + year VWAP';
+  return { session: 'session VWAP', month: 'month VWAP', year: 'year VWAP' }[sig.line ?? 'month'];
+}
+// The reclaim setup's line, short: mVWAP (the default), yVWAP, or both.
+function reclaimLine(sig: TvSetupSignal): string {
+  return sig.line === 'year' ? 'yVWAP' : sig.line === 'both' ? 'mVWAP + yVWAP' : 'mVWAP';
+}
 
 // "touch 1 (first)" — the operator rates the first pullback after the first big move highest.
 export function touchText(touch: number | null | undefined): string {
@@ -299,10 +321,13 @@ export function formatTvSetupAlert(
   strength: TvStrength | null = null,
 ): string {
   const pb = PULLBACK_STAGES.has(sig.stage);
-  // PULLBACK / BROKEN name the line: "back near the session VWAP after the run — be ready"
-  const hint = sig.stage === 'go' && sig.go_via === 'reclaim' ? 'price reclaimed mVWAP'
-    : pb && sig.line && sig.stage !== 'held' ? STAGE_HINT[sig.stage].replace('VWAP', `the ${LINE_NAME[sig.line]}`)
-      : STAGE_HINT[sig.stage];
+  const yearish = !pb && (sig.line === 'year' || sig.line === 'both');
+  // PULLBACK / BROKEN name the line: "back near the session VWAP after the run — be ready".
+  // Reclaim stages on the year line (v11) say so: "price reclaimed yVWAP", "entry zone · year VWAP".
+  const hint = sig.stage === 'go' ? (sig.go_via === 'reclaim' ? `price reclaimed ${reclaimLine(sig)}` : `basis crossed above ${reclaimLine(sig)}`)
+    : pb && sig.line && sig.stage !== 'held' ? STAGE_HINT[sig.stage].replace('VWAP', `the ${lineName(sig)}`)
+      : yearish ? `${STAGE_HINT[sig.stage]} · ${lineName(sig)}`
+        : STAGE_HINT[sig.stage];
   const lines = [
     `${row ? '⭐ ' : ''}📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
     `<i>${hint}${sig.path === 'fast' ? ' · fast approach (price leads, basis lagging)' : ''}</i>`,
@@ -313,8 +338,11 @@ export function formatTvSetupAlert(
     if (what.some(Boolean)) lines.push(what.filter(Boolean).join(' · '));
   }
   const lvl: string[] = [];
+  const yLvl = sig.yvwap != null ? `yVWAP ${fmtPx(sig.yvwap)} (${fmtSigned(sig.ypx_pct ?? null)})` : null;
+  if (sig.line === 'year' && yLvl) lvl.push(yLvl);   // the setup's own line first
   if (sig.svwap != null) lvl.push(`sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})`);
   if (sig.mvwap != null) lvl.push(`mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})`);
+  if (sig.line !== 'year' && yLvl && !pb) lvl.push(yLvl);
   if (sig.basis != null) lvl.push(`basis ${fmtPx(sig.basis)} (${fmtSigned(sig.basis_pct)})`);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
   if (row) {

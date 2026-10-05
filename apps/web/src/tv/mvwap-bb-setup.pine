@@ -1,10 +1,13 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v10 (2026-10-05).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v11 (2026-10-05).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Two setups in one script, so the same two watchlist alerts carry both.
 // 1) RECLAIM: a top gainer pulls back under its month-anchored VWAP while the
-// Bollinger basis (SMA 20) curls up beneath it; the trade is the reclaim.
+// Bollinger basis (SMA 20) curls up beneath it; the trade is the reclaim. Since
+// v11 the same rules also run on the year-anchored VWAP, each line with its own
+// stages (the operator's SAIQ 2026-10-05: the spike stopped at the year VWAP,
+// based under it, reclaimed it and ran). Messages say which line.
 //   FORMING  basis 6–10% under mVWAP, rising, gap closing — or, on a fast approach,
 //            price ≤10% under mVWAP and ≥3% above a rising basis → open the chart
 //   READY    basis ≤6% under mVWAP — or, on a fast approach, price ≤5% under → entry zone
@@ -35,6 +38,7 @@ indicator("mVWAP x BB basis setup", shorttitle = "mVWAP-BB", overlay = true)
 minDayGain = input.float(20.0, "Up at least % (day high vs prior close; -100 = filter off)", group = "Gainer filter (this ticker's own move)")
 runnerDays = input.int(3,      "…today, or on any of the last N sessions (0 = today only)", minval = 0, maxval = 5, group = "Gainer filter (this ticker's own move)")
 useAhGain  = input.bool(true,  "After hours, also count the move since today's close", group = "Gainer filter (this ticker's own move)")
+rcLines    = input.string("Month + Year", "Lines: month VWAP, year VWAP or both (v11)", options = ["Month + Year", "Month", "Year"], group = "Setup")
 maxPxBelow = input.float(15.0, "Price at most % under mVWAP", group = "Setup")
 formBasis  = input.float(10.0, "FORMING: basis at most % under mVWAP", group = "Setup")
 readyBasis = input.float(6.0,  "READY: basis at most % under mVWAP", group = "Setup")
@@ -63,16 +67,13 @@ pbMax      = input.int(2,       "Pullbacks per line per day (touches; a close st
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
-// and (v10, PULLBACK only) VWAP anchor Session — TradingView's own VWAP resets
-// at timeframe.change("D"), the 04:00 ET pre-market open on an Extended chart.
+// (v11) VWAP anchor Year — TradingView's own VWAP uses timeframe.change("12M") —
+// and (v10, PULLBACK only) VWAP anchor Session, which resets at
+// timeframe.change("D"), the 04:00 ET pre-market open on an Extended chart.
 mvwap  = ta.vwap(hlc3, timeframe.change("M"))
+yvwap  = ta.vwap(hlc3, timeframe.change("12M"))
 svwap  = ta.vwap(hlc3, timeframe.change("D"))
 basis  = ta.sma(close, 20)
-crossU = ta.crossover(basis, mvwap)
-// Closes at/above the line in the previous `fromBelow` bars — computed on every
-// bar (v6 evaluates and/or lazily; a skipped math.sum would corrupt its history).
-aboveRecent = math.sum(close >= mvwap ? 1.0 : 0.0, math.max(fromBelow, 1))[1]
-underRecent = math.sum(close <= mvwap ? 1.0 : 0.0, goWithin)[1]
 // Strength inputs sent with every signal (v9): the signal bar's volume vs the
 // average of the previous 20 bars, and the run-up over the previous 10 bars.
 // The server scores GOs with them (services/tv-setups.ts goStrength).
@@ -82,6 +83,7 @@ runUp10  = (close / close[10] - 1) * 100
 plot(mvwap, "mVWAP", color.yellow)
 plot(basis, "BB basis", color.green)
 plot(svwap, "sVWAP", color.purple)
+plot(yvwap, "yVWAP", color.blue)
 
 // Top gainer: today's high vs the prior regular-session close (like Finviz
 // Change), or the same in any of the last `runnerDays` sessions — a second- or
@@ -119,71 +121,109 @@ if lookback > 0
 gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain or
      (useAhGain and not na(ahGain) and ahGain >= minDayGain)
 
-// Distances, positive = under mVWAP
-pxBelow    = (mvwap - close) / mvwap * 100
-basisBelow = (mvwap - basis) / mvwap * 100
-basisUp    = basis > basis[slopeBars]
-gapClosing = basisBelow < basisBelow[slopeBars]
-holding    = close >= basis * (1 - holdTol / 100)
-valid      = gainer and not na(mvwap) and not na(basis)
+// Line-independent parts of the reclaim setup.
+basisUp  = basis > basis[slopeBars]
+holding  = close >= basis * (1 - holdTol / 100)
+inWindow = not na(time(timeframe.period, alertWin, "America/New_York"))
 
+// The reclaim conditions on one line. v11 runs the same rules on the month VWAP
+// and the year VWAP. The function is called for each line on every bar, so the
+// history inside it (gap closing, the recent-close counts, the cross) stays intact:
+// v6 evaluates and/or lazily, and a skipped math.sum would corrupt its history.
+// Distances are positive under the line.
 // Two shapes. BASE: price consolidates under the line until the basis converges
 // (AIXI, VEEA). FAST: price runs at the line while the 20-bar basis lags far
-// behind (MEDS 09-18, NIVF 09-30) — reached by price distance instead.
-inZone      = valid and pxBelow > 0 and pxBelow <= maxPxBelow and basisUp and holding
-// FAST only when approaching from below: a spike that falls back to the line
-// (AMOD 2026-09-01) is not an approach.
-fromBelowOk  = fromBelow == 0 or aboveRecent == 0
-fastApproach = useFast and fromBelowOk and close >= basis * (1 + fastAbove / 100) and basisBelow <= maxBasis
-baseForming = basisBelow > readyBasis and basisBelow <= formBasis
-baseReady   = basisBelow > 0 and basisBelow <= readyBasis
-forming     = inZone and gapClosing and (baseForming or (fastApproach and pxBelow <= formPx))
-ready       = inZone and (baseReady or (fastApproach and pxBelow <= readyPx))
-// GO: the basis cross alone fires late on fast moves — the 20-bar basis lags,
-// so it crossed near the top on NIVF 2026-09-30 (+40% after the break). The
-// decisive price reclaim marks the breakout itself.
-// A cross only counts with the basis RISING, and no GO prints on a falling bar:
-// early in a month the line is built on thin volume, and one heavy red bar can
-// drag it under a flat basis — a "cross" with price below both (AIXI 2026-10-01 09:38).
-reclaim     = basisUp and underRecent > 0 and close > mvwap * (1 + goAbovePct / 100)
-crossOk     = crossU and basisUp
-goTrig      = goOn == "Basis cross" ? crossOk : goOn == "Price reclaim" ? reclaim : (crossOk or reclaim)
-go          = valid and goTrig and close >= close[1]
-inWindow    = not na(time(timeframe.period, alertWin, "America/New_York"))
+// behind (MEDS 09-18, NIVF 09-30), reached by price distance instead. FAST only
+// counts when approaching from below: a spike that falls back to the line (AMOD
+// 2026-09-01) is not an approach.
+// GO: the basis cross alone fires late on fast moves, because the 20-bar basis
+// lags; it crossed near the top on NIVF 2026-09-30 (+40% after the break). The
+// decisive price reclaim marks the breakout itself. A cross only counts with the
+// basis RISING, and no GO prints on a falling bar: early in a month the line is
+// built on thin volume, and one heavy red bar can drag it under a flat basis — a
+// "cross" with price below both (AIXI 2026-10-01 09:38).
+reclaimConds(float ln) =>
+    float pxB    = (ln - close) / ln * 100
+    float bB     = (ln - basis) / ln * 100
+    bool  gapC   = bB < bB[slopeBars]
+    float aboveR = math.sum(close >= ln ? 1.0 : 0.0, math.max(fromBelow, 1))[1]   // closes at/above it, previous `fromBelow` bars
+    float underR = math.sum(close <= ln ? 1.0 : 0.0, goWithin)[1]
+    bool  crossUp = ta.crossover(basis, ln)
+    bool  okLine = gainer and not na(ln) and not na(basis)
+    bool  inZ    = okLine and pxB > 0 and pxB <= maxPxBelow and basisUp and holding
+    bool  fromOk = fromBelow == 0 or aboveR == 0
+    bool  fastA  = useFast and fromOk and close >= basis * (1 + fastAbove / 100) and bB <= maxBasis
+    bool  bForm  = bB > readyBasis and bB <= formBasis
+    bool  bReady = bB > 0 and bB <= readyBasis
+    bool  frm    = inZ and gapC and (bForm or (fastA and pxB <= formPx))
+    bool  rdy    = inZ and (bReady or (fastA and pxB <= readyPx))
+    bool  recl   = basisUp and underR > 0 and close > ln * (1 + goAbovePct / 100)
+    bool  crOk   = crossUp and basisUp
+    bool  trig   = goOn == "Basis cross" ? crOk : goOn == "Price reclaim" ? recl : (crOk or recl)
+    bool  g      = okLine and trig and close >= close[1]
+    [frm, rdy, g, bForm, bReady, recl, bB]
 
-// Stages: 0 idle, 1 forming, 2 ready, 3 go; each fires once per setup.
-// A setup that breaks (close under mVWAP and failPct under the basis) re-arms.
+[mForm, mReady, mGo, mBaseForm, mBaseReady, mRecl, mBasisBelow] = reclaimConds(mvwap)
+[yForm, yReady, yGo, yBaseForm, yBaseReady, yRecl, yBasisBelow] = reclaimConds(yvwap)
+
+// Stages, per line: 0 idle, 1 forming, 2 ready, 3 go; each fires once per setup.
+// A setup that breaks (close under the line and failPct under the basis) re-arms.
 // GO also fires within `goMemory` bars of the last FORMING/READY when a break
 // came in between (AIXI 2026-10-02: READY, dip under the basis, then one bar
 // back over both lines). Outside the alert window nothing fires and no stage advances.
-var int stage        = 0
-var int cycles       = 0
-var int lastSetupBar = na
+type RcLine
+    int stage        = 0
+    int cycles       = 0
+    int lastSetupBar = na
+
+// One bar of one line's stage machine; returns the stage that fires (0 = none).
+method advance(RcLine s, float ln, bool frm, bool rdy, bool g) =>
+    if s.stage > 0 and close < ln and close < basis * (1 - failPct / 100)
+        s.stage := 0
+    bool recentSetup = goMemory > 0 and not na(s.lastSetupBar) and bar_index - s.lastSetupBar <= goMemory
+    int target = 0
+    if g and s.stage < 3 and (s.stage >= 1 or recentSetup)
+        target := 3
+    else if rdy
+        target := 2
+    else if frm
+        target := 1
+    bool fire = inWindow and target > s.stage and (s.stage > 0 or target == 3 or s.cycles < maxCycles)
+    if fire
+        if s.stage == 0 and target < 3
+            s.cycles := s.cycles + 1
+        if target < 3
+            s.lastSetupBar := bar_index
+        s.stage := target
+    fire ? target : 0
+
+var RcLine rcM = RcLine.new()
+var RcLine rcY = RcLine.new()
 if newDay
-    stage        := 0
-    cycles       := 0
-    lastSetupBar := na
-if stage > 0 and close < mvwap and close < basis * (1 - failPct / 100)
-    stage := 0
-recentSetup = goMemory > 0 and not na(lastSetupBar) and bar_index - lastSetupBar <= goMemory
-int target = 0
-if go and stage < 3 and (stage >= 1 or recentSetup)
-    target := 3
-else if ready
-    target := 2
-else if forming
-    target := 1
-bool fire = inWindow and target > stage and (stage > 0 or target == 3 or cycles < maxCycles)
-if fire
-    if stage == 0 and target < 3
-        cycles += 1
-    if target < 3
-        lastSetupBar := bar_index
-    stage := target
-    string stageName = target == 3 ? "GO" : target == 2 ? "READY" : "FORMING"
-    string msg = stageName + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
-    msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + str.tostring(-pxBelow, "#.0") + "%)"
-    msg += " | basis " + str.tostring(basis, format.mintick) + " (" + str.tostring(-basisBelow, "#.0") + "%)"
+    rcM.stage        := 0
+    rcM.cycles       := 0
+    rcM.lastSetupBar := na
+    rcY.stage        := 0
+    rcY.cycles       := 0
+    rcY.lastSetupBar := na
+int fireM = 0
+int fireY = 0
+if rcLines != "Year"
+    fireM := rcM.advance(mvwap, mForm, mReady, mGo)
+if rcLines != "Month"
+    fireY := rcY.advance(yvwap, yForm, yReady, yGo)
+
+pctVs(float ln) => (close >= ln ? "+" : "") + str.tostring((close / ln - 1) * 100, "#.0")
+// The message is a contract with services/tv-setups.ts parseTvMessage. `basis %`
+// is measured against the setup's own line:
+//   READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | yVWAP 2.9 (-49.0%) | basis 1.49 (-5.1%) | line month | day high +41% | vol 1.2x | run +3.0% | tf 1 | path base
+rcMsg(int target, string lineName, float bBelow, bool bForm, bool bReady, bool recl) =>
+    string msg = (target == 3 ? "GO" : target == 2 ? "READY" : "FORMING") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
+    msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + pctVs(mvwap) + "%)"
+    if not na(yvwap)
+        msg += " | yVWAP " + str.tostring(yvwap, format.mintick) + " (" + pctVs(yvwap) + "%)"
+    msg += " | basis " + str.tostring(basis, format.mintick) + " (" + str.tostring(-bBelow, "#.0") + "%)"
+    msg += " | line " + lineName
     msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
     if not na(ahGain)
         msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
@@ -193,10 +233,20 @@ if fire
         msg += " | run " + (runUp10 >= 0 ? "+" : "") + str.tostring(runUp10, "#.#") + "%"
     msg += " | tf " + timeframe.period
     if target < 3
-        msg += " | path " + ((target == 2 ? baseReady : baseForming) ? "base" : "fast")
+        msg += " | path " + ((target == 2 ? bReady : bForm) ? "base" : "fast")
     else
-        msg += " | via " + (reclaim and goOn != "Basis cross" ? "reclaim" : "cross")
-    alert(msg, alert.freq_once_per_bar_close)
+        msg += " | via " + (recl and goOn != "Basis cross" ? "reclaim" : "cross")
+    msg
+
+// Both lines firing the same stage on one bar (they can sit close together) is
+// one "line both" message, with the month line's basis distance.
+if fireM > 0 and fireM == fireY
+    alert(rcMsg(fireM, "both", mBasisBelow, mBaseForm, mBaseReady, mRecl), alert.freq_once_per_bar_close)
+else
+    if fireM > 0
+        alert(rcMsg(fireM, "month", mBasisBelow, mBaseForm, mBaseReady, mRecl), alert.freq_once_per_bar_close)
+    if fireY > 0
+        alert(rcMsg(fireY, "year", yBasisBelow, yBaseForm, yBaseReady, yRecl), alert.freq_once_per_bar_close)
 
 // ── 2) PULLBACK (v10) ─────────────────────────────────────────────────────────
 // A fast run stretches price well above a VWAP line and it comes back down to it
@@ -267,7 +317,6 @@ if pbOn and inWindow
     if pbLines != "Session"
         evM := pbM.step(mvwap, gainer)
 
-pctVs(float ln) => (close >= ln ? "+" : "") + str.tostring((close / ln - 1) * 100, "#.0")
 // The message — a contract with services/tv-setups.ts parseTvMessage, like the RECLAIM one:
 //   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
 pbMsg(int ev, string lineName, int touch, float peak) =>
@@ -299,8 +348,8 @@ else
 plotshape(evS == 1 or evM == 1, "Pullback", shape.diamond, location.belowbar, color.aqua, size = size.tiny)
 plotshape(evS == 2 or evM == 2, "Broken", shape.xcross, location.abovebar, color.red, size = size.tiny)
 plotshape(evS == 3 or evM == 3, "Held", shape.flag, location.abovebar, color.lime, size = size.tiny)
-plotshape(fire and target == 1, "Forming", shape.circle, location.belowbar, color.orange, size = size.tiny)
-plotshape(fire and target == 2, "Ready", shape.triangleup, location.belowbar, color.yellow, size = size.small)
-plotshape(fire and target == 3, "Go", shape.labelup, location.belowbar, color.lime, text = "GO", textcolor = color.black, size = size.small)
-alertcondition(fire and target == 2, "READY", "READY {{ticker}} {{close}} | tf {{interval}}")
-alertcondition(fire and target == 3, "GO", "GO {{ticker}} {{close}} | tf {{interval}}")
+plotshape(fireM == 1 or fireY == 1, "Forming", shape.circle, location.belowbar, color.orange, size = size.tiny)
+plotshape(fireM == 2 or fireY == 2, "Ready", shape.triangleup, location.belowbar, color.yellow, size = size.small)
+plotshape(fireM == 3 or fireY == 3, "Go", shape.labelup, location.belowbar, color.lime, text = "GO", textcolor = color.black, size = size.small)
+alertcondition(fireM == 2 or fireY == 2, "READY", "READY {{ticker}} {{close}} | tf {{interval}}")
+alertcondition(fireM == 3 or fireY == 3, "GO", "GO {{ticker}} {{close}} | tf {{interval}}")

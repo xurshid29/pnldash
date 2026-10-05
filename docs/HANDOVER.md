@@ -86,8 +86,13 @@ parking), disk 26%.
      random) but about break-even as a mechanical trade; touch 2 ≈ touch 1; a
      stop just under the line beats a 1m-close exit by ~0.7 pt/trade. The month
      line can't be rebuilt from our rows, so it's graded live.
+   - **Year line (v11, 10-05):** the reclaim setup also runs on the year VWAP
+     (`rcLines` Month + Year), each line with its own stages; messages say
+     `line month|year|both` and carry `yVWAP`. A live trial — the year line
+     can't be rebuilt from our data. The session line was measured for the
+     reclaim setup and rejected.
    - **Full reference: `docs/vwap-setup.md`** (Pine walkthrough, tuning table,
-     changelog v1–v10, change procedure, grading SQL, backlog; §13 = PULLBACK).
+     changelog v1–v11, change procedure, grading SQL, backlog; §13 = PULLBACK).
 
 **Parked, code kept** — `COMPONENTS_DISABLED` default
 `ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`:
@@ -109,17 +114,27 @@ webhook key; the full URL was given to the operator). Backups:
 `.env.bak-20261003`.
 
 **Open items, ranked:**
-0. **📐 v10 (PULLBACK) shipped 10-05 ~06:30 ET — the operator must switch.**
-   Paste v10 (📐 tab → Copy Pine script), Save, then delete and recreate both
-   alerts (1m + 2m). Until then the alerts run v9 (reclaim only). Check the
-   purple sVWAP line sits on their "VWAP Session". After the switch, confirm
-   PULLBACK/BROKEN/HELD rows arrive (`grep tv-setup` shows `session line ·
-   touch N`). Expect ~13–17 session-line PULLBACKs/day plus month-line ones;
-   noise is the risk (mute `tv_pullback`, or raise `pbArm`).
+0. **📐 v11 (year line) — deployed after the 10-05 session; the operator must
+   switch again.** Paste v11, Save, delete and recreate both alerts. Check the
+   blue yVWAP line sits on their "VWAP Year" on BOTH 1m and 2m (intraday
+   history doesn't reach Jan 1, so the "year" line starts at the first loaded
+   bar — `docs/vwap-setup.md` §5.2). Compare the `yvwap` in the first year-line
+   messages with their chart. Mute just the trial with `tv_year`.
+   **v10 (PULLBACK) is live and verified:** the operator switched at ~06:25 ET.
+   First messages came at 07:04 ET (SAIQ month line, SDEV session line, QNME
+   month line); SAIQ and QNME were BROKEN within 2 min. Expect ~13–17
+   session-line PULLBACKs/day plus month-line ones; noise is the risk (mute
+   `tv_pullback`, or raise `pbArm`).
    - **~2026-10-19 — grade the PULLBACK rows** (SQL in `docs/vwap-setup.md`
      §13.6): month vs session line (the operator says the month line works
      more often; we couldn't measure it), touch 1 vs 2, time of day
      (pre-market was the weak spot), on/off Momentum.
+   - **Also ~10-19 — the reclaim setup by line:** month vs year (v11 trial).
+     The session line was measured and rejected (−1.2%/trade, 37 GOs/day).
+   - Considered and NOT built (10-05): a "tight base on the session VWAP →
+     breakout" alert (SDEV 05:00–05:30 ET). Measured: ~38/day, 9% reach +10%
+     before the stop, −0.3%/trade (`research/vwap-pullback/base_study.py`).
+     Offered instead: a passive "vs VWAP" Momentum column (not asked for yet).
 1. **📐 live since Mon 2026-10-05 04:00 ET.** Webhooks arrive (all HTTP 200,
    both timeframes, cross-timeframe repeats folded). The operator recreated
    both alerts on **v9** at ~04:25 ET; the first v9 signal (FRGT READY 04:32,
@@ -199,6 +214,23 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-05 (session) — 📐 YEAR LINE (script v11) and two measured no's.**
+- **Base breakout (no).** "How could we catch SDEV 05:00–05:30 ET?" — a 30-min
+  base right on the session VWAP (9.06–9.35, volume drying up), broken at 05:27
+  on ~3× volume, then 10.48 and 12.3. Over four months the shape (15-min range
+  ≤4% on the line, close above it on ≥2× volume, stop under the range) fires
+  ~38×/day, reaches +10% first 9% of the time, and averages −0.3%. Pre-market
+  was −1.2%. Not built; a passive "vs VWAP" column was offered instead.
+- **Reclaim on the session line (no).** The script's reclaim logic run on our
+  stored session VWAP: 37 GOs/day, 16% reach +10% first, −1.2% per trade
+  (−1.5% held 60 min with no stop), worse than any plain reclaim (−0.8%).
+  Probable reason: the session line follows the day's own price, so crossing it
+  is routine.
+- **Reclaim on the year line (shipped as a trial, v11).** The operator's SAIQ
+  chart shows the spike stopping at the year VWAP (~7.0), a base under it, then
+  a reclaim and a run past 13. Not measurable from our data. Note that the
+  intraday "year" line starts at the first loaded bar.
 
 **2026-10-05 (session) — 📐 PULLBACK SETUP (script v10).** The operator
 described a second VWAP edge with three charts (SAIQ 10-05 1m and SDEV 10-02 2m

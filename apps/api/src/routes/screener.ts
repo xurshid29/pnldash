@@ -125,6 +125,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
       day_gain: number | null; ah_gain: number | null; tf: string | null; path: string | null; go_via: string | null;
       vol_x: number | null; run_pct: number | null; strength: Record<string, unknown> | null;
       svwap: number | null; spx_pct: number | null; line: string | null; touch: number | null; peak_pct: number | null;
+      yvwap: number | null; ypx_pct: number | null;
       on_screen: boolean; notified: boolean;
     } | null;
   };
@@ -159,6 +160,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
         strength: m.strength && typeof m.strength === 'object' ? (m.strength as Record<string, unknown>) : null,
         // PULLBACK setup (script v10)
         svwap: num(m.svwap), spx_pct: num(m.spx_pct), line: str(m.line), touch: num(m.touch), peak_pct: num(m.peak_pct),
+        // reclaim setup on the year line (script v11)
+        yvwap: num(m.yvwap), ypx_pct: num(m.ypx_pct),
         on_screen: m.on_screen === true, notified: m.notified !== false,
       };
     }

@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v10** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v11** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -240,7 +240,8 @@ watchlist (§7.1).
 | Gainer filter | `minDayGain` | 20 | "Up at least %": day high vs the prior regular close; −100 = filter off | fewer, stronger names / more names |
 | Gainer filter | `runnerDays` | 3 (v2–v6: 2) | "…today, or on any of the last N sessions" (0 = today only, max 5). New in v2 | older runners qualify / today's gainers only |
 | Gainer filter | `useAhGain` | on | "After hours, also count the move since today's close". New in v3 | — / off = after-hours names need a +20% day too |
-| Setup | `maxPxBelow` | 15 | Price may be at most this % under the month VWAP | deeper pullbacks qualify / only near-the-line setups |
+| Setup | `rcLines` | Month + Year | Which lines the reclaim setup runs on: Month + Year, Month, or Year. Each line keeps its own stages. New in v11 | — |
+| Setup | `maxPxBelow` | 15 | Price may be at most this % under the line (month or year VWAP) | deeper pullbacks qualify / only near-the-line setups |
 | Setup | `formBasis` | 10 | Base FORMING when the basis is within this % under the VWAP | earlier heads-up, noisier / later, fewer |
 | Setup | `readyBasis` | 6 | Base READY when the basis is within this % (the operator's "5–6%") | earlier entries / tighter, later |
 | Setup | `holdTol` | 0 (v1–v3: 2) | Price may sit this % under the basis and still count as holding it. 0 = must close at/above it (the operator's rule) | allows higher lows under the basis / — |
@@ -275,6 +276,22 @@ crossU = ta.crossover(basis, mvwap)              // computed on EVERY bar — se
 This reproduces TradingView's built-in VWAP with anchor Month and source hlc3,
 and the BB basis. Volume includes extended hours when the chart or alert
 session is Extended.
+
+**v11 adds the year line** (`yvwap = ta.vwap(hlc3, timeframe.change("12M"))`,
+plotted blue), the same construction as the built-in VWAP with anchor Year.
+The reclaim rules run on each line separately, through `reclaimConds(line)` for
+the conditions and `RcLine.advance()` for the stages (a broken month setup
+doesn't reset the year one). The same stage on one bar from both lines is one
+message with `line both`.
+
+**Caveat — the year line is only as long as the loaded history.** A 1m chart
+holds roughly 3–4 weeks of extended-hours bars and a 2m chart about twice that.
+So on intraday charts the "year" VWAP — the script's and TradingView's built-in
+one alike — starts at the first loaded bar, not at January 1. The 1m and 2m
+alerts may therefore see different year lines. Each message carries `yVWAP`,
+so the alert engine's value can be checked against the operator's chart. If
+it drifts, build the year-to-date part from 60m bars (`request.security`) plus
+today's part from the chart's bars, like the month-line fix in §5.7.
 
 ### 5.3 The top-gainer gate (today, or a recent session — v2)
 
@@ -411,6 +428,21 @@ vs VWAP %>) | day high <±gain>% [| ah <±gain>%] | tf <timeframe.period> | path
 `str.tostring(x, format.mintick)`, which keeps sub-dollar precision (0.1259).
 It is sent with `alert(msg, alert.freq_once_per_bar_close)`, so it arrives at
 the bar close: up to 60 s after the condition on a 1m chart.
+
+**v11** (the year line):
+- every reclaim message adds `yVWAP <value> (<price vs it %>)` and
+  `line month|year|both`;
+- `basis (%)` is measured against the setup's own line (the month line on
+  `month` and `both`);
+- the mVWAP percentage gets a `+` when price is above the line.
+
+```
+READY SAIQ 6.5 | mVWAP 4.1 (+58.5%) | yVWAP 7.0 (-7.1%) | basis 6.3 (-10.0%) | line year | day high +336% | tf 1 | path base
+```
+
+The server stores `yvwap`, `ypx_pct` and `line`; older messages without
+`line` are the month line. Telegram mute for the year-line experiment alone:
+`ALERTS_DISABLED=tv_year`.
 
 The PULLBACK setup (v10) has its own message, PULLBACK / BROKEN / HELD with
 `sVWAP`, `line`, `touch` and `peak` (§13.4).
@@ -649,8 +681,8 @@ no new high within ~3–5 bars. Weak GOs stall at once.
 | `apps/api/src/services/poller.ts` → `deliverTvSetup` | storage, `payload.alerts`, SSE, Telegram |
 | `apps/api/src/services/opportunity-alerts.ts` | the `tv_setup` kind, `TvSetupInfo`, `pushExternal` |
 | `apps/api/src/routes/screener.ts` → `GET /alerts` | returns `setup` for tv_setup rows |
-| `apps/api/src/services/telegram.ts` | mute slugs `tv_setup` / `tv_forming` / `tv_ready` / `tv_go` / `tv_pullback` / `tv_broken` / `tv_held` |
-| `apps/api/scripts/verify-tv-setups.ts` | regression: 102 checks incl. the Pine ↔ parser contract (both setups) |
+| `apps/api/src/services/telegram.ts` | mute slugs `tv_setup` / `tv_forming` / `tv_ready` / `tv_go` / `tv_pullback` / `tv_broken` / `tv_held` / `tv_year` |
+| `apps/api/scripts/verify-tv-setups.ts` | regression: 118 checks incl. the Pine ↔ parser contract (both setups, both reclaim lines) |
 | `apps/api/scripts/research/vwap-pullback/` | the PULLBACK study on our own data (§13.5) |
 | `apps/web/src/components/screener/TvSetupsPanel.tsx` | the 📐 tab |
 | `apps/web/src/components/common/TvStageTag.tsx` | stage pill, level text, timeframe labels |
@@ -708,6 +740,7 @@ is missing).
 - time to GO, and how often FORMING becomes READY and READY becomes GO.
 
 **Split by:**
+- the line (v11): month vs year vs both — the year line is a live trial;
 - GO strength: score and each check (morning, run-up, volume, on Momentum) —
   which ones actually predict a 10%+ run? (v9, §7.5);
 - `path`: base vs fast (v2) — did the fast route add winners or chop?
@@ -791,7 +824,8 @@ Ordered roughly by expected value; most should wait for the first grading.
      volume we never saw). The operator's SAIQ 2026-10-05 chart: the 04:07 ET
      spike stopped at the year VWAP (~7.0), based under it while the basis
      curled up, then reclaimed it at ~04:22 and ran past 13. Only a live trial
-     can grade it.
+     can grade it. **Shipped as that trial in v11** (§5.2); grade it alongside the
+     month line (§9, split by `line`).
 9. **Month-to-date from 60m bars**, if the yellow line drifts late in the month
    on 1m (§5.7).
 10. **JSON messages** carrying bar time and volume, if the parser needs more
@@ -820,6 +854,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-03 | v8 | `cbd90a8` | Clarity only, no logic change. The settings group "Top gainer" is renamed "Gainer filter (this ticker's own move)", with titles "Up at least % (day high vs prior close; -100 = filter off)", "…today, or on any of the last N sessions", and "After hours, also count the move since today's close". The operator had asked which screener picks the "top gainers"; none does — it's a per-ticker filter. Renamed inputs may come back at their defaults after the update. |
 | 2026-10-05 | v9 | `bf8eff4` | Operator: "how not to enter the weak GOs (under 10%)?" No signal logic change. Every message now carries `vol <N>x` (signal-bar volume ÷ previous-20-bar average) and `run <±N>%` (close vs 10 bars earlier). The server scores each GO 0–4 (morning 04:00–10:30 ET, run-up ≥5%, volume ≥2×, on Momentum) and shows 💪N/M on the 📐 and Alerts tabs, in Telegram and in the notification; all of it is stored for grading (§7.5). A tag, not a filter, until live data says which checks matter. Regression: 71 checks. |
 | 2026-10-05 | v10 | `9d3a4f9` | Operator: a second VWAP setup — after a fast run, price comes back down to the session or month VWAP and bounces; alert at ~5% above the line "so I can be ready", exit when it crosses down. Added to the same script (Premium's 2 alert slots are taken) as the PULLBACK setup (§13): a session VWAP line (`ta.vwap(hlc3, timeframe.change("D"))`, purple), per-line state, messages PULLBACK / BROKEN / HELD with `sVWAP`, `line`, `touch`, `peak`; new input group "Pullback to VWAP (v10)" (arm 15, near 5, break 0, held 10, 2 per line per day, 60-bar timeout). The reclaim setup is unchanged. Server, 📐 tab (one row per ticker and setup, S/M line and #touch tags), Telegram (outcomes always silent), the replica (`PullbackLine`, `selftest_pullback`) and the study (`research/vwap-pullback/`) ship with it. Regression: 102 checks. |
+| 2026-10-05 | v11 | (this commit) | Operator: "could we do the same with other VWAP anchors, such as session and yearly?" The session line was measured first: the script's own reclaim logic on our stored session VWAP over four months fired GO 37 times a day, and the average trade was −1.2% (§11 item 8), so it was not added. The year line can't be measured from our data. It's added as a live trial: `yvwap = ta.vwap(hlc3, timeframe.change("12M"))` (blue), new input `rcLines` (Month + Year by default), the reclaim conditions moved into `reclaimConds(line)` and the stages into a per-line `RcLine`. The month line's logic is unchanged. Messages add `yVWAP` and `line month|year|both`; `basis %` is against the setup's line. The server stores `yvwap` / `ypx_pct`; the 📐 tab gets a "year" row and a Y / M+Y tag; Telegram mute `tv_year`. Replica: `simulate_lines()` plus a two-line self-test. Regression: 118 checks. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 

@@ -194,7 +194,7 @@ function fmtAlertPrice(p: number | null): string {
 const TV_STAGE_TITLE: Record<TvStage, string> = {
   forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD',
 };
-const TV_LINE_TITLE = { session: 'session VWAP', month: 'month VWAP', both: 'session + month VWAP' } as const;
+const TV_LINE_TITLE = { session: 'session VWAP', month: 'month VWAP', year: 'year VWAP', both: 'session + month VWAP' } as const;
 function fmtSignedPct(p: number | null): string {
   return p == null ? '?' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
 }
@@ -209,9 +209,12 @@ export function opportunityTitle(a: OpportunityAlert): string {
         : s.stage === 'broken' ? `closed under the ${lineName}` : '+10% from the pullback';
       return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — ${what}`;
     }
+    // v11: the reclaim setup also runs on the year VWAP
+    const ln = s.line === 'year' ? 'yVWAP' : s.line === 'both' ? 'mVWAP + yVWAP' : 'mVWAP';
+    const pct = s.line === 'year' ? s.ypx_pct ?? null : s.px_pct;
     const where = s.stage === 'go'
-      ? (s.go_via === 'reclaim' ? 'price reclaimed mVWAP' : 'basis crossed above mVWAP')
-      : `${fmtSignedPct(s.px_pct)} vs mVWAP · basis ${fmtSignedPct(s.basis_pct)}`;
+      ? (s.go_via === 'reclaim' ? `price reclaimed ${ln}` : `basis crossed above ${ln}`)
+      : `${fmtSignedPct(pct)} vs ${s.line === 'year' ? 'yVWAP' : 'mVWAP'} · basis ${fmtSignedPct(s.basis_pct)}`;
     return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]}${s.path === 'fast' ? ' (fast)' : ''} ${a.ticker} — ${where}`;
   }
   if (a.kinds.includes('grade_aplus')) return `🅰️ ${a.ticker} — ${a.new_on_screen ? 'new A+' : `A+ (was ${a.prev_grade ?? '—'})`}`;
@@ -225,6 +228,7 @@ export function opportunityBody(a: OpportunityAlert): string {
     const bits = [fmtAlertPrice(a.price)];
     if (s.svwap != null) bits.push(`sVWAP ${fmtAlertPrice(s.svwap)}`);
     if (s.mvwap != null) bits.push(`mVWAP ${fmtAlertPrice(s.mvwap)}`);
+    if (s.yvwap != null) bits.push(`yVWAP ${fmtAlertPrice(s.yvwap)}`);
     if (s.stage === 'pullback' && s.peak_pct != null) bits.push(`ran +${Math.round(s.peak_pct)}% above the line`);
     if (s.basis != null) bits.push(`basis ${fmtAlertPrice(s.basis)}`);
     if (s.day_gain != null) bits.push(`day high ${s.day_gain >= 0 ? '+' : ''}${Math.round(s.day_gain)}%`);

@@ -50,7 +50,9 @@ alert). "Win" = +10% before a close under the line.
   ordinary moment near the line. The average trade is still about break-even.
 - **"The first touch is best" doesn't hold here.** Touch 2 did as well as touch 1
   or better. Touch 3+ was the weakest, so the script alerts on 2 touches per
-  line per day.
+  line per day. Not counting closes straight through the line and allowing up
+  to 4 alerts per line adds ~3 alerts a day, averaging −0.45% (stop, +10%), so
+  the cap stays.
 - **A stop just under the line beats waiting for a 1m close under it**, by about
   0.7 points per trade (touch 1: −0.94% → −0.24%). The close of a breaking bar
   is often far under the line.
@@ -74,3 +76,34 @@ On 2026-10-05, SAIQ's touches went: 04:03 win, 04:06 broken at 04:09 (a close
 2.8% under the line, just before the run to 16), 05:34 win. SDEV 10-02 (the
 operator's chart) broke at 12:18 under the strict rule, then ran after an hour
 sitting on the line.
+
+## Two related questions, measured the same day
+
+**A tight base on the session VWAP, then a breakout** (`base_study.py`; the
+operator asked about SDEV 05:00–05:30 ET on 10-05). The rule: a 15-min range
+≤4% sitting on the line (−1.5% to +3%), then a close above the range on ≥2×
+volume, with a stop 0.5% under the range. SDEV's 05:27 breakout is caught
+(+10%), but over four months:
+
+| breakouts from a base on the session VWAP | n | +10% before the stop | avg per trade |
+|---|---:|---:|---:|
+| all | 3,126 (~38/day) | 9% | −0.31% |
+| pre-market 04:00–07:00 (like SDEV's) | 245 | 14% | −1.22% |
+| 09:30–10:30 | 288 | 13% | +0.63% |
+| on names up 30–100% on the day | 402 | 15–23% | ~0% |
+
+Neither volume drying up in the base nor a bigger breakout volume helped. Not
+built as an alert.
+
+**The reclaim setup on the session VWAP** (`reclaim_session.py`; "could we do
+the same with other VWAP anchors?"). The script's own reclaim logic
+(`pinesim.simulate`) runs with our stored session VWAP as the line:
+
+| on the session VWAP | per day | +10% before the stop | avg per trade | held 60 min, no stop |
+|---|---:|---:|---:|---:|
+| GO | 37 | 16% | −1.18% | −1.48% |
+| READY | 72 | 1% | −0.21% | −0.74% |
+| any plain reclaim of the line (≥5 closes under, then above) | 165 | 7% | −0.82% | −0.95% |
+
+Not added. The year line can't be measured here; it shipped as a live trial in
+script v11.

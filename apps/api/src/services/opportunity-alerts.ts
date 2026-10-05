@@ -59,6 +59,9 @@ export interface TvSetupInfo {
   line: TvLine | null;        // which line the pullback came back to: session / month / both
   touch: number | null;       // pullbacks to that line today, this one included (1 = the first)
   peak_pct: number | null;    // PULLBACK: highest bar high above the line before it, %
+  // Reclaim setup on the year VWAP (script v11)
+  yvwap: number | null;
+  ypx_pct: number | null;     // price vs the year VWAP, %
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe
 }

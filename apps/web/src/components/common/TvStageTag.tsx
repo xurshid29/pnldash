@@ -16,13 +16,21 @@ export function isPullbackStage(stage: TvStage): boolean {
   return stage === 'pullback' || stage === 'broken' || stage === 'held';
 }
 
-// The line a PULLBACK-setup signal is about, colored like the operator's chart:
-// session VWAP purple, month VWAP yellow.
-const LINE_TAG: Record<TvLine, { label: string; color: string }> = {
+// The line a signal is about, colored like the operator's chart: session VWAP
+// purple, month yellow, year blue. 'both' = the setup's two lines (S+M for a
+// pullback, M+Y for a reclaim). Reclaim signals on the month line — the
+// original setup — carry no tag.
+const LINE_TAG: Record<Exclude<TvLine, 'both'>, { label: string; color: string }> = {
   session: { label: 'S', color: '#b37feb' },
   month: { label: 'M', color: '#fadb14' },
-  both: { label: 'S+M', color: '#ffffff' },
+  year: { label: 'Y', color: '#4096ff' },
 };
+function lineTag(stage: TvStage, line: TvLine | null | undefined): { label: string; color: string } | null {
+  if (!line) return null;
+  if (line === 'both') return { label: isPullbackStage(stage) ? 'S+M' : 'M+Y', color: '#ffffff' };
+  if (line === 'month' && !isPullbackStage(stage)) return null;
+  return LINE_TAG[line];
+}
 
 // TradingView interval → short label: "1" → 1m, "60" → 1h, "30S" → 30s, "1D" → 1D.
 export function fmtTf(tf: string | null | undefined): string {
@@ -48,7 +56,7 @@ export function TvStageTag({ stage, dim, path, line, touch }: {
   stage: TvStage; dim?: boolean; path?: 'base' | 'fast' | null; line?: TvLine | null; touch?: number | null;
 }) {
   const s = TV_STAGE_STYLE[stage];
-  const ln = line ? LINE_TAG[line] : null;
+  const ln = lineTag(stage, line);
   return (
     <span style={{ whiteSpace: 'nowrap', opacity: dim ? 0.55 : 1 }}>
       <span
@@ -95,7 +103,12 @@ export function tvLevelsText(s: TvSetupInfo): string {
     if (s.stage === 'pullback' && s.peak_pct != null) parts.push(`ran +${Math.round(s.peak_pct)}%`);
     return parts.join(' · ');
   }
-  if (s.px_pct != null) parts.push(`${fmtSignedPct(s.px_pct).replace('-', '−')} vs mVWAP`);
+  // reclaim setup: its own line first (v11 adds the year line); basis % is against that line
+  const mv = s.px_pct != null ? `${fmtSignedPct(s.px_pct).replace('-', '−')} vs mVWAP` : null;
+  const yv = s.ypx_pct != null ? `${fmtSignedPct(s.ypx_pct).replace('-', '−')} vs yVWAP` : null;
+  if (s.line === 'year') parts.push(...[yv].filter((p): p is string => p != null));
+  else if (s.line === 'both') parts.push(...[mv, yv].filter((p): p is string => p != null));
+  else if (mv) parts.push(mv);
   if (s.basis_pct != null) parts.push(`basis ${fmtSignedPct(s.basis_pct).replace('-', '−')}`);
   return parts.join(' · ');
 }

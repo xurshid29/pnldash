@@ -129,6 +129,35 @@ console.log('PULLBACK setup (v10)');
   check('BROKEN is its own stage → notifies', g.admit(br!, T0 + 70) === 'notify');
 }
 
+console.log('Reclaim setup on the year line (v11)');
+{
+  const yr = parseTvMessage('READY SAIQ 6.5 | mVWAP 4.1 (+58.5%) | yVWAP 7.0 (-7.1%) | basis 6.3 (-10.0%) | line year | day high +336% | vol 1.2x | run +4.0% | tf 1 | path base');
+  check('parses', yr?.stage === 'ready' && yr.ticker === 'SAIQ' && yr.line === 'year' && yr.path === 'base', JSON.stringify(yr));
+  check('year line + month line', yr?.yvwap === 7 && yr.ypx_pct === -7.1 && yr.mvwap === 4.1 && yr.px_pct === 58.5, JSON.stringify(yr));
+  check('basis vs the setup line', yr?.basis === 6.3 && yr.basis_pct === -10, JSON.stringify(yr));
+  const both = parseTvMessage('GO NXL 7.2 | mVWAP 7.0 (+2.9%) | yVWAP 7.05 (+2.1%) | basis 6.9 (-1.4%) | line both | day high +60% | tf 2 | via reclaim');
+  check('GO on both lines', both?.stage === 'go' && both.line === 'both' && both.go_via === 'reclaim' && both.yvwap === 7.05, JSON.stringify(both));
+  const month = parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | yVWAP 2.9 (-49.0%) | basis 1.49 (-5.1%) | line month | day high +41% | tf 1 | path base');
+  check('month line with the year level along', month?.line === 'month' && month.ypx_pct === -49 && month.basis_pct === -5.1, JSON.stringify(month));
+  const old = parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base');
+  check('a v10 message has no line and no year level', old?.line === null && old.yvwap === null, JSON.stringify(old));
+
+  const html = formatTvSetupAlert(yr!, 'NASDAQ:SAIQ', { change_pct: 140, grade: 'A', float_m: 3.1 });
+  check('Telegram: names the year line', html.includes('entry zone · year VWAP'), html);
+  check('Telegram: year level first', html.indexOf('yVWAP $7.00 (-7.1%)') >= 0 && html.indexOf('yVWAP $7.00') < html.indexOf('mVWAP $4.10'), html);
+  const goY = formatTvSetupAlert({ ...yr!, stage: 'go', path: null, go_via: 'reclaim' }, 'NASDAQ:SAIQ', null);
+  check('Telegram: GO reclaimed yVWAP', goY.includes('price reclaimed yVWAP'), goY);
+  const goBoth = formatTvSetupAlert(both!, 'NASDAQ:NXL', null);
+  check('Telegram: GO on both lines', goBoth.includes('price reclaimed mVWAP + yVWAP'), goBoth);
+  const mHtml = formatTvSetupAlert(month!, 'NASDAQ:AIXI', null);
+  check('Telegram: month line unchanged, year level after it', mHtml.includes('<i>entry zone</i>') && mHtml.indexOf('mVWAP $1.57') < mHtml.indexOf('yVWAP $2.90'), mHtml);
+
+  const T0 = 1_790_100_000;
+  const g = new TvSetupGate();
+  check('month READY notifies', g.admit(month!, T0) === 'notify');
+  check('year READY a minute later is logged, not dropped', g.admit({ ...month!, line: 'year' }, T0 + 60) === 'log');
+}
+
 console.log('Gate — duplicates, other timeframes, flood');
 {
   const T0 = 1_790_000_000;
@@ -178,7 +207,8 @@ console.log('Contract — the Pine script still emits what the parser reads');
   const pine = readFileSync(resolve(here, '../../web/src/tv/mvwap-bb-setup.pine'), 'utf8');
   for (const part of ['" | mVWAP "', '" | basis "', '" | day high "', '" | ah "', '" | tf "', '" | path "', '"base"', '"fast"',
     '" | via "', '"reclaim"', '"cross"', '" | vol "', '" | run "', '"FORMING"', '"READY"', '"GO"',
-    '"PULLBACK"', '"BROKEN"', '"HELD"', '" | sVWAP "', '" | line "', '" | touch "', '" | peak +"', '"session"', '"month"', '"both"']) {
+    '"PULLBACK"', '"BROKEN"', '"HELD"', '" | sVWAP "', '" | line "', '" | touch "', '" | peak +"', '"session"', '"month"', '"both"',
+    '" | yVWAP "', '"year"', 'timeframe.change("12M")']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));
