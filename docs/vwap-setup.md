@@ -653,6 +653,15 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   and 2m copies of a stage merge into one event, tagged "1m+2m". A click selects
   the ticker and opens its day trail. The ⋯ menu has Copy list, Download .txt,
   Copy Pine script and How to. `components/screener/TvSetupsSidebar.tsx`.
+- **"Not in your TV list" nudge** (2026-10-05). The alerts only see the symbols
+  on the TradingView watchlist, and that list is pasted in by hand. MI ran +634%
+  on 10-05 with no alerts all day: it hadn't been a runner when the list was
+  copied on Sunday. The sidebar now remembers what the last Copy list or
+  Download held (this browser's localStorage, `tvList.lastCopied`). It flags
+  today's screen names that weren't in it, with a **Copy** button for just
+  those. Watchlist alerts pick up symbols added to the list by themselves, so
+  nothing needs recreating
+  ([TradingView](https://www.tradingview.com/support/solutions/43000739708-watchlist-alerts-your-trading-edge/)).
 - **Toast + sound + browser notification** the moment the webhook lands:
   - GO: the bright pair (same as 🅰️ A+)
   - READY: a rising triple

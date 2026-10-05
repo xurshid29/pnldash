@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { App, Button, Dropdown, Modal, Typography } from 'antd';
+import { useQuery } from '@tanstack/react-query';
 import { CaretDownOutlined, CaretRightOutlined, EllipsisOutlined } from '@ant-design/icons';
 import type { CyclePayload, OpportunityAlert, TvSetupInfo } from '../../api/types';
 import { tvApi, type TvWatchlist } from '../../api/tv';
@@ -111,12 +112,36 @@ function hhmm(ms: number): string {
 const HOW_TO = (
   <div style={{ fontSize: 13, lineHeight: 1.6 }}>
     <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month”, its purple line on your “VWAP Session” and its blue line on your “VWAP Year”.</div>
-    <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning.</div>
+    <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning. During the day the sidebar flags new names missing from it — <b>Copy</b> and add them to the watchlist (the alerts pick up added symbols by themselves).</div>
     <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>2 minutes</b>.</div>
     <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
   </div>
 );
+
+// The TradingView watchlist the alerts run on is pasted in by hand (TradingView
+// has no watchlist API), and the alerts only see names that are on it. The
+// sidebar remembers what the last Copy list / Download held (this browser) and
+// flags today's screen names that weren't in it — a name that wasn't a runner
+// yet goes unwatched all day otherwise (MI 2026-10-05: +634%, no alerts).
+// Watchlist alerts pick up added symbols by themselves; no alert recreation.
+const LIST_KEY = 'tvList.lastCopied';
+interface CopiedList { at: number; symbols: string[] }   // bare tickers
+const bareSym = (s: string) => s.replace(/^[A-Z_]+:/i, '').toUpperCase();
+function loadCopied(): CopiedList | null {
+  try {
+    const raw = localStorage.getItem(LIST_KEY);
+    return raw ? (JSON.parse(raw) as CopiedList) : null;
+  } catch {
+    return null;
+  }
+}
+// Replace the remembered list (a full Copy / Download) or add to it (Copy new).
+function saveCopied(symbols: string[], addTo: CopiedList | null): CopiedList {
+  const v = { at: Date.now(), symbols: [...new Set([...(addTo?.symbols ?? []), ...symbols.map(bareSym)])] };
+  try { localStorage.setItem(LIST_KEY, JSON.stringify(v)); } catch { /* private mode */ }
+  return v;
+}
 
 // 📐 setups in the left rail (operator, 2026-10-05: "organize this list … move
 // it to the sidebar"). One row per ticker with its CURRENT state — the stage,
@@ -136,6 +161,19 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   });
   const [howTo, setHowTo] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState<CopiedList | null>(() => loadCopied());
+  // Today's screen names come first in the server's list (`today` of them).
+  const { data: tvList } = useQuery({
+    queryKey: ['tv', 'watchlist'],
+    queryFn: () => tvApi.watchlist(),
+    refetchInterval: 5 * 60_000,
+    staleTime: 60_000,
+  });
+  const missing = useMemo(() => {
+    if (!tvList || !copied) return [];
+    const have = new Set(copied.symbols);
+    return tvList.symbols.slice(0, tvList.today).filter((sym) => !have.has(bareSym(sym)));
+  }, [tvList, copied]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -178,6 +216,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
       if (key === 'copy') {
         void withList(async (list) => {
           await navigator.clipboard.writeText(list.symbols.join(','));
+          setCopied(saveCopied(list.symbols, null));
           message.success(`Copied ${list.symbols.length} symbols — ${list.today} on today's screen + ${list.runners} runners (≥+${list.min_chg}% in ${list.days}d)`);
         });
       } else if (key === 'download') {
@@ -188,6 +227,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           a.download = `pnldash-runners-${new Date().toISOString().slice(0, 10)}.txt`;
           a.click();
           URL.revokeObjectURL(url);
+          setCopied(saveCopied(list.symbols, null));
           message.success(`Downloaded ${list.symbols.length} symbols — import it from the TradingView watchlist menu`);
         });
       } else if (key === 'script') {
@@ -198,6 +238,15 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
         setHowTo(true);
       }
     },
+  };
+
+  const copyNew = () => {
+    navigator.clipboard.writeText(missing.join(','))
+      .then(() => {
+        setCopied(saveCopied(missing, copied));
+        message.success(`Copied ${missing.length} new symbol${missing.length === 1 ? '' : 's'} — add them to the TradingView watchlist; the alerts pick them up by themselves`);
+      })
+      .catch(() => message.error('Clipboard blocked by the browser'));
   };
 
   const row = (c: TickerCard, dim: boolean) => {
@@ -276,6 +325,19 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           <Button size="small" type="text" icon={<EllipsisOutlined />} loading={busy} style={{ marginLeft: 'auto' }} />
         </Dropdown>
       </div>
+      {copied && missing.length > 0 && (
+        <div style={{ padding: '4px 8px', background: '#2b2111', borderBottom: '1px solid #614700', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 11, color: '#ffd666', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            ⚠ {missing.length} new, not in your TV list: {missing.map(bareSym).join(', ')}
+          </span>
+          <Button size="small" onClick={copyNew} style={{ marginLeft: 'auto', flexShrink: 0 }}>Copy</Button>
+        </div>
+      )}
+      {!copied && (
+        <div style={{ padding: '4px 8px', borderBottom: '1px solid #262626', fontSize: 11, color: '#8c8c8c' }}>
+          ⋯ → Copy list once, and new names missing from your TradingView list will show here.
+        </div>
+      )}
       <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
         <div style={{ padding: '4px 8px', fontSize: 10, color: '#8c8c8c', letterSpacing: 0.5, background: '#141414' }}>
           LIVE · {live.length}
