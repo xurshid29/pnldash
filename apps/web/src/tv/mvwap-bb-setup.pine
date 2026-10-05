@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v12 (2026-10-05).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v13 (2026-10-05).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Two setups in one script, so the same two watchlist alerts carry both.
@@ -354,8 +354,14 @@ else
 plotshape(evS == 1 or evM == 1, "Pullback", shape.diamond, location.belowbar, color.aqua, size = size.tiny)
 plotshape(evS == 2 or evM == 2, "Broken", shape.xcross, location.abovebar, color.red, size = size.tiny)
 plotshape(evS == 3 or evM == 3, "Held", shape.flag, location.abovebar, color.lime, size = size.tiny)
-plotshape(fireM == 1 or fireY == 1, "Forming", shape.circle, location.belowbar, color.orange, size = size.tiny)
-plotshape(fireM == 2 or fireY == 2, "Ready", shape.triangleup, location.belowbar, color.yellow, size = size.small)
-plotshape(fireM == 3 or fireY == 3, "Go", shape.labelup, location.belowbar, color.lime, text = "GO", textcolor = color.black, size = size.small)
+// Reclaim markers: the month line orange / yellow / green as before, the year line
+// (v13) the same shapes in blue like its line. A stage that fires on both lines on
+// one bar shows the month marker.
+plotshape(fireM == 1, "Forming (month)", shape.circle, location.belowbar, color.orange, size = size.tiny)
+plotshape(fireM == 2, "Ready (month)", shape.triangleup, location.belowbar, color.yellow, size = size.small)
+plotshape(fireM == 3, "Go (month)", shape.labelup, location.belowbar, color.lime, text = "GO", textcolor = color.black, size = size.small)
+plotshape(fireY == 1 and fireM != 1, "Forming (year)", shape.circle, location.belowbar, color.blue, size = size.tiny)
+plotshape(fireY == 2 and fireM != 2, "Ready (year)", shape.triangleup, location.belowbar, color.blue, size = size.small)
+plotshape(fireY == 3 and fireM != 3, "Go (year)", shape.labelup, location.belowbar, color.blue, text = "GO", textcolor = color.white, size = size.small)
 alertcondition(fireM == 2 or fireY == 2, "READY", "READY {{ticker}} {{close}} | tf {{interval}}")
 alertcondition(fireM == 3 or fireY == 3, "GO", "GO {{ticker}} {{close}} | tf {{interval}}")
