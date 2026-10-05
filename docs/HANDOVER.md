@@ -254,13 +254,14 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
   87 MB for 06-12 → 10-05). In study SQL, `dd10` is already the "−10% within
   30 min" label column — a same-named feature silently shadows it (cost an hour
   on 10-01).
-- **Two sessions can share this working directory.** On 10-05 a parallel session
-  committed v15 while another was mid-work. Then at 14:42 ET an editor saved
-  stale v14 copies of `mvwap-bb-setup.pine` and the vwap-pullback README over
-  v15. They were caught (byte-identical to `0a29a81`) and restored. Committing
-  them would have rolled the 📐 script back on the next deploy. Before every
-  commit, read `git status` / `git diff --stat`, and add files by name, not
-  `git add -A`.
+- **A conversation rewind (Esc Esc) restores files, not git.** It puts files the
+  conversation edited back to the checkpoint, but commits, pushes and deploys
+  stay. On 10-05 v15 was committed and deployed, then a rewind left v14 copies of
+  `mvwap-bb-setup.pine` and the vwap-pullback README in the working tree
+  (byte-identical to `0a29a81`). They were caught and restored from HEAD.
+  Committing them would have rolled the 📐 script back on the next deploy.
+  After a rewind, and before every commit, read `git status` / `git diff --stat`.
+  Add files by name, not `git add -A`.
 - The droplet's `git pull` once failed mid-deploy with "expected flush
   after ref listing" (a GitHub HTTPS hiccup); rerunning the deploy job fixed
   it.
