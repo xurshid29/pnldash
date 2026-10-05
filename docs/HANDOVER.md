@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-05 (last code commit `bf8eff4`)
+## START HERE — state at 2026-10-05 (last code commit `9d3a4f9`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every
 20s) sorted by the **A+…D grade**, plus the History, Watchlist and Alerts
@@ -18,7 +18,10 @@ low float, mostly 07:00–11:00 ET. **The operator's current entry (since
 ~10-01): the VWAP/BB setup.** A recent big gainer sits under its
 month-anchored VWAP while the BB basis (SMA 20) curls up beneath it; the
 operator exits fast when it fails. TradingView detects it and our webhook
-delivers it (📐, item 5 below). Everything else is parked (below). Prod
+delivers it (📐, item 5 below). **Second setup since 10-05: the PULLBACK** — after
+a fast run, price comes back to the session or month VWAP; alert at ~5% above
+the line, exit when it crosses down (same script, v10). Everything else is
+parked (below). Prod
 `/health` ok; ~0.8 GB of 3.9 GB RAM used (was ~3 GB + swap before the
 parking), disk 26%.
 
@@ -72,8 +75,19 @@ parking), disk 26%.
      GO-bar volume ≥2×, on Momentum. A tag, not a filter.
    - **Offline replay:** `apps/api/scripts/research/vwap-setup/`
      (`python3 replay.py`, `replay.py go`, `pinesim.py`).
+   - **PULLBACK setup (v10, 10-05):** a second setup in the same script. A bar
+     high ≥15% above the session or month VWAP arms it; PULLBACK on a later
+     close within 5% above the line; then BROKEN (a close under it) or HELD
+     (+10%). Tagged `line` S/M/both and `touch` (max 2 per line per day).
+     PULLBACK pushes like the other stages; BROKEN/HELD are always silent.
+     Mutes `tv_pullback` / `tv_broken` / `tv_held`. Measured on our data first
+     (`research/vwap-pullback/`, §13.5 of the doc): on the session line it's a
+     good heads-up (26–30% reach +10% before breaking vs 5% near the line at
+     random) but about break-even as a mechanical trade; touch 2 ≈ touch 1; a
+     stop just under the line beats a 1m-close exit by ~0.7 pt/trade. The month
+     line can't be rebuilt from our rows, so it's graded live.
    - **Full reference: `docs/vwap-setup.md`** (Pine walkthrough, tuning table,
-     changelog v1–v9, change procedure, grading SQL, backlog).
+     changelog v1–v10, change procedure, grading SQL, backlog; §13 = PULLBACK).
 
 **Parked, code kept** — `COMPONENTS_DISABLED` default
 `ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`:
@@ -95,7 +109,18 @@ webhook key; the full URL was given to the operator). Backups:
 `.env.bak-20261003`.
 
 **Open items, ranked:**
-0. **📐 live since Mon 2026-10-05 04:00 ET.** Webhooks arrive (all HTTP 200,
+0. **📐 v10 (PULLBACK) shipped 10-05 ~06:30 ET — the operator must switch.**
+   Paste v10 (📐 tab → Copy Pine script), Save, then delete and recreate both
+   alerts (1m + 2m). Until then the alerts run v9 (reclaim only). Check the
+   purple sVWAP line sits on their "VWAP Session". After the switch, confirm
+   PULLBACK/BROKEN/HELD rows arrive (`grep tv-setup` shows `session line ·
+   touch N`). Expect ~13–17 session-line PULLBACKs/day plus month-line ones;
+   noise is the risk (mute `tv_pullback`, or raise `pbArm`).
+   - **~2026-10-19 — grade the PULLBACK rows** (SQL in `docs/vwap-setup.md`
+     §13.6): month vs session line (the operator says the month line works
+     more often; we couldn't measure it), touch 1 vs 2, time of day
+     (pre-market was the weak spot), on/off Momentum.
+1. **📐 live since Mon 2026-10-05 04:00 ET.** Webhooks arrive (all HTTP 200,
    both timeframes, cross-timeframe repeats folded). The operator recreated
    both alerts on **v9** at ~04:25 ET; the first v9 signal (FRGT READY 04:32,
    `vol`/`run` present) confirmed it. Signals before that were v8 (no
@@ -126,24 +151,24 @@ webhook key; the full URL was given to the operator). Backups:
      for watchlist alerts), then compare per timeframe (`tf` is stored).
    - Ask the operator to import a fresh IBKR .tlg (the journal stops at
      06-18) so their real P&L on these trades can be checked.
-1. **~2026-10-15 — re-grade the LIVE grade** from `screener_results.grade`
+2. **~2026-10-15 — re-grade the LIVE grade** from `screener_results.grade`
    with the same label and the first-touch race. Does it hold live? Pipeline:
    `apps/api/scripts/research/momentum-grade/` (export SQL → `study.py` →
    `verify-momentum-grade.ts` parity). Re-fit there; never hand-edit
    POINTS/CUTS.
-2. **~2026-10-15 — grade the alerts** (`tier_events` tier='alert'; meta has
+3. **~2026-10-15 — grade the alerts** (`tier_events` tier='alert'; meta has
    the alert id, price, grade, kind details): continuation after each kind,
    then review the volume with the operator. Dials: the +10% fast threshold,
    cooldowns, the news phone floor — `alert_study.py` re-measures them.
-3. **Noise is the failure mode.** The operator muted alerts for noise twice
+4. **Noise is the failure mode.** The operator muted alerts for noise twice
    before (07-22, 08-21). Treat "too many pings" as a tuning request.
-4. Same-ticker alerts in consecutive cycles are not merged (FLUX on 10-02:
+5. Same-ticker alerts in consecutive cycles are not merged (FLUX on 10-02:
    A+ and a headline 20s apart = two toasts). Add a cross-cycle merge window
    if it annoys.
-5. Candidate, not built: Ross's exit tell, the 1-minute MACD turning
+6. Candidate, not built: Ross's exit tell, the 1-minute MACD turning
    negative, as a live feature/alert. Finviz gives 20s snapshots, not 1m
    candles, so it needs 1m bars built from cycles or a data source.
-6. Long-open: Trade Journal attribution — join trades to the grade/rows at
+7. Long-open: Trade Journal attribution — join trades to the grade/rows at
    entry time; more interesting now that grades persist.
 
 **Gotchas before touching things:**
@@ -174,6 +199,29 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-05 (session) — 📐 PULLBACK SETUP (script v10).** The operator
+described a second VWAP edge with three charts (SAIQ 10-05 1m and SDEV 10-02 2m
+on the session line, VEEA 09-14/15 5m on the month line): after a fast run,
+price comes back to VWAP and bounces, the first bounce being the best. Their
+rules: alert at ~5% above the line, exit when it crosses down, either line.
+- **The month line can't be rebuilt from our rows.** Every 📐 signal carries
+  TradingView's month VWAP, so we could check. Our rebuild was within 3% for
+  half the names and 6–37% off for the rest: we only see a ticker while it is
+  up 20%+. The session line is fine (stored `vwap` within ~1% of TradingView's).
+- **Study first** (`apps/api/scripts/research/vwap-pullback/`, exported at
+  06:05 ET in 38 s; 06-12 → 10-05, 18,335 ticker-days). On the session line,
+  touch 1 reaches +10% before a close under the line 26% of the time, touch 2
+  30%, against 5% for any moment near the line. Expectancy with a stop 0.5%
+  under the line: touch 1 −0.2%, touch 2 +0.3% per trade, about break-even.
+  It improves by month: June −0.9%, September +0.6%, October +2.9% (n 24).
+  Pre-market 04:00–07:00 was the worst window. A looser break rule and a
+  bigger arm threshold both made it worse. So it's a heads-up for the
+  operator's discretion, not a mechanical edge, and "first touch is best"
+  didn't hold.
+- **Built as v10 in the same script** (Premium's 2 slots), with the server,
+  📐 tab, Telegram, the replica (`pinesim.PullbackLine`, which the study
+  imports, so the study measures the script itself) and 102 regression checks.
 
 **2026-10-05 (session) — 📐 FIRST LIVE SESSION.** Checked at 04:18 ET:
 health OK, cycles every 20s, 8 Momentum names (SAIQ +274% A+, first 🅰️ at
