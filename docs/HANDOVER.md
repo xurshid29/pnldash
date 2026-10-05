@@ -135,6 +135,15 @@ webhook key; the full URL was given to the operator). Backups:
      (pre-market was the weak spot), on/off Momentum.
    - **Also ~10-19 — the reclaim setup by line:** month vs year (v11 trial).
      The session line was measured and rejected (−1.2%/trade, 37 GOs/day).
+   - **v14 deferred (10-05, operator asked "will it be useful?").** The plan was
+     a true year-to-date line from 60m bars, so 1m and 2m see the same line,
+     plus an optional year-line cap of 3/day. In the first hour on v12
+     (07:36–08:43 ET), 9 of the 10 tickers seen by both alerts agreed within
+     0.2%. Only CTNT disagreed (16.65 vs 32.64), and its year line was 88% above
+     price, so no setup was possible either way. The year-line signals (APUS,
+     AMOD, GOW) agreed. Only ~3 year-line signals came in that hour.
+     **Revisit at the grading:** compare `yvwap` by `tf` for year-line signals,
+     and count year-line signals per ticker per day.
    - Considered and NOT built (10-05): a "tight base on the session VWAP →
      breakout" alert (SDEV 05:00–05:30 ET). Measured: ~38/day, 9% reach +10%
      before the stop, −0.3%/trade (`research/vwap-pullback/base_study.py`).
