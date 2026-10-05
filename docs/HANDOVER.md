@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-05 (last code commit `73aacf4`)
+## START HERE — state at 2026-10-05 (last code commit `e34f892`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every
 20s) sorted by the **A+…D grade**, plus the History, Watchlist and Alerts
