@@ -95,12 +95,20 @@ webhook key; the full URL was given to the operator). Backups:
 `.env.bak-20261003`.
 
 **Open items, ranked:**
-0. **📐 live from Mon 2026-10-05.** No signal had arrived by the end of
-   10-04 (weekend).
-   - **Before the session:** the operator must paste **v9** (📐 tab → Copy
-     Pine script) and **delete + recreate both alerts**. TradingView alerts
-     snapshot the script and settings; v9 adds the `vol`/`run` fields that
-     the strength score needs.
+0. **📐 live since Mon 2026-10-05 04:00 ET.** Webhooks arrive (all HTTP 200,
+   both timeframes, cross-timeframe repeats folded). The operator recreated
+   both alerts on **v9** at ~04:25 ET; the first v9 signal (FRGT READY 04:32,
+   `vol`/`run` present) confirmed it. Signals before that were v8 (no
+   `vol`/`run`; GO strength scored out of 2).
+   - **Watch the 04:00 burst:** the first 13 minutes brought 31 signals (17
+     announced) from 14 tickers, **none on our Momentum list**, so all were
+     silent on the phone. They were runners-list names roughly flat on the
+     day (−2% to +13%) that pass the gainer filter only through the
+     3-session look-back, in thin pre-market (FRGT's READY bar had 0×
+     volume). If the operator finds the dashboard tones/toasts for off-list
+     setups too much, options are (a) off-list setups on the 📐 tab only,
+     with no toast or tone, or (b) a later alert window (e.g. 0700). AIXI
+     10-02 04:06 → 2.26 argues against (b).
    - **First days:** confirm signals arrive (📐 tab, or
      `docker compose … logs api | grep tv-setup`). Answer "why no signal
      here?" with the replica's trace (`pinesim.simulate(..., trace=)`). The
@@ -166,6 +174,13 @@ webhook key; the full URL was given to the operator). Backups:
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-05 (session) — 📐 FIRST LIVE SESSION.** Checked at 04:18 ET:
+health OK, cycles every 20s, 8 Momentum names (SAIQ +274% A+, first 🅰️ at
+04:02). 32 TradingView webhook POSTs since 04:00, all 200 from TradingView's
+IPs; 31 `tv_setup` rows from 14 tickers, 17 announced, 0 on Momentum. Those
+were still v8; the operator recreated both alerts on v9 and FRGT 04:32
+carried `vol`/`run`.
 
 **2026-10-05 — 📐 GO STRENGTH (script v9).** The operator asked how to
 avoid weak GOs (under 10%). Replay: time of day separated best (all 8 unique
