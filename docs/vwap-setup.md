@@ -934,6 +934,13 @@ line). "Win" = +10% before a close under the line.
   the edge.
 - **"The first touch is best" doesn't hold here.** Touch 2 did as well or
   better. Touch 3+ was the weakest, hence 2 per line per day.
+- **The cap was checked again after shipping** (10-05, after SAIQ's early chop
+  used up both of its session-line touches before a winning 05:34 pullback).
+  Two alternatives were tried: not counting closes straight through the line,
+  and allowing up to 4 alerts per line. Together they add ~3 alerts a day, and
+  those averaged −0.45% per trade (stop, +10%; −1.59% with no target). v10's
+  rule (2 touches, throughs counted, 14.5 alerts a day) did as well as or
+  better than every alternative, so it stays.
 - **Exit with a stop just under the line**, not on a 1m close under it. That
   was worth about 0.7 points per trade (touch 1: −0.94% → −0.24%), because a
   breaking bar often closes far under the line.
