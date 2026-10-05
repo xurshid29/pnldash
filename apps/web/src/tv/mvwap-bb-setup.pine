@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v14 (2026-10-05).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v15 (2026-10-05).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Two setups in one script, so the same two watchlist alerts carry both.
@@ -65,7 +65,7 @@ pbArm      = input.float(15.0,  "Armed: a bar high at least % above the line (th
 pbNear     = input.float(5.0,   "PULLBACK: a close back within % above the line", group = "Pullback to VWAP (v10)")
 pbBreak    = input.float(0.0,   "BROKEN: a close at least % under the line (0 = any close under it)", group = "Pullback to VWAP (v10)")
 pbWin      = input.float(10.0,  "HELD: price runs % above the PULLBACK close", group = "Pullback to VWAP (v10)")
-pbMax      = input.int(2,       "Pullbacks per line per day (touches; a close straight through counts)", minval = 1, group = "Pullback to VWAP (v10)")
+pbMax      = input.int(2,       "Stop a line after N failed pullbacks a day (BROKEN or a close straight through)", minval = 1, group = "Pullback to VWAP (v10)")
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
@@ -298,13 +298,19 @@ else
 //   BROKEN    then a close pbBreak% under the line — the operator's exit — or
 //   HELD      a high +pbWin% above the PULLBACK close, whichever comes first;
 //             after pbTimeout bars the pullback is dropped silently.
-// A close straight through the line while armed uses up a touch with no
-// PULLBACK. Re-arming needs a new bar high ≥ pbArm% above the line.
+// A close straight through the line while armed is a touch with no PULLBACK.
+// Re-arming needs a new bar high ≥ pbArm% above the line. v15: the day's cap
+// (pbMax) counts FAILED pullbacks — BROKEN or straight through — not every touch.
+// A line that keeps holding keeps alerting (MI 2026-10-05: six year-line touches,
+// every alerted one HELD, but v14's 2-touch cap blocked 11:44, 12:37 and 12:57);
+// a line that failed twice stops. Four months of session-line data: at least as good
+// on every exit rule, ~2 more alerts a day (docs/vwap-setup.md §13.5).
 type PbLine
     bool  armed    = false
     int   armBar   = na
     float peakPct  = na
     int   touches  = 0
+    int   fails    = 0
     bool  open     = false
     float entry    = na
     int   alertBar = na
@@ -315,7 +321,8 @@ method step(PbLine s, float ln, bool canArm) =>
     if not na(ln) and ln > 0
         if s.open
             if close < ln * (1 - pbBreak / 100)
-                s.open := false
+                s.open  := false
+                s.fails := s.fails + 1
                 ev := 2
             else if high >= s.entry * (1 + pbWin / 100)
                 s.open := false
@@ -334,7 +341,9 @@ method step(PbLine s, float ln, bool canArm) =>
                 if bar_index > s.armBar and close <= ln * (1 + pbNear / 100)
                     s.armed   := false
                     s.touches := s.touches + 1
-                    if ev == 0 and s.touches <= pbMax and close >= ln * (1 - pbBreak / 100)
+                    if close < ln * (1 - pbBreak / 100)
+                        s.fails := s.fails + 1
+                    else if ev == 0 and s.fails < pbMax
                         s.open     := true
                         s.entry    := close
                         s.alertBar := bar_index
@@ -348,12 +357,15 @@ if newDay
     pbS.armed   := false
     pbS.open    := false
     pbS.touches := 0
+    pbS.fails   := 0
     pbM.armed   := false
     pbM.open    := false
     pbM.touches := 0
+    pbM.fails   := 0
     pbY.armed   := false
     pbY.open    := false
     pbY.touches := 0
+    pbY.fails   := 0
 int evS = 0
 int evM = 0
 int evY = 0

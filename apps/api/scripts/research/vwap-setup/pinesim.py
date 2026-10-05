@@ -203,7 +203,8 @@ PB = dict(arm=15.0,        # armed: a bar high at least % above the line (the bi
           near=5.0,        # PULLBACK: a close back within % above the line
           brk=0.0,         # BROKEN: a close at least % under the line
           win=10.0,        # HELD: a high % above the PULLBACK close
-          max_touches=2,   # pullbacks per line per day (a close straight through counts)
+          max_touches=2,   # the day's cap per line (pbMax)…
+          cap_on='failures',  # …counts BROKEN + straight-through pullbacks (v15); 'touches' = every touch (v10–v14)
           timeout=60,      # stop watching a pullback after N bars
           window=(240, 1200))
 
@@ -218,6 +219,7 @@ class PullbackLine:
     def new_day(self):
         self.armed, self.arm_bar, self.peak_pct, self.peak_bar = False, None, None, None
         self.touches, self.open, self.entry, self.alert_bar = 0, False, None, None
+        self.fails = 0   # BROKEN + straight-through touches (cap_on='failures')
 
     def step(self, i, h, c, ln, can_arm=True):
         """Bar index i, high, close, the line → 0 nothing, 1 PULLBACK, 2 BROKEN, 3 HELD."""
@@ -227,6 +229,7 @@ class PullbackLine:
         if self.open:
             if c < ln * (1 - p['brk'] / 100):
                 self.open, ev = False, 2
+                self.fails += 1
             elif h >= self.entry * (1 + p['win'] / 100):
                 self.open, ev = False, 3
             elif i - self.alert_bar >= p['timeout']:
@@ -243,7 +246,12 @@ class PullbackLine:
                 if i > self.arm_bar and c <= ln * (1 + p['near'] / 100):
                     self.armed = False
                     self.touches += 1
-                    if ev == 0 and self.touches <= p['max_touches'] and c >= ln * (1 - p['brk'] / 100):
+                    through = c < ln * (1 - p['brk'] / 100)
+                    allowed = (self.fails < p['max_touches'] if p['cap_on'] == 'failures'
+                               else self.touches <= p['max_touches'])
+                    if through:
+                        self.fails += 1
+                    elif ev == 0 and allowed:
                         self.open, self.entry, self.alert_bar, ev = True, c, i, 1
         return ev
 
@@ -291,13 +299,21 @@ def selftest_pullback():
             1.12, 1.03,                           # back within 5% → PULLBACK #2
             0.98,                                 # close under the line → BROKEN
             1.20, 0.95,                           # re-armed, then straight through: touch 3, no PULLBACK
-            1.25, 1.02,                           # re-armed, back near: touch 4 > max 2 → nothing
+            1.25, 1.02,                           # re-armed, back near: already 2 failures (BROKEN + through) → nothing
             1.30, 1.01]                           # still nothing (touches exhausted for the day)
     bars = [{'t': t0 + dt.timedelta(minutes=k), 'h': c, 'c': c} for k, c in enumerate(path)]
     got = [(e[1], e[3], e[4]) for e in simulate_pullback(bars, {'session': lambda b: 1.00})]
     want = [('PULLBACK', 1, 1.04), ('HELD', 1, 1.16), ('PULLBACK', 2, 1.03), ('BROKEN', 2, 0.98)]
     ok = got == want
     print('pullback state machine:', got, '→', 'OK' if ok else f'UNEXPECTED (want {want})')
+    # v15: held pullbacks don't use up the cap — the third HELD-after-HELD pullback still alerts;
+    # v10–v14 capped every touch, so it stopped after two.
+    held3 = [1.00, 1.20, 1.04, 1.16, 1.04, 1.16, 1.04]
+    hb = [{'t': t0 + dt.timedelta(minutes=k), 'h': c, 'c': c} for k, c in enumerate(held3)]
+    v15 = [e[1] for e in simulate_pullback(hb, {'session': lambda b: 1.00})]
+    v14 = [e[1] for e in simulate_pullback(hb, {'session': lambda b: 1.00}, {'cap_on': 'touches'})]
+    ok_cap = (v15 == ['PULLBACK', 'HELD', 'PULLBACK', 'HELD', 'PULLBACK'] and v14 == ['PULLBACK', 'HELD', 'PULLBACK', 'HELD'])
+    print('cap counts failures (v15) vs touches (v14):', v15, '/', v14, '→', 'OK' if ok_cap else 'UNEXPECTED')
     flat = lambda b: 1.00
     both = simulate_pullback(bars[:6], {'session': flat, 'month': flat})
     three = simulate_pullback(bars[:6], {'session': flat, 'month': lambda b: None, 'year': flat})
@@ -305,7 +321,7 @@ def selftest_pullback():
                and [(e[1], e[2]) for e in three] == [('PULLBACK', 'session+year')])
     print('same event on several lines → one message naming them:', [(e[1], e[2]) for e in both + three], '→',
           'OK' if ok_both else 'UNEXPECTED')
-    return ok and ok_both
+    return ok and ok_both and ok_cap
 
 
 def selftest():

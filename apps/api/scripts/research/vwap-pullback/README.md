@@ -52,7 +52,11 @@ alert). "Win" = +10% before a close under the line.
   or better. Touch 3+ was the weakest, so the script alerts on 2 touches per
   line per day. Not counting closes straight through the line and allowing up
   to 4 alerts per line adds ~3 alerts a day, averaging −0.45% (stop, +10%), so
-  the cap stays.
+  the cap stays. **v15 changed what it counts:** failed pullbacks (BROKEN or
+  straight through) instead of every touch. That was at least as good on every
+  exit rule (stop +10%: −0.06% → +0.00%, 14.5 → 16.3 alerts/day; `--cap 2
+  --cap-on failures` vs `--cap 2 --cap-on touches`). It also stopped cutting off
+  a line that keeps holding (MI 2026-10-05).
 - **A stop just under the line beats waiting for a 1m close under it**, by about
   0.7 points per trade (touch 1: −0.94% → −0.24%). The close of a breaking bar
   is often far under the line.

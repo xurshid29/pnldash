@@ -234,7 +234,9 @@ console.log('Contract — the Pine script still emits what the parser reads');
     '" | yVWAP "', '"year"', 'timeframe.change("M") or firstBar', 'firstBar = na(hlc3[1])',
     // v14: the year line from this year's hourly bars + today's chart bars; merged lines are named together
     'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", yearBefore()', 'timeframe.change("12M")',
-    '"month+year"', 'pbJoin(names, "year")']) {
+    '"month+year"', 'pbJoin(names, "year")',
+    // v15: the day's PULLBACK cap counts failed pullbacks, not every touch
+    's.fails < pbMax', 's.fails := s.fails + 1']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

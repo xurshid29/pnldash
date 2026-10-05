@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v14** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v15** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -918,6 +918,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-05 | v12 | `02f39eb` | Operator: "yearly VWAP is visible only for SAIQ, but not for others". v11's year line was na until the loaded history reached January. TradingView's built-in VWAP also restarts on the first loaded bar, and the script didn't, so the line showed only on thin names whose sparse bars reach back that far (SAIQ 1m yes; VEEA, PCVX 30s no). All three lines now restart on the first loaded bar like the built-in: `ta.vwap(hlc3, timeframe.change(...) or firstBar)`. No other change. |
 | 2026-10-05 | v13 | `b8d338c` | Chart markers only. The year line's FORMING / READY / GO markers are drawn in blue, like its line, so a chart shows which line fired (the operator's AMOD chart had a cluster of unlabeled year-line READYs). No alert logic change, so the alerts don't need recreating. Also answered: `maxCycles` (6) counts per line, so up to 6 month-line and 6 year-line setups per ticker per day; GO isn't capped. |
 | 2026-10-05 | v14 | `73aacf4` | Operator, two findings. **SDEV:** a year-line GO on the 30s chart (line 4.36) never reached us, because the 2m alert's year line was 4.70. **MI:** a 12:40 ET pullback to the year line, after a run to 6.6, then +90%, and the PULLBACK setup didn't watch that line. (MI also wasn't on the TradingView watchlist; the sidebar's "not in your TV list" nudge, shipped the same day, covers that.) Changes: the year line is built from this year's hourly bars (extended hours) up to yesterday plus today's chart bars (`request.security`, §5.2), so every timeframe shares one line. PULLBACK gets the year line (`pbSession` / `pbMonth` / `pbYear`). Lines that fire the same event on one bar are named together (`session+month`, `month+year`, …; the legacy `both` still parses). PULLBACK messages carry `yVWAP`, and `tv_year` mutes any year-only message. The replica's `simulate_pullback` takes any set of lines. Regression: 132 checks. |
+| 2026-10-05 | v15 | (this commit) | Operator: "no PULLBACK around the year VWAP" (MI 21:37, i.e. 12:37 ET, after v14). The replica on MI's bars: the year line had six touches; the two alerted ones (10:19, 10:31) both HELD, 10:52 went straight through, and the cap of 2 touches then blocked 11:44, 12:37 and 12:57, which all held +10%. The cap (`pbMax`, still 2) now counts *failed* pullbacks (BROKEN or straight through) instead of every touch, so a line that keeps holding keeps alerting and a line that failed twice stops. Four months of session-line data: at least as good on every exit rule (stop +10%: −0.06% → +0.00%), 14.5 → 16.3 alerts/day (§13.5). Messages unchanged. Replica: `cap_on='failures'` (default) plus a held-held-held self-test. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -998,7 +999,7 @@ Each line keeps its own state, reset every day.
 | PULLBACK: a close back within % above the line | 5 | the operator |
 | BROKEN: a close at least % under the line | 0 | the operator's exit ("crosses down"); a looser rule wins more often but loses more (§13.5) |
 | HELD: price runs % above the PULLBACK close | 10 | the study's win label; it only closes the setup for grading |
-| Pullbacks per line per day | 2 | the study: touch 3+ was the weakest |
+| Stop a line after N failed pullbacks a day (`pbMax`) | 2 | v15: counts BROKEN and straight-through pullbacks, so a line that keeps holding keeps alerting. v10–v14 counted every touch, which cut off MI's year line on 10-05 after two pullbacks that both HELD. See the table in §13.5 |
 | Stop watching a pullback after N bars | 60 | the study's horizon |
 
 ### 13.4 The message
@@ -1057,6 +1058,17 @@ line). "Win" = +10% before a close under the line.
   those averaged −0.45% per trade (stop, +10%; −1.59% with no target). v10's
   rule (2 touches, throughs counted, 14.5 alerts a day) did as well as or
   better than every alternative, so it stays.
+- **What the daily cap should count (v15).** The same data, all alerts per rule:
+
+  | cap per line per day | alerts/day | avg, stop +10% | avg, stop no target | avg, close-exit +10% |
+  |---|---:|---:|---:|---:|
+  | 2 touches (v10–v14) | 14.5 | −0.06% | −0.17% | −0.73% |
+  | **2 failures (v15)** | 16.3 | **+0.00%** | **−0.15%** | **−0.68%** |
+  | 3 failures | 17.3 | −0.01% | −0.26% | −0.71% |
+  | no cap | 17.9 | −0.08% | −0.36% | −0.76% |
+
+  Counting failures is at least as good on every exit rule, for ~2 more alerts
+  a day. The replica's `cap_on` and the study's `--cap` / `--cap-on` reproduce it.
 - **Exit with a stop just under the line**, not on a 1m close under it. That
   was worth about 0.7 points per trade (touch 1: −0.94% → −0.24%), because a
   breaking bar often closes far under the line.

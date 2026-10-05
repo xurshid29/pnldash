@@ -51,6 +51,8 @@ ap.add_argument('--near', type=float, default=5, help='alert band above the line
 ap.add_argument('--brk', type=float, default=0, help='a close this far under the line breaks the setup, %%')
 ap.add_argument('--grid', action='store_true', help='also sweep --brk and --arm (touch-level summary)')
 ap.add_argument('--list', help="print every setup for a ticker, or 'all'")
+ap.add_argument('--cap', type=int, default=99, help='pullbacks per line per day (99 = uncapped, the default for the touch tables)')
+ap.add_argument('--cap-on', choices=['touches', 'failures'], default='touches', help="what the cap counts: all touches (script v10–v14) or BROKEN + straight-through only")
 args = ap.parse_args()
 PATH, ARM, NEAR, BRK = args.rows, args.arm / 100, args.near / 100, args.brk / 100
 WIN = 0.10
@@ -159,8 +161,8 @@ def run(arm):
 def run_day(key, bars, arm, events, base):
     first_t, prior_max = TD.get(key, (None, None))
     runner = prior_max is not None and prior_max >= 30
-    pl = PullbackLine(dict(arm=arm * 100, near=NEAR * 100, brk=BRK * 100, win=WIN * 100, max_touches=99,
-                           timeout=HORIZON, window=None))
+    pl = PullbackLine(dict(arm=arm * 100, near=NEAR * 100, brk=BRK * 100, win=WIN * 100, max_touches=args.cap,
+                           cap_on=args.cap_on, timeout=HORIZON, window=None))
     ep, open_base, open_side, last_base = None, [], [], -999
     bvols, seen = [], []       # (minute, bar volume) for every bar; (t, o, h, l, c, line) for each bar the setup saw
     prev_vol = prev_t = None

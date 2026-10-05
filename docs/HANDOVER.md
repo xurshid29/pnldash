@@ -125,9 +125,11 @@ strategies/setups". Expect UI tweaks and setup refinements; keep each one
 small, measured where our data allows, and shipped the same day.
 
 **Open items, ranked:**
-0. **📐 v14 (year line from hourly bars; PULLBACK on the year line) — deployed
-   10-05 after the session; the operator must paste v14 and recreate both alerts
-   (1m + 30s).** Check the first messages: `yvwap` should now agree between the 1m
+0. **📐 v15 (PULLBACK cap counts failed pullbacks, not touches) — deployed 10-05
+   after the session, on top of v14 (year line from hourly bars, PULLBACK on the
+   year line); the operator must paste v15 and recreate both alerts (1m + 30s).**
+   Why v15: MI's year line was touched six times; the two alerted pullbacks both
+   HELD, and the v14 2-touch cap then blocked three more that held too. Check the first messages: `yvwap` should now agree between the 1m
    and 30s alerts, and `line year` PULLBACKs should start arriving. Also on
    10-05: the 📐 sidebar flags today's names missing from the TradingView list
    (MI case). Watchlist alerts follow the list, so Copy + add is enough.
