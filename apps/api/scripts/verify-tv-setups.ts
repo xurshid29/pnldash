@@ -208,7 +208,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
   for (const part of ['" | mVWAP "', '" | basis "', '" | day high "', '" | ah "', '" | tf "', '" | path "', '"base"', '"fast"',
     '" | via "', '"reclaim"', '"cross"', '" | vol "', '" | run "', '"FORMING"', '"READY"', '"GO"',
     '"PULLBACK"', '"BROKEN"', '"HELD"', '" | sVWAP "', '" | line "', '" | touch "', '" | peak +"', '"session"', '"month"', '"both"',
-    '" | yVWAP "', '"year"', 'timeframe.change("12M")']) {
+    '" | yVWAP "', '"year"', 'timeframe.change("12M") or firstBar', 'timeframe.change("M") or firstBar', 'firstBar = na(hlc3[1])']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

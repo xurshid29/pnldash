@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v11 (2026-10-05).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v12 (2026-10-05).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Two setups in one script, so the same two watchlist alerts carry both.
@@ -70,9 +70,15 @@ pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval 
 // (v11) VWAP anchor Year — TradingView's own VWAP uses timeframe.change("12M") —
 // and (v10, PULLBACK only) VWAP anchor Session, which resets at
 // timeframe.change("D"), the 04:00 ET pre-market open on an Extended chart.
-mvwap  = ta.vwap(hlc3, timeframe.change("M"))
-yvwap  = ta.vwap(hlc3, timeframe.change("12M"))
-svwap  = ta.vwap(hlc3, timeframe.change("D"))
+// Each line also restarts on the first loaded bar, exactly like TradingView's
+// built-in VWAP (`if na(src[1]) … isNewPeriod := true`). Without that the line is
+// na until its anchor shows up in the loaded history: v11's year line was blank on
+// every liquid name (VEEA, PCVX on 30s, 2026-10-05; a 1m chart holds weeks, not a
+// year), and the month line could go blank late in a month on short timeframes.
+firstBar = na(hlc3[1])
+mvwap  = ta.vwap(hlc3, timeframe.change("M") or firstBar)
+yvwap  = ta.vwap(hlc3, timeframe.change("12M") or firstBar)
+svwap  = ta.vwap(hlc3, timeframe.change("D") or firstBar)
 basis  = ta.sma(close, 20)
 // Strength inputs sent with every signal (v9): the signal bar's volume vs the
 // average of the previous 20 bars, and the run-up over the previous 10 bars.

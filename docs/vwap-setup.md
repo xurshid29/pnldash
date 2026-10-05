@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v11** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v12** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
@@ -285,13 +285,23 @@ doesn't reset the year one). The same stage on one bar from both lines is one
 message with `line both`.
 
 **Caveat — the year line is only as long as the loaded history.** A 1m chart
-holds roughly 3–4 weeks of extended-hours bars and a 2m chart about twice that.
-So on intraday charts the "year" VWAP — the script's and TradingView's built-in
-one alike — starts at the first loaded bar, not at January 1. The 1m and 2m
-alerts may therefore see different year lines. Each message carries `yVWAP`,
-so the alert engine's value can be checked against the operator's chart. If
-it drifts, build the year-to-date part from 60m bars (`request.security`) plus
-today's part from the chart's bars, like the month-line fix in §5.7.
+of a liquid name holds roughly 3–4 weeks of extended-hours bars, and a 2m chart
+about twice that. Thin names reach further back, because TradingView only makes
+a bar when something trades. So on intraday charts the "year" VWAP — the
+script's and TradingView's built-in one alike — usually starts at the first
+loaded bar, not at January 1, and the 1m and 2m alerts may see different year
+lines. Each message carries `yVWAP`, so the alert engine's value can be checked
+against the operator's chart. If it drifts, build the year-to-date part from
+60m or daily bars (`request.security`) plus today's part from the chart's bars,
+like the month-line fix in §5.7.
+
+**Every line restarts on the first loaded bar (v12).** This is exactly what
+TradingView's built-in VWAP does (`if na(src[1]) … isNewPeriod := true`):
+`ta.vwap(hlc3, timeframe.change("12M") or firstBar)`. v11 lacked it. Its year
+line was then na until the chart's history reached January, so it showed only
+on thin names. On 2026-10-05 SAIQ (1m) had the line and VEEA and PCVX (30s) did
+not, and no year-line setup could fire on a liquid name. The same reset keeps
+the month line from going blank late in a month on short timeframes.
 
 ### 5.3 The top-gainer gate (today, or a recent session — v2)
 
@@ -469,8 +479,10 @@ parser relies on are gone. The parser also accepts:
   once-per-bar-close alerts, nothing fires on an intrabar wiggle.
 - **History limits are a known risk.** A 1m chart with extended hours has ~960
   bars a day and 30s has ~1,920. Late in a month the chart, and possibly the
-  alert engine, may not hold bars back to the 1st; the month VWAP then starts
-  at the first loaded bar and drifts off the built-in line. **Check:** the
+  alert engine, may not hold bars back to the 1st. The month VWAP then starts at
+  the first loaded bar, as the built-in one does since v12 (§5.2; before v12
+  the script's line was na there), so it may drift from the operator's line if
+  the alert engine loads less history than their chart. **Check:** the
   script's yellow line must sit exactly on the built-in "VWAP Month". **Fix if
   it drifts:** compute the month-to-date part from a 60m
   `request.security` and only today's part on the chart timeframe.
@@ -855,6 +867,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-05 | v9 | `bf8eff4` | Operator: "how not to enter the weak GOs (under 10%)?" No signal logic change. Every message now carries `vol <N>x` (signal-bar volume ÷ previous-20-bar average) and `run <±N>%` (close vs 10 bars earlier). The server scores each GO 0–4 (morning 04:00–10:30 ET, run-up ≥5%, volume ≥2×, on Momentum) and shows 💪N/M on the 📐 and Alerts tabs, in Telegram and in the notification; all of it is stored for grading (§7.5). A tag, not a filter, until live data says which checks matter. Regression: 71 checks. |
 | 2026-10-05 | v10 | `9d3a4f9` | Operator: a second VWAP setup — after a fast run, price comes back down to the session or month VWAP and bounces; alert at ~5% above the line "so I can be ready", exit when it crosses down. Added to the same script (Premium's 2 alert slots are taken) as the PULLBACK setup (§13): a session VWAP line (`ta.vwap(hlc3, timeframe.change("D"))`, purple), per-line state, messages PULLBACK / BROKEN / HELD with `sVWAP`, `line`, `touch`, `peak`; new input group "Pullback to VWAP (v10)" (arm 15, near 5, break 0, held 10, 2 per line per day, 60-bar timeout). The reclaim setup is unchanged. Server, 📐 tab (one row per ticker and setup, S/M line and #touch tags), Telegram (outcomes always silent), the replica (`PullbackLine`, `selftest_pullback`) and the study (`research/vwap-pullback/`) ship with it. Regression: 102 checks. |
 | 2026-10-05 | v11 | `50280d1` | Operator: "could we do the same with other VWAP anchors, such as session and yearly?" The session line was measured first: the script's own reclaim logic on our stored session VWAP over four months fired GO 37 times a day, and the average trade was −1.2% (§11 item 8), so it was not added. The year line can't be measured from our data. It's added as a live trial: `yvwap = ta.vwap(hlc3, timeframe.change("12M"))` (blue), new input `rcLines` (Month + Year by default), the reclaim conditions moved into `reclaimConds(line)` and the stages into a per-line `RcLine`. The month line's logic is unchanged. Messages add `yVWAP` and `line month|year|both`; `basis %` is against the setup's line. The server stores `yvwap` / `ypx_pct`; the 📐 tab gets a "year" row and a Y / M+Y tag; Telegram mute `tv_year`. Replica: `simulate_lines()` plus a two-line self-test. Regression: 118 checks. |
+| 2026-10-05 | v12 | (this commit) | Operator: "yearly VWAP is visible only for SAIQ, but not for others". v11's year line was na until the loaded history reached January. TradingView's built-in VWAP also restarts on the first loaded bar, and the script didn't, so the line showed only on thin names whose sparse bars reach back that far (SAIQ 1m yes; VEEA, PCVX 30s no). All three lines now restart on the first loaded bar like the built-in: `ta.vwap(hlc3, timeframe.change(...) or firstBar)`. No other change. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
