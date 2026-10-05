@@ -47,8 +47,9 @@ parking), disk 26%.
    `news` (phone).
 3. **UI state:** no hover tooltips anywhere (global `.ant-tooltip` hide in
    `index.css` + native `title=` removed — **don't add hover hints back**);
-   no left rail (Watchlist is a tab; the rail only renders if Ignition or
-   Live Ticks is re-enabled); Momentum columns: Ticker · Grade · Heat · Chg% ·
+   the left rail is back (10-05) with the 📐 setups list, which replaced the
+   📐 tab (Ignition/Live Ticks stack under it if re-enabled; Watchlist stays a
+   tab); Momentum columns: Ticker · Grade · Heat · Chg% ·
    Float · Volume · RVol 1m · RVol 5m · RVol Day · Price · MCap · Country ·
    Appeared.
 4. **CI rollout runs `dbmate up` BEFORE `docker compose up -d`** (fixed
@@ -149,10 +150,10 @@ webhook key; the full URL was given to the operator). Backups:
      day (−2% to +13%) that pass the gainer filter only through the
      3-session look-back, in thin pre-market (FRGT's READY bar had 0×
      volume). If the operator finds the dashboard tones/toasts for off-list
-     setups too much, options are (a) off-list setups on the 📐 tab only,
+     setups too much, options are (a) off-list setups in the 📐 sidebar only,
      with no toast or tone, or (b) a later alert window (e.g. 0700). AIXI
      10-02 04:06 → 2.26 argues against (b).
-   - **First days:** confirm signals arrive (📐 tab, or
+   - **First days:** confirm signals arrive (📐 sidebar, or
      `docker compose … logs api | grep tv-setup`). Answer "why no signal
      here?" with the replica's trace (`pinesim.simulate(..., trace=)`). The
      gainer filter was the cause twice (AMOD after hours, AIXI third

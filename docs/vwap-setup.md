@@ -12,7 +12,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v13** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
-| Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
+| Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
 | First live session | Mon 2026-10-05 |
 | Grade it | ~2026-10-17 (the "Grading plan" section below has the SQL) |
 | Status | **The reclaim edge is unmeasured** — the evidence is six hand-picked winners. The PULLBACK setup's session-line version measured about break-even on four months of our data (§13.5) |
@@ -220,7 +220,7 @@ of the grading plan (§9).
 
 ## 5. The Pine script (`apps/web/src/tv/mvwap-bb-setup.pine`)
 
-The file in the repo is the only copy. The 📐 tab's **Copy Pine script** button
+The file in the repo is the only copy. The 📐 sidebar's **⋯ → Copy Pine script** item
 serves exactly that file (a Vite `?raw` import), so after a deploy the button
 always hands out the latest version. The excerpts below explain it; when they
 disagree with the file, the file wins.
@@ -509,7 +509,7 @@ examples (failures too) while they are available. See the folder's README.
 
 ### 5.9 Other timeframes (30s, 5m, …)
 
-The script runs on any timeframe, and the webhook and the 📐 tab label any
+The script runs on any timeframe, and the webhook and the 📐 sidebar label any
 interval ("30s", "5m"). Nothing is tied to 1m/2m, but the setup changes with
 the bar size, because these are counted in **bars**, not minutes:
 - the BB basis (20 bars: 10 min on 30s, 20 on 1m, 40 on 2m, 100 on 5m);
@@ -629,17 +629,24 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   `TV_SETUP.offscreen_silent` in `tv-setups.ts`).
 - **Dashboard sound and toast:** priority setups get the stage sounds and a
   gold-edged 20 s toast. Off-list ones get a soft single tone and an 8 s toast.
-- **📐 tab:** tickers on Momentum *right now* sort first with ⭐; the rest
-  are dimmed. The header counts both.
+- **📐 sidebar:** tickers on Momentum *right now* sort first with ⭐; the rest
+  are dimmed.
 - **Alerts tab:** ⭐📐 marks a priority setup.
 
-- **📐 VWAP setups tab** (next to Momentum): one row per ticker with today's
-  stage trail. "→" means the setup advanced, "·" means it broke and re-armed.
-  Repeats from another timeframe are dimmed, and a cyan **fast** tag marks the
-  fast-approach path. It also shows the latest signal's
-  price and levels, "Since" (live Momentum price vs the signal; "off screen"
-  when we have no row), and the current change and grade. Header buttons: Copy
-  list, Download .txt, Copy Pine script, How to.
+- **📐 setups sidebar** (the left rail, beside Momentum, since 2026-10-05;
+  it replaced the 📐 tab). There's one row per ticker with its *current* state:
+  - the stage pill with its line (S session / M month / Y year) and touch #;
+  - 💪 strength on a GO, and how long ago it fired;
+  - the distance to the line for a setup still in play, or "since" (live price
+    vs the signal) once it's resolved;
+  - the current change and grade.
+
+  It has two sections. **Live** holds FORMING/READY under 30 min old, a GO
+  under 15 min, and a PULLBACK with no BROKEN/HELD yet (under 60 min). Everything
+  else is **Earlier today**, dimmed and collapsible. The 1m and 2m copies of a
+  stage merge into one event, tagged "1m+2m". A click selects the ticker and
+  opens its day trail. The ⋯ menu has Copy list, Download .txt, Copy Pine
+  script and How to. `components/screener/TvSetupsSidebar.tsx`.
 - **Toast + sound + browser notification** the moment the webhook lands:
   - GO: the bright pair (same as 🅰️ A+)
   - READY: a rising triple
@@ -669,7 +676,7 @@ is scored on four checks (`goStrength` in `tv-setups.ts`, knobs in `TV_SETUP`):
 | volume | GO-bar volume ≥2× the previous-20-bar average (`vol`) | the classic breakout confirmation; NIVF 09-30 (big spike, +30%) vs 10-01 (tiny, ~9%). **Unvalidated:** the replay has no pre-market volume |
 | on Momentum | the ticker is on our Momentum list (⭐) | the operator's priority (§7.4) |
 
-It shows as **💪3/4** next to GO in the 📐 tab and the Alerts tab, with the
+It shows as **💪3/4** next to GO in the 📐 sidebar and the Alerts tab, with the
 checks spelled out under "Latest signal". Telegram adds a "💪 GO strength
 3/4 · morning ✓ · run-up +8.1% ✓ · volume 3.2× ✓ · on Momentum ✗" line, and
 the browser notification adds "strength 3/4". A v8 message has no
@@ -696,7 +703,7 @@ no new high within ~3–5 bars. Weak GOs stall at once.
 | `apps/api/src/services/telegram.ts` | mute slugs `tv_setup` / `tv_forming` / `tv_ready` / `tv_go` / `tv_pullback` / `tv_broken` / `tv_held` / `tv_year` |
 | `apps/api/scripts/verify-tv-setups.ts` | regression: 118 checks incl. the Pine ↔ parser contract (both setups, both reclaim lines) |
 | `apps/api/scripts/research/vwap-pullback/` | the PULLBACK study on our own data (§13.5) |
-| `apps/web/src/components/screener/TvSetupsPanel.tsx` | the 📐 tab |
+| `apps/web/src/components/screener/TvSetupsSidebar.tsx` | the 📐 setups sidebar in the left rail (replaced the 📐 tab, `TvSetupsPanel.tsx`, on 2026-10-05) |
 | `apps/web/src/components/common/TvStageTag.tsx` | stage pill, level text, timeframe labels |
 | `apps/web/src/hooks/useScreenerStream.ts` | merges SSE `alert` events into the payload |
 | `apps/web/src/hooks/useScreenerAlerts.ts` | stage sounds + notification text |
@@ -785,7 +792,7 @@ Also ask the operator to import a fresh IBKR `.tlg`. The journal stops at
 2. If the alert message changed: update `parseTvMessage`, extend
    `verify-tv-setups.ts`, and run it.
 3. `npm run build --workspace=apps/web` (plus `npx tsc --noEmit` in `apps/api`
-   if the server changed), then commit. CI deploys, and the 📐 tab's Copy
+   if the server changed), then commit. CI deploys, and the 📐 sidebar's Copy
    button now serves the new version.
 4. In TradingView: paste the new version into the Pine Editor → Save, then
    **delete and recreate the watchlist alert** (alerts keep the old script
@@ -847,7 +854,7 @@ Ordered roughly by expected value; most should wait for the first grading.
    FORMING → READY → GO in quick succession proves noisy (the same open item as
    the opportunity alerts' cross-cycle merge).
 12. **"Since" for off-screen names** from Yahoo prices, and outcome columns on
-    the 📐 tab once grading exists.
+    the 📐 sidebar once grading exists.
 13. **Webhook hardening:** TradingView publishes its webhook source IPs, so an
     nginx allowlist on `/api/tv/webhook` would make a leaked key useless from
     elsewhere.
@@ -919,8 +926,8 @@ The operator's examples (screenshots):
   - On the dashboard, a PULLBACK on a Momentum name plays the READY triple tone.
   - Mutes: `ALERTS_DISABLED` `tv_pullback` / `tv_broken` / `tv_held` (or
     `tv_setup` for all 📐).
-  - The 📐 tab shows one row per ticker and setup. A pullback row's stages
-    carry the line (S purple / M yellow / S+M) and the touch number.
+  - The 📐 sidebar shows one row per ticker, with its current stage carrying
+    the line (S purple / M yellow / S+M) and the touch number.
 
 ### 13.3 The rules and inputs (group "Pullback to VWAP (v10)")
 

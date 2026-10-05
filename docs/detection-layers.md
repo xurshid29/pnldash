@@ -529,7 +529,7 @@ bars carry zero volume), so a Pine v6 script
 (`apps/web/src/tv/mvwap-bb-setup.pine`, v8) runs as two TradingView watchlist
 alerts (1m and 2m) and posts FORMING → READY → GO to `POST /api/tv/webhook`. Each signal is a
 `tier_events` row (tier `alert`, event `tv_setup`), an SSE `alert` event
-(toast + sound), a 📐 row badge, a row in the 📐 VWAP setups tab, and a
+(toast + sound), a 📐 row badge, a row in the 📐 setups sidebar, and a
 Telegram message (`ALERTS_DISABLED` `tv_setup` / `tv_forming` / `tv_ready` /
 `tv_go`). The edge is unmeasured so far: grade it after ~2 weeks.
 
