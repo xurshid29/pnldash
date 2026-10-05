@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-05 (last code commit `50280d1`)
+## START HERE — state at 2026-10-05 (last code commit `02f39eb`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every
 20s) sorted by the **A+…D grade**, plus the History, Watchlist and Alerts
@@ -114,8 +114,11 @@ webhook key; the full URL was given to the operator). Backups:
 `.env.bak-20261003`.
 
 **Open items, ranked:**
-0. **📐 v11 (year line) — deployed 10-05 07:18 ET (the operator asked for it
-   mid-session); the operator must switch again.** Paste v11, Save, delete and recreate both alerts. Check the
+0. **📐 v12 (year line fixed) — deployed 10-05 07:29 ET; the operator must
+   switch again.** v11 (07:18 ET) left the year line blank on liquid names: its
+   VWAP waited for a January bar in the loaded history. v12 restarts every line on
+   the first loaded bar, like the built-in VWAP. Paste v12, Save, delete and
+   recreate both alerts. Check the
    blue yVWAP line sits on their "VWAP Year" on BOTH 1m and 2m (intraday
    history doesn't reach Jan 1, so the "year" line starts at the first loaded
    bar — `docs/vwap-setup.md` §5.2). Compare the `yvwap` in the first year-line
