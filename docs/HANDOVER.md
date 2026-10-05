@@ -344,6 +344,11 @@ dashboard toast and sound), 168 timeframe copies logged.
   PULLBACK counts per line; a line already announced in another
   combination stays logged. Replayed on 10-05: 169 → 174, all five
   extra on ⭐ names. 164 checks.
+- **Decided, keep as-is (operator, 10-05):** the Pine alerts keep sending
+  every stage. Filtering stays on our side, because BROKEN/HELD are the
+  only month/year-line outcome data and they close pullbacks in the
+  sidebar. Quiet FORMING rows stay visible in the sidebar; hiding them
+  was offered and declined for now.
 
 **2026-10-05 (afternoon) — 📐 v12 → v15, the 📐 sidebar, 1m + 30s alerts.**
 - **v12 (07:29 ET).** v11's year line was blank on liquid names:
