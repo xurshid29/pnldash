@@ -107,8 +107,6 @@ function hhmm(ms: number): string {
   return new Date(ms).toLocaleTimeString('en-GB', { timeZone: LOCAL_TZ, hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
-const STAGE_ORDER: Record<string, number> = { go: 0, ready: 1, pullback: 1, forming: 2, held: 3, broken: 3 };
-
 const HOW_TO = (
   <div style={{ fontSize: 13, lineHeight: 1.6 }}>
     <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month”, its purple line on your “VWAP Session” and its blue line on your “VWAP Year”.</div>
@@ -122,9 +120,10 @@ const HOW_TO = (
 // 📐 setups in the left rail (operator, 2026-10-05: "organize this list … move
 // it to the sidebar"). One row per ticker with its CURRENT state — the stage,
 // its line (S session / M month / Y year), touch #, age and the distance to
-// the line — live setups first (⭐ Momentum names on top), the rest under
-// "Earlier today". The 1m and 2m alerts' copies merge into one event. A click
-// selects the ticker and opens its day trail. The full log stays on the Alerts tab.
+// the line — live setups first, the rest under "Earlier today", each section
+// newest first (operator: order by alert time; ⭐ still marks Momentum names).
+// The 1m and 2m alerts' copies merge into one event. A click selects the
+// ticker and opens its day trail. The full log stays on the Alerts tab.
 export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   const { message } = App.useApp();
   const { selected, setSelected } = useSelection();
@@ -144,12 +143,8 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
 
   const rowByTicker = useMemo(() => new Map((payload?.rows ?? []).map((r) => [r.ticker, r])), [payload]);
   const cards = useMemo(() => buildCards(alerts, now), [alerts, now]);
-  const onList = (c: TickerCard) => (rowByTicker.has(c.ticker) ? 0 : 1);
-  const live = cards.filter((c) => c.live)
-    .sort((x, y) => onList(x) - onList(y) || STAGE_ORDER[x.current.setup.stage] - STAGE_ORDER[y.current.setup.stage]
-      || y.current.at - x.current.at);
-  const earlier = cards.filter((c) => !c.live)
-    .sort((x, y) => onList(x) - onList(y) || y.current.at - x.current.at);
+  const live = cards.filter((c) => c.live).sort((x, y) => y.current.at - x.current.at);
+  const earlier = cards.filter((c) => !c.live).sort((x, y) => y.current.at - x.current.at);
 
   const toggleEarlier = () => setShowEarlier((v) => {
     try { localStorage.setItem('tvSidebar.earlier', v ? '0' : '1'); } catch { /* private mode */ }
@@ -224,13 +219,14 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           {expanded ? <CaretDownOutlined style={{ fontSize: 9, color: '#8c8c8c' }} /> : <CaretRightOutlined style={{ fontSize: 9, color: '#595959' }} />}
+          <TickerLinks ticker={c.ticker} />
           <TickerLink ticker={c.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
           {r && <span style={{ color: '#fadb14', fontSize: 11 }}>⭐</span>}
           <TvStageTag stage={s.stage} dim={!e.notified} path={s.path} line={s.line} touch={s.touch} />
           {s.strength && <StrengthTag st={s.strength} />}
           <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{age(now - e.at)}</Text>
         </div>
-        <div style={{ fontSize: 11, color: '#8c8c8c', paddingLeft: 15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        <div style={{ fontSize: 11, color: '#8c8c8c', paddingLeft: 59, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
           {resolved
             ? (since != null
               ? <span style={{ color: since >= 0 ? '#52c41a' : '#ff4d4f' }}>since {since >= 0 ? '+' : ''}{since.toFixed(1)}%</span>
@@ -240,7 +236,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           {e.tfs.length > 0 && <> · {[...e.tfs].sort(byTf).map(fmtTf).join('+')}</>}
         </div>
         {expanded && (
-          <div style={{ paddingLeft: 15, paddingTop: 4, fontSize: 11 }} onClick={(ev) => ev.stopPropagation()}>
+          <div style={{ paddingLeft: 59, paddingTop: 4, fontSize: 11 }} onClick={(ev) => ev.stopPropagation()}>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
               {c.events.map((x) => (
                 <span key={x.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
@@ -253,7 +249,6 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
               {fmtPrice(e.price)} · {tvLevelsText(s)}
               {s.day_gain != null && <> · day high {s.day_gain >= 0 ? '+' : '−'}{Math.abs(Math.round(s.day_gain))}%</>}
             </div>
-            <div style={{ marginTop: 3 }}><TickerLinks ticker={c.ticker} /></div>
           </div>
         )}
       </div>

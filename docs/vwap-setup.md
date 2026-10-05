@@ -629,8 +629,9 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   `TV_SETUP.offscreen_silent` in `tv-setups.ts`).
 - **Dashboard sound and toast:** priority setups get the stage sounds and a
   gold-edged 20 s toast. Off-list ones get a soft single tone and an 8 s toast.
-- **📐 sidebar:** tickers on Momentum *right now* sort first with ⭐; the rest
-  are dimmed.
+- **📐 sidebar:** ⭐ marks tickers on Momentum *right now*; off-list rows are
+  dimmed. Each section is sorted newest first (the operator asked on 10-05 to
+  order by alert time, so ⭐ names no longer jump the list).
 - **Alerts tab:** ⭐📐 marks a priority setup.
 
 - **📐 setups sidebar** (the left rail, beside Momentum, since 2026-10-05;
@@ -641,12 +642,13 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
     vs the signal) once it's resolved;
   - the current change and grade.
 
-  It has two sections. **Live** holds FORMING/READY under 30 min old, a GO
-  under 15 min, and a PULLBACK with no BROKEN/HELD yet (under 60 min). Everything
-  else is **Earlier today**, dimmed and collapsible. The 1m and 2m copies of a
-  stage merge into one event, tagged "1m+2m". A click selects the ticker and
-  opens its day trail. The ⋯ menu has Copy list, Download .txt, Copy Pine
-  script and How to. `components/screener/TvSetupsSidebar.tsx`.
+  It has two sections, both newest first. **Live** holds FORMING/READY under
+  30 min old, a GO under 15 min, and a PULLBACK with no BROKEN/HELD yet (under
+  60 min). Everything else is **Earlier today**, dimmed and collapsible. Each
+  row starts with the Finviz and TradingView buttons, then the ticker. The 1m
+  and 2m copies of a stage merge into one event, tagged "1m+2m". A click selects
+  the ticker and opens its day trail. The ⋯ menu has Copy list, Download .txt,
+  Copy Pine script and How to. `components/screener/TvSetupsSidebar.tsx`.
 - **Toast + sound + browser notification** the moment the webhook lands:
   - GO: the bright pair (same as 🅰️ A+)
   - READY: a rising triple

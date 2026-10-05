@@ -70,8 +70,9 @@ parking), disk 26%.
      `alert`, event `tv_setup`), an SSE `alert` event, the **📐 VWAP setups**
      tab and Telegram (`ALERTS_DISABLED` `tv_setup` / `tv_forming` /
      `tv_ready` / `tv_go`).
-   - **Priority (10-04):** a ticker on our Momentum list gets ⭐, a buzzing
-     push and sorts first; off-list ones are silent and dimmed.
+   - **Priority (10-04):** a ticker on our Momentum list gets ⭐ and a buzzing
+     push; off-list ones are silent and dimmed. The 📐 sidebar (left rail,
+     10-05) sorts by alert time, newest first, as the operator asked.
    - **GO strength (10-05):** 💪0–4 = morning 04:00–10:30 ET, run-up ≥5%,
      GO-bar volume ≥2×, on Momentum. A tag, not a filter.
    - **Offline replay:** `apps/api/scripts/research/vwap-setup/`
