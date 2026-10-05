@@ -1,4 +1,5 @@
-"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine (script v8 = v7 logic, clearer setting names).
+"""Offline replica of apps/web/src/tv/mvwap-bb-setup.pine — the reclaim setup (v9 logic = v7 + message
+fields) in simulate(), and the PULLBACK setup (script v10) in PullbackLine / simulate_pullback().
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -179,6 +180,112 @@ def simulate(bars, mvwap_of, params=None, start=None, end=None, trace=None):
     return [e for e in fired if (start is None or e[0] >= start) and (end is None or e[0] <= end)]
 
 
+# ── PULLBACK setup (script v10) ────────────────────────────────────────────────
+# Inputs, same meaning and defaults as the script's "Pullback to VWAP (v10)" group.
+PB = dict(arm=15.0,        # armed: a bar high at least % above the line (the big move)
+          near=5.0,        # PULLBACK: a close back within % above the line
+          brk=0.0,         # BROKEN: a close at least % under the line
+          win=10.0,        # HELD: a high % above the PULLBACK close
+          max_touches=2,   # pullbacks per line per day (a close straight through counts)
+          timeout=60,      # stop watching a pullback after N bars
+          window=(240, 1200))
+
+
+class PullbackLine:
+    """One line's state — the script's `PbLine` and `method step`, bar for bar."""
+
+    def __init__(self, params=None):
+        self.p = {**PB, **(params or {})}
+        self.new_day()
+
+    def new_day(self):
+        self.armed, self.arm_bar, self.peak_pct, self.peak_bar = False, None, None, None
+        self.touches, self.open, self.entry, self.alert_bar = 0, False, None, None
+
+    def step(self, i, h, c, ln, can_arm=True):
+        """Bar index i, high, close, the line → 0 nothing, 1 PULLBACK, 2 BROKEN, 3 HELD."""
+        p, ev = self.p, 0
+        if ln is None or ln <= 0:
+            return 0
+        if self.open:
+            if c < ln * (1 - p['brk'] / 100):
+                self.open, ev = False, 2
+            elif h >= self.entry * (1 + p['win'] / 100):
+                self.open, ev = False, 3
+            elif i - self.alert_bar >= p['timeout']:
+                self.open = False
+        if not self.open:
+            stretch = (h / ln - 1) * 100
+            if not self.armed:
+                if can_arm and stretch >= p['arm']:
+                    self.armed, self.arm_bar, self.peak_pct, self.peak_bar = True, i, stretch, i
+            else:
+                if stretch > self.peak_pct:       # replica-only: peak_bar (the script keeps just the %)
+                    self.peak_bar = i
+                self.peak_pct = max(self.peak_pct, stretch)
+                if i > self.arm_bar and c <= ln * (1 + p['near'] / 100):
+                    self.armed = False
+                    self.touches += 1
+                    if ev == 0 and self.touches <= p['max_touches'] and c >= ln * (1 - p['brk'] / 100):
+                        self.open, self.entry, self.alert_bar, ev = True, c, i, 1
+        return ev
+
+
+def simulate_pullback(bars, session_of, month_of, params=None, lines='both', gainer_of=None):
+    """Both lines of the PULLBACK setup over bars (dicts with t, h, c). session_of / month_of(bar) → the
+    line or None; gainer_of(bar) → bool (default: always a gainer). Returns the script's messages:
+    (time, PULLBACK|BROKEN|HELD, line session|month|both, touch, close, line value, % vs line, peak %)."""
+    p = {**PB, **(params or {})}
+    sl, ml = PullbackLine(p), PullbackLine(p)
+    out, day = [], None
+    names = {1: 'PULLBACK', 2: 'BROKEN', 3: 'HELD'}
+    for i, b in enumerate(bars):
+        t = b['t']
+        if t.date() != day:
+            day = t.date()
+            sl.new_day(); ml.new_day()
+        m = t.hour * 60 + t.minute
+        if p['window'] is not None and not (p['window'][0] <= m < p['window'][1]):
+            continue
+        ok = True if gainer_of is None else gainer_of(b)
+        sv, mv = session_of(b), month_of(b)
+        ev_s = sl.step(i, b['h'], b['c'], sv, ok) if lines != 'month' else 0
+        ev_m = ml.step(i, b['h'], b['c'], mv, ok) if lines != 'session' else 0
+        pct = lambda ln: (b['c'] / ln - 1) * 100 if ln else None
+        if ev_s and ev_s == ev_m:
+            out.append((t, names[ev_s], 'both', min(sl.touches, ml.touches), b['c'], sv, pct(sv),
+                        max(sl.peak_pct, ml.peak_pct) if ev_s == 1 else None))
+            continue
+        if ev_s:
+            out.append((t, names[ev_s], 'session', sl.touches, b['c'], sv, pct(sv), sl.peak_pct if ev_s == 1 else None))
+        if ev_m:
+            out.append((t, names[ev_m], 'month', ml.touches, b['c'], mv, pct(mv), ml.peak_pct if ev_m == 1 else None))
+    return out
+
+
+def selftest_pullback():
+    """Synthetic check of the PULLBACK state machine against a flat line at 1.00."""
+    import datetime as dt
+    t0 = dt.datetime(2026, 10, 5, 9, 30, tzinfo=ET)
+    path = [1.00, 1.00, 1.20, 1.15, 1.10, 1.04,   # run +20% (armed), back within 5% → PULLBACK #1
+            1.08, 1.16,                           # +11.5% from 1.04 → HELD, and re-armed (16% above; an exact
+                                                  # 15% computes as 14.999…% in floating point, in Pine too)
+            1.12, 1.03,                           # back within 5% → PULLBACK #2
+            0.98,                                 # close under the line → BROKEN
+            1.20, 0.95,                           # re-armed, then straight through: touch 3, no PULLBACK
+            1.25, 1.02,                           # re-armed, back near: touch 4 > max 2 → nothing
+            1.30, 1.01]                           # still nothing (touches exhausted for the day)
+    bars = [{'t': t0 + dt.timedelta(minutes=k), 'h': c, 'c': c} for k, c in enumerate(path)]
+    got = [(e[1], e[3], e[4]) for e in simulate_pullback(bars, lambda b: 1.00, lambda b: None)]
+    want = [('PULLBACK', 1, 1.04), ('HELD', 1, 1.16), ('PULLBACK', 2, 1.03), ('BROKEN', 2, 0.98)]
+    ok = got == want
+    print('pullback state machine:', got, '→', 'OK' if ok else f'UNEXPECTED (want {want})')
+    both = simulate_pullback(bars[:6], lambda b: 1.00, lambda b: 1.00)
+    ok_both = [(e[1], e[2]) for e in both] == [('PULLBACK', 'both')]
+    print('same event on both lines → one "both" message:', [(e[1], e[2]) for e in both], '→', 'OK' if ok_both else 'UNEXPECTED')
+    return ok and ok_both
+
+
 def selftest():
     """Synthetic check of the GO rules (run: python3 pinesim.py).
     Crash: a month-start line built on thin volume collapses under a flat basis on one
@@ -213,4 +320,4 @@ def selftest():
 
 
 if __name__ == '__main__':
-    raise SystemExit(0 if selftest() else 1)
+    raise SystemExit(0 if (selftest() & selftest_pullback()) else 1)

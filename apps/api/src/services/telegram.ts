@@ -39,7 +39,10 @@ export type AlertComponent =
   | 'tv_setup'      // 📐 TradingView VWAP setup, every stage (tv-setups.ts)
   | 'tv_forming'    // 📐 … only the FORMING stage
   | 'tv_ready'      // 📐 … only the READY stage
-  | 'tv_go';        // 📐 … only the GO stage
+  | 'tv_go'         // 📐 … only the GO stage
+  | 'tv_pullback'   // 📐 PULLBACK setup (script v10): price back near VWAP after a run
+  | 'tv_broken'     // 📐 … a pullback closed under its line (always a silent message)
+  | 'tv_held';      // 📐 … a pullback ran +10% (always a silent message)
 let disabledAlerts: Set<string> | null = null;
 export function alertDisabled(component: AlertComponent): boolean {
   if (!disabledAlerts) {

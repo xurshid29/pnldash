@@ -7,7 +7,7 @@ import { tvApi, type TvWatchlist } from '../../api/tv';
 import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, StrengthTag, strengthText, tvLevelsText, fmtTf, TV_STAGE_RANK } from '../common/TvStageTag';
+import { TvStageTag, StrengthTag, strengthText, tvLevelsText, fmtTf, isPullbackStage, TV_STAGE_RANK } from '../common/TvStageTag';
 import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
 
@@ -22,6 +22,7 @@ interface Signal {
 }
 interface TickerSetups {
   ticker: string;
+  family: 'reclaim' | 'pullback';   // which of the script's two setups (v10)
   signals: Signal[];   // oldest first
   latest: Signal;
 }
@@ -32,7 +33,7 @@ function hhmm(iso: string): string {
 
 const HOW_TO = (
   <div style={{ maxWidth: 420, fontSize: 12, lineHeight: 1.5 }}>
-    <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month”.</div>
+    <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month”, its purple line on your “VWAP Session”.</div>
     <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning.</div>
     <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>2 minutes</b>.</div>
     <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts.</div>
@@ -42,9 +43,11 @@ const HOW_TO = (
 
 // 📐 VWAP setups (2026-10-03) — the operator's edge, detected by TradingView
 // (Pine script + one watchlist alert) and posted to our webhook. One row per
-// ticker with its stage trail for today: FORMING → READY → GO (a broken setup
-// re-arms, so a ticker can show more than one trail). "Since" compares the
-// live Momentum price with the latest signal's price.
+// ticker and setup with its stage trail for today: the reclaim setup's
+// FORMING → READY → GO, and (script v10) the PULLBACK setup's PULLBACK →
+// BROKEN / HELD, each tagged with its line (S session / M month) and touch #.
+// A broken setup re-arms, so a row can show more than one trail. "Since"
+// compares the live Momentum price with the latest signal's price.
 export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[]; payload: CyclePayload | null }) {
   const { message } = App.useApp();
   const { selected, setSelected } = useSelection();
@@ -55,22 +58,25 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
   // Priority (operator, 2026-10-04): tickers on our Momentum list right now come
   // first (⭐), then the rest, each newest first; off-list rows are dimmed.
   const groups = useMemo<TickerSetups[]>(() => {
-    const byTicker = new Map<string, Signal[]>();
+    const byKey = new Map<string, { ticker: string; family: TickerSetups['family']; signals: Signal[] }>();
     for (const a of alerts) {
       if (!a.kinds.includes('tv_setup') || !a.setup) continue;
-      const list = byTicker.get(a.ticker) ?? [];
-      list.push({ id: a.id, at: a.at, price: a.price, setup: a.setup });
-      byTicker.set(a.ticker, list);
+      const family = isPullbackStage(a.setup.stage) ? 'pullback' : 'reclaim';
+      const key = `${a.ticker}|${family}`;
+      const g = byKey.get(key) ?? { ticker: a.ticker, family, signals: [] };
+      g.signals.push({ id: a.id, at: a.at, price: a.price, setup: a.setup });
+      byKey.set(key, g);
     }
     const out: TickerSetups[] = [];
-    for (const [ticker, signals] of byTicker) {
+    for (const { ticker, family, signals } of byKey.values()) {
       signals.sort((x, y) => x.at.localeCompare(y.at));
-      out.push({ ticker, signals, latest: signals[signals.length - 1] });
+      out.push({ ticker, family, signals, latest: signals[signals.length - 1] });
     }
     const on = (g: TickerSetups) => (rowByTicker.has(g.ticker) ? 1 : 0);
     return out.sort((x, y) => on(y) - on(x) || y.latest.at.localeCompare(x.latest.at));
   }, [alerts, rowByTicker]);
-  const onMomentum = groups.filter((g) => rowByTicker.has(g.ticker)).length;
+  const tickers = new Set(groups.map((g) => g.ticker));
+  const onMomentum = [...tickers].filter((t) => rowByTicker.has(t)).length;
 
   const withList = async (use: (list: TvWatchlist) => Promise<void> | void) => {
     setBusy(true);
@@ -115,6 +121,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
           <TickerLinks ticker={g.ticker} />
           <TickerLink ticker={g.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
           {rowByTicker.has(g.ticker) && <span style={{ color: '#fadb14' }}>⭐</span>}
+          {g.family === 'pullback' && <span style={{ color: '#69c0ff', fontSize: 10, fontWeight: 700 }}>pullback</span>}
         </span>
       ),
     },
@@ -131,7 +138,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
                   {TV_STAGE_RANK[s.setup.stage] > TV_STAGE_RANK[g.signals[i - 1].setup.stage] ? '→' : '·'}
                 </Text>
               )}
-              <TvStageTag stage={s.setup.stage} dim={!s.setup.notified} path={s.setup.path} />
+              <TvStageTag stage={s.setup.stage} dim={!s.setup.notified} path={s.setup.path} line={s.setup.line} touch={s.setup.touch} />
               {s.setup.strength && <StrengthTag st={s.setup.strength} />}
               <Text type="secondary" style={{ fontSize: 10 }}>{hhmm(s.at)}{s.setup.tf ? ` ${fmtTf(s.setup.tf)}` : ''}</Text>
             </span>
@@ -196,8 +203,8 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={{ padding: '6px 8px', borderBottom: '1px solid #303030', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <Text type="secondary" style={{ fontSize: 12 }}>
-          TradingView watchlist alert → 📐 forming · ready · go
-          {groups.length > 0 && <> · ⭐ {onMomentum} on Momentum · {groups.length - onMomentum} other</>}
+          TradingView watchlist alert → 📐 forming · ready · go, and pullback → broken · held
+          {tickers.size > 0 && <> · ⭐ {onMomentum} on Momentum · {tickers.size - onMomentum} other</>}
         </Text>
         <Space size={6}>
           <Button size="small" icon={<CopyOutlined />} loading={busy} onClick={copyList}>Copy list</Button>
@@ -210,7 +217,7 @@ export function TvSetupsPanel({ alerts, payload }: { alerts: OpportunityAlert[];
       </div>
       <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
         <Table<TickerSetups>
-          rowKey="ticker"
+          rowKey={(g) => `${g.ticker}|${g.family}`}
           size="small"
           columns={columns}
           dataSource={groups}

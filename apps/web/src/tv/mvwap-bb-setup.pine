@@ -1,9 +1,10 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v9 (2026-10-05).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v10 (2026-10-05).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
-// A top gainer pulls back under its month-anchored VWAP while the Bollinger
-// basis (SMA 20) curls up beneath it; the trade is the reclaim.
+// Two setups in one script, so the same two watchlist alerts carry both.
+// 1) RECLAIM: a top gainer pulls back under its month-anchored VWAP while the
+// Bollinger basis (SMA 20) curls up beneath it; the trade is the reclaim.
 //   FORMING  basis 6–10% under mVWAP, rising, gap closing — or, on a fast approach,
 //            price ≤10% under mVWAP and ≥3% above a rising basis → open the chart
 //   READY    basis ≤6% under mVWAP — or, on a fast approach, price ≤5% under → entry zone
@@ -12,6 +13,14 @@
 //            FORMING/READY, and never on a bar that closes lower than the bar before
 // Price must close at or above the BB basis: a setup under the basis is no
 // setup, and a close 2% under it ends the setup — the next reclaim is a fresh READY.
+// 2) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
+// session VWAP or the month VWAP — and it comes back down to it.
+//   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
+//   BROKEN    a close under the line → the setup is over (the operator's exit)
+//   HELD      price runs +10% from the PULLBACK close first
+// Each line runs its own setup, and every message carries its touch number (the
+// operator rates the first pullback after the first big move highest; our own
+// data found the second as good — docs/vwap-setup.md §13.5).
 // Run it as TradingView watchlist alerts — one on 1m and one on 2m (Premium allows 2):
 // Symbols = the runners list (dashboard → 📐 tab → Copy list), session Extended,
 // condition = this script → "Any alert() function call", once per bar close,
@@ -44,9 +53,20 @@ goOn       = input.string("Either", "GO when", options = ["Either", "Price recla
 goAbovePct = input.float(2.0,  "Price reclaim: close at least % above mVWAP", group = "GO")
 goWithin   = input.int(5,      "…having been at/under it within the previous N bars", minval = 1, group = "GO")
 alertWin   = input.session("0400-2000", "Alert window (New York time)", group = "Alerts")
+pbOn       = input.bool(true,   "Pullback setup on", group = "Pullback to VWAP (v10)")
+pbLines    = input.string("Both", "Lines", options = ["Both", "Session", "Month"], group = "Pullback to VWAP (v10)")
+pbArm      = input.float(15.0,  "Armed: a bar high at least % above the line (the big move)", group = "Pullback to VWAP (v10)")
+pbNear     = input.float(5.0,   "PULLBACK: a close back within % above the line", group = "Pullback to VWAP (v10)")
+pbBreak    = input.float(0.0,   "BROKEN: a close at least % under the line (0 = any close under it)", group = "Pullback to VWAP (v10)")
+pbWin      = input.float(10.0,  "HELD: price runs % above the PULLBACK close", group = "Pullback to VWAP (v10)")
+pbMax      = input.int(2,       "Pullbacks per line per day (touches; a close straight through counts)", minval = 1, group = "Pullback to VWAP (v10)")
+pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
 
-// Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close
+// Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
+// and (v10, PULLBACK only) VWAP anchor Session — TradingView's own VWAP resets
+// at timeframe.change("D"), the 04:00 ET pre-market open on an Extended chart.
 mvwap  = ta.vwap(hlc3, timeframe.change("M"))
+svwap  = ta.vwap(hlc3, timeframe.change("D"))
 basis  = ta.sma(close, 20)
 crossU = ta.crossover(basis, mvwap)
 // Closes at/above the line in the previous `fromBelow` bars — computed on every
@@ -61,6 +81,7 @@ volX     = volAvg20 > 0 ? volume / volAvg20 : na
 runUp10  = (close / close[10] - 1) * 100
 plot(mvwap, "mVWAP", color.yellow)
 plot(basis, "BB basis", color.green)
+plot(svwap, "sVWAP", color.purple)
 
 // Top gainer: today's high vs the prior regular-session close (like Finviz
 // Change), or the same in any of the last `runnerDays` sessions — a second- or
@@ -177,6 +198,107 @@ if fire
         msg += " | via " + (reclaim and goOn != "Basis cross" ? "reclaim" : "cross")
     alert(msg, alert.freq_once_per_bar_close)
 
+// ── 2) PULLBACK (v10) ─────────────────────────────────────────────────────────
+// A fast run stretches price well above a VWAP line and it comes back down to it
+// (operator, 2026-10-05: SAIQ and SDEV on the session line, VEEA 2026-09-15 on
+// the month line). Each line keeps its own state, reset every day:
+//   armed     by a bar high ≥ pbArm% above the line (gainers only)
+//   PULLBACK  on a LATER close within pbNear% above the line ("be ready")
+//   BROKEN    then a close pbBreak% under the line — the operator's exit — or
+//   HELD      a high +pbWin% above the PULLBACK close, whichever comes first;
+//             after pbTimeout bars the pullback is dropped silently.
+// A close straight through the line while armed uses up a touch with no
+// PULLBACK. Re-arming needs a new bar high ≥ pbArm% above the line.
+type PbLine
+    bool  armed    = false
+    int   armBar   = na
+    float peakPct  = na
+    int   touches  = 0
+    bool  open     = false
+    float entry    = na
+    int   alertBar = na
+
+// One bar of one line's setup: 0 nothing, 1 PULLBACK, 2 BROKEN, 3 HELD.
+method step(PbLine s, float ln, bool canArm) =>
+    int ev = 0
+    if not na(ln) and ln > 0
+        if s.open
+            if close < ln * (1 - pbBreak / 100)
+                s.open := false
+                ev := 2
+            else if high >= s.entry * (1 + pbWin / 100)
+                s.open := false
+                ev := 3
+            else if bar_index - s.alertBar >= pbTimeout
+                s.open := false
+        if not s.open
+            float stretch = (high / ln - 1) * 100
+            if not s.armed
+                if canArm and stretch >= pbArm
+                    s.armed   := true
+                    s.armBar  := bar_index
+                    s.peakPct := stretch
+            else
+                s.peakPct := math.max(s.peakPct, stretch)
+                if bar_index > s.armBar and close <= ln * (1 + pbNear / 100)
+                    s.armed   := false
+                    s.touches := s.touches + 1
+                    if ev == 0 and s.touches <= pbMax and close >= ln * (1 - pbBreak / 100)
+                        s.open     := true
+                        s.entry    := close
+                        s.alertBar := bar_index
+                        ev := 1
+    ev
+
+var PbLine pbS = PbLine.new()
+var PbLine pbM = PbLine.new()
+if newDay
+    pbS.armed   := false
+    pbS.open    := false
+    pbS.touches := 0
+    pbM.armed   := false
+    pbM.open    := false
+    pbM.touches := 0
+int evS = 0
+int evM = 0
+if pbOn and inWindow
+    if pbLines != "Month"
+        evS := pbS.step(svwap, gainer)
+    if pbLines != "Session"
+        evM := pbM.step(mvwap, gainer)
+
+pctVs(float ln) => (close >= ln ? "+" : "") + str.tostring((close / ln - 1) * 100, "#.0")
+// The message — a contract with services/tv-setups.ts parseTvMessage, like the RECLAIM one:
+//   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
+pbMsg(int ev, string lineName, int touch, float peak) =>
+    string msg = (ev == 1 ? "PULLBACK" : ev == 2 ? "BROKEN" : "HELD") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
+    msg += " | sVWAP " + str.tostring(svwap, format.mintick) + " (" + pctVs(svwap) + "%)"
+    msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + pctVs(mvwap) + "%)"
+    msg += " | line " + lineName + " | touch " + str.tostring(touch)
+    if ev == 1 and not na(peak)
+        msg += " | peak +" + str.tostring(peak, "#") + "%"
+    msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
+    if not na(ahGain)
+        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
+    if not na(volX)
+        msg += " | vol " + str.tostring(volX, "#.#") + "x"
+    if not na(runUp10)
+        msg += " | run " + (runUp10 >= 0 ? "+" : "") + str.tostring(runUp10, "#.#") + "%"
+    msg + " | tf " + timeframe.period
+
+// Both lines firing the same event on one bar (they sit close together early in
+// a month) is one "line both" message.
+if evS > 0 and evS == evM
+    alert(pbMsg(evS, "both", math.min(pbS.touches, pbM.touches), math.max(pbS.peakPct, pbM.peakPct)), alert.freq_once_per_bar_close)
+else
+    if evS > 0
+        alert(pbMsg(evS, "session", pbS.touches, pbS.peakPct), alert.freq_once_per_bar_close)
+    if evM > 0
+        alert(pbMsg(evM, "month", pbM.touches, pbM.peakPct), alert.freq_once_per_bar_close)
+
+plotshape(evS == 1 or evM == 1, "Pullback", shape.diamond, location.belowbar, color.aqua, size = size.tiny)
+plotshape(evS == 2 or evM == 2, "Broken", shape.xcross, location.abovebar, color.red, size = size.tiny)
+plotshape(evS == 3 or evM == 3, "Held", shape.flag, location.abovebar, color.lime, size = size.tiny)
 plotshape(fire and target == 1, "Forming", shape.circle, location.belowbar, color.orange, size = size.tiny)
 plotshape(fire and target == 2, "Ready", shape.triangleup, location.belowbar, color.yellow, size = size.small)
 plotshape(fire and target == 3, "Go", shape.labelup, location.belowbar, color.lime, text = "GO", textcolor = color.black, size = size.small)

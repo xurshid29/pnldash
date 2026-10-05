@@ -9,13 +9,13 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v9** (history in §12) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v10** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13) |
 | Runs as | two TradingView **watchlist alerts**, 1m and 2m (operator is on Premium = 2 watchlist alerts) |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 tab, toast + sound, Telegram, `tier_events` |
 | First live session | Mon 2026-10-05 |
 | Grade it | ~2026-10-17 (the "Grading plan" section below has the SQL) |
-| Status | **The edge itself is unmeasured** — the evidence is six hand-picked winners |
+| Status | **The reclaim edge is unmeasured** — the evidence is six hand-picked winners. The PULLBACK setup's session-line version measured about break-even on four months of our data (§13.5) |
 
 ---
 
@@ -412,6 +412,9 @@ vs VWAP %>) | day high <±gain>% [| ah <±gain>%] | tf <timeframe.period> | path
 It is sent with `alert(msg, alert.freq_once_per_bar_close)`, so it arrives at
 the bar close: up to 60 s after the condition on a 1m chart.
 
+The PULLBACK setup (v10) has its own message, PULLBACK / BROKEN / HELD with
+`sVWAP`, `line`, `touch` and `peak` (§13.4).
+
 **The server parses this text** (`parseTvMessage` in
 `apps/api/src/services/tv-setups.ts`). If you change the message, change the
 parser too and run `npx tsx scripts/verify-tv-setups.ts` from `apps/api`. The
@@ -646,8 +649,9 @@ no new high within ~3–5 bars. Weak GOs stall at once.
 | `apps/api/src/services/poller.ts` → `deliverTvSetup` | storage, `payload.alerts`, SSE, Telegram |
 | `apps/api/src/services/opportunity-alerts.ts` | the `tv_setup` kind, `TvSetupInfo`, `pushExternal` |
 | `apps/api/src/routes/screener.ts` → `GET /alerts` | returns `setup` for tv_setup rows |
-| `apps/api/src/services/telegram.ts` | mute slugs `tv_setup` / `tv_forming` / `tv_ready` / `tv_go` |
-| `apps/api/scripts/verify-tv-setups.ts` | regression: 39 checks incl. the Pine ↔ parser contract |
+| `apps/api/src/services/telegram.ts` | mute slugs `tv_setup` / `tv_forming` / `tv_ready` / `tv_go` / `tv_pullback` / `tv_broken` / `tv_held` |
+| `apps/api/scripts/verify-tv-setups.ts` | regression: 102 checks incl. the Pine ↔ parser contract (both setups) |
+| `apps/api/scripts/research/vwap-pullback/` | the PULLBACK study on our own data (§13.5) |
 | `apps/web/src/components/screener/TvSetupsPanel.tsx` | the 📐 tab |
 | `apps/web/src/components/common/TvStageTag.tsx` | stage pill, level text, timeframe labels |
 | `apps/web/src/hooks/useScreenerStream.ts` | merges SSE `alert` events into the payload |
@@ -801,3 +805,183 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-03 | v7 | `90d580a` | Operator: "why nothing between 13:00–13:20?" (AIXI 10-02 pre-market). AIXI was a third-session runner (+22% on 09-29), so the 2-session look-back kept the gate shut. `runnerDays` default 2 → 3, max 3 → 5; the gains now live in a 5-entry array instead of gain1..3. Replay with the new AIXI-1002PM case: v6 caught 8/10 on 1m and 8/10 on 2m, v7 caught 9/10 on both (READY 04:06 / 04:08 ET, GO 04:21). Other signals unchanged (24 / 16). |
 | 2026-10-03 | v8 | `cbd90a8` | Clarity only, no logic change. The settings group "Top gainer" is renamed "Gainer filter (this ticker's own move)", with titles "Up at least % (day high vs prior close; -100 = filter off)", "…today, or on any of the last N sessions", and "After hours, also count the move since today's close". The operator had asked which screener picks the "top gainers"; none does — it's a per-ticker filter. Renamed inputs may come back at their defaults after the update. |
 | 2026-10-05 | v9 | `bf8eff4` | Operator: "how not to enter the weak GOs (under 10%)?" No signal logic change. Every message now carries `vol <N>x` (signal-bar volume ÷ previous-20-bar average) and `run <±N>%` (close vs 10 bars earlier). The server scores each GO 0–4 (morning 04:00–10:30 ET, run-up ≥5%, volume ≥2×, on Momentum) and shows 💪N/M on the 📐 and Alerts tabs, in Telegram and in the notification; all of it is stored for grading (§7.5). A tag, not a filter, until live data says which checks matter. Regression: 71 checks. |
+| 2026-10-05 | v10 | (this commit) | Operator: a second VWAP setup — after a fast run, price comes back down to the session or month VWAP and bounces; alert at ~5% above the line "so I can be ready", exit when it crosses down. Added to the same script (Premium's 2 alert slots are taken) as the PULLBACK setup (§13): a session VWAP line (`ta.vwap(hlc3, timeframe.change("D"))`, purple), per-line state, messages PULLBACK / BROKEN / HELD with `sVWAP`, `line`, `touch`, `peak`; new input group "Pullback to VWAP (v10)" (arm 15, near 5, break 0, held 10, 2 per line per day, 60-bar timeout). The reclaim setup is unchanged. Server, 📐 tab (one row per ticker and setup, S/M line and #touch tags), Telegram (outcomes always silent), the replica (`PullbackLine`, `selftest_pullback`) and the study (`research/vwap-pullback/`) ship with it. Regression: 102 checks. |
+
+## 13. The PULLBACK setup (script v10, 2026-10-05)
+
+### 13.1 The operator's definition
+
+> Usually, when the chart rapidly moves up (after the session start, when news
+> comes out, or when it just starts moving fast), at some point it starts moving
+> down, and when it reaches the VWAP it bounces. The first bounce after the first
+> big move is the more attractive one.
+
+The line is usually the month VWAP, and the session VWAP works well too ("I
+noticed the monthly line works very often"). Asked for the details on
+2026-10-05:
+- **Alert** when price comes back down to about 5% above the line, "so I can be ready".
+- **Exit** when the setup breaks, i.e. price crosses down through the line.
+- **Either line**, session or month.
+
+The operator's examples (screenshots):
+
+| Ticker | Chart | Line | What happened (ET) |
+|---|---|---|---|
+| SAIQ | 10-05, 1m | session | 4.13 → 6.93 at the 04:00 open, back to the line at 04:09 (5.98, −2.8%), sat on it ~8 min, then 16.16 by 04:37 |
+| SDEV | 10-02, 2m | session | 5.03 → 7.05 after the open, faded to the line by ~12:10, sat on it (as low as −2%) until 13:20, then 7.15 at 14:30 and 8.37 after hours |
+| VEEA | 09-14/15, 5m | month | ran ~1.9 → 4.2 after hours on 09-14, pulled back to the month line (~3.4) in the 09-15 pre-market, then ran to 7.3 |
+
+### 13.2 Design
+
+- **The same script, not a second one.** Premium has two watchlist-alert slots,
+  and the 1m and 2m alerts use both. The script carries both setups, so the same
+  two alerts deliver both. The setups share the gainer filter, the alert window
+  and the message fields; each line has its own state.
+- **It's the reclaim setup's mirror image.** The reclaim setup buys a base
+  under the month line. The pullback buys a return to a line from above. v4
+  stopped the reclaim setup from firing on "a spike falling back to the line"
+  (AMOD 09-01); that case is this setup.
+- **Two lines.** The session line is TradingView's VWAP with anchor Session
+  (`ta.vwap(hlc3, timeframe.change("D"))`; it resets at 04:00 ET on an Extended
+  chart), plotted purple. The month line is the existing yellow one. When both
+  fire the same event on one bar (early in a month they sit close together),
+  the message says `line both`.
+- **The outcome is a message too.** BROKEN and HELD come from TradingView,
+  because we can't compute the month line ourselves (§13.5). That makes the
+  month-line version gradable from its own messages.
+- **Delivery.**
+  - A PULLBACK is treated like the other stages: on our Momentum list → ⭐ and a
+    buzzing push; off the list → a silent message and a dimmed row.
+  - BROKEN and HELD are always silent messages and short toasts.
+  - On the dashboard, a PULLBACK on a Momentum name plays the READY triple tone.
+  - Mutes: `ALERTS_DISABLED` `tv_pullback` / `tv_broken` / `tv_held` (or
+    `tv_setup` for all 📐).
+  - The 📐 tab shows one row per ticker and setup. A pullback row's stages
+    carry the line (S purple / M yellow / S+M) and the touch number.
+
+### 13.3 The rules and inputs (group "Pullback to VWAP (v10)")
+
+Each line keeps its own state, reset every day.
+
+1. **Armed** by a bar high at least *arm* % above the line (gainers only, the
+   same filter as the reclaim setup).
+2. **PULLBACK** on a *later* bar whose close is within *near* % above the line
+   and not more than *break* % under it. A close below that while armed is a
+   "through": the touch counts, but no message is sent.
+3. While a pullback is open:
+   - **BROKEN** on a close more than *break* % under the line;
+   - **HELD** on a high *held* % above the PULLBACK close;
+   - after *timeout* bars with neither, it is dropped silently.
+4. **Re-arming** needs a new bar high at least *arm* % above the line.
+
+| Input | Default | Where it came from |
+|---|---|---|
+| Pullback setup on | on | |
+| Lines | Both | the operator: "either" |
+| Armed: a bar high at least % above the line | 15 | the study: 10% adds noise (touch-1 win 22% vs 26%); 20–50% doesn't improve the P&L |
+| PULLBACK: a close back within % above the line | 5 | the operator |
+| BROKEN: a close at least % under the line | 0 | the operator's exit ("crosses down"); a looser rule wins more often but loses more (§13.5) |
+| HELD: price runs % above the PULLBACK close | 10 | the study's win label; it only closes the setup for grading |
+| Pullbacks per line per day | 2 | the study: touch 3+ was the weakest |
+| Stop watching a pullback after N bars | 60 | the study's horizon |
+
+### 13.4 The message
+
+```
+PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
+BROKEN SAIQ 5.98 | sVWAP 6.15 (-2.8%) | mVWAP 4.1 (+45.9%) | line session | touch 2 | day high +336% | tf 1
+HELD VEEA 3.75 | sVWAP 3.9 (-3.8%) | mVWAP 3.41 (+10.0%) | line month | touch 1 | day high +98% | tf 2
+```
+
+- `sVWAP` / `mVWAP`: each line and the close's distance from it.
+- `line`: session, month, or both.
+- `touch`: the touches to that line today, this one included.
+- `peak` (PULLBACK only): the highest bar high above the line since arming, %.
+
+The rest is the same as the reclaim setup's message (§5.6). The server stores
+each of these as `svwap`, `spx_pct`, `line`, `touch` and `peak_pct` on the
+`tier_events` row (tier `alert`, event `tv_setup`, stage `pullback` / `broken` /
+`held`).
+
+### 13.5 What our data says — the session line, 2026-06-12 → 10-05
+
+`apps/api/scripts/research/vwap-pullback/` (README there) runs the script's own
+state machine (`pinesim.PullbackLine`) on 1m bars built from our 20s snapshots.
+The line is the poller's stored session VWAP, within ~1% of TradingView's on
+SAIQ and SDEV on 10-05.
+
+**The month line can't be measured from our data.** We only see a ticker while
+it is up 20%+, and the month line includes all the volume we never saw. Against
+TradingView's own month VWAP (every 📐 signal carries it), a rebuild from our
+rows landed within 3% for half the names (CYCU 0.2%, MYND 1%, PMAX 1%, AIXI 2%,
+VEEA 2.5%). The rest were 6–37% off (GNS, NIVF, FRGT, SAIQ −13%, LGHL +37%; RETO
+had a reverse split). So the month-line version — the operator's favorite — is
+graded live (§13.6).
+
+The session line: 18,335 ticker-days, 1,883 setups (416 straight through the
+line). "Win" = +10% before a close under the line.
+
+| | alerts | win | broke | P&L: exit on a 1m close under the line, +10% target | P&L: stop 0.5% under the line, +10% / +20% / no target |
+|---|---:|---:|---:|---:|---|
+| touch 1 | 842 | 26.4% | 64.8% | −0.94% | −0.24% / −0.22% / −0.37% |
+| touch 2 | 346 | 29.8% | 62.1% | −0.21% | +0.38% / +0.29% / +0.31% |
+| touch 3+ | 279 | 25.8% | 62.7% | −0.87% | −0.15% / −0.68% / −1.18% |
+| any close within 5% above the line | 60,683 | 4.8% | 50.8% | −0.55% | −0.34% / −0.34% / −0.32% |
+
+- **A useful heads-up, not a mechanical edge.** Alerts reach +10% 5–6× as often
+  as an ordinary moment near the line, but the average trade is about
+  break-even. The operator's read of the tape at the line is what has to add
+  the edge.
+- **"The first touch is best" doesn't hold here.** Touch 2 did as well or
+  better. Touch 3+ was the weakest, hence 2 per line per day.
+- **Exit with a stop just under the line**, not on a 1m close under it. That
+  was worth about 0.7 points per trade (touch 1: −0.94% → −0.24%), because a
+  breaking bar often closes far under the line.
+- **A looser break rule doesn't help.** A close 1–5% under the line raises the
+  win rate to 33%, but the losses grow more (touch 1: −0.94% → −1.40%).
+- **It has been improving month by month** (touch 1, stop, +10%): June −0.90%,
+  July −0.73%, August −0.50%, September +0.64%, October +2.85% (n 24). The
+  operator's recent experience matches the recent months.
+- **Time of day** (touch 1, stop, +10%): 04:00–07:00 was the worst
+  (−1.07%, n 129), 07:00–09:30 flat (+0.02%, or +1.81% with no target),
+  12:00–16:00 +0.61%.
+- Weaker hints (n 50–200): a pullback taking 10–30 min beat a drop of under
+  3 min (−0.07% vs −1.79%), and a light pullback beat a heavy one (−0.08% vs
+  −1.12%). Runners and fresh names performed the same.
+- **Volume.** 16–21 session-line PULLBACKs per day on names on our screen
+  (median 16; 13–17 for touches 1–2). Month-line alerts come on top of that.
+
+### 13.6 Grading (~2026-10-19)
+
+Two weeks of live messages give both lines, with TradingView's own outcome
+messages:
+
+```sql
+SELECT meta->>'line' AS line, (meta->>'touch')::int AS touch, meta->>'tf' AS tf,
+       count(*) FILTER (WHERE meta->>'stage' = 'pullback') AS pullbacks,
+       count(*) FILTER (WHERE meta->>'stage' = 'held')     AS held,
+       count(*) FILTER (WHERE meta->>'stage' = 'broken')   AS broken
+FROM tier_events
+WHERE tier = 'alert' AND event = 'tv_setup' AND meta->>'stage' IN ('pullback', 'held', 'broken')
+GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
+```
+
+- The outcome arrives per timeframe. Pair each PULLBACK with the first BROKEN
+  or HELD for the same ticker, line and touch.
+- **Month line vs session line** is the main question: the operator's
+  experience says the month line works more often.
+- Split by time of day (pre-market was the weak spot), by touch, by
+  on/off Momentum, and by `peak`.
+- For on-screen names, check the stop-vs-close exit on live data with our
+  snapshots.
+- Ask for the operator's IBKR `.tlg`: their discretionary entries at the line
+  are what this setup lives on.
+
+### 13.7 Replay and changes
+
+`pinesim.PullbackLine` and `simulate_pullback()` mirror the script's
+`PbLine.step` bar for bar. `python3 pinesim.py` runs `selftest_pullback()`, a
+synthetic path through PULLBACK → HELD → PULLBACK → BROKEN → through → the
+daily cap. The study imports the same class, so a logic change goes into the
+`.pine` file and `PullbackLine` together (§10). Then rerun the self-test, the
+study and `verify-tv-setups.ts`.

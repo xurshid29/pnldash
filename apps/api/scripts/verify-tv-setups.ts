@@ -90,6 +90,45 @@ console.log('GO strength (v9)');
   check('Telegram strength line', html.includes('GO strength 4/4') && html.includes('run-up +8.1% ✓') && html.includes('volume 3.2× ✓') && html.includes('on Momentum ✓'), html);
 }
 
+console.log('PULLBACK setup (v10)');
+{
+  const pb = parseTvMessage('PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1');
+  check('parses', pb?.stage === 'pullback' && pb.ticker === 'SAIQ' && pb.price === 6.2, JSON.stringify(pb));
+  check('both lines', pb?.svwap === 6.16 && pb.spx_pct === 0.7 && pb.mvwap === 4.1 && pb.px_pct === 51.2, JSON.stringify(pb));
+  check('line, touch, peak', pb?.line === 'session' && pb.touch === 2 && pb.peak_pct === 17, JSON.stringify(pb));
+  check('context', pb?.day_gain === 336 && pb.vol_x === 0.6 && pb.run_pct === -9.6 && pb.tf === '1' && pb.basis === null && pb.path === null, JSON.stringify(pb));
+  const br = parseTvMessage('BROKEN SAIQ 5.98 | sVWAP 6.15 (-2.8%) | mVWAP 4.1 (+45.9%) | line session | touch 2 | day high +336% | tf 1');
+  check('BROKEN under the line', br?.stage === 'broken' && br.spx_pct === -2.8 && br.touch === 2 && br.peak_pct === null, JSON.stringify(br));
+  const held = parseTvMessage('HELD VEEA 3.75 | sVWAP 3.9 (-3.8%) | mVWAP 3.41 (+10.0%) | line month | touch 1 | day high +98% | tf 2');
+  check('HELD on the month line', held?.stage === 'held' && held.line === 'month' && held.px_pct === 10 && held.tf === '2', JSON.stringify(held));
+  const both = parseTvMessage('PULLBACK NXL 7.01 | sVWAP 6.89 (+1.7%) | mVWAP 6.86 (+2.2%) | line both | touch 1 | peak +15% | day high +60% | tf 1');
+  check('line both', both?.line === 'both' && both.touch === 1, JSON.stringify(both));
+  const nan = parseTvMessage('PULLBACK X 1.00 | sVWAP 0.97 (+3.1%) | mVWAP NaN (NaN%) | line session | touch 1 | peak +22% | day high NaN% | tf 1');
+  check('a NaN month line reads as null', nan?.mvwap === null && nan.px_pct === null && nan.svwap === 0.97 && nan.day_gain === null, JSON.stringify(nan));
+  check('reclaim messages carry no pullback fields', parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | tf 1')?.line === null);
+  const js = parseTvMessage({ stage: 'pullback', ticker: 'SDEV', price: 6.31, svwap: 6.035, line: 'SESSION', touch: '1' });
+  check('JSON body', js?.stage === 'pullback' && js.line === 'session' && js.touch === 1 && js.svwap === 6.035, JSON.stringify(js));
+  check('no GO strength on a PULLBACK', goStrength(pb!, new Date('2026-10-05T08:08:00Z'), true) === null);
+
+  const html = formatTvSetupAlert(pb!, 'NASDAQ:SAIQ', { change_pct: 340, grade: 'B+', float_m: 3.1 });
+  check('Telegram: names the line', html.includes('<b>PULLBACK</b>') && html.includes('back near the session VWAP after the run — be ready'), html);
+  check('Telegram: touch + run', html.includes('touch 2') && !html.includes('(first)') && html.includes('ran +17% above the line first'), html);
+  check('Telegram: both levels, no basis', html.includes('sVWAP $6.16 (+0.7%)') && html.includes('mVWAP $4.10 (+51.2%)') && !html.includes('basis'), html);
+  const first = formatTvSetupAlert(both!, 'NASDAQ:NXL', null);
+  check('Telegram: first touch says so', first.includes('touch 1 (first)') && first.includes('session + month VWAP'), first);
+  const brHtml = formatTvSetupAlert(br!, 'NASDAQ:SAIQ', null);
+  check('Telegram: BROKEN', brHtml.includes('<b>BROKEN</b>') && brHtml.includes('closed under the session VWAP — setup broken') && !brHtml.includes('ran +'), brHtml);
+  const heldHtml = formatTvSetupAlert(held!, 'NASDAQ:VEEA', null);
+  check('Telegram: HELD', heldHtml.includes('<b>HELD</b>') && heldHtml.includes('held — ran +10% from the pullback'), heldHtml);
+
+  const T0 = 1_790_000_000;
+  const g = new TvSetupGate();
+  check('session PULLBACK notifies', g.admit(pb!, T0) === 'notify');
+  check('same line + tf again within 2 min is a duplicate', g.admit(pb!, T0 + 20) === 'drop');
+  check('the month line minutes later is logged, not dropped', g.admit({ ...pb!, line: 'month' }, T0 + 60) === 'log');
+  check('BROKEN is its own stage → notifies', g.admit(br!, T0 + 70) === 'notify');
+}
+
 console.log('Gate — duplicates, other timeframes, flood');
 {
   const T0 = 1_790_000_000;
@@ -138,7 +177,8 @@ console.log('Contract — the Pine script still emits what the parser reads');
   const here = dirname(fileURLToPath(import.meta.url));
   const pine = readFileSync(resolve(here, '../../web/src/tv/mvwap-bb-setup.pine'), 'utf8');
   for (const part of ['" | mVWAP "', '" | basis "', '" | day high "', '" | ah "', '" | tf "', '" | path "', '"base"', '"fast"',
-    '" | via "', '"reclaim"', '"cross"', '" | vol "', '" | run "', '"FORMING"', '"READY"', '"GO"']) {
+    '" | via "', '"reclaim"', '"cross"', '" | vol "', '" | run "', '"FORMING"', '"READY"', '"GO"',
+    '"PULLBACK"', '"BROKEN"', '"HELD"', '" | sVWAP "', '" | line "', '" | touch "', '" | peak +"', '"session"', '"month"', '"both"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

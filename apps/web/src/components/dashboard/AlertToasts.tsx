@@ -46,7 +46,9 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
       // 📐 priority: a setup on a ticker that was on our Momentum list gets a gold
       // edge and stays longer; an off-list setup is a short plain toast.
       const setupOnly = kinds.length === 1 && kinds[0] === 'tv_setup';
-      const priority = setupOnly && a.setup?.on_screen === true;
+      // A pullback's outcome (BROKEN / HELD) is a short plain toast either way.
+      const outcome = a.setup?.stage === 'broken' || a.setup?.stage === 'held';
+      const priority = setupOnly && a.setup?.on_screen === true && !outcome;
       notification.open({
         key: a.id,
         title: opportunityTitle(shown),

@@ -34,7 +34,7 @@
 
 import type { NewsSource } from '../db/types.js';
 import { classifyByRules } from './catalyst-rules.js';
-import type { TvGoVia, TvPath, TvStage, TvStrength } from './tv-setups.js';
+import type { TvGoVia, TvLine, TvPath, TvStage, TvStrength } from './tv-setups.js';
 
 export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 
@@ -53,6 +53,12 @@ export interface TvSetupInfo {
   vol_x: number | null;       // script v9+: signal-bar volume ÷ previous-20-bar average
   run_pct: number | null;     // script v9+: run-up over the previous 10 bars, %
   strength: TvStrength | null; // GO only: morning / run-up / volume / on Momentum checks
+  // PULLBACK setup (script v10) — null on the reclaim setup's stages
+  svwap: number | null;       // session VWAP
+  spx_pct: number | null;     // price vs the session VWAP, %
+  line: TvLine | null;        // which line the pullback came back to: session / month / both
+  touch: number | null;       // pullbacks to that line today, this one included (1 = the first)
+  peak_pct: number | null;    // PULLBACK: highest bar high above the line before it, %
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe
 }

@@ -329,7 +329,10 @@ export interface TickCatch {
 // (2026-10-03) is the operator's VWAP setup reported by a TradingView
 // watchlist alert through POST /api/tv/webhook — it arrives between cycles.
 export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
-export type TvStage = 'forming' | 'ready' | 'go';
+// PULLBACK / BROKEN / HELD belong to the PULLBACK setup (script v10, 2026-10-05):
+// price back near the session or month VWAP after a run, then its outcome.
+export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held';
+export type TvLine = 'session' | 'month' | 'both';
 // GO strength: morning window (04:00–10:30 ET), run-up ≥5% into the GO,
 // GO-bar volume ≥2× the previous 20 bars, ticker on our Momentum list.
 export interface TvStrength {
@@ -354,6 +357,12 @@ export interface TvSetupInfo {
   vol_x?: number | null;      // script v9+: signal-bar volume ÷ previous-20-bar average
   run_pct?: number | null;    // script v9+: run-up over the previous 10 bars, %
   strength?: TvStrength | null; // GO only (server: tv-setups.ts goStrength)
+  // PULLBACK setup (script v10)
+  svwap?: number | null;      // session VWAP
+  spx_pct?: number | null;    // price vs the session VWAP, %
+  line?: TvLine | null;       // the line the pullback came back to (both = the two fired on one bar)
+  touch?: number | null;      // pullbacks to that line today, this one included (1 = the first)
+  peak_pct?: number | null;   // PULLBACK: how far above the line it ran first, %
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

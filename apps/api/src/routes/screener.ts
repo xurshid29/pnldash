@@ -99,7 +99,8 @@ router.get('/ema-debug', authMiddleware, (req, res) => {
 // rows sharing meta.id (one merged alert) fold back into one entry. Rows
 // written before meta.id existed (2026-10-01) fold by ticker within 3s — one
 // cycle's inserts land milliseconds apart. 📐 tv_setup rows (TradingView VWAP
-// setup, 2026-10-03) carry their own id and the stage + levels in `setup`.
+// setup, 2026-10-03; the PULLBACK setup since script v10) carry their own id
+// and the stage + levels in `setup`.
 router.get('/alerts', authMiddleware, async (req, res) => {
   const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
   if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
@@ -123,6 +124,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
       stage: string; mvwap: number | null; px_pct: number | null; basis: number | null; basis_pct: number | null;
       day_gain: number | null; ah_gain: number | null; tf: string | null; path: string | null; go_via: string | null;
       vol_x: number | null; run_pct: number | null; strength: Record<string, unknown> | null;
+      svwap: number | null; spx_pct: number | null; line: string | null; touch: number | null; peak_pct: number | null;
       on_screen: boolean; notified: boolean;
     } | null;
   };
@@ -155,6 +157,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
         day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf), path: str(m.path), go_via: str(m.go_via),
         vol_x: num(m.vol_x), run_pct: num(m.run_pct),
         strength: m.strength && typeof m.strength === 'object' ? (m.strength as Record<string, unknown>) : null,
+        // PULLBACK setup (script v10)
+        svwap: num(m.svwap), spx_pct: num(m.spx_pct), line: str(m.line), touch: num(m.touch), peak_pct: num(m.peak_pct),
         on_screen: m.on_screen === true, notified: m.notified !== false,
       };
     }

@@ -7,6 +7,15 @@
 //   FORMING  basis 6–10% under mVWAP, rising, gap closing — open the chart
 //   READY    basis ≤6% under mVWAP, rising, price holding the basis — entry zone
 //   GO       the basis crosses above mVWAP (only after FORMING/READY)
+// Script v10 (2026-10-05) adds a second setup to the same script, PULLBACK: a
+// fast run stretches price well above the session or month VWAP and it comes
+// back down to the line —
+//   PULLBACK  a close back within ~5% above the line — be ready
+//   BROKEN    a close under the line — the setup is over (the operator's exit)
+//   HELD      price ran +10% from the PULLBACK close first
+// tagged with the line (session / month / both) and the touch number. The
+// operator rates the first pullback after the first big move highest; on our
+// own data (research/vwap-pullback, 2026-10-05) touch 2 did as well.
 //
 // Why TradingView computes it and we don't: the line is a VWAP anchored at the
 // 1st of the month INCLUDING pre-market volume. Yahoo's extended-hours bars
@@ -21,7 +30,12 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'forming' | 'ready' | 'go';
+export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held';
+// The PULLBACK setup's stages (script v10); the rest belong to the reclaim setup.
+export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
+// Which VWAP a PULLBACK-setup message is about: 'both' = the session and month
+// lines fired the same event on one bar (they sit close together early in a month).
+export type TvLine = 'session' | 'month' | 'both';
 // Which shape reached FORMING/READY (script v2+): 'base' = price consolidated
 // until the basis converged under the line; 'fast' = price ran at the line
 // while the basis lagged. Null for GO and for v1 / fallback messages.
@@ -45,6 +59,12 @@ export interface TvSetupSignal {
   go_via: TvGoVia | null;
   vol_x: number | null;       // script v9+: signal bar volume ÷ average of the previous 20 bars
   run_pct: number | null;     // script v9+: close vs 10 bars earlier, %
+  // PULLBACK setup only (script v10); null on the reclaim setup's messages.
+  svwap?: number | null;      // session VWAP (anchor Session, 04:00 ET on an Extended chart)
+  spx_pct?: number | null;    // price vs the session VWAP, %
+  line?: TvLine | null;
+  touch?: number | null;      // pullbacks to this line today, this one included
+  peak_pct?: number | null;   // PULLBACK: highest bar high above the line before it, %
 }
 
 export const TV_SETUP = {
@@ -92,7 +112,14 @@ export function goStrength(sig: TvSetupSignal, at: Date, onMomentum: boolean): T
   return { score: checks.filter(Boolean).length, max: checks.length, morning, run_up: runUp, volume, on_momentum: onMomentum };
 }
 
-const STAGES: Record<string, TvStage> = { forming: 'forming', ready: 'ready', go: 'go' };
+const STAGES: Record<string, TvStage> = {
+  forming: 'forming', ready: 'ready', go: 'go', pullback: 'pullback', broken: 'broken', held: 'held',
+};
+
+function toLine(v: unknown): TvLine | null {
+  const p = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return p === 'session' || p === 'month' || p === 'both' ? p : null;
+}
 
 function toNum(v: unknown): number | null {
   const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN;
@@ -124,6 +151,11 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     go_via: toVia(o.go_via),
     vol_x: toNum(o.vol_x),
     run_pct: toNum(o.run_pct),
+    svwap: toNum(o.svwap),
+    spx_pct: toNum(o.spx_pct),
+    line: toLine(o.line),
+    touch: toNum(o.touch),
+    peak_pct: toNum(o.peak_pct),
   };
 }
 
@@ -142,6 +174,7 @@ function toPath(v: unknown): TvPath | null {
 //   READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base
 //   READY AMOD 1.38 | mVWAP 1.42 (-2.5%) | basis 1.35 (-4.6%) | day high +20% | ah +34% | tf 1 | path base
 //   GO NIVF 0.1961 | mVWAP 0.188 (4.3%) | basis 0.169 (-10.1%) | day high +38% | tf 1 | via reclaim   (v5)
+//   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | tf 1   (v10)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -157,12 +190,13 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
       return null;
     }
   }
-  const head = /^(FORMING|READY|GO)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(FORMING|READY|GO|PULLBACK|BROKEN|HELD)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
   const line = (label: string) => new RegExp(`${label}\\s+\\$?(\\d*\\.?\\d+)\\s*\\(\\s*([-+]?\\d*\\.?\\d+)\\s*%\\s*\\)`, 'i').exec(text);
   const mv = line('mVWAP');
+  const sv = line('sVWAP');
   const bb = line('basis');
   const day = /day\s+high\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);   // v1/v2 wrote "+-2%" for a negative day
   const ah = /\bah\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
@@ -171,6 +205,9 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const via = /\bvia\s+(reclaim|cross)\b/i.exec(text);
   const vol = /\bvol\s+(\d*\.?\d+)\s*x\b/i.exec(text);
   const run = /\brun\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
+  const ln = /\bline\s+(session|month|both)\b/i.exec(text);
+  const touch = /\btouch\s+(\d+)\b/i.exec(text);
+  const peak = /\bpeak\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -186,6 +223,11 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     go_via: toVia(via?.[1]),
     vol_x: toNum(vol?.[1]),
     run_pct: toNum(run?.[1]),
+    svwap: toNum(sv?.[1]),
+    spx_pct: toNum(sv?.[2]),
+    line: toLine(ln?.[1]),
+    touch: toNum(touch?.[1]),
+    peak_pct: toNum(peak?.[1]),
   };
 }
 
@@ -206,7 +248,9 @@ export class TvSetupGate {
     for (const [k, t] of this.lastExact) if (nowSec - t > 600) this.lastExact.delete(k);
     for (const [k, t] of this.lastNotify) if (nowSec - t > 600) this.lastNotify.delete(k);
 
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}`;
+    // The line is part of the exact key: a PULLBACK on the month line two
+    // minutes after one on the session line is a second event, not a re-delivery.
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}`;
     const prev = this.lastExact.get(exact);
     if (prev != null && nowSec - prev < TV_SETUP.dup_sec) return 'drop';
     this.lastExact.set(exact, nowSec);
@@ -219,13 +263,24 @@ export class TvSetupGate {
   }
 }
 
-export const TV_STAGE_LABEL: Record<TvStage, string> = { forming: 'FORMING', ready: 'READY', go: 'GO' };
-const STAGE_ICON: Record<TvStage, string> = { forming: '🟡', ready: '🟠', go: '🟢' };
+export const TV_STAGE_LABEL: Record<TvStage, string> = {
+  forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD',
+};
+const STAGE_ICON: Record<TvStage, string> = { forming: '🟡', ready: '🟠', go: '🟢', pullback: '↩️', broken: '✖️', held: '✅' };
 const STAGE_HINT: Record<TvStage, string> = {
   forming: 'setup forming — open the chart',
   ready: 'entry zone',
   go: 'basis crossed above mVWAP',
+  pullback: 'back near VWAP after the run — be ready',
+  broken: 'closed under VWAP — setup broken',
+  held: 'held — ran +10% from the pullback',
 };
+const LINE_NAME: Record<TvLine, string> = { session: 'session VWAP', month: 'month VWAP', both: 'session + month VWAP' };
+
+// "touch 1 (first)" — the operator rates the first pullback after the first big move highest.
+export function touchText(touch: number | null | undefined): string {
+  return touch == null ? '' : `touch ${touch}${touch === 1 ? ' (first)' : ''}`;
+}
 
 function fmtPx(p: number | null): string {
   return p == null ? '' : `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
@@ -243,11 +298,22 @@ export function formatTvSetupAlert(
   row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
   strength: TvStrength | null = null,
 ): string {
+  const pb = PULLBACK_STAGES.has(sig.stage);
+  // PULLBACK / BROKEN name the line: "back near the session VWAP after the run — be ready"
+  const hint = sig.stage === 'go' && sig.go_via === 'reclaim' ? 'price reclaimed mVWAP'
+    : pb && sig.line && sig.stage !== 'held' ? STAGE_HINT[sig.stage].replace('VWAP', `the ${LINE_NAME[sig.line]}`)
+      : STAGE_HINT[sig.stage];
   const lines = [
     `${row ? '⭐ ' : ''}📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>${sig.stage === 'go' && sig.go_via === 'reclaim' ? 'price reclaimed mVWAP' : STAGE_HINT[sig.stage]}${sig.path === 'fast' ? ' · fast approach (price leads, basis lagging)' : ''}</i>`,
+    `<i>${hint}${sig.path === 'fast' ? ' · fast approach (price leads, basis lagging)' : ''}</i>`,
   ];
+  if (pb) {
+    const what = [touchText(sig.touch)];
+    if (sig.stage === 'pullback' && sig.peak_pct != null) what.push(`ran +${Math.round(sig.peak_pct)}% above the line first`);
+    if (what.some(Boolean)) lines.push(what.filter(Boolean).join(' · '));
+  }
   const lvl: string[] = [];
+  if (sig.svwap != null) lvl.push(`sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})`);
   if (sig.mvwap != null) lvl.push(`mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})`);
   if (sig.basis != null) lvl.push(`basis ${fmtPx(sig.basis)} (${fmtSigned(sig.basis_pct)})`);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
