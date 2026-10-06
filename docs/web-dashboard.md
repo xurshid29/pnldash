@@ -4,7 +4,8 @@ Status as of 2026-10-03. The bash scanner (`screener-poll_breakout.sh`) and the 
 
 **Current operating profile — lean manual-playbook desk.** The active UI is
 Momentum (with the A+…D grade, default sort) + Momentum History, plus the
-Watchlist and Alerts tabs, opportunity alerts (phone + dashboard) and, since
+Watchlist tab (the Alerts tab was removed 2026-10-06), opportunity alerts
+(phone + dashboard; 📐 stage switches in the ⚙ menu since 10-06) and, since
 2026-10-03, the **📐 VWAP setups** tab — the operator's VWAP/BB edge as
 detected by a TradingView watchlist alert and posted to `POST /api/tv/webhook`
 (full reference: `docs/vwap-setup.md`). Ignition, MOMO, SETUPS, EMA, Swing,

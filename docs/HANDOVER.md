@@ -8,11 +8,11 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-06 03:30 ET (last code commit `a5a5520`)
+## START HERE — state at 2026-10-06 04:00 ET (last code commit `b52c907`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every 20s)
 sorted by the **A+…D grade**, the **📐 setups sidebar** in the left rail, the
-History / Watchlist / Alerts tabs, Quote Details, the news room and 0–4
+History / Watchlist tabs, Quote Details, the news room and 0–4
 TradingView charts. The operator trades manually off 30s/1m charts,
 Ross-Cameron style (catalyst first, low float), mostly 04:00–11:00 ET.
 
@@ -47,8 +47,8 @@ ask.
    sight, deduped across sources; the phone only gets catalyst ≥40. ONE
    engine feeds Telegram and `payload.alerts`. Sized ≈63 phone alerts/day.
    Dashboard: sound + browser notification, in-page toast (`AlertToasts`), row
-   pulse ~90s then a colored left edge for 15 min, 🅰️⚡📰 badges, and the
-   **Alerts** tab (`GET /api/screener/alerts`, the full log incl. 📐).
+   pulse ~90s then a colored left edge for 15 min, 🅰️⚡📰 badges. (The Alerts
+   tab was removed 10-06; `GET /api/screener/alerts` stays, the 📐 sidebar reads it.)
    Switches: header ⚙ per-type menu + Alerts ON/OFF (dashboard);
    `ALERTS_DISABLED` slugs `grade_aplus` / `fast_move` / `news` (phone).
 3. **UI state.**
@@ -126,13 +126,15 @@ ask.
        READY after the first per ticker and line each ET day, are stored and
        shown in the sidebar (dimmed pill) but never announced: no toast,
        sound, notification or Telegram. GO and PULLBACK announce every time.
-       Knobs: `TV_SETUP.quiet_stages` / `ready_once_per_day`.
+       Since 10-06 the stages are switchable in the header ⚙ menu (**📐 Stages
+       that alert**; global, phone + dashboard; `app_settings` key
+       `tv_alert_stages`). `ready_once_per_day` stays in code.
      - **5-min limit:** one announcement per ticker and stage per 5 min, but
        PULLBACK counts per line (`a5a5520`): a pullback to a line not
        announced in the last 5 min pings (MI 15:21, session after year).
      - Mutes: `tv_setup` (all), `tv_ready` / `tv_go` / `tv_pullback`,
        `tv_year` (messages about the year line alone). `tv_forming` /
-       `tv_broken` / `tv_held` only matter if a stage leaves `quiet_stages`.
+       `tv_broken` / `tv_held` only matter if those stages are switched on.
    - **What our data says** (`apps/api/scripts/research/vwap-pullback/`, session
      line only, 06-12 → 10-05):
      - PULLBACK is a good heads-up: 26–30% of alerts reach +10% before
@@ -242,7 +244,7 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
     function that's called on every bar.
 - **📐 hiding a marker on the chart doesn't stop its alert.** The Style tab
   only hides the plotted shape; `alert()` still fires and reaches the webhook.
-  What gets announced is decided on our side (`TV_SETUP.quiet_stages`,
+  What gets announced is decided on our side (the ⚙ stage switches,
   `ready_once_per_day` in `tv-setups.ts`), with no alert recreation.
 - **📐 names missing from the TradingView watchlist never alert** (MI 10-05,
   +634%). The sidebar nudge covers it; the operator copies, then adds to the
@@ -297,6 +299,22 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-06 (pre-market) — ⚙ 📐 STAGE SWITCHES, ALERTS TAB REMOVED (`b52c907`).**
+- Operator: "remove the Alerts tab … I usually read them when new toast
+  appears … the whole dashboard is freezing when there is too many data".
+  The tab and `AlertsPanel` are gone. Its antd table had no pagination or
+  virtualization (833 rows on 10-05). antd keeps a visited tab mounted, so it
+  re-rendered on every cycle and alert. The Tabs now use `destroyOnHidden`:
+  only the visible tab renders, and History's day/screen pick resets when
+  you leave it. Not measured in the operator's browser; ask whether the
+  freezing is gone.
+- Operator: "notification settings for vwap based setups … disable READY,
+  keep only PULLBACK and GO". The ⚙ menu has **📐 Stages that alert** (six
+  stages). It's global and server-side (`GET/PUT /api/tv/settings`, new
+  `app_settings` table, key `tv_alert_stages`) and replaces the hard-coded
+  quiet list; defaults are unchanged. Off = quiet (stored, graded, in the
+  sidebar). 175 checks.
 
 **2026-10-05 (evening) — 📐 NOISE CUT (`6bc9437`, server only).** The operator
 showed their chart's Style tab, with the Broken, Held, Forming (month) and

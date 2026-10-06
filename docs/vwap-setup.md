@@ -210,7 +210,7 @@ of the grading plan (§9).
   FORMING is the heads-up ("open the chart"), READY is the entry zone, and GO
   is the confirmation they described.
 - **A fourth opportunity-alert kind (`tv_setup`), not a separate pipeline.**
-  It reuses the Alerts tab, toasts, sounds, the ⚙ switches, the row badges,
+  It reuses the toasts, sounds, the ⚙ switches, the row badges,
   Telegram and the `tier_events` grading log the other alerts already have.
 - **Plan B, not built: an IBKR TWS API bridge** on the operator's Mac.
   IBKR's data includes pre-market volume, so we could compute the line
@@ -630,7 +630,7 @@ TradingView servers                                   pnldash droplet
 |---|---|---|
 | Same ticker + stage + timeframe + line within 2 min | `dup_sec` 120 | `drop` — a re-delivery, not stored |
 | Same event (ticker + stage + line) from another timeframe within 5 min | `notify_merge_sec` 300 | `log` — stored for grading, not announced |
-| FORMING, BROKEN, HELD (since 2026-10-05) | `quiet_stages` | `quiet` — stored, graded and shown in the 📐 sidebar; no toast, sound, notification or Telegram |
+| A stage switched off in the ⚙ menu's **📐 Stages that alert** (since 2026-10-06; default off: FORMING, BROKEN, HELD — the 10-05 noise cut) | app_settings `tv_alert_stages` (default `TV_SETUP.quiet_stages`) | `quiet` — stored, graded and shown in the 📐 sidebar; no toast, sound, notification or Telegram |
 | A READY on a line that already had a READY announced today (ET day; since 2026-10-05) | `ready_once_per_day` | `quiet`. Before the first webhook after a deploy, the gate reloads today's announced READYs from `tier_events` |
 | The ticker had this stage announced in the last 5 min (a month READY, then a year READY a minute later). **PULLBACK counts per line** (since 2026-10-05, `a5a5520`): only a line announced in the last 5 min blocks it, in any combination | `notify_merge_sec` 300 | `log`. Only announcements count, so a quiet event never blocks the next one |
 | More than 120 webhooks a minute | `max_per_min` 120 | `flood` → 429, so a leaked key or runaway alert can't spam the phone |
@@ -640,9 +640,17 @@ TradingView servers                                   pnldash droplet
 chart markers they had switched off. TradingView still sends every stage, so
 the cut is ours. Replayed on 10-05 it takes 372 announcements to 154 (READY
 145 → 63) and buzzing pushes from 106 to 55; 46 of the 49 GOs had their READY
-announced earlier that day. GO and PULLBACK announce every time. To bring a
-stage back, take it off `quiet_stages` (BROKEN/HELD then go out as silent
-messages, as before).
+announced earlier that day. GO and PULLBACK announce every time.
+
+**The ⚙ stage switches (operator, 2026-10-06):** "add a notification settings
+for vwap based setups, so I can disable some types when I want … disable READY
+alerts, and keep only PULLBACK and GO". The header ⚙ menu lists all six
+stages under **📐 Stages that alert**. They're server-side and global (one
+row in `app_settings`, key `tv_alert_stages`, via `GET/PUT /api/tv/settings`),
+so one click mutes the phone and the dashboard. A switched-off stage is quiet,
+not dropped. Turning BROKEN/HELD back on sends them as silent messages, as
+before. The device-local 📐 checkbox above them still controls sound and
+notification on that browser only.
 
 **PULLBACK per line (operator, 2026-10-05, after MI).** The 5-min limit used
 to allow one PULLBACK per ticker on any line. MI's 15:21 ET session-line
@@ -681,12 +689,12 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   gold-edged 20 s toast. Off-list ones get a soft single tone and an 8 s toast.
 - **Quiet (since 2026-10-05, §7.2):** FORMING, BROKEN, HELD and repeat READYs
   reach neither Telegram nor the toast, sound and notification. They're
-  still in the sidebar and the Alerts tab.
+  still in the sidebar. Since 10-06 any stage can be switched on or off in
+  the ⚙ menu (§7.2).
 - **📐 sidebar:** ⭐ marks tickers on Momentum *right now*; off-list rows are
   dimmed. A dimmed stage pill means "not announced" (quiet, or a copy).
   Each section is sorted newest first (the operator asked on 10-05 to
   order by alert time, so ⭐ names no longer jump the list).
-- **Alerts tab:** ⭐📐 marks a priority setup.
 
 - **📐 setups sidebar** (the left rail, beside Momentum, since 2026-10-05;
   it replaced the 📐 tab). There's one row per ticker with its *current* state:
@@ -724,8 +732,8 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
 
   When alerts arrive together, the loudest one plays. The ⚙ menu has a
   **📐 VWAP setup** switch; the master Alerts ON/OFF applies too.
-- **Alerts tab** — a "📐 Setup" filter, with each signal showing its stage pill,
-  levels and timeframe.
+- **Alerts tab** — removed 2026-10-06 (the operator reads alerts from the
+  toasts; the 📐 sidebar keeps the setup trail).
 - **Momentum row** — a 📐 badge and a cyan left edge for 15 min, pulsing for
   the first 90 s.
 - **Telegram** — a header line (📐, the stage, the ticker and price), a hint
@@ -746,7 +754,7 @@ is scored on four checks (`goStrength` in `tv-setups.ts`, knobs in `TV_SETUP`):
 | volume | GO-bar volume ≥2× the previous-20-bar average (`vol`) | the classic breakout confirmation; NIVF 09-30 (big spike, +30%) vs 10-01 (tiny, ~9%). **Unvalidated:** the replay has no pre-market volume |
 | on Momentum | the ticker is on our Momentum list (⭐) | the operator's priority (§7.4) |
 
-It shows as **💪3/4** next to GO in the 📐 sidebar and the Alerts tab, with the
+It shows as **💪3/4** next to GO in the 📐 sidebar, with the
 checks spelled out under "Latest signal". Telegram adds a "💪 GO strength
 3/4 · morning ✓ · run-up +8.1% ✓ · volume 3.2× ✓ · on Momentum ✗" line, and
 the browser notification adds "strength 3/4". A v8 message has no
@@ -777,7 +785,7 @@ no new high within ~3–5 bars. Weak GOs stall at once.
 | `apps/web/src/components/common/TvStageTag.tsx` | stage pill, level text, timeframe labels |
 | `apps/web/src/hooks/useScreenerStream.ts` | merges SSE `alert` events into the payload |
 | `apps/web/src/hooks/useScreenerAlerts.ts` | stage sounds + notification text |
-| `AlertToasts.tsx`, `AlertsPanel.tsx`, `ScreenerPanel.tsx`, `AlertKindsMenu.tsx`, `useAlertKinds.ts`, `index.css` | toast colour, Alerts filter, tab + row badge/tone, ⚙ switch |
+| `AlertToasts.tsx`, `ScreenerPanel.tsx`, `AlertKindsMenu.tsx`, `useAlertKinds.ts`, `useTvAlertStages.ts`, `index.css` | toast colour, row badge/tone, ⚙ switch + 📐 stage switches |
 
 ## 8. Testing and operations
 
@@ -1006,7 +1014,7 @@ The operator's examples (screenshots):
     messages and short toasts.
   - On the dashboard, a PULLBACK on a Momentum name plays the READY triple tone.
   - Mutes: `ALERTS_DISABLED` `tv_pullback` (or `tv_setup` for all 📐);
-    `tv_broken` / `tv_held` only matter if those stages leave `quiet_stages`.
+    `tv_broken` / `tv_held` only matter if those stages are switched on in ⚙.
   - The 📐 sidebar shows one row per ticker, with its current stage carrying
     the line (S purple / M yellow / S+M) and the touch number.
 
