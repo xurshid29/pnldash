@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-05 evening (last code commit `a5a5520`)
+## START HERE — state at 2026-10-06 03:30 ET (last code commit `a5a5520`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every 20s)
 sorted by the **A+…D grade**, the **📐 setups sidebar** in the left rail, the
@@ -173,22 +173,11 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 `.env.bak-20261003`.
 
 **Open items, ranked:**
-0. **The operator switches to v15** (📐 ⋯ → Copy Pine script → paste → Save,
-   then delete and recreate both alerts, 1m + 30s) **and re-imports the
-   list**, so today's new runners like MI are on the TradingView watchlist.
-   Then check the first v15 messages:
-   - `yvwap` agrees between the 1m and 30s alerts;
-   - `line year` PULLBACKs arrive;
-   - a line whose pullbacks hold keeps alerting.
-
-   v14 added a `request.security` call. If TradingView shows a compile error
-   or warning on paste, fix it first.
-
-   Checked 15:00 ET: the 1m alert carries v14+ fingerprints since ~14:54
-   (RETO's yVWAP jumped 17.72 → 18.26 while trading at $1.95, which volume
-   can't do), and 1m and 30s agree on yVWAP since 14:57 (GOW 4.32, TNMG
-   6.21; VRAX at 14:06 was 6.89 vs 7.04). v14 and v15 send identical
-   messages, so only the operator can confirm v15.
+0. **Done (10-06): v15 is live on both alerts**, confirmed by the operator. The
+   data agrees: MI's year line sent PULLBACK touches 5 and 6 on 10-05 (v14
+   stopped a line after 2 touches; v15 only after 2 failures), the 1m and
+   30s alerts agree on yVWAP since 14:57 ET, and year-line PULLBACKs
+   arrive. The list was re-imported (MI's first 📐 row: 15:17 ET).
 1. **~2026-10-17/19 — grade the 📐 rows** (SQL: `docs/vwap-setup.md` §9 and
    §13.6). Both edges are still unmeasured live.
    - RECLAIM by line (month vs year), stage, path, timeframe (1m vs 30s; 30s
