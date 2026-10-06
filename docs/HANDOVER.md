@@ -343,7 +343,9 @@ dashboard toast and sound), 168 timeframe copies logged.
   ticker on any line, and a year-line one (5.68) had pinged at 15:17. Now
   PULLBACK counts per line; a line already announced in another
   combination stays logged. Replayed on 10-05: 169 → 174, all five
-  extra on ⭐ names. 164 checks.
+  extra on ⭐ names. 164 checks. GitHub's runner outage cancelled its CI
+  twice on 10-05; it deployed through CI on 10-06 at 03:26 ET (prod api
+  = `sha-a5a5520`).
 - **Decided, keep as-is (operator, 10-05):** the Pine alerts keep sending
   every stage. Filtering stays on our side, because BROKEN/HELD are the
   only month/year-line outcome data and they close pullbacks in the
