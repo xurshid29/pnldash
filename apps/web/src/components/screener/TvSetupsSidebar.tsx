@@ -2,9 +2,10 @@ import { useEffect, useMemo, useState } from 'react';
 import { App, Button, Dropdown, Modal, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { CaretDownOutlined, CaretRightOutlined, EllipsisOutlined } from '@ant-design/icons';
-import type { CyclePayload, OpportunityAlert, TvSetupInfo } from '../../api/types';
+import type { CyclePayload, OpportunityAlert, TvSetupInfo, TvStage } from '../../api/types';
 import { tvApi, type TvWatchlist } from '../../api/tv';
 import { useAlertLog } from '../../hooks/useAlertLog';
+import { useTvAlertStages } from '../../hooks/useTvAlertStages';
 import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
@@ -33,9 +34,10 @@ interface SetupEvent {
 }
 interface TickerCard {
   ticker: string;
-  events: SetupEvent[];   // oldest first, 1m/2m copies merged
-  current: SetupEvent;    // the live event, or the latest one
+  events: SetupEvent[];   // oldest first, 1m/2m copies merged — every stage (the day trail)
+  current: SetupEvent;    // the live event, or the latest one of a shown stage
   live: boolean;
+  resolved: boolean;      // GO / HELD / BROKEN, or a PULLBACK a later BROKEN / HELD closed
 }
 
 // One setup thread per line combination: reclaim (month / year / month+year)
@@ -45,7 +47,10 @@ function threadOf(s: TvSetupInfo): string {
   return `${isPullbackStage(s.stage) ? 'pb' : 'rc'}:${lineTokens(s.stage, s.line).join('+') || 'none'}`;
 }
 
-function buildCards(alerts: OpportunityAlert[], now: number): TickerCard[] {
+// `shown`: the ⚙ menu's 📐 stage switches (2026-10-06). A switched-off stage
+// never becomes a card's current state, so a ticker with only such events has
+// no card; BROKEN / HELD still close a pullback even while hidden.
+function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvStage) => boolean): TickerCard[] {
   const byTicker = new Map<string, SetupEvent[]>();
   const sorted = alerts
     .filter((a) => a.kinds.includes('tv_setup') && a.setup)
@@ -80,9 +85,15 @@ function buildCards(alerts: OpportunityAlert[], now: number): TickerCard[] {
     let live: SetupEvent | null = null;
     for (const e of latest.values()) {
       const limit = (LIVE_MIN as Record<string, number | undefined>)[e.setup.stage];
-      if (limit != null && now - e.at <= limit * 60_000 && (!live || e.at > live.at)) live = e;
+      if (shown(e.setup.stage) && limit != null && now - e.at <= limit * 60_000 && (!live || e.at > live.at)) live = e;
     }
-    cards.push({ ticker, events, current: live ?? events[events.length - 1], live: live != null });
+    const current = live ?? [...events].reverse().find((e) => shown(e.setup.stage));
+    if (!current) continue;
+    const st = current.setup.stage;
+    const closer = latest.get(threadOf(current.setup));
+    const resolved = st === 'go' || st === 'held' || st === 'broken'
+      || (st === 'pullback' && closer != null && closer !== current && (closer.setup.stage === 'broken' || closer.setup.stage === 'held'));
+    cards.push({ ticker, events, current, live: live != null, resolved });
   }
   return cards;
 }
@@ -155,6 +166,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   const { message } = App.useApp();
   const { selected, setSelected } = useSelection();
   const { alerts } = useAlertLog(payload);
+  const { settings: stageSettings } = useTvAlertStages();
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [showEarlier, setShowEarlier] = useState(() => {
@@ -182,7 +194,11 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   }, []);
 
   const rowByTicker = useMemo(() => new Map((payload?.rows ?? []).map((r) => [r.ticker, r])), [payload]);
-  const cards = useMemo(() => buildCards(alerts, now), [alerts, now]);
+  // Until the switches load, show every stage rather than flash an empty list.
+  const cards = useMemo(() => {
+    const on = stageSettings ? new Set(stageSettings.announced) : null;
+    return buildCards(alerts, now, (st) => on == null || on.has(st));
+  }, [alerts, now, stageSettings]);
   const live = cards.filter((c) => c.live).sort((x, y) => y.current.at - x.current.at);
   const earlier = cards.filter((c) => !c.live).sort((x, y) => y.current.at - x.current.at);
 
@@ -261,7 +277,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     const nowChg = r?.change_pct != null ? Number(r.change_pct) : q?.change_pct ?? null;
     const since = nowPx != null && e.price != null && e.price > 0 ? (nowPx / e.price - 1) * 100 : null;
     const expanded = open.has(c.ticker);
-    const resolved = s.stage === 'go' || s.stage === 'held' || s.stage === 'broken';
+    const resolved = c.resolved;
     return (
       <div
         key={c.ticker}

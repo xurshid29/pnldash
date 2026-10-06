@@ -20,8 +20,7 @@ const STAGE_LABEL: Record<TvStage, string> = {
 // Click-to-open switches for which opportunity alerts make a sound and a
 // browser notification on this device. The master ON/OFF stays next to it.
 // Below them, the 📐 stage switches (2026-10-06): server-side, so they mute
-// the phone too, for everyone; a switched-off stage still shows in the 📐
-// sidebar, it just doesn't ping.
+// the phone too, for everyone, and hide the stage from the 📐 sidebar list.
 export function AlertKindsMenu() {
   const kinds = useAlertKinds();
   const { settings, save } = useTvAlertStages();
@@ -37,7 +36,7 @@ export function AlertKindsMenu() {
       <div>
         <span style={{ fontWeight: 600 }}>📐 Stages that alert</span>
         <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
-          phone + dashboard · off = sidebar only
+          phone + dashboard · off = no ping, hidden from the sidebar
         </Text>
       </div>
       {settings ? (
