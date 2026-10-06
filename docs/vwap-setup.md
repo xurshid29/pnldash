@@ -648,7 +648,10 @@ alerts, and keep only PULLBACK and GO". The header ⚙ menu lists all six
 stages under **📐 Stages that alert**. They're server-side and global (one
 row in `app_settings`, key `tv_alert_stages`, via `GET/PUT /api/tv/settings`),
 so one click mutes the phone and the dashboard. A switched-off stage is quiet,
-not dropped. Turning BROKEN/HELD back on sends them as silent messages, as
+not dropped: it's stored and graded, and since `e5ab278` it's also hidden from
+the sidebar list (operator: "maybe we should also hide them from the
+sidebar?"). BROKEN/HELD still close a pullback while hidden, and a ticker's
+day trail still lists every stage. Turning BROKEN/HELD back on sends them as silent messages, as
 before. The device-local 📐 checkbox above them still controls sound and
 notification on that browser only.
 
@@ -689,8 +692,8 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   gold-edged 20 s toast. Off-list ones get a soft single tone and an 8 s toast.
 - **Quiet (since 2026-10-05, §7.2):** FORMING, BROKEN, HELD and repeat READYs
   reach neither Telegram nor the toast, sound and notification. They're
-  still in the sidebar. Since 10-06 any stage can be switched on or off in
-  the ⚙ menu (§7.2).
+  stored and graded. Since 10-06 any stage can be switched on or off in the
+  ⚙ menu (§7.2), and a switched-off stage is hidden from the sidebar list.
 - **📐 sidebar:** ⭐ marks tickers on Momentum *right now*; off-list rows are
   dimmed. A dimmed stage pill means "not announced" (quiet, or a copy).
   Each section is sorted newest first (the operator asked on 10-05 to

@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-06 04:00 ET (last code commit `b52c907`)
+## START HERE — state at 2026-10-06 04:10 ET (last code commit `e5ab278`)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every 20s)
 sorted by the **A+…D grade**, the **📐 setups sidebar** in the left rail, the
@@ -123,12 +123,15 @@ ask.
      - Priority: a ticker on our Momentum list gets ⭐ and a buzzing push;
        off-list ones are silent.
      - **Quiet since 10-05 (`6bc9437`):** FORMING, BROKEN, HELD, and every
-       READY after the first per ticker and line each ET day, are stored and
-       shown in the sidebar (dimmed pill) but never announced: no toast,
+       READY after the first per ticker and line each ET day, are stored but
+       never announced: no toast,
        sound, notification or Telegram. GO and PULLBACK announce every time.
        Since 10-06 the stages are switchable in the header ⚙ menu (**📐 Stages
        that alert**; global, phone + dashboard; `app_settings` key
-       `tv_alert_stages`). `ready_once_per_day` stays in code.
+       `tv_alert_stages`). A switched-off stage is also hidden from the
+       sidebar list (`e5ab278`); BROKEN/HELD still close pullbacks. The
+       operator runs GO + PULLBACK only since 10-06 03:55 ET.
+       `ready_once_per_day` stays in code.
      - **5-min limit:** one announcement per ticker and stage per 5 min, but
        PULLBACK counts per line (`a5a5520`): a pullback to a line not
        announced in the last 5 min pings (MI 15:21, session after year).
@@ -313,8 +316,9 @@ These are the detailed notes behind START HERE, kept verbatim.
   keep only PULLBACK and GO". The ⚙ menu has **📐 Stages that alert** (six
   stages). It's global and server-side (`GET/PUT /api/tv/settings`, new
   `app_settings` table, key `tv_alert_stages`) and replaces the hard-coded
-  quiet list; defaults are unchanged. Off = quiet (stored, graded, in the
-  sidebar). 175 checks.
+  quiet list; defaults are unchanged. Off = quiet (stored, graded). 175
+  checks. The operator switched READY off at 03:55 ET (GO + PULLBACK only),
+  then asked to hide switched-off stages from the sidebar too (`e5ab278`).
 
 **2026-10-05 (evening) — 📐 NOISE CUT (`6bc9437`, server only).** The operator
 showed their chart's Style tab, with the Broken, Held, Forming (month) and
