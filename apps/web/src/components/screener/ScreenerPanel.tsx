@@ -104,36 +104,29 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
   const [activeTab, setActiveTab] = useState<ScreenerTab>('momentum');
   // Same TanStack Query cache as the panel itself — the tab label's count is free.
   const { entries: watchEntries } = useWatchlist();
-  // Momentum rows that alerted in the last 15 min get a small badge per kind,
-  // so the table itself shows what just fired (payload.alerts = last hour).
-  const recentAlertKinds = useMemo(() => {
-    const m = new Map<string, Set<string>>();
+  // Momentum rows with a 📐 setup alert in the last 15 min get a 📐 badge, so
+  // the table itself shows what just fired (payload.alerts = last hour). Only
+  // 📐 since 2026-10-06 — the dashboard dropped the 🅰️ / ⚡ / 📰 alerts.
+  const recentSetupAlerts = useMemo(() => {
+    const m = new Map<string, number>();   // ticker → latest 📐 alert, ms
     const cutoff = Date.now() - 15 * 60_000;
     for (const a of payload?.alerts ?? []) {
-      if (Date.parse(a.at) < cutoff) continue;
-      const s = m.get(a.ticker) ?? new Set<string>();
-      for (const k of a.kinds) s.add(k);
-      m.set(a.ticker, s);
+      const t = Date.parse(a.at);
+      if (t < cutoff || !a.kinds.includes('tv_setup')) continue;
+      m.set(a.ticker, Math.max(m.get(a.ticker) ?? 0, t));
     }
     return m;
   }, [payload]);
-  // Row highlight for alerted tickers: a pulse for the first 90s, then a
-  // colored left edge until the 15-min badge window ends. Color = the
-  // strongest kind that fired (A+ green > fast amber > 📐 setup cyan > news blue).
+  // Row highlight: a pulse for the first 90s, then a cyan left edge until the
+  // 15-min badge window ends.
   const alertRowClass = useMemo(() => {
     const m = new Map<string, string>();
     const now = Date.now();
-    const latest = new Map<string, number>();
-    for (const a of payload?.alerts ?? []) {
-      const t = Date.parse(a.at);
-      if (now - t <= 90_000) latest.set(a.ticker, Math.max(latest.get(a.ticker) ?? 0, t));
-    }
-    for (const [ticker, kinds] of recentAlertKinds) {
-      const tone = kinds.has('grade_aplus') ? 'aplus' : kinds.has('fast_move') ? 'fast' : kinds.has('tv_setup') ? 'setup' : 'news';
-      m.set(ticker, `screener-row-alert screener-row-alert-${tone}${latest.has(ticker) ? ' screener-row-alert-pulse' : ''}`);
+    for (const [ticker, t] of recentSetupAlerts) {
+      m.set(ticker, `screener-row-alert screener-row-alert-setup${now - t <= 90_000 ? ' screener-row-alert-pulse' : ''}`);
     }
     return m;
-  }, [payload, recentAlertKinds]);
+  }, [recentSetupAlerts]);
   const components = payload?.components ?? LEAN_COMPONENT_FLAGS;
   const { hidden, hide, unhide } = useHiddenTickers();
   const { momentumNewsOnly, setMomentumNewsOnly } = useLayout();
@@ -173,14 +166,7 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
               stopPropagation
               style={{ color: '#fff', fontWeight: 600 }}
             />
-            {recentAlertKinds.has(t) && (
-              <span style={{ marginLeft: 4, fontSize: 11 }}>
-                {recentAlertKinds.get(t)!.has('grade_aplus') && '🅰️'}
-                {recentAlertKinds.get(t)!.has('fast_move') && '⚡'}
-                {recentAlertKinds.get(t)!.has('news') && '📰'}
-                {recentAlertKinds.get(t)!.has('tv_setup') && '📐'}
-              </span>
-            )}
+            {recentSetupAlerts.has(t) && <span style={{ marginLeft: 4, fontSize: 11 }}>📐</span>}
             {row.is_fresh_news && <span> 🚨</span>}
             {row.vwap_reclaim && (
               <Tooltip title="Reclaimed VWAP this cycle — crossed from below to above">
@@ -362,8 +348,8 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
         ),
       },
     ],
-    // recentAlertKinds: the ticker cell's alert badges must refresh each cycle.
-    [hide, payload?.session, recentAlertKinds],
+    // recentSetupAlerts: the ticker cell's 📐 badge must refresh each cycle.
+    [hide, payload?.session, recentSetupAlerts],
   );
 
   const allRows = payload?.rows ?? [];

@@ -14,12 +14,22 @@ const STORAGE_KEY = 'alerts.kinds';
 const CHANGE_EVENT = 'alert-kinds-changed';
 const DEFAULTS: AlertKinds = { grade_aplus: true, fast_move: true, news: true, tv_setup: true };
 
+// 2026-10-06 (operator: "remove any other alerts/toasts from our dashboard and
+// keep only setup alerts"): the dashboard alerts on 📐 VWAP setups only. 🅰️ /
+// ⚡ / 📰 no longer toast, sound or notify here, whatever an older browser
+// stored; the phone keeps them (server-side, ALERTS_DISABLED).
+export const DASHBOARD_KINDS: readonly AlertKind[] = ['tv_setup'];
+
+function dashboardOnly(k: AlertKinds): AlertKinds {
+  return { grade_aplus: false, fast_move: false, news: false, tv_setup: k.tv_setup && DASHBOARD_KINDS.includes('tv_setup') };
+}
+
 export function getAlertKinds(): AlertKinds {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<AlertKinds>) } : { ...DEFAULTS };
+    return dashboardOnly(raw ? { ...DEFAULTS, ...(JSON.parse(raw) as Partial<AlertKinds>) } : { ...DEFAULTS });
   } catch {
-    return { ...DEFAULTS };
+    return dashboardOnly({ ...DEFAULTS });
   }
 }
 

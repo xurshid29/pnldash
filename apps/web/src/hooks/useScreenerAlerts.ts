@@ -27,10 +27,12 @@ const DASHBOARD_ALERTS: Record<
   | 'vwap_reclaimed' | 'vwap_confirmed',
   boolean
 > = {
-  ema_cross_confirm: true,  // ✅ volume confirmed — bright two-tone + notification
-  ema_cross_observe: true,  // 📈 new cross appeared — soft single tone
+  // 2026-10-06: off with the rest — the dashboard alerts on 📐 setups only
+  // (these layers are parked anyway; this keeps them silent if revived).
+  ema_cross_confirm: false, // ✅ volume confirmed — bright two-tone + notification
+  ema_cross_observe: false, // 📈 new cross appeared — soft single tone
   news_radar: false,
-  tick_confirmed: true,     // 🛰️ radar ping + notification (2026-08-21)
+  tick_confirmed: false,    // 🛰️ radar ping + notification (2026-08-21; Live Ticks parked 10-01)
   tick_watch: false,        // 👀 off again (2026-08-21 pm) — confirmed-only, operator's call
   accum: false,
   vwap_reclaimed: false,    // ↑ layer parked 2026-08-22 (COMPONENTS_DISABLED vwap) — graded as noise
@@ -305,8 +307,9 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       return;
     }
 
-    // Opportunity alerts (2026-10-01) — the same set the phone gets. One
-    // sound per cycle (loudest kind wins), one notification per alert.
+    // Opportunity alerts (2026-10-01). Since 2026-10-06 only 📐 setups pass
+    // getAlertKinds() here; 🅰️ / ⚡ / 📰 go to the phone only. One sound per
+    // cycle (loudest wins), one notification per alert.
     const newAlerts = (payload.alerts ?? []).filter((a) => !seenAlerts.current.has(a.id));
     newAlerts.forEach((a) => seenAlerts.current.add(a.id));
     const kindsOn = getAlertKinds();

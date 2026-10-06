@@ -1,17 +1,16 @@
 import { Button, Checkbox, Divider, Popover, Space, Typography } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
-import { setAlertKind, useAlertKinds, type AlertKind } from '../../hooks/useAlertKinds';
+import { DASHBOARD_KINDS, setAlertKind, useAlertKinds, type AlertKind } from '../../hooks/useAlertKinds';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
 import type { TvStage } from '../../api/types';
 
 const { Text } = Typography;
 
+// Since 2026-10-06 the dashboard alerts on 📐 setups only (DASHBOARD_KINDS);
+// 🅰️ / ⚡ / 📰 still reach the phone.
 const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
-  { kind: 'grade_aplus', label: '🅰️ New A+', hint: 'first time a ticker reaches A+ today' },
-  { kind: 'fast_move', label: '⚡ Fast move', hint: '+10% within 60s on volume' },
-  { kind: 'news', label: '📰 Fresh news', hint: 'headline published in the last 30 min' },
-  { kind: 'tv_setup', label: '📐 VWAP setup', hint: 'TradingView alert — the stages below' },
-];
+  { kind: 'tv_setup', label: '📐 VWAP setup', hint: 'sound + notification on this device' },
+].filter((k) => DASHBOARD_KINDS.includes(k.kind as AlertKind)) as Array<{ kind: AlertKind; label: string; hint: string }>;
 
 const STAGE_LABEL: Record<TvStage, string> = {
   ready: 'READY', go: 'GO', pullback: 'PULLBACK', forming: 'FORMING', broken: 'BROKEN', held: 'HELD',
