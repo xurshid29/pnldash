@@ -6,7 +6,10 @@
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
-import { parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, lineTokens, type TvSetupSignal } from '../src/services/tv-setups.js';
+import {
+  parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, lineTokens,
+  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, type TvSetupSignal,
+} from '../src/services/tv-setups.js';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail = ''): void {
@@ -263,6 +266,33 @@ console.log('Gate — the 5-min PULLBACK limit counts per line (2026-10-05)');
   check('READY keeps one announcement per ticker per 5 min across lines',
     a.admit(apus({ stage: 'ready', line: 'month', tf: '1' }), T0 + 700) === 'notify'
       && a.admit(apus({ stage: 'ready', line: 'year', tf: '1' }), T0 + 760) === 'log');
+}
+
+console.log('Gate — the ⚙ stage switches (2026-10-06)');
+{
+  const T0 = 1_791_276_000;   // 2026-10-06 04:40 ET
+  const sig = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
+    stage: 'ready', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, basis: 1.95, basis_pct: -7, day_gain: 25, ah_gain: null,
+    tf: '1', path: 'base', go_via: null, vol_x: null, run_pct: null, line: 'month', ...over,
+  });
+  check('default switches: READY, GO, PULLBACK on', JSON.stringify(DEFAULT_ANNOUNCED) === '["ready","go","pullback"]');
+  check('parseStageList keeps known stages in menu order, drops the rest',
+    JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 7])) === '["go","pullback","held"]'
+      && parseStageList('go') === null && JSON.stringify(parseStageList([])) === '[]');
+  check('menu order lists all six stages', TV_STAGE_ORDER.length === 6 && new Set(TV_STAGE_ORDER).size === 6);
+  const g = new TvSetupGate();
+  g.setAnnounced(['go', 'pullback']);
+  check('READY switched off → quiet, even the first of the day', g.admit(sig(), T0) === 'quiet' && !g.announces('ready'));
+  check('GO still announces', g.admit(sig({ stage: 'go' }), T0 + 60) === 'notify');
+  g.setAnnounced(['ready', 'go', 'pullback']);
+  check('READY back on: the line was never announced, so the next READY notifies', g.admit(sig(), T0 + 900) === 'notify');
+  check('…and a repeat after that is quiet again', g.admit(sig(), T0 + 2000) === 'quiet');
+  g.setAnnounced(['ready', 'go', 'pullback', 'held']);
+  check('HELD switched on → announces', g.admit(sig({ stage: 'held', line: 'session' }), T0 + 2100) === 'notify');
+  check('FORMING still off → quiet', g.admit(sig({ stage: 'forming' }), T0 + 2200) === 'quiet');
+  check('announcedStages() reports menu order', JSON.stringify(g.announcedStages()) === '["ready","go","pullback","held"]');
+  g.setAnnounced([]);
+  check('everything off → every first copy is quiet', g.admit(sig({ stage: 'pullback', line: 'year' }), T0 + 2300) === 'quiet');
 }
 
 console.log('Telegram format');

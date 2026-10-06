@@ -1,15 +1,37 @@
 import express, { Router } from 'express';
 import { timingSafeEqual } from 'crypto';
 import { sql } from 'kysely';
+import { z } from 'zod';
 import { authMiddleware } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
-import { parseTvMessage, TvSetupGate } from '../services/tv-setups.js';
+import { DEFAULT_ANNOUNCED, parseStageList, parseTvMessage, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
 
 // TradingView ↔ dashboard bridge for the 📐 VWAP setup (services/tv-setups.ts).
 const router = Router();
 const gate = new TvSetupGate();
+
+// The ⚙ menu's 📐 stage switches (2026-10-06): which stages are announced —
+// phone and dashboard alike. One global row in app_settings, like the
+// screener config, because the gate and Telegram are global. Loaded once,
+// before the first webhook or settings read; never rejects (defaults stay).
+const STAGES_KEY = 'tv_alert_stages';
+let settingsLoad: Promise<void> | null = null;
+function loadSettings(): Promise<void> {
+  settingsLoad ??= getDb()
+    .selectFrom('app_settings').select('value').where('key', '=', STAGES_KEY)
+    .executeTakeFirst()
+    .then((row) => {
+      const stages = row ? parseStageList(row.value) : null;
+      if (stages) gate.setAnnounced(stages);
+      console.log(`[tv-setup] announced stages: ${gate.announcedStages().join(', ') || 'none'}${stages ? '' : ' (default)'}`);
+    })
+    .catch((err) => {
+      console.error('[tv-setup] stage settings load failed (defaults in use):', err instanceof Error ? err.message : err);
+    });
+  return settingsLoad;
+}
 
 // A deploy restarts the gate empty. Before the first webhook, reload today's
 // announced READYs once, so a READY already announced today stays quiet.
@@ -61,7 +83,7 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
   }
   if (req.query.dry === '1') return res.json({ data: { dry_run: true, signal: sig } });
 
-  await seedGate();
+  await Promise.all([loadSettings(), seedGate()]);
   // Express 4 doesn't catch errors thrown after an await — answer them here.
   try {
     const verdict = gate.admit(sig, Math.floor(Date.now() / 1000));
@@ -70,12 +92,44 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
       return res.status(429).json({ error: 'Too many alerts' });
     }
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
-    const alert = poller.deliverTvSetup(sig, verdict);
+    const why = verdict !== 'quiet' ? undefined : gate.announces(sig.stage) ? 'repeat' : 'muted';
+    const alert = poller.deliverTvSetup(sig, verdict, why);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
   } catch (err) {
     console.error(`[tv-setup] delivery failed for ${sig.stage} ${sig.ticker}:`, err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'Delivery failed' });
   }
+});
+
+// GET /api/tv/settings — the 📐 stage switches: which stages are announced
+// (Telegram + dashboard toast/sound/notification). Off = quiet: still stored,
+// graded and shown in the 📐 sidebar.
+router.get('/settings', authMiddleware, async (_req, res) => {
+  await loadSettings();
+  res.json({ data: { announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED } });
+});
+
+// PUT /api/tv/settings { announced: ["go", "pullback", …] } — global, like the
+// screener config. Takes effect on the next webhook; persisted for restarts.
+const settingsSchema = z.object({ announced: z.array(z.enum(TV_STAGE_ORDER as [string, ...string[]])) });
+router.put('/settings', authMiddleware, async (req, res) => {
+  const parsed = settingsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'announced must be a list of stages' });
+  await loadSettings();   // so a late first load can't overwrite this change
+  const stages = parseStageList(parsed.data.announced) ?? [];
+  try {
+    await getDb()
+      .insertInto('app_settings')
+      .values({ key: STAGES_KEY, value: JSON.stringify(stages), updated_at: new Date() })
+      .onConflict((oc) => oc.column('key').doUpdateSet({ value: JSON.stringify(stages), updated_at: new Date() }))
+      .execute();
+  } catch (err) {
+    console.error('[tv-setup] stage settings save failed:', err instanceof Error ? err.message : err);
+    return res.status(500).json({ error: 'Could not save the stage settings' });
+  }
+  gate.setAnnounced(stages);
+  console.log(`[tv-setup] announced stages set to: ${stages.join(', ') || 'none'}`);
+  res.json({ data: { announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED } });
 });
 
 // GET /api/tv/watchlist[?days=30&min_chg=30] — the symbols for the TradingView

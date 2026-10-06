@@ -49,7 +49,7 @@ export function useScreenerStream(): { payload: CyclePayload | null; connected: 
     });
     // 📐 TradingView setup alerts arrive between cycles (webhook → SSE
     // 'alert'). Fold each into the current payload so the toast, sound, row
-    // badge and Alerts log react now; the cycle_id suffix lets the
+    // badge and 📐 sidebar react now; the cycle_id suffix lets the
     // per-cycle sound hook treat it as a new delivery. The next real cycle
     // replaces the payload and already carries the alert in payload.alerts.
     es.addEventListener('alert', (ev) => {

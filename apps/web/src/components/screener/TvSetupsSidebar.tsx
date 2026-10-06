@@ -14,7 +14,7 @@ import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
 
 const { Text } = Typography;
-const LOCAL_TZ = 'Asia/Tashkent'; // UTC+5, the operator's clock (same as the Alerts tab)
+const LOCAL_TZ = 'Asia/Tashkent'; // UTC+5, the operator's clock
 
 // What counts as live (operator, 2026-10-05): a setup still forming, a fresh
 // GO, or a pullback still waiting at its line. Everything else is "earlier".
@@ -150,7 +150,7 @@ function saveCopied(symbols: string[], addTo: CopiedList | null): CopiedList {
 // the line — live setups first, the rest under "Earlier today", each section
 // newest first (operator: order by alert time; ⭐ still marks Momentum names).
 // The 1m and 2m alerts' copies merge into one event. A click selects the
-// ticker and opens its day trail. The full log stays on the Alerts tab.
+// ticker and opens its day trail.
 export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   const { message } = App.useApp();
   const { selected, setSelected } = useSelection();

@@ -94,7 +94,9 @@ export const TV_SETUP = {
   // Noise cut (operator, 2026-10-05: "I hide broken, held, forming setups, and
   // READY also can be limited" — the chart markers they switched off). Quiet
   // stages are stored, graded and shown in the 📐 sidebar, but never announced:
-  // no toast, sound, browser notification or Telegram.
+  // no toast, sound, browser notification or Telegram. This is the DEFAULT;
+  // since 2026-10-06 the live set is the ⚙ menu's stage switches
+  // (app_settings 'tv_alert_stages', TvSetupGate.setAnnounced).
   quiet_stages: ['forming', 'broken', 'held'] as readonly TvStage[],
   // READY is announced once per ticker and line per ET day; a later READY on
   // that line is quiet. GO and PULLBACK announce every time. On 10-05 this
@@ -150,6 +152,18 @@ export function goStrength(sig: TvSetupSignal, at: Date, onMomentum: boolean): T
 const STAGES: Record<string, TvStage> = {
   forming: 'forming', ready: 'ready', go: 'go', pullback: 'pullback', broken: 'broken', held: 'held',
 };
+
+// Every stage, in the order the ⚙ menu lists them, and the stages announced
+// until the operator changes the switches.
+export const TV_STAGE_ORDER: readonly TvStage[] = ['ready', 'go', 'pullback', 'forming', 'broken', 'held'];
+export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
+
+// A stored or posted stage list → known stages in menu order; null if it isn't a list.
+export function parseStageList(v: unknown): TvStage[] | null {
+  if (!Array.isArray(v)) return null;
+  const wanted = new Set(v.filter((x): x is string => typeof x === 'string').map((x) => x.trim().toLowerCase()));
+  return TV_STAGE_ORDER.filter((s) => wanted.has(s));
+}
 
 function toLine(v: unknown): TvLine | null {
   const p = typeof v === 'string' ? v.trim().toLowerCase() : '';
@@ -280,9 +294,9 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
 // deliver the same alert twice, and the watchlist alert runs on two timeframes
 // (1m and 30s), so one event arrives twice: the first copy counts, the second
 // is only logged. A first copy is then 'quiet' (stored and shown in the 📐
-// sidebar, not announced) for a quiet stage or a READY repeat, else announced
-// — at most once per ticker + stage (PULLBACK: per line) per 5 min; the rest
-// are logged.
+// sidebar, not announced) for a stage switched off in the ⚙ menu or a READY
+// repeat, else announced — at most once per ticker + stage (PULLBACK: per
+// line) per 5 min; the rest are logged.
 export type TvVerdict = 'notify' | 'quiet' | 'log' | 'drop' | 'flood';
 
 export class TvSetupGate {
@@ -291,7 +305,20 @@ export class TvSetupGate {
   private lastNotify = new Map<string, number>();  // ticker|stage (PULLBACK: ticker|pullback|line) → last announcement
   private readyDay = '';                            // the ET day readyLines belongs to
   private readyLines = new Set<string>();           // ticker|line with a READY announced that day
+  private announced = new Set<TvStage>(DEFAULT_ANNOUNCED);  // the ⚙ stage switches
   private recent: number[] = [];
+
+  setAnnounced(stages: readonly TvStage[]): void {
+    this.announced = new Set(stages);
+  }
+
+  announcedStages(): TvStage[] {
+    return TV_STAGE_ORDER.filter((s) => this.announced.has(s));
+  }
+
+  announces(stage: TvStage): boolean {
+    return this.announced.has(stage);
+  }
 
   admit(sig: TvSetupSignal, nowSec: number): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
@@ -314,7 +341,7 @@ export class TvSetupGate {
     if (first != null && nowSec - first < TV_SETUP.notify_merge_sec) return 'log';
     this.lastEvent.set(event, nowSec);
 
-    if (TV_SETUP.quiet_stages.includes(sig.stage)) return 'quiet';
+    if (!this.announced.has(sig.stage)) return 'quiet';
     const readyKeys = sig.stage === 'ready' && TV_SETUP.ready_once_per_day ? tokens.map((t) => `${sig.ticker}|${t}`) : [];
     if (readyKeys.length > 0) {
       this.rollDay(nowSec);

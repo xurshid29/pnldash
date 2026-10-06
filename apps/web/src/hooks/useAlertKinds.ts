@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 
 // Per-type switches for the dashboard's opportunity alerts (2026-10-01):
 // 🅰️ first A+ of the day, ⚡ fast move, 📰 fresh news, and since 2026-10-03
-// 📐 the TradingView VWAP setup (all three stages). Device-local like the
+// 📐 the TradingView VWAP setup (which stages alert at all is the server-side
+// ⚙ stage switch, useTvAlertStages). Device-local like the
 // Alerts ON/OFF master switch (useAlertsArmed) — sound/notification are
 // per-browser concerns. The phone has its own mutes server-side
 // (ALERTS_DISABLED slugs grade_aplus / fast_move / news / tv_setup).

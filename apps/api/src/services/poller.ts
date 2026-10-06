@@ -3935,14 +3935,15 @@ class PollerService {
   // (ALERTS_DISABLED tv_setup, or per stage tv_forming / tv_ready / tv_go /
   // tv_pullback / tv_broken / tv_held, and tv_year for the reclaim setup on
   // the year line). BROKEN and HELD — a pullback's outcome — are quiet by
-  // default; taken off TV_SETUP.quiet_stages they go out as silent messages.
+  // default; switched on in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
   // had this stage announced in the last 5 min): recorded for grading, not
-  // re-announced. mode 'quiet' (2026-10-05) = FORMING / BROKEN / HELD, or a
-  // READY on a line already announced today (TV_SETUP.quiet_stages /
-  // ready_once_per_day): recorded and shown in the 📐 sidebar (it reads
-  // tier_events), never announced. Rows carry `quiet: true`.
-  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log'): OpportunityAlert {
+  // re-announced. mode 'quiet' (2026-10-05) = a stage switched off in the ⚙
+  // menu (`why` 'muted'; default FORMING / BROKEN / HELD), or a READY on a
+  // line already announced today (`why` 'repeat', ready_once_per_day):
+  // recorded and shown in the 📐 sidebar (it reads tier_events), never
+  // announced. Rows carry `quiet: true`.
+  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'repeat'): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
     const at = new Date(nowSec * 1000).toISOString();
@@ -3998,7 +3999,7 @@ class PollerService {
       (strength ? ` · strength ${strength.score}/${strength.max}` : '') +
       `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
       (mode === 'log' ? ' · repeat (logged only)'
-        : mode === 'quiet' ? (sig.stage === 'ready' ? ' · quiet (READY already announced on this line today)' : ' · quiet stage') : ''),
+        : mode === 'quiet' ? (why === 'repeat' ? ' · quiet (READY already announced on this line today)' : ' · quiet (stage switched off)') : ''),
     );
     if (mode === 'notify') {
       this.opportunity.pushExternal(alert);

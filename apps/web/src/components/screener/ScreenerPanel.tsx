@@ -26,8 +26,6 @@ import { MomoSetupsPanel } from './MomoSetupsPanel';
 import { EdgePanel } from './EdgePanel';
 import { WatchlistPanel } from './WatchlistPanel';
 import { useWatchlist } from '../../hooks/useWatchlist';
-import { AlertsPanel } from './AlertsPanel';
-import { useAlertLog } from '../../hooks/useAlertLog';
 
 const { Text } = Typography;
 
@@ -57,7 +55,7 @@ const SESSION_COLOR: Record<TradingSession, string> = {
   closed: '#8c8c8c',
 };
 
-type ScreenerTab = 'momo' | 'setups' | 'ema' | 'momentum' | 'edge' | 'swing' | 'outcomes' | 'continuation' | 'history' | 'watchlist' | 'alerts';
+type ScreenerTab = 'momo' | 'setups' | 'ema' | 'momentum' | 'edge' | 'swing' | 'outcomes' | 'continuation' | 'history' | 'watchlist';
 
 // First-appeared time in the operator's TZ (UTC+5), HH:MM, plus how long ago.
 // The "ago" is the staleness cue: a top-of-list +600% name first seen 9h ago is
@@ -106,7 +104,6 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
   const [activeTab, setActiveTab] = useState<ScreenerTab>('momentum');
   // Same TanStack Query cache as the panel itself — the tab label's count is free.
   const { entries: watchEntries } = useWatchlist();
-  const { alerts: alertLog } = useAlertLog(payload);
   // Momentum rows that alerted in the last 15 min get a small badge per kind,
   // so the table itself shows what just fired (payload.alerts = last hour).
   const recentAlertKinds = useMemo(() => {
@@ -468,8 +465,14 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
         catalyst={catalystModal?.catalyst ?? null}
         onClose={() => setCatalystModal(null)}
       />
+      {/* destroyOnHidden (2026-10-06): only the visible tab renders. A tab
+          visited once used to stay mounted and re-render on every cycle and
+          every alert (the Alerts log reached ~800 unvirtualized rows a day).
+          The Alerts tab itself was removed the same day (toasts are how the
+          operator reads alerts; the 📐 sidebar keeps the setup trail). */}
       <Tabs
         size="small"
+        destroyOnHidden
         activeKey={activeTab}
         onChange={(k) => setActiveTab(k as ScreenerTab)}
         className="tabs-fill-height"
@@ -574,13 +577,6 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
             key: 'watchlist',
             label: `Watchlist · ${watchEntries.length}`,
             children: <WatchlistPanel showHeader={false} />,
-          },
-          {
-            // Today's opportunity-alert log (2026-10-02): the same events that
-            // pinged the phone/browser, kept on screen with "since alert".
-            key: 'alerts',
-            label: `Alerts · ${alertLog.length}`,
-            children: <AlertsPanel alerts={alertLog} payload={payload} />,
           },
           {
             key: 'outcomes',

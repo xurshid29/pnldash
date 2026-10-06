@@ -2,7 +2,7 @@ import type { TvLine, TvLineName, TvSetupInfo, TvStage, TvStrength } from '../..
 
 // 📐 VWAP setup stage pill (TradingView webhook, 2026-10-03). Amber → orange →
 // green as the reclaim setup matures; blue → red/green for the PULLBACK setup
-// (script v10) and its outcome. Shared by the Alerts log and the 📐 tab.
+// (script v10) and its outcome. Used by the 📐 sidebar.
 export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg: string }> = {
   forming: { label: 'FORMING', color: '#ffe58f', bg: '#3d2f00' },
   ready: { label: 'READY', color: '#ffd591', bg: '#612500' },

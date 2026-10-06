@@ -39,6 +39,13 @@ export interface ScreenerSettingsTable {
   updated_at: Generated<Date>;
 }
 
+// Small global key/value settings (migration 20261006090000_app_settings).
+export interface AppSettingsTable {
+  key: string;
+  value: JSONColumnType<object>;   // any JSON value the key defines (tv_alert_stages: a stage list)
+  updated_at: Generated<Date>;
+}
+
 export type RowStatus = 'NEW' | 'ACC' | 'UP' | 'NEWS' | null;
 
 export interface ScreenerResultsTable {
@@ -444,6 +451,7 @@ export interface Bars2mTable {
 export interface Database {
   users: UsersTable;
   screener_settings: ScreenerSettingsTable;
+  app_settings: AppSettingsTable;
   screener_cycles: ScreenerCyclesTable;
   screener_results: ScreenerResultsTable;
   ignition_results: IgnitionResultsTable;
