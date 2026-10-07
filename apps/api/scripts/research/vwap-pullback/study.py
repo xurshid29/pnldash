@@ -38,7 +38,7 @@
 #          ticker-days that is not a setup alert (≤ 1 per 15 min per
 #          ticker-day), same race: "just near VWAP".
 import argparse, duckdb, os, statistics, sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 sys.dont_write_bytecode = True   # no __pycache__ in the repo
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'vwap-setup'))
@@ -52,7 +52,10 @@ ap.add_argument('--brk', type=float, default=0, help='a close this far under the
 ap.add_argument('--grid', action='store_true', help='also sweep --brk and --arm (touch-level summary)')
 ap.add_argument('--list', help="print every setup for a ticker, or 'all'")
 ap.add_argument('--cap', type=int, default=99, help='pullbacks per line per day (99 = uncapped, the default for the touch tables)')
-ap.add_argument('--cap-on', choices=['touches', 'failures'], default='touches', help="what the cap counts: all touches (script v10–v14) or BROKEN + straight-through only")
+ap.add_argument('--cap-on', choices=['touches', 'failures', 'broken'], default='touches',
+                help="what the cap counts: all touches (script v10–v14), BROKEN + straight-through (v15), or BROKEN only")
+ap.add_argument('--cap-compare', action='store_true',
+                help='compare the cap modes at --cap (default 2): alerts/day, P&L per exit rule, and the alerts each mode adds')
 args = ap.parse_args()
 PATH, ARM, NEAR, BRK = args.rows, args.arm / 100, args.near / 100, args.brk / 100
 WIN = 0.10
@@ -364,6 +367,48 @@ def compact(label, events, base):
     b = summarize(base)
     print(f"  {label:12} " + ' | '.join(parts) + (f" | base win {b['win']:4.1%} P&L {b['pnl']:+5.2%}" if b else ''))
 
+
+if args.cap_compare:
+    # The cap modes head to head (2026-10-07, after BIYA: its session line's first
+    # touch crashed straight through, used one of the two failures, and the cap
+    # then blocked a 14:22 pullback that ran +19%). Same data, same exits; only
+    # what the cap counts changes.
+    cap = args.cap if args.cap != 99 else 2
+    runs = {}
+    for mode in ('touches', 'failures', 'broken'):
+        args.cap, args.cap_on = cap, mode
+        evs, _ = run(ARM)
+        runs[mode] = [e for e in evs if not e['through']]
+    days = len({e['day'] for evs in runs.values() for e in evs})
+    key = lambda e: (e['ticker'], e['day'], e['t0'])
+    pts = lambda evs: [(e['seen'], e['k'], e['entry']) for e in evs]
+    print(f"\nCap {cap} per line per day, by what it counts ({days} days with alerts)")
+    for mode, evs in runs.items():
+        s = summarize([e['race'] for e in evs])
+        print(f"  {mode:9} {len(evs):6,} alerts  {len(evs) / days:5.1f}/day  win {s['win']:5.1%}  broke {s['broke']:5.1%}")
+    groups = [(mode, pts(evs)) for mode, evs in runs.items()]
+    base_keys = {key(e) for e in runs['failures']}
+    extra = [e for e in runs['broken'] if key(e) not in base_keys]
+    gone = [e for e in runs['failures'] if key(e) not in {key(x) for x in runs['broken']}]
+    groups.append(('broken − failures', pts(extra)))
+    if gone:
+        groups.append(('failures − broken', pts(gone)))
+    exit_grid(f'Cap {cap} — trading every alert', groups)
+    if extra:
+        s = summarize([e['race'] for e in extra])
+        print(f"\n'broken' adds {len(extra):,} alerts ({len(extra) / days:.1f}/day): win {s['win']:.1%}, broke {s['broke']:.1%}; "
+              f"touch numbers {sorted(Counter(e['touch'] for e in extra).items())}")
+        exit_grid("The added alerts by month", [(m, pts([e for e in extra if e['day'].strftime('%Y-%m') == m]))
+                                                for m in sorted({e['day'].strftime('%Y-%m') for e in extra})])
+        exit_grid("The added alerts by time of day (ET)", [(b, pts([e for e in extra if tod(e['t0']) == b]))
+                                                          for b in sorted({tod(e['t0']) for e in extra})])
+    if args.list:
+        hm = lambda m: f"{m // 60:02d}:{m % 60:02d}"
+        for e in extra:
+            if args.list.upper() in ('ALL', e['ticker']):
+                print(f"  + {e['ticker']:6} {e['day']} {hm(e['t0'])} touch {e['touch']} entry {e['entry']:.4g} line {e['line']:.4g} "
+                      f"→ {e['race'].out} {e['race'].pnl:+.1%} mfe {e['race'].mfe:+.1%}")
+    sys.exit(0)
 
 events, base = run(ARM)
 report(events, base)

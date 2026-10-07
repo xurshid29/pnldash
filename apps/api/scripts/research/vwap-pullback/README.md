@@ -29,6 +29,7 @@ ssh root@<droplet> 'cd /root/projects/pnldash && docker compose -f docker-compos
 python3 -m venv /tmp/pb/venv && /tmp/pb/venv/bin/pip install duckdb
 /tmp/pb/venv/bin/python study.py /tmp/pb/rows.csv.gz --grid          # ~1 min
 /tmp/pb/venv/bin/python study.py /tmp/pb/rows.csv.gz --list SAIQ     # every setup for one ticker
+/tmp/pb/venv/bin/python study.py /tmp/pb/rows.csv.gz --cap 2 --cap-compare   # what the daily cap counts: touches / failures (v15) / broken
 ```
 
 `--arm` / `--near` / `--brk` change the script inputs (defaults 15 / 5 / 0).
@@ -57,6 +58,17 @@ alert). "Win" = +10% before a close under the line.
   exit rule (stop +10%: −0.06% → +0.00%, 14.5 → 16.3 alerts/day; `--cap 2
   --cap-on failures` vs `--cap 2 --cap-on touches`). It also stopped cutting off
   a line that keeps holding (MI 2026-10-05).
+- **A straight-through stays a failure (measured 2026-10-07, after BIYA).** BIYA's
+  session line crashed straight through on its first touch (13:14 Tashkent),
+  broke on touch 3, and the cap then blocked a 05:22 ET pullback that ran +19%.
+  Counting only alerted-then-BROKEN pullbacks (`--cap 2 --cap-compare`,
+  06-12 → 10-07) adds 70 alerts (0.9/day, touches 3–6) that won 22.9% and
+  broke 71.4%, at −0.76% per trade (stop, +10%) and −1.84% (close exit). That's
+  worse than the baseline, and they lost in 4 of 5 months (October +6.3%, n 4).
+  A line a stock has already crashed through is a weaker line, so v15's rule
+  stays. Caveat: our session VWAP starts when a name reaches our screen, so the
+  first minutes of a move can read differently from TradingView's line (BIYA's
+  05:22 is touch 2 on ours and alerts either way).
 - **A stop just under the line beats waiting for a 1m close under it**, by about
   0.7 points per trade (touch 1: −0.94% → −0.24%). The close of a breaking bar
   is often far under the line.
