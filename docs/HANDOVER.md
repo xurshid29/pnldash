@@ -303,6 +303,21 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-07 (pre-market) — BIYA "why no setup at 14:22?" and a rejected cap change.**
+- 14:22 Tashkent = 05:22 ET. BIYA's session line had used v15's two failures:
+  touch 1 crashed straight through at 04:14 ET (spike to 2.86, next close 2.16
+  under the ~2.18 line), and touch 3 broke at 04:36. So the cap blocked touch 4
+  at 05:22 (close 2.56, ~3% above the line), which ran +19%.
+- Tested "only alerted-then-BROKEN pullbacks count" (`study.py --cap 2
+  --cap-compare`, `pinesim cap_on='broken'`, 06-12 → 10-07): +70 alerts
+  (0.9/day), win 22.9%, −0.76%/trade (stop +10%), negative in 4 of 5 months.
+  **Rejected; v15 stays.** A line a stock crashed through is weaker. Commit
+  `9c7da7a` (research only).
+- **Not yet deployed:** `4d1e134` (the dashboard alerts on 📐 setups only: no
+  🅰️/⚡/📰 toasts, sounds or notifications, ⚙ menu shows only 📐). Its 10-06
+  CI run was cancelled at 09:14 ET (inside 07:00–11:00). The next push under
+  `apps/**` deploys it. The operator was asked for a time.
+
 **2026-10-06 (pre-market) — ⚙ 📐 STAGE SWITCHES, ALERTS TAB REMOVED (`b52c907`).**
 - Operator: "remove the Alerts tab … I usually read them when new toast
   appears … the whole dashboard is freezing when there is too many data".
