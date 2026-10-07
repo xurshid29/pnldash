@@ -303,7 +303,7 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 
 These are the detailed notes behind START HERE, kept verbatim.
 
-**2026-10-07 (09:30 ET) — HIDDEN TICKERS HIDDEN EVERYWHERE (`03c2987`, `07b2a14`).**
+**2026-10-07 (09:30 ET) — HIDDEN TICKERS HIDDEN EVERYWHERE (`03c2987`, `64e66ac`).**
 Operator: "setup tickers must also be hidden if we hide them from momentum
 list", then "skip hidden tickers on telegram too".
 - Dashboard: the per-user, per-ET-day hidden list (the Momentum row's hide)
