@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-06 04:10 ET (last code commit `e5ab278`)
+## START HERE — state at 2026-10-07 09:20 ET (last code commit `4d1e134`, deployed)
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every 20s)
 sorted by the **A+…D grade**, the **📐 setups sidebar** in the left rail, the
@@ -313,10 +313,11 @@ These are the detailed notes behind START HERE, kept verbatim.
   (0.9/day), win 22.9%, −0.76%/trade (stop +10%), negative in 4 of 5 months.
   **Rejected; v15 stays.** A line a stock crashed through is weaker. Commit
   `9c7da7a` (research only).
-- **Not yet deployed:** `4d1e134` (the dashboard alerts on 📐 setups only: no
-  🅰️/⚡/📰 toasts, sounds or notifications, ⚙ menu shows only 📐). Its 10-06
-  CI run was cancelled at 09:14 ET (inside 07:00–11:00). The next push under
-  `apps/**` deploys it. The operator was asked for a time.
+- **Deployed 10-07 09:18 ET, at the operator's request:** `4d1e134`. The
+  dashboard alerts on 📐 setups only: no 🅰️/⚡/📰 toasts, sounds or
+  notifications, and the ⚙ menu shows only 📐. Its 10-06 CI run had been
+  cancelled at 09:14 ET (inside 07:00–11:00). The phone still gets
+  🅰️/⚡/📰.
 
 **2026-10-06 (pre-market) — ⚙ 📐 STAGE SWITCHES, ALERTS TAB REMOVED (`b52c907`).**
 - Operator: "remove the Alerts tab … I usually read them when new toast
