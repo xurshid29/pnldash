@@ -303,6 +303,19 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-07 (09:30 ET) — HIDDEN TICKERS HIDDEN EVERYWHERE (`03c2987`, `07b2a14`).**
+Operator: "setup tickers must also be hidden if we hide them from momentum
+list", then "skip hidden tickers on telegram too".
+- Dashboard: the per-user, per-ET-day hidden list (the Momentum row's hide)
+  also filters the 📐 sidebar (header "· N hidden"), its TV-list nudge, and the
+  📐 toasts, sounds and notifications. Alerts for hidden tickers are still marked
+  seen, so un-hiding never replays them.
+- Phone: `services/telegram-hidden.ts` reads `TELEGRAM_USER_ID`'s hidden list
+  (cached 20 s). `pushOpportunityAlerts` (🅰️/⚡/📰) and the 📐 Telegram send
+  skip those tickers. **`TELEGRAM_USER_ID` was never set in prod.** It was added
+  10-07 (= `admin`, the only user; backup `.env.bak-20261007`), which also turns
+  on the bot's `/hidden` and `/unhide`.
+
 **2026-10-07 (pre-market) — BIYA "why no setup at 14:22?" and a rejected cap change.**
 - 14:22 Tashkent = 05:22 ET. BIYA's session line had used v15's two failures:
   touch 1 crashed straight through at 04:14 ET (spike to 2.86, next close 2.16

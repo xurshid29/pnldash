@@ -20,6 +20,7 @@ import { fetchEdgarFilings, type EdgarFiling, tvSymbol } from './edgar.js';
 import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
+import { telegramHiddenTickers } from './telegram-hidden.js';
 import { formatTvSetupAlert, goStrength, lineTokens, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
@@ -4012,8 +4013,16 @@ class PollerService {
         // Priority: on our Momentum list → normal push; off the list → silent message.
         // A pullback's outcome (BROKEN / HELD) is never a buzzing push.
         const outcome = sig.stage === 'broken' || sig.stage === 'held';
-        void sendTelegram(formatTvSetupAlert(sig, tvSymbol(sig.ticker), row, strength),
-          { disableNotification: outcome || (row == null && TV_SETUP.offscreen_silent) });
+        const text = formatTvSetupAlert(sig, tvSymbol(sig.ticker), row, strength);
+        const silent = outcome || (row == null && TV_SETUP.offscreen_silent);
+        // A ticker hidden on the dashboard today is skipped on the phone too (2026-10-07).
+        void telegramHiddenTickers().then((hidden) => {
+          if (hidden.has(sig.ticker)) {
+            console.log(`[tv-setup] ${sig.ticker} is hidden today — not sent to Telegram`);
+            return;
+          }
+          return sendTelegram(text, { disableNotification: silent });
+        });
       }
     }
     return alert;
@@ -4021,12 +4030,16 @@ class PollerService {
 
   // Phone delivery for opportunity alerts. Per-kind mutes via ALERTS_DISABLED
   // (grade_aplus / fast_move / news); news-only alerts need catalyst ≥40.
+  // Tickers hidden on the dashboard today are skipped (2026-10-07).
   private pushOpportunityAlerts(alerts: OpportunityAlert[]) {
-    if (!telegramEnabled() || this.alertsMuted) return;
-    for (const a of alerts) {
-      const kinds = phoneKinds(a, (k) => alertDisabled(k));
-      if (kinds.length > 0) void sendTelegram(formatOpportunityAlert(a, kinds));
-    }
+    if (!telegramEnabled() || this.alertsMuted || alerts.length === 0) return;
+    void telegramHiddenTickers().then((hidden) => {
+      for (const a of alerts) {
+        if (hidden.has(a.ticker)) continue;
+        const kinds = phoneKinds(a, (k) => alertDisabled(k));
+        if (kinds.length > 0) void sendTelegram(formatOpportunityAlert(a, kinds));
+      }
+    });
   }
 
   // Momentum-grade catalyst input: per ticker, the best NON-bearish classified
