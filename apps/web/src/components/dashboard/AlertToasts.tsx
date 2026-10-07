@@ -3,6 +3,7 @@ import { App } from 'antd';
 import type { CyclePayload, OpportunityKind } from '../../api/types';
 import { useSelection } from '../../context/SelectionContext';
 import { useAlertsArmed } from '../../hooks/useAlertsArmed';
+import { useHiddenTickers } from '../../hooks/useHiddenTickers';
 import { getAlertKinds } from '../../hooks/useAlertKinds';
 import { opportunityBody, opportunityTitle } from '../../hooks/useScreenerAlerts';
 
@@ -22,6 +23,11 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
   const { notification } = App.useApp();
   const { setSelected } = useSelection();
   const armed = useAlertsArmed();
+  // A ticker hidden from Momentum is hidden from the alerts too (2026-10-07).
+  const { hidden } = useHiddenTickers();
+  const hiddenRef = useRef(hidden);
+  // Declared before the payload effect, so it runs first in the same commit.
+  useEffect(() => { hiddenRef.current = hidden; });
   const seen = useRef<Set<string>>(new Set());
   const seeded = useRef(false);
 
@@ -39,7 +45,7 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
     for (const a of [...alerts].reverse()) {
       if (seen.current.has(a.id)) continue;
       seen.current.add(a.id);
-      if (!armed) continue;
+      if (!armed || hiddenRef.current.has(a.ticker)) continue;
       const kinds = a.kinds.filter((k) => kindsOn[k]);
       if (kinds.length === 0) continue;
       const shown = { ...a, kinds };

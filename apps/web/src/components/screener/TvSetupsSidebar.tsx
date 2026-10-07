@@ -6,6 +6,7 @@ import type { CyclePayload, OpportunityAlert, TvSetupInfo, TvStage } from '../..
 import { tvApi, type TvWatchlist } from '../../api/tv';
 import { useAlertLog } from '../../hooks/useAlertLog';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
+import { useHiddenTickers } from '../../hooks/useHiddenTickers';
 import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
@@ -167,6 +168,9 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   const { selected, setSelected } = useSelection();
   const { alerts } = useAlertLog(payload);
   const { settings: stageSettings } = useTvAlertStages();
+  // A ticker hidden from Momentum (today, this user) is hidden here too (2026-10-07).
+  const { hidden } = useHiddenTickers();
+  const hiddenKey = [...hidden].sort().join(',');
   const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [showEarlier, setShowEarlier] = useState(() => {
@@ -185,8 +189,9 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   const missing = useMemo(() => {
     if (!tvList || !copied) return [];
     const have = new Set(copied.symbols);
-    return tvList.symbols.slice(0, tvList.today).filter((sym) => !have.has(bareSym(sym)));
-  }, [tvList, copied]);
+    return tvList.symbols.slice(0, tvList.today).filter((sym) => !have.has(bareSym(sym)) && !hidden.has(bareSym(sym)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hiddenKey stands in for the Set
+  }, [tvList, copied, hiddenKey]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -195,10 +200,16 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
 
   const rowByTicker = useMemo(() => new Map((payload?.rows ?? []).map((r) => [r.ticker, r])), [payload]);
   // Until the switches load, show every stage rather than flash an empty list.
-  const cards = useMemo(() => {
+  const allCards = useMemo(() => {
     const on = stageSettings ? new Set(stageSettings.announced) : null;
     return buildCards(alerts, now, (st) => on == null || on.has(st));
   }, [alerts, now, stageSettings]);
+  const cards = useMemo(
+    () => allCards.filter((c) => !hidden.has(c.ticker)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hiddenKey stands in for the Set
+    [allCards, hiddenKey],
+  );
+  const hiddenCount = allCards.length - cards.length;
   const live = cards.filter((c) => c.live).sort((x, y) => y.current.at - x.current.at);
   const earlier = cards.filter((c) => !c.live).sort((x, y) => y.current.at - x.current.at);
 
@@ -337,7 +348,9 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <div style={{ padding: '6px 8px', borderBottom: '1px solid #303030', display: 'flex', alignItems: 'center', gap: 6 }}>
         <Text strong style={{ fontSize: 13 }}>📐 Setups</Text>
-        <Text type="secondary" style={{ fontSize: 11 }}>{live.length} live · {earlier.length} earlier</Text>
+        <Text type="secondary" style={{ fontSize: 11 }}>
+          {live.length} live · {earlier.length} earlier{hiddenCount > 0 ? ` · ${hiddenCount} hidden` : ''}
+        </Text>
         <Dropdown menu={menu} trigger={['click']} placement="bottomRight">
           <Button size="small" type="text" icon={<EllipsisOutlined />} loading={busy} style={{ marginLeft: 'auto' }} />
         </Dropdown>

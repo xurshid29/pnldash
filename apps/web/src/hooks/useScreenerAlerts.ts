@@ -1,6 +1,7 @@
 import { lineTokens } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
+import { useHiddenTickers } from './useHiddenTickers';
 import { getAlertKinds } from './useAlertKinds';
 import type { CyclePayload, OpportunityAlert, TvStage } from '../api/types';
 
@@ -263,6 +264,12 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
   // the payload effect below runs (effects fire after render, and a stale
   // gate would leak exactly one beep on the cycle the user hits mute).
   armedGate = armed;
+  // Tickers hidden from Momentum stay silent too (2026-10-07). A ref, so the
+  // payload effect reads the current set without re-running on it.
+  const { hidden } = useHiddenTickers();
+  const hiddenRef = useRef(hidden);
+  // Declared before the payload effect, so it runs first in the same commit.
+  useEffect(() => { hiddenRef.current = hidden; });
   // Track cycle ids we've already handled so SSE replay (e.g. on reconnect) doesn't double-fire.
   const handled = useRef<Set<string>>(new Set());
   // Skip the very first payload (which is the cached snapshot the server pushes
@@ -314,6 +321,7 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
     newAlerts.forEach((a) => seenAlerts.current.add(a.id));
     const kindsOn = getAlertKinds();
     const audible = newAlerts
+      .filter((a) => !hiddenRef.current.has(a.ticker))
       .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k]) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
