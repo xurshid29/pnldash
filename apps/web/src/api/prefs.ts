@@ -16,6 +16,9 @@ export interface PanelLayout {
   hide_live_ticks?: boolean;
   hide_ignition_list?: boolean;
   hide_news_radar?: boolean;
+  // The dashboard's bottom news room panel (hidden by default since 2026-10-09;
+  // header News switch).
+  hide_news_room?: boolean;
 }
 
 export const prefsApi = {

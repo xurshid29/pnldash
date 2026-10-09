@@ -12,7 +12,8 @@ Memory files under `…/memory/` also carry the durable facts.
 
 **The desk the operator actually uses.** The Momentum table (Finviz, every 20s)
 sorted by the **A+…D grade**, the **📐 setups sidebar** in the left rail, the
-History / Watchlist tabs, Quote Details, the news room and 0–4
+History / Watchlist tabs, Quote Details (the bottom news room is hidden
+since 10-09; header **News** switch) and 0–4
 TradingView charts. The operator trades manually off 30s/1m charts,
 Ross-Cameron style (catalyst first, low float), mostly 04:00–11:00 ET.
 
@@ -302,6 +303,11 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-09 — NEWS ROOM HIDDEN.** Operator: "lets hide the bottom news panel".
+A per-user layout flag `hide_news_room` (default hidden, header **News** switch)
+unmounts the panel, so its feed stops polling. Momentum and Quote Details
+take the column (60/40 by default). Web only.
 
 **2026-10-07 (09:30 ET) — HIDDEN TICKERS HIDDEN EVERYWHERE (`03c2987`, `64e66ac`).**
 Operator: "setup tickers must also be hidden if we hide them from momentum

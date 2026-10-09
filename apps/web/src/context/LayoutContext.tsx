@@ -28,6 +28,10 @@ interface LayoutContextValue {
   setHideIgnitionList: (v: boolean) => void;
   hideNewsRadar: boolean;
   setHideNewsRadar: (v: boolean) => void;
+  // The bottom news room panel — hidden by default (operator, 2026-10-09:
+  // "lets hide the bottom news panel"); the header's News switch brings it back.
+  hideNewsRoom: boolean;
+  setHideNewsRoom: (v: boolean) => void;
 }
 
 const LayoutContext = createContext<LayoutContextValue | null>(null);
@@ -39,6 +43,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
   const [hideLiveTicks, setHideLiveTicksState] = useState(false);
   const [hideIgnitionList, setHideIgnitionListState] = useState(false);
   const [hideNewsRadar, setHideNewsRadarState] = useState(false);
+  const [hideNewsRoom, setHideNewsRoomState] = useState(true);
   const { data: serverLayout } = useQuery({
     queryKey: ['prefs', 'layout'],
     queryFn: () => prefsApi.getLayout(),
@@ -66,6 +71,9 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
     if (typeof serverLayout?.hide_news_radar === 'boolean') {
       setHideNewsRadarState(serverLayout.hide_news_radar);
     }
+    if (typeof serverLayout?.hide_news_room === 'boolean') {
+      setHideNewsRoomState(serverLayout.hide_news_room);
+    }
     hydrated.current = true;
   }, [serverLayout]);
 
@@ -78,6 +86,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
       hide_live_ticks: hideLiveTicks,
       hide_ignition_list: hideIgnitionList,
       hide_news_radar: hideNewsRadar,
+      hide_news_room: hideNewsRoom,
       ...patch,
     };
     prefsApi.putLayout(next).catch(() => {});
@@ -113,6 +122,11 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
     persist({ hide_news_radar: v });
   };
 
+  const setHideNewsRoom = (v: boolean) => {
+    setHideNewsRoomState(v);
+    persist({ hide_news_room: v });
+  };
+
   return (
     <LayoutContext.Provider
       value={{
@@ -128,6 +142,8 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
         setHideIgnitionList,
         hideNewsRadar,
         setHideNewsRadar,
+        hideNewsRoom,
+        setHideNewsRoom,
       }}
     >
       {children}

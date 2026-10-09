@@ -1,5 +1,5 @@
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
-import { Layout, Dropdown, Space, Avatar, Typography, Segmented } from 'antd';
+import { Layout, Dropdown, Space, Avatar, Typography, Segmented, Switch } from 'antd';
 import { UserOutlined, LogoutOutlined } from '@ant-design/icons';
 import type { MenuProps } from 'antd';
 import { useAuth } from '../../context/AuthContext';
@@ -12,7 +12,7 @@ const { Text } = Typography;
 
 export function AppLayout() {
   const { user, logout } = useAuth();
-  const { chartCount, setChartCount } = useLayout();
+  const { chartCount, setChartCount, hideNewsRoom, setHideNewsRoom } = useLayout();
   const navigate = useNavigate();
   const location = useLocation();
   const onDashboard = location.pathname.startsWith('/dashboard');
@@ -61,6 +61,10 @@ export function AppLayout() {
                   options={[0, 1, 2, 3, 4].map((v) => ({ label: String(v), value: v as ChartCount }))}
                   onChange={setChartCount}
                 />
+              </Space>
+              <Space size={6}>
+                <Text type="secondary" style={{ fontSize: 11 }}>News</Text>
+                <Switch size="small" checked={!hideNewsRoom} onChange={(on) => setHideNewsRoom(!on)} />
               </Space>
               <AlertKindsMenu />
               <AlertsToggle />

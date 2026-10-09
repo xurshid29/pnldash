@@ -29,7 +29,7 @@ export function DashboardPage() {
   const { events: edgeEvents, isLoading: edgeLoading } = useEdge(edgeEnabled);
   useEdgeAlerts(edgeEvents, edgeEnabled && !edgeLoading);
   useTabTitleFlash(payload);
-  const { chartCount } = useLayout();
+  const { chartCount, hideNewsRoom } = useLayout();
   const chartsVisible = chartCount > 0;
   // The left rail (back 2026-10-05) holds the 📐 setups list, so it sits next
   // to the Momentum table instead of hiding it behind a tab. Ignition / Live
@@ -65,18 +65,23 @@ export function DashboardPage() {
             defaultSize={82 - (chartsVisible ? 42 : 0)}
             minSize={25}
           >
+            {/* The news room is hidden by default (2026-10-09, header News
+                switch); hidden, it unmounts, so its feed stops polling. Ids +
+                order let the saved sizes follow whichever panels are shown. */}
             <PanelGroup direction="vertical" autoSaveId="ms-left">
-              <Panel defaultSize={45} minSize={20}>
+              <Panel id="ms-left-screener" order={0} defaultSize={hideNewsRoom ? 60 : 45} minSize={20}>
                 <Card><ScreenerPanel payload={payload} connected={connected} /></Card>
               </Panel>
               <VHandle />
-              <Panel defaultSize={30} minSize={15}>
+              <Panel id="ms-left-quote" order={1} defaultSize={hideNewsRoom ? 40 : 30} minSize={15}>
                 <Card><SelectedStockPanel payload={payload} /></Card>
               </Panel>
-              <VHandle />
-              <Panel defaultSize={25} minSize={15}>
-                <Card><NewsRoomPanel payload={payload} /></Card>
-              </Panel>
+              {!hideNewsRoom && <VHandle />}
+              {!hideNewsRoom && (
+                <Panel id="ms-left-news" order={2} defaultSize={25} minSize={15}>
+                  <Card><NewsRoomPanel payload={payload} /></Card>
+                </Panel>
+              )}
             </PanelGroup>
           </Panel>
           {/* Charts collapse entirely at count 0 — the chart pane unmounts so
