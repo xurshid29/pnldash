@@ -183,10 +183,11 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 `.env.bak-20261003`.
 
 **Open items, ranked:**
-0. **(new 10-10) The operator pastes v16 and recreates both alerts (1m + 30s).**
-   The server already handles v16 (and older messages without `fails`). Check
-   the first v16 PULLBACKs carry `fails`, and that a gray chart diamond matches
-   a quiet "past cap" row (or an announced one for a B+ Momentum name).
+0. **v16 pasted and both alerts recreated by the operator (Sat 10-10).** No bars
+   over the weekend, so it's unverified live. **On Mon 10-12 premarket, check:**
+   the first PULLBACK rows carry `fails` (`meta->>'fails'`); a past-the-cap one is
+   `capped: true`, and quiet unless `cap_exempt` (B+ on Momentum); and a gray
+   chart diamond matches a "past cap" sidebar row.
 0. **Done (10-06): v15 is live on both alerts**, confirmed by the operator. The
    data agrees: MI's year line sent PULLBACK touches 5 and 6 on 10-05 (v14
    stopped a line after 2 touches; v15 only after 2 failures), the 1m and
