@@ -371,6 +371,8 @@ export interface TvSetupInfo {
   // reclaim setup on the year VWAP (script v11); basis_pct is then vs the year line
   yvwap?: number | null;
   ypx_pct?: number | null;    // price vs the year VWAP, %
+  fails?: number | null;      // script v16, PULLBACK: failed pullbacks on the line before it
+  capped?: boolean;           // v16: past the cap — pings only for a B+-or-better Momentum ticker
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

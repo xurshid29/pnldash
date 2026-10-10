@@ -30,6 +30,7 @@ python3 -m venv /tmp/pb/venv && /tmp/pb/venv/bin/pip install duckdb
 /tmp/pb/venv/bin/python study.py /tmp/pb/rows.csv.gz --grid          # ~1 min
 /tmp/pb/venv/bin/python study.py /tmp/pb/rows.csv.gz --list SAIQ     # every setup for one ticker
 /tmp/pb/venv/bin/python study.py /tmp/pb/rows.csv.gz --cap 2 --cap-compare   # what the daily cap counts: touches / failures (v15) / broken
+/tmp/pb/venv/bin/python study.py /tmp/pb/rows.csv.gz --cap-strong            # the touches the cap blocks, by change % and grade
 ```
 
 `--arm` / `--near` / `--brk` change the script inputs (defaults 15 / 5 / 0).
@@ -69,6 +70,12 @@ alert). "Win" = +10% before a close under the line.
   stays. Caveat: our session VWAP starts when a name reaches our screen, so the
   first minutes of a move can read differently from TradingView's line (BIYA's
   05:22 is touch 2 on ours and alerts either way).
+- **No cap exemption for top gainers (measured 2026-10-10, after WFF).** The v15
+  cap blocks 1.8 touches a day, averaging −0.64% (stop, +10%; `--cap-strong`).
+  The bigger the day's gain, the worse: +100–200% −0.88%, +200%+ −0.95%. Grade
+  B+ or better at the alert: +0.90% on 17 blocked touches, all October (grades
+  are stored from 10-01), unproven. Script v16 moved the cap to the server so
+  a B+-on-Momentum exemption can run live and be graded.
 - **A stop just under the line beats waiting for a 1m close under it**, by about
   0.7 points per trade (touch 1: −0.94% → −0.24%). The close of a breaking bar
   is often far under the line.

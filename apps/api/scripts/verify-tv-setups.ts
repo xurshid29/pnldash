@@ -8,7 +8,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, lineTokens,
-  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, type TvSetupSignal,
+  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -295,6 +295,39 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
   check('everything off → every first copy is quiet', g.admit(sig({ stage: 'pullback', line: 'year' }), T0 + 2300) === 'quiet');
 }
 
+console.log('PULLBACK cap moved to the server (v16, 2026-10-10)');
+{
+  const msg = 'PULLBACK WFF 3.53 | sVWAP 3.12 (+13.1%) | mVWAP 3.11 (+13.5%) | yVWAP 3.39 (+4.1%) | line year | touch 4 | fails 2 | peak +45% | day high +120% | tf 30S';
+  const w = parseTvMessage(msg);
+  check('parses fails', w?.fails === 2 && w.touch === 4 && w.line === 'year' && w.peak_pct === 45, JSON.stringify(w));
+  check('JSON fails', parseTvMessage({ stage: 'pullback', ticker: 'WFF', line: 'year', touch: 4, fails: 2 })?.fails === 2);
+  const old = parseTvMessage('PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | tf 1');
+  check('a v10–v15 message has no fails', old?.fails === null, JSON.stringify(old));
+  check('past the cap: PULLBACK with 2 failed before', pastCap(w!) && !pastCap({ ...w!, fails: 1 }) && !pastCap(old!)
+    && !pastCap({ ...w!, stage: 'broken' }), JSON.stringify(TV_SETUP));
+  check('cap defaults: 2 failures, B+ exemption', TV_SETUP.pb_cap === 2 && TV_SETUP.pb_cap_exempt === 'B+');
+  check('gradeAtLeast follows the ladder', gradeAtLeast('A+', 'B+') && gradeAtLeast('B+', 'B+') && !gradeAtLeast('B', 'B+')
+    && !gradeAtLeast(null, 'B+') && !gradeAtLeast('?', 'B+'));
+
+  const T0 = 1_791_563_700;   // 2026-10-09 12:35 ET
+  const g = new TvSetupGate();
+  check('past the cap, not exempt → quiet (stored, no ping)', g.admit(w!, T0) === 'quiet');
+  check('…its 1m copy is logged', g.admit({ ...w!, tf: '1' }, T0 + 30) === 'log');
+  const g2 = new TvSetupGate();
+  check('past the cap, B+ on Momentum → announces', g2.admit(w!, T0, true) === 'notify');
+  const g3 = new TvSetupGate();
+  check('1 failed before → announces as before', g3.admit({ ...w!, fails: 1 }, T0) === 'notify');
+  check('a pre-v16 message (no fails) is never capped here', new TvSetupGate().admit(old!, T0) === 'notify');
+  check('BROKEN/HELD keep their stage switch', new TvSetupGate().admit({ ...w!, stage: 'broken' }, T0) === 'quiet');
+
+  const ex = formatTvSetupAlert(w!, 'NASDAQ:WFF', { change_pct: 110, grade: 'A-', float_m: 2.1 });
+  check('Telegram: says why a capped pullback was sent', ex.includes('touch 4') && ex.includes('2 failed before — past the cap, sent for grade A-'), ex);
+  const one = formatTvSetupAlert({ ...w!, fails: 1 }, 'NASDAQ:WFF', null);
+  check('Telegram: 1 failed before', one.includes('1 failed before') && !one.includes('past the cap'), one);
+  const zero = formatTvSetupAlert({ ...w!, fails: 0, touch: 1 }, 'NASDAQ:WFF', null);
+  check('Telegram: no failures, no mention', !zero.includes('failed before'), zero);
+}
+
 console.log('Telegram format');
 {
   const html = formatTvSetupAlert(
@@ -328,7 +361,9 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", yearBefore()', 'timeframe.change("12M")',
     '"month+year"', 'pbJoin(names, "year")',
     // v15: the day's PULLBACK cap counts failed pullbacks, not every touch
-    's.fails < pbMax', 's.fails := s.fails + 1']) {
+    's.fails < pbMax', 's.fails := s.fails + 1',
+    // v16: no cap in the script by default; each PULLBACK says how many failed before it
+    'pbMax == 0 or s.fails < pbMax', '" | fails "', 'fails := math.min(fails, pbY.fails)', 'pbCapMark']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

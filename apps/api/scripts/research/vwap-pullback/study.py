@@ -54,6 +54,8 @@ ap.add_argument('--list', help="print every setup for a ticker, or 'all'")
 ap.add_argument('--cap', type=int, default=99, help='pullbacks per line per day (99 = uncapped, the default for the touch tables)')
 ap.add_argument('--cap-on', choices=['touches', 'failures', 'broken'], default='touches',
                 help="what the cap counts: all touches (script v10–v14), BROKEN + straight-through (v15), or BROKEN only")
+ap.add_argument('--cap-strong', action='store_true',
+                help='the touches the cap (2 failures) blocks, by how strong the ticker was: change %% and grade at the alert')
 ap.add_argument('--cap-compare', action='store_true',
                 help='compare the cap modes at --cap (default 2): alerts/day, P&L per exit rule, and the alerts each mode adds')
 args = ap.parse_args()
@@ -367,6 +369,70 @@ def compact(label, events, base):
     b = summarize(base)
     print(f"  {label:12} " + ' | '.join(parts) + (f" | base win {b['win']:4.1%} P&L {b['pnl']:+5.2%}" if b else ''))
 
+
+GRADE_RANK = {g: i for i, g in enumerate(['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'])}
+
+
+def grade_group(e):
+    g = e['grade']
+    if g in (None, ''):
+        return None
+    return 'a B+ or better' if GRADE_RANK.get(g, 9) <= GRADE_RANK['B+'] else 'b B or worse'
+
+
+def chg_group(e):
+    return None if e['chg'] is None else bucket(e['chg'], [30, 60, 100, 200], ['a <30%', 'b 30-60%', 'c 60-100%', 'd 100-200%', 'e 200%+'])
+
+
+if args.cap_strong:
+    # 2026-10-10 (operator, after WFF's year-line pullback at 12:35 ET ran +40%
+    # past the cap): "we should not limit pullbacks or increase the cap at least
+    # for session top gainers maybe? Or at least, for >B grades?" — the touches
+    # the v15 cap blocks (2 failures per line per day), split by strength at the
+    # alert. Session line only (the one our data can rebuild).
+    runs = {}
+    for name, cap in (('capped', 2), ('uncapped', 99)):
+        args.cap, args.cap_on = cap, 'failures'
+        evs, _ = run(ARM)
+        runs[name] = [e for e in evs if not e['through']]
+    key = lambda e: (e['ticker'], e['day'], e['t0'])
+    kept = {key(e) for e in runs['capped']}
+    blocked = [e for e in runs['uncapped'] if key(e) not in kept]
+    days = len({e['day'] for e in runs['uncapped']})
+    pts = lambda evs: [(e['seen'], e['k'], e['entry']) for e in evs]
+    s_all = summarize([e['race'] for e in runs['capped']])
+    s_blk = summarize([e['race'] for e in blocked])
+    print(f"\nAlerts the cap keeps: {len(runs['capped']):,} ({len(runs['capped']) / days:.1f}/day), win {s_all['win']:.1%}")
+    print(f"Touches the cap blocks: {len(blocked):,} ({len(blocked) / days:.1f}/day), win {s_blk['win']:.1%}, broke {s_blk['broke']:.1%}")
+    exit_grid('Blocked vs kept, overall', [('kept (cap 2)', pts(runs['capped'])), ('blocked', pts(blocked))])
+    for title, fn in (('change % at the alert', chg_group), ('grade at the alert (stored since 10-01)', grade_group)):
+        groups = defaultdict(list)
+        kept_g = defaultdict(list)
+        for e in blocked:
+            g = fn(e)
+            if g is not None:
+                groups[g].append(e)
+        for e in runs['capped']:
+            g = fn(e)
+            if g is not None:
+                kept_g[g].append(e)
+        rows = []
+        for g in sorted(set(groups) | set(kept_g)):
+            rows.append((f'blocked {g}', pts(groups.get(g, []))))
+            rows.append((f'  kept {g}', pts(kept_g.get(g, []))))
+        exit_grid(f'By {title}', rows)
+    strong = [e for e in blocked if e['chg'] is not None and e['chg'] >= 100]
+    exit_grid('Blocked, change ≥ +100%: by month', [(m, pts([e for e in strong if e['day'].strftime('%Y-%m') == m]))
+                                                     for m in sorted({e['day'].strftime('%Y-%m') for e in strong})])
+    exit_grid('Blocked, change ≥ +100%: by time of day (ET)', [(b, pts([e for e in strong if tod(e['t0']) == b]))
+                                                                for b in sorted({tod(e['t0']) for e in strong})])
+    if args.list:
+        hm = lambda m: f"{m // 60:02d}:{m % 60:02d}"
+        for e in blocked:
+            if args.list.upper() in ('ALL', e['ticker']):
+                print(f"  ✗ {e['ticker']:6} {e['day']} {hm(e['t0'])} touch {e['touch']} chg {e['chg'] if e['chg'] is not None else float('nan'):+.0f}% "
+                      f"grade {e['grade'] or '-':3} entry {e['entry']:.4g} → {e['race'].out} {e['race'].pnl:+.1%} mfe {e['race'].mfe:+.1%}")
+    sys.exit(0)
 
 if args.cap_compare:
     # The cap modes head to head (2026-10-07, after BIYA: its session line's first

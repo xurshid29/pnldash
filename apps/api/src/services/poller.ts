@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { formatTvSetupAlert, goStrength, lineTokens, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
+import { formatTvSetupAlert, goStrength, gradeAtLeast, lineTokens, pastCap, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3928,6 +3928,13 @@ class PollerService {
     }
   }
 
+  // v16 cap exemption: the ticker is on our Momentum list right now at grade
+  // TV_SETUP.pb_cap_exempt (B+) or better.
+  tvCapExempt(ticker: string): boolean {
+    const row = this.lastPayload?.rows.find((r) => r.ticker === ticker);
+    return row != null && gradeAtLeast(row.grade, TV_SETUP.pb_cap_exempt);
+  }
+
   // 📐 TradingView VWAP-setup signal (POST /api/tv/webhook → tv-setups.ts),
   // delivered like a cycle's opportunity alerts but immediately: a
   // tier_events row for grading, the engine's recent list (payload.alerts →
@@ -3944,7 +3951,10 @@ class PollerService {
   // line already announced today (`why` 'repeat', ready_once_per_day):
   // recorded and shown in the 📐 sidebar (it reads tier_events), never
   // announced. Rows carry `quiet: true`.
-  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'repeat'): OpportunityAlert {
+  // v16: why 'capped' = a PULLBACK past TV_SETUP.pb_cap failures on a ticker that
+  // isn't B+ or better on Momentum; `capExempt` = past the cap but announced anyway.
+  // Rows carry `fails`, `capped`, `cap_exempt` for the grading.
+  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'repeat' | 'capped', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
     const at = new Date(nowSec * 1000).toISOString();
@@ -3972,6 +3982,7 @@ class PollerService {
         svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, line: sig.line ?? null,
         touch: sig.touch ?? null, peak_pct: sig.peak_pct ?? null,
         yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
+        fails: sig.fails ?? null, capped: pastCap(sig),
         on_screen: row != null, notified: mode === 'notify',
       },
     };
@@ -3984,6 +3995,7 @@ class PollerService {
       yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
       chg: alert.change_pct, grade: alert.grade, float_m: alert.float_m, rv1: alert.rel_vol_1min,
       on_screen: row != null, notified: mode === 'notify', quiet: mode === 'quiet',
+      fails: sig.fails ?? null, capped: pastCap(sig), cap_exempt: capExempt,
     });
     const pb = PULLBACK_STAGES.has(sig.stage);
     console.log(
@@ -4000,7 +4012,9 @@ class PollerService {
       (strength ? ` · strength ${strength.score}/${strength.max}` : '') +
       `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
       (mode === 'log' ? ' · repeat (logged only)'
-        : mode === 'quiet' ? (why === 'repeat' ? ' · quiet (READY already announced on this line today)' : ' · quiet (stage switched off)') : ''),
+        : mode === 'quiet' ? (why === 'repeat' ? ' · quiet (READY already announced on this line today)'
+          : why === 'capped' ? ` · quiet (past the cap: ${sig.fails} failed on this line)` : ' · quiet (stage switched off)')
+        : capExempt ? ` · past the cap (${sig.fails} failed), announced for grade ${row?.grade ?? '?'}` : ''),
     );
     if (mode === 'notify') {
       this.opportunity.pushExternal(alert);

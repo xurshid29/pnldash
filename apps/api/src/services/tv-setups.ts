@@ -84,6 +84,7 @@ export interface TvSetupSignal {
   ypx_pct?: number | null;    // price vs the year VWAP, %
   line?: TvLine | null;       // null on older messages = the month line
   touch?: number | null;      // pullbacks to this line today, this one included
+  fails?: number | null;      // script v16+, PULLBACK: failed pullbacks on the line before this one (null = older script, which capped itself)
   peak_pct?: number | null;   // PULLBACK: highest bar high above the line before it, %
 }
 
@@ -102,6 +103,14 @@ export const TV_SETUP = {
   // that line is quiet. GO and PULLBACK announce every time. On 10-05 this
   // kept 63 of 145 READYs; 46 of the 49 GOs had their READY announced earlier.
   ready_once_per_day: true,
+  // The PULLBACK cap moved here from the script in v16 (2026-10-10): past
+  // pb_cap failed pullbacks on a line (BROKEN or straight through, the
+  // message's `fails`), a PULLBACK is quiet — unless the ticker is on our
+  // Momentum list at grade pb_cap_exempt or better (operator's trial after
+  // WFF 10-09 and BIYA 10-07; on the session line, capped touches averaged
+  // −0.64%, the B+ ones +0.90% on n 17 in October). Grade ~10-24.
+  pb_cap: 2,
+  pb_cap_exempt: 'B+' as string,
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
@@ -152,6 +161,19 @@ export function goStrength(sig: TvSetupSignal, at: Date, onMomentum: boolean): T
 const STAGES: Record<string, TvStage> = {
   forming: 'forming', ready: 'ready', go: 'go', pullback: 'pullback', broken: 'broken', held: 'held',
 };
+
+// v16: a PULLBACK past the day's cap on every line it names. Older scripts
+// (no `fails`) capped themselves, so they're never capped here.
+export function pastCap(sig: TvSetupSignal): boolean {
+  return sig.stage === 'pullback' && sig.fails != null && sig.fails >= TV_SETUP.pb_cap;
+}
+
+const GRADE_LADDER = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'];
+// "B+" or better, by the Momentum grade ladder.
+export function gradeAtLeast(grade: string | null | undefined, min: string): boolean {
+  const g = grade == null ? -1 : GRADE_LADDER.indexOf(grade);
+  return g >= 0 && g <= GRADE_LADDER.indexOf(min);
+}
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
@@ -210,6 +232,7 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     line: toLine(o.line),
     touch: toNum(o.touch),
     peak_pct: toNum(o.peak_pct),
+    fails: toNum(o.fails),
   };
 }
 
@@ -231,6 +254,7 @@ function toPath(v: unknown): TvPath | null {
 //   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | tf 1   (v10)
 //   READY SAIQ 6.5 | mVWAP 4.1 (+58.5%) | yVWAP 7.0 (-7.1%) | basis 6.3 (-10.0%) | line year | day high +336% | tf 1 | path base   (v11)
 //   PULLBACK MI 5.31 | sVWAP 4.67 (+13.7%) | mVWAP 4.65 (+14.2%) | yVWAP 5.2 (+2.1%) | line year | touch 1 | peak +27% | tf 1   (v14)
+//   PULLBACK WFF 3.53 | sVWAP 3.12 (+13.1%) | mVWAP 3.11 (+13.5%) | yVWAP 3.39 (+4.1%) | line year | touch 4 | fails 2 | peak +45% | tf 30S   (v16)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -264,6 +288,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const run = /\brun\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const ln = /\bline\s+((?:session|month|year)(?:\+(?:session|month|year)){0,2}|both)\b/i.exec(text);
   const touch = /\btouch\s+(\d+)\b/i.exec(text);
+  const fails = /\bfails\s+(\d+)\b/i.exec(text);
   const peak = /\bpeak\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
@@ -287,6 +312,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     line: toLine(ln?.[1]),
     touch: toNum(touch?.[1]),
     peak_pct: toNum(peak?.[1]),
+    fails: toNum(fails?.[1]),
   };
 }
 
@@ -320,7 +346,9 @@ export class TvSetupGate {
     return this.announced.has(stage);
   }
 
-  admit(sig: TvSetupSignal, nowSec: number): TvVerdict {
+  // `capExempt`: a PULLBACK past the cap may still announce (v16 — the caller
+  // knows the ticker's Momentum row and grade).
+  admit(sig: TvSetupSignal, nowSec: number, capExempt = false): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
     if (this.recent.length >= TV_SETUP.max_per_min) return 'flood';
     this.recent.push(nowSec);
@@ -342,6 +370,7 @@ export class TvSetupGate {
     this.lastEvent.set(event, nowSec);
 
     if (!this.announced.has(sig.stage)) return 'quiet';
+    if (pastCap(sig) && !capExempt) return 'quiet';
     const readyKeys = sig.stage === 'ready' && TV_SETUP.ready_once_per_day ? tokens.map((t) => `${sig.ticker}|${t}`) : [];
     if (readyKeys.length > 0) {
       this.rollDay(nowSec);
@@ -448,6 +477,9 @@ export function formatTvSetupAlert(
   ];
   if (pb) {
     const what = [touchText(sig.touch)];
+    if (sig.stage === 'pullback' && sig.fails != null && sig.fails > 0) {
+      what.push(pastCap(sig) ? `${sig.fails} failed before — past the cap, sent for grade ${escapeHtml(row?.grade ?? '?')}` : `${sig.fails} failed before`);
+    }
     if (sig.stage === 'pullback' && sig.peak_pct != null) what.push(`ran +${Math.round(sig.peak_pct)}% above the line first`);
     if (what.some(Boolean)) lines.push(what.filter(Boolean).join(' · '));
   }

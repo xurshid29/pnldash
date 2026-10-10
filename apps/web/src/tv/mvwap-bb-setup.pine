@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v15 (2026-10-05).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v16 (2026-10-10).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Two setups in one script, so the same two watchlist alerts carry both.
@@ -65,7 +65,8 @@ pbArm      = input.float(15.0,  "Armed: a bar high at least % above the line (th
 pbNear     = input.float(5.0,   "PULLBACK: a close back within % above the line", group = "Pullback to VWAP (v10)")
 pbBreak    = input.float(0.0,   "BROKEN: a close at least % under the line (0 = any close under it)", group = "Pullback to VWAP (v10)")
 pbWin      = input.float(10.0,  "HELD: price runs % above the PULLBACK close", group = "Pullback to VWAP (v10)")
-pbMax      = input.int(2,       "Stop a line after N failed pullbacks a day (BROKEN or a close straight through)", minval = 1, group = "Pullback to VWAP (v10)")
+pbMax      = input.int(0,       "Script cap: stop a line after N failed pullbacks a day (0 = none; the dashboard applies the cap since v16)", minval = 0, group = "Pullback to VWAP (v10)")
+pbCapMark  = input.int(2,       "Chart: pullbacks after N failed ones are drawn gray (the dashboard's cap)", minval = 1, group = "Pullback to VWAP (v10)")
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
@@ -305,6 +306,11 @@ else
 // every alerted one HELD, but v14's 2-touch cap blocked 11:44, 12:37 and 12:57);
 // a line that failed twice stops. Four months of session-line data: at least as good
 // on every exit rule, ~2 more alerts a day (docs/vwap-setup.md §13.5).
+// v16 (2026-10-10): the cap moved to the dashboard. The script alerts every
+// pullback (pbMax 0) and each PULLBACK says how many failed before it on its line
+// (`fails N`); the server stays quiet past 2 failures unless the ticker is on our
+// Momentum list at grade B+ or better (WFF 10-09: a year-line pullback ran +40%
+// past the cap). Cap tweaks no longer need a new script or new alerts.
 type PbLine
     bool  armed    = false
     int   armBar   = na
@@ -343,7 +349,7 @@ method step(PbLine s, float ln, bool canArm) =>
                     s.touches := s.touches + 1
                     if close < ln * (1 - pbBreak / 100)
                         s.fails := s.fails + 1
-                    else if ev == 0 and s.fails < pbMax
+                    else if ev == 0 and (pbMax == 0 or s.fails < pbMax)
                         s.open     := true
                         s.entry    := close
                         s.alertBar := bar_index
@@ -378,14 +384,17 @@ if pbOn and inWindow
         evY := pbY.step(yvwap, gainer)
 
 // The message — a contract with services/tv-setups.ts parseTvMessage, like the RECLAIM one:
-//   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
-pbMsg(int ev, string lineName, int touch, float peak) =>
+//   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | fails 0 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
+// v16: `fails` = failed pullbacks on the line before this one (the lowest of the lines named).
+pbMsg(int ev, string lineName, int touch, float peak, int fails) =>
     string msg = (ev == 1 ? "PULLBACK" : ev == 2 ? "BROKEN" : "HELD") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
     msg += " | sVWAP " + str.tostring(svwap, format.mintick) + " (" + pctVs(svwap) + "%)"
     msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + pctVs(mvwap) + "%)"
     if not na(yvwap)
         msg += " | yVWAP " + str.tostring(yvwap, format.mintick) + " (" + pctVs(yvwap) + "%)"
     msg += " | line " + lineName + " | touch " + str.tostring(touch)
+    if ev == 1
+        msg += " | fails " + str.tostring(fails)
     if ev == 1 and not na(peak)
         msg += " | peak +" + str.tostring(peak, "#") + "%"
     msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
@@ -399,37 +408,45 @@ pbMsg(int ev, string lineName, int touch, float peak) =>
 
 // Lines firing the same event on one bar (they sit close together early in a
 // month) are one message naming all of them, e.g. "line session+month" (v10–v13
-// said "both" for session + month): the lowest touch number, the highest peak.
+// said "both" for session + month): the lowest touch number and failure count, the highest peak.
 pbJoin(string acc, string name) => acc == "" ? name : acc + "+" + name
 pbFire(int e) =>
     string names = ""
     int touch = 999
+    int fails = 999
     float peak = na
     if evS == e
         names := pbJoin(names, "session")
         touch := math.min(touch, pbS.touches)
+        fails := math.min(fails, pbS.fails)
         peak  := na(peak) ? pbS.peakPct : math.max(peak, nz(pbS.peakPct, peak))
     if evM == e
         names := pbJoin(names, "month")
         touch := math.min(touch, pbM.touches)
+        fails := math.min(fails, pbM.fails)
         peak  := na(peak) ? pbM.peakPct : math.max(peak, nz(pbM.peakPct, peak))
     if evY == e
         names := pbJoin(names, "year")
         touch := math.min(touch, pbY.touches)
+        fails := math.min(fails, pbY.fails)
         peak  := na(peak) ? pbY.peakPct : math.max(peak, nz(pbY.peakPct, peak))
-    [names, touch, peak]
+    [names, touch, peak, fails]
 
-[pbN1, pbT1, pbP1] = pbFire(1)
-[pbN2, pbT2, pbP2] = pbFire(2)
-[pbN3, pbT3, pbP3] = pbFire(3)
+[pbN1, pbT1, pbP1, pbF1] = pbFire(1)
+[pbN2, pbT2, pbP2, pbF2] = pbFire(2)
+[pbN3, pbT3, pbP3, pbF3] = pbFire(3)
 if pbN1 != ""
-    alert(pbMsg(1, pbN1, pbT1, pbP1), alert.freq_once_per_bar_close)
+    alert(pbMsg(1, pbN1, pbT1, pbP1, pbF1), alert.freq_once_per_bar_close)
 if pbN2 != ""
-    alert(pbMsg(2, pbN2, pbT2, pbP2), alert.freq_once_per_bar_close)
+    alert(pbMsg(2, pbN2, pbT2, pbP2, pbF2), alert.freq_once_per_bar_close)
 if pbN3 != ""
-    alert(pbMsg(3, pbN3, pbT3, pbP3), alert.freq_once_per_bar_close)
+    alert(pbMsg(3, pbN3, pbT3, pbP3, pbF3), alert.freq_once_per_bar_close)
 
-plotshape(evS == 1 or evM == 1 or evY == 1, "Pullback", shape.diamond, location.belowbar, color.aqua, size = size.tiny)
+// v16: a pullback past the dashboard's cap (pbCapMark failures on every line it names)
+// is drawn gray — it only pings for a B+-or-better ticker on our Momentum list.
+bool pbCapped = pbN1 != "" and pbF1 >= pbCapMark
+plotshape(pbN1 != "" and not pbCapped, "Pullback", shape.diamond, location.belowbar, color.aqua, size = size.tiny)
+plotshape(pbCapped, "Pullback (past the cap)", shape.diamond, location.belowbar, color.gray, size = size.tiny)
 plotshape(evS == 2 or evM == 2 or evY == 2, "Broken", shape.xcross, location.abovebar, color.red, size = size.tiny)
 plotshape(evS == 3 or evM == 3 or evY == 3, "Held", shape.flag, location.abovebar, color.lime, size = size.tiny)
 // Reclaim markers: the month line orange / yellow / green as before, the year line

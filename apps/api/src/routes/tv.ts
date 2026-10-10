@@ -6,7 +6,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
-import { DEFAULT_ANNOUNCED, parseStageList, parseTvMessage, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
+import { DEFAULT_ANNOUNCED, parseStageList, parseTvMessage, pastCap, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
 
 // TradingView ↔ dashboard bridge for the 📐 VWAP setup (services/tv-setups.ts).
 const router = Router();
@@ -86,14 +86,18 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
   await Promise.all([loadSettings(), seedGate()]);
   // Express 4 doesn't catch errors thrown after an await — answer them here.
   try {
-    const verdict = gate.admit(sig, Math.floor(Date.now() / 1000));
+    // v16: a PULLBACK past the cap still pings for a B+-or-better Momentum ticker.
+    const capped = pastCap(sig);
+    const capExempt = capped && poller.tvCapExempt(sig.ticker);
+    const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt);
     if (verdict === 'flood') {
       console.warn(`[tv-setup] flood guard — dropped ${sig.stage} ${sig.ticker}`);
       return res.status(429).json({ error: 'Too many alerts' });
     }
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
-    const why = verdict !== 'quiet' ? undefined : gate.announces(sig.stage) ? 'repeat' : 'muted';
-    const alert = poller.deliverTvSetup(sig, verdict, why);
+    const why = verdict !== 'quiet' ? undefined
+      : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped' : 'repeat';
+    const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
   } catch (err) {
     console.error(`[tv-setup] delivery failed for ${sig.stage} ${sig.ticker}:`, err instanceof Error ? err.message : err);

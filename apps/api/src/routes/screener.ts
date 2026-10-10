@@ -126,6 +126,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
       vol_x: number | null; run_pct: number | null; strength: Record<string, unknown> | null;
       svwap: number | null; spx_pct: number | null; line: string | null; touch: number | null; peak_pct: number | null;
       yvwap: number | null; ypx_pct: number | null;
+      fails: number | null; capped: boolean;
       on_screen: boolean; notified: boolean;
     } | null;
   };
@@ -162,6 +163,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
         svwap: num(m.svwap), spx_pct: num(m.spx_pct), line: str(m.line), touch: num(m.touch), peak_pct: num(m.peak_pct),
         // reclaim setup on the year line (script v11)
         yvwap: num(m.yvwap), ypx_pct: num(m.ypx_pct),
+        // script v16 PULLBACK cap fields
+        fails: num(m.fails), capped: m.capped === true,
         on_screen: m.on_screen === true, notified: m.notified !== false,
       };
     }

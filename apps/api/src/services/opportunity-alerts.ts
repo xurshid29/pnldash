@@ -62,6 +62,8 @@ export interface TvSetupInfo {
   // Reclaim setup on the year VWAP (script v11)
   yvwap: number | null;
   ypx_pct: number | null;     // price vs the year VWAP, %
+  fails?: number | null;      // v16 PULLBACK: failed pullbacks on the line before it
+  capped?: boolean;           // v16: past the cap (TV_SETUP.pb_cap failures)
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe
 }

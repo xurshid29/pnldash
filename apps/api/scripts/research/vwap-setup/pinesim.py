@@ -203,7 +203,7 @@ PB = dict(arm=15.0,        # armed: a bar high at least % above the line (the bi
           near=5.0,        # PULLBACK: a close back within % above the line
           brk=0.0,         # BROKEN: a close at least % under the line
           win=10.0,        # HELD: a high % above the PULLBACK close
-          max_touches=2,   # the day's cap per line (pbMax)…
+          max_touches=0,   # the day's cap per line (pbMax); v16: 0 = none, the dashboard applies it (v15: 2)…
           cap_on='failures',  # …counts BROKEN + straight-through pullbacks (v15); 'touches' = every touch (v10–v14);
                               # 'broken' = only alerted pullbacks that BROKE (the 2026-10-07 BIYA question)
           timeout=60,      # stop watching a pullback after N bars
@@ -221,6 +221,7 @@ class PullbackLine:
         self.armed, self.arm_bar, self.peak_pct, self.peak_bar = False, None, None, None
         self.touches, self.open, self.entry, self.alert_bar = 0, False, None, None
         self.fails = 0   # BROKEN + straight-through touches (cap_on='failures'; 'broken': BROKEN only)
+        self.alert_fails = None   # v16: failures on the line before the last PULLBACK (the message's `fails`)
 
     def step(self, i, h, c, ln, can_arm=True):
         """Bar index i, high, close, the line → 0 nothing, 1 PULLBACK, 2 BROKEN, 3 HELD."""
@@ -248,13 +249,15 @@ class PullbackLine:
                     self.armed = False
                     self.touches += 1
                     through = c < ln * (1 - p['brk'] / 100)
-                    allowed = (self.fails < p['max_touches'] if p['cap_on'] in ('failures', 'broken')
-                               else self.touches <= p['max_touches'])
+                    allowed = (p['max_touches'] == 0
+                               or (self.fails < p['max_touches'] if p['cap_on'] in ('failures', 'broken')
+                                   else self.touches <= p['max_touches']))
                     if through:
                         if p['cap_on'] != 'broken':
                             self.fails += 1
                     elif ev == 0 and allowed:
                         self.open, self.entry, self.alert_bar, ev = True, c, i, 1
+                        self.alert_fails = self.fails
         return ev
 
 
@@ -264,7 +267,7 @@ def simulate_pullback(bars, lines, params=None, gainer_of=None):
     that fire the same event on one bar are one message named after all of them ("session+month"),
     with the lowest touch number and the highest peak. gainer_of(bar) → bool (default: always a gainer).
     Returns the script's messages: (time, PULLBACK|BROKEN|HELD, line, touch, close, first line's value,
-    % vs it, peak %)."""
+    % vs it, peak %, fails) — `fails` (v16) on PULLBACK only, the lowest of the lines named."""
     p = {**PB, **(params or {})}
     state = {name: PullbackLine(p) for name in lines}
     out, day = [], None
@@ -287,7 +290,8 @@ def simulate_pullback(bars, lines, params=None, gainer_of=None):
             ln = lines[hit[0]](b)
             out.append((t, names[e], '+'.join(hit), min(state[n].touches for n in hit), b['c'], ln,
                         (b['c'] / ln - 1) * 100 if ln else None,
-                        max(state[n].peak_pct for n in hit) if e == 1 else None))
+                        max(state[n].peak_pct for n in hit) if e == 1 else None,
+                        min(state[n].alert_fails for n in hit) if e == 1 else None))
     return out
 
 
@@ -304,7 +308,8 @@ def selftest_pullback():
             1.25, 1.02,                           # re-armed, back near: already 2 failures (BROKEN + through) → nothing
             1.30, 1.01]                           # still nothing (touches exhausted for the day)
     bars = [{'t': t0 + dt.timedelta(minutes=k), 'h': c, 'c': c} for k, c in enumerate(path)]
-    got = [(e[1], e[3], e[4]) for e in simulate_pullback(bars, {'session': lambda b: 1.00})]
+    V15 = {'max_touches': 2}
+    got = [(e[1], e[3], e[4]) for e in simulate_pullback(bars, {'session': lambda b: 1.00}, V15)]
     want = [('PULLBACK', 1, 1.04), ('HELD', 1, 1.16), ('PULLBACK', 2, 1.03), ('BROKEN', 2, 0.98)]
     ok = got == want
     print('pullback state machine:', got, '→', 'OK' if ok else f'UNEXPECTED (want {want})')
@@ -312,8 +317,8 @@ def selftest_pullback():
     # v10–v14 capped every touch, so it stopped after two.
     held3 = [1.00, 1.20, 1.04, 1.16, 1.04, 1.16, 1.04]
     hb = [{'t': t0 + dt.timedelta(minutes=k), 'h': c, 'c': c} for k, c in enumerate(held3)]
-    v15 = [e[1] for e in simulate_pullback(hb, {'session': lambda b: 1.00})]
-    v14 = [e[1] for e in simulate_pullback(hb, {'session': lambda b: 1.00}, {'cap_on': 'touches'})]
+    v15 = [e[1] for e in simulate_pullback(hb, {'session': lambda b: 1.00}, V15)]
+    v14 = [e[1] for e in simulate_pullback(hb, {'session': lambda b: 1.00}, {**V15, 'cap_on': 'touches'})]
     ok_cap = (v15 == ['PULLBACK', 'HELD', 'PULLBACK', 'HELD', 'PULLBACK'] and v14 == ['PULLBACK', 'HELD', 'PULLBACK', 'HELD'])
     print('cap counts failures (v15) vs touches (v14):', v15, '/', v14, '→', 'OK' if ok_cap else 'UNEXPECTED')
     # 2026-10-07 (BIYA): cap_on='broken' doesn't count a straight-through. A crash through the line,
@@ -321,11 +326,17 @@ def selftest_pullback():
     # quiet; 'broken' has used one and alerts. (Measured and rejected: research/vwap-pullback README.)
     biya = [1.00, 1.20, 0.95, 1.20, 1.04, 1.16, 1.03, 0.98, 1.20, 1.02]
     bb = [{'t': t0 + dt.timedelta(minutes=k), 'h': c, 'c': c} for k, c in enumerate(biya)]
-    f15 = [(e[1], e[3]) for e in simulate_pullback(bb, {'session': lambda b: 1.00})]
-    brk = [(e[1], e[3]) for e in simulate_pullback(bb, {'session': lambda b: 1.00}, {'cap_on': 'broken'})]
+    f15 = [(e[1], e[3]) for e in simulate_pullback(bb, {'session': lambda b: 1.00}, V15)]
+    brk = [(e[1], e[3]) for e in simulate_pullback(bb, {'session': lambda b: 1.00}, {**V15, 'cap_on': 'broken'})]
     base4 = [('PULLBACK', 2), ('HELD', 2), ('PULLBACK', 3), ('BROKEN', 3)]
     ok_brk = f15 == base4 and brk == base4 + [('PULLBACK', 4)]
     print('straight-through counts (v15) vs BROKEN only:', f15, '/', brk, '→', 'OK' if ok_brk else 'UNEXPECTED')
+    # v16: the script no longer caps; the BIYA path's 4th touch alerts and says 2 failed before it
+    # (the dashboard decides whether it pings).
+    v16 = [(e[1], e[3], e[8]) for e in simulate_pullback(bb, {'session': lambda b: 1.00})]
+    want16 = [('PULLBACK', 2, 1), ('HELD', 2, None), ('PULLBACK', 3, 1), ('BROKEN', 3, None), ('PULLBACK', 4, 2)]
+    ok_v16 = v16 == want16
+    print('v16 no script cap, PULLBACK carries fails:', v16, '→', 'OK' if ok_v16 else f'UNEXPECTED (want {want16})')
     flat = lambda b: 1.00
     both = simulate_pullback(bars[:6], {'session': flat, 'month': flat})
     three = simulate_pullback(bars[:6], {'session': flat, 'month': lambda b: None, 'year': flat})
@@ -333,7 +344,7 @@ def selftest_pullback():
                and [(e[1], e[2]) for e in three] == [('PULLBACK', 'session+year')])
     print('same event on several lines → one message naming them:', [(e[1], e[2]) for e in both + three], '→',
           'OK' if ok_both else 'UNEXPECTED')
-    return ok and ok_both and ok_cap and ok_brk
+    return ok and ok_both and ok_cap and ok_brk and ok_v16
 
 
 def selftest():

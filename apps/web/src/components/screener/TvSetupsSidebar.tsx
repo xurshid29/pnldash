@@ -305,6 +305,8 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           <TickerLink ticker={c.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
           {r && <span style={{ color: '#fadb14', fontSize: 11 }}>⭐</span>}
           <TvStageTag stage={s.stage} dim={!e.notified} path={s.path} line={s.line} touch={s.touch} />
+          {/* v16: past the day's cap — pings only for a B+-or-better Momentum name */}
+          {s.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
           {s.strength && <StrengthTag st={s.strength} />}
           <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{age(now - e.at)}</Text>
         </div>
