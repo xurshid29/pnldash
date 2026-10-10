@@ -83,7 +83,7 @@ ask.
    10-01). The old API briefly runs on the new schema, so keep migrations
    additive. Any commit under `apps/**` deploys (API restart, ~2 min);
    `docs/**` doesn't.
-5. **📐 TradingView VWAP setups — script v15** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+5. **📐 TradingView VWAP setups — script v16** (`apps/web/src/tv/mvwap-bb-setup.pine`; v16 needs the operator's paste + both alerts recreated, see open item 0).
    TradingView computes the setups because we can't build month/year VWAPs with
    pre-market volume ourselves: Yahoo's extended-hours bars have zero volume,
    and our snapshots only see a ticker while it's up 20%+.
@@ -106,7 +106,11 @@ ask.
      - Then BROKEN on a close under the line (the exit) or HELD on +10% from
        the PULLBACK close; a pullback is dropped after 60 bars.
      - **Cap: 2 FAILED pullbacks** (BROKEN or straight through) per line per
-       day. Held pullbacks don't use it up (v15, after MI).
+       day. Held pullbacks don't use it up (v15, after MI). **Since v16 the
+       server applies it** from each PULLBACK's `fails N`: past it the alert is
+       quiet unless the ticker is on Momentum at B+ or better (trial; grade
+       ~10-24 from rows' `capped` / `cap_exempt`). Knobs `TV_SETUP.pb_cap` /
+       `pb_cap_exempt`.
    - **The year line (v14)** comes from this year's 60-minute extended-hours
      bars up to yesterday (`request.security(ticker.new(…, session.extended),
      "60", yearBefore(), lookahead_on)`) plus today's chart bars. Every
@@ -179,6 +183,10 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 `.env.bak-20261003`.
 
 **Open items, ranked:**
+0. **(new 10-10) The operator pastes v16 and recreates both alerts (1m + 30s).**
+   The server already handles v16 (and older messages without `fails`). Check
+   the first v16 PULLBACKs carry `fails`, and that a gray chart diamond matches
+   a quiet "past cap" row (or an announced one for a B+ Momentum name).
 0. **Done (10-06): v15 is live on both alerts**, confirmed by the operator. The
    data agrees: MI's year line sent PULLBACK touches 5 and 6 on 10-05 (v14
    stopped a line after 2 touches; v15 only after 2 failures), the 1m and
@@ -303,6 +311,19 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-10 (Sat) — WFF "why no PULLBACK at 21:30–21:40?" → SCRIPT v16 (`fe6fd4a`).**
+- 21:35 Tashkent = 12:35 ET on 10-09. The year line had used its 2 failures:
+  touch 1 (month+year, 10:00 ET) and touch 3 (12:00) both BROKE. Touch 4 at
+  12:35 (close 3.53, +4% over the 3.39 line) was capped and ran to 4.94. The
+  session and month lines (~3.10) were 14% below, out of range.
+- Operator: uncap for top gainers or >B grades? Session-line study
+  (`study.py --cap-strong`): the cap blocks 1.8/day at −0.64%, and is worse the
+  bigger the gain (+100–200%: −0.88%, +200%+: −0.95%). B+ or better: +0.90%,
+  but n 17, all October. Decision: move the cap to the server and trial a
+  B+-on-Momentum exemption. v16 = no script cap, `fails N` on every PULLBACK,
+  gray chart diamonds past the cap, server cap + exemption, sidebar "past cap"
+  tag, Telegram "N failed before". 194 checks, replica self-test.
 
 **2026-10-09 — NEWS ROOM HIDDEN.** Operator: "lets hide the bottom news panel".
 A per-user layout flag `hide_news_room` (default hidden, header **News** switch)

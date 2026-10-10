@@ -633,6 +633,7 @@ TradingView servers                                   pnldash droplet
 | A stage switched off in the ⚙ menu's **📐 Stages that alert** (since 2026-10-06; default off: FORMING, BROKEN, HELD — the 10-05 noise cut) | app_settings `tv_alert_stages` (default `TV_SETUP.quiet_stages`) | `quiet` — stored, graded and shown in the 📐 sidebar; no toast, sound, notification or Telegram |
 | A READY on a line that already had a READY announced today (ET day; since 2026-10-05) | `ready_once_per_day` | `quiet`. Before the first webhook after a deploy, the gate reloads today's announced READYs from `tier_events` |
 | The ticker had this stage announced in the last 5 min (a month READY, then a year READY a minute later). **PULLBACK counts per line** (since 2026-10-05, `a5a5520`): only a line announced in the last 5 min blocks it, in any combination | `notify_merge_sec` 300 | `log`. Only announcements count, so a quiet event never blocks the next one |
+| A PULLBACK past the day's cap: `fails` ≥ 2 on every line it names (script v16+; older scripts capped themselves) | `pb_cap` 2, `pb_cap_exempt` 'B+' | `quiet`, unless the ticker is on our Momentum list at grade B+ or better (a trial since 2026-10-10, after WFF) — then it announces, and Telegram says it's past the cap. Rows carry `fails`, `capped`, `cap_exempt` |
 | More than 120 webhooks a minute | `max_per_min` 120 | `flood` → 429, so a leaked key or runaway alert can't spam the phone |
 
 **The noise cut (operator, 2026-10-05):** "we need to cut noise a little bit
@@ -962,6 +963,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-05 | v15 | `e34f892` | Operator: "no PULLBACK around the year VWAP" (MI 21:37, i.e. 12:37 ET, after v14). The replica on MI's bars: the year line had six touches; the two alerted ones (10:19, 10:31) both HELD, 10:52 went straight through, and the cap of 2 touches then blocked 11:44, 12:37 and 12:57, which all held +10%. The cap (`pbMax`, still 2) now counts *failed* pullbacks (BROKEN or straight through) instead of every touch, so a line that keeps holding keeps alerting and a line that failed twice stops. Four months of session-line data: at least as good on every exit rule (stop +10%: −0.06% → +0.00%), 14.5 → 16.3 alerts/day (§13.5). Messages unchanged. Replica: `cap_on='failures'` (default) plus a held-held-held self-test. |
 | 2026-10-05 | server | `6bc9437` | Noise cut, no script change, so no alert recreation. Operator: "we need to cut noise a little bit … I hide broken, held, forming setups, and READY also can be limited". FORMING, BROKEN and HELD are now quiet (stored with `quiet: true`, graded and shown in the sidebar, never announced), and READY is announced once per ticker and line per ET day (§7.2). The gate spots timeframe copies per line, and its 5-min limit only counts announcements. Replayed on 10-05: 372 → 154 announcements, buzzing pushes 106 → 55. Regression: 153 checks. |
 | 2026-10-05 | server | `a5a5520` | The 5-min PULLBACK limit counts per line (§7.2). Operator: "lets do what you suggested" after MI's 15:21 ET session-line pullback (+10% two minutes later) was only logged behind a year-line PULLBACK 3½ min earlier. A line already announced in another combination stays logged. Replayed on 10-05: 169 → 174 announcements. Regression: 164 checks. |
+| 2026-10-10 | v16 | `fe6fd4a` | Operator, after WFF 10-09 (a year-line pullback at 12:35 ET, blocked as touch 4 after two BROKEN, ran +40%): "we should not limit pullbacks or increase the cap at least for session top gainers maybe? Or at least, for >B grades?" Measured on the session line (`study.py --cap-strong`, 06-12 → 10-09): the cap blocks 1.8 touches/day at −0.64% (stop, +10%); the bigger the day's gain the worse (+100–200%: −0.88%, +200%+: −0.95%), so no top-gainer exemption; grade B+ or better: +0.90% on n 17, all October, unproven. So the cap moved to the server and the B+ idea runs as a measured trial: the script no longer caps (`pbMax` 0) and every PULLBACK carries `fails N` (failed pullbacks on its line before it, the lowest of the lines named); the server keeps PULLBACKs past 2 failures quiet unless the ticker is on Momentum at B+ or better (`TV_SETUP.pb_cap`, `pb_cap_exempt`), and stores `fails` / `capped` / `cap_exempt`. Chart: past-the-cap pullbacks are gray (`pbCapMark`). The sidebar tags them "past cap"; Telegram says "N failed before". Cap tweaks no longer need a new script. Replica: `max_touches` 0 + `alert_fails`, v16 self-test. Regression: 194 checks. Grade the exemption ~10-24. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1044,13 +1046,14 @@ Each line keeps its own state, reset every day.
 | PULLBACK: a close back within % above the line | 5 | the operator |
 | BROKEN: a close at least % under the line | 0 | the operator's exit ("crosses down"); a looser rule wins more often but loses more (§13.5) |
 | HELD: price runs % above the PULLBACK close | 10 | the study's win label; it only closes the setup for grading |
-| Stop a line after N failed pullbacks a day (`pbMax`) | 2 | v15: counts BROKEN and straight-through pullbacks, so a line that keeps holding keeps alerting. v10–v14 counted every touch, which cut off MI's year line on 10-05 after two pullbacks that both HELD. See the table in §13.5 |
+| Script cap: stop a line after N failed pullbacks a day (`pbMax`) | 0 | v16: 0 = no cap in the script; the dashboard applies it (`TV_SETUP.pb_cap` 2 failures, quiet past it unless the ticker is B+ or better on Momentum, §7.2). v15 used 2 here (BROKEN and straight-through count, holds don't); v10–v14 counted every touch, which cut off MI's year line on 10-05 after two pullbacks that both HELD. See §13.5 |
+| Chart: pullbacks after N failed ones are drawn gray (`pbCapMark`) | 2 | v16, chart only: the dashboard's cap, so you can see which pullbacks only ping for a B+-or-better Momentum name |
 | Stop watching a pullback after N bars | 60 | the study's horizon |
 
 ### 13.4 The message
 
 ```
-PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
+PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | fails 0 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
 BROKEN SAIQ 5.98 | sVWAP 6.15 (-2.8%) | mVWAP 4.1 (+45.9%) | line session | touch 2 | day high +336% | tf 1
 HELD VEEA 3.75 | sVWAP 3.9 (-3.8%) | mVWAP 3.41 (+10.0%) | line month | touch 1 | day high +98% | tf 2
 ```
@@ -1058,6 +1061,7 @@ HELD VEEA 3.75 | sVWAP 3.9 (-3.8%) | mVWAP 3.41 (+10.0%) | line month | touch 1 
 - `sVWAP` / `mVWAP`: each line and the close's distance from it.
 - `line`: session, month, or both.
 - `touch`: the touches to that line today, this one included.
+- `fails` (v16, PULLBACK only): failed pullbacks (BROKEN or straight through) on the line before this one — the lowest of the lines named. The server's cap reads it.
 - `peak` (PULLBACK only): the highest bar high above the line since arming, %.
 
 The rest is the same as the reclaim setup's message (§5.6). The server stores
