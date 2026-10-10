@@ -313,6 +313,16 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-10 (Sat) — HISTORY TAB ~6× FASTER (`24745dc`).** Operator: the calendar picker
+is slow. `history-by-day` filtered `(polled_at AT TIME ZONE …)::date = d`, which
+no index can serve: a full scan of ~15M `screener_results` rows, ~6.5 s per
+day. Fixes: an ET-day half-open range on `polled_at` / `published_at`, a
+per-query `SET LOCAL random_page_cost = 1.1` + `jit = off` (at the default 4 the
+planner still chose the full scan), and a `na.id` tie-breaker for the day's
+catalyst (26–163 ties a day). Live endpoint: 0.5–1.2 s, same rows. **Follow-up
+idea, not done:** `random_page_cost` 1.1 database-wide (the droplet is SSD)
+would help other date-filtered queries too, but test plans first.
+
 **2026-10-10 (Sat) — WFF "why no PULLBACK at 21:30–21:40?" → SCRIPT v16 (`fe6fd4a`).**
 - 21:35 Tashkent = 12:35 ET on 10-09. The year line had used its 2 failures:
   touch 1 (month+year, 10:00 ET) and touch 3 (12:00) both BROKE. Touch 4 at
