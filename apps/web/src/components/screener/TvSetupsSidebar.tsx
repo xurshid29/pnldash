@@ -39,6 +39,9 @@ interface TickerCard {
   current: SetupEvent;    // the live event, or the latest one of a shown stage
   live: boolean;
   resolved: boolean;      // GO / HELD / BROKEN, or a PULLBACK a later BROKEN / HELD closed
+  // How a PULLBACK shown as current ended — labelled on the row, since BROKEN /
+  // HELD are usually switched off and hidden (2026-10-13, WFF 00:34 → broke 00:35).
+  outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
 // One setup thread per line combination: reclaim (month / year / month+year)
@@ -92,9 +95,11 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
     if (!current) continue;
     const st = current.setup.stage;
     const closer = latest.get(threadOf(current.setup));
-    const resolved = st === 'go' || st === 'held' || st === 'broken'
-      || (st === 'pullback' && closer != null && closer !== current && (closer.setup.stage === 'broken' || closer.setup.stage === 'held'));
-    cards.push({ ticker, events, current, live: live != null, resolved });
+    const closed = st === 'pullback' && closer != null && closer !== current
+      && (closer.setup.stage === 'broken' || closer.setup.stage === 'held');
+    const resolved = st === 'go' || st === 'held' || st === 'broken' || closed;
+    const outcome = closed ? { stage: closer!.setup.stage as 'broken' | 'held', at: closer!.at } : null;
+    cards.push({ ticker, events, current, live: live != null, resolved, outcome });
   }
   return cards;
 }
@@ -307,6 +312,11 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           <TvStageTag stage={s.stage} dim={!e.notified} path={s.path} line={s.line} touch={s.touch} />
           {/* v16: past the day's cap — pings only for a B+-or-better Momentum name */}
           {s.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
+          {c.outcome && (
+            <span style={{ fontSize: 10, color: c.outcome.stage === 'held' ? '#52c41a' : '#ff4d4f', whiteSpace: 'nowrap' }}>
+              {c.outcome.stage === 'held' ? '✓ held' : '✗ broke'} {hhmm(c.outcome.at)}
+            </span>
+          )}
           {s.strength && <StrengthTag st={s.strength} />}
           <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{age(now - e.at)}</Text>
         </div>
