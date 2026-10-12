@@ -313,6 +313,15 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-12 — WFF "almost silent" + the sidebar outcome label (`8f6dd8f`).** WFF went
+9 → 33 → 8 → 50 → 17. The script found only 4 pullbacks, and **all 4 pinged**,
+including the 15:34 one past the cap via the B+ exemption. Its dips bottomed
+30–100% above the VWAP lines, so they weren't pullbacks by the 5%-of-line rule.
+A pullback-to-BB-basis setup for extended names was offered (measurable on our
+data), not built. The operator saw the 15:34 PULLBACK under Earlier: BROKEN at
+15:35 (hidden, but it closes the pullback) moved it. Closed pullbacks now show
+"✗ broke HH:MM" / "✓ held HH:MM" on the card.
+
 **2026-10-10 (Sat) — HISTORY TAB ~6× FASTER (`24745dc`).** Operator: the calendar picker
 is slow. `history-by-day` filtered `(polled_at AT TIME ZONE …)::date = d`, which
 no index can serve: a full scan of ~15M `screener_results` rows, ~6.5 s per
