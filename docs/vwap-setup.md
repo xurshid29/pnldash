@@ -616,13 +616,16 @@ TradingView servers                                   pnldash droplet
     (TradingView cancels requests that take over ~3 s).
   - The body is text/plain for the script's `alert()` text, or JSON, which the
     global parser has already turned into an object.
-- **`GET /api/tv/watchlist[?days=30&min_chg=30]`** (JWT): every name on today's
-  Momentum screen, then every name that hit ≥ `min_chg`% on our screen in the
-  last `days` days, newest first, max 1,000. Nasdaq names get the `NASDAQ:`
-  prefix (SEC exchange map — the SPRO index-collision fix) and the rest stay
-  bare. It scans a month of `screener_results` (~8 s cold), so the result is
-  cached for 10 min. On 2026-10-03 it returned 389 symbols (24 from today + 365
-  runners), all six examples included.
+- **`GET /api/tv/watchlist[?days=90&min_chg=30&recent_days=5&recent_min_chg=20]`** (JWT): today's Momentum
+  names first, then every name that hit ≥ `min_chg`% on our screen in the last `days` days (repeat runners),
+  and every name ≥ `recent_min_chg`% in the last `recent_days` calendar days (≈ 3 sessions, the script's own
+  gainer rule, so second-day names make an overnight download), newest first, max 1,000. Since 2026-10-12
+  (operator: "too many tickers repeat their big moves once a several days"): of the +30% days since
+  mid-August, a list built the night before held 64% at 30 days and 82% with 90 days + the 3-session rule
+  (~850–960 symbols with today's names). History comes from `screener_ticker_days` (one row per ticker per
+  ET day, max change; filled by its migration, topped up by the endpoint once a day), today from
+  `screener_results`: ~0.5 s instead of scanning 30+ days of rows. Nasdaq names get the `NASDAQ:` prefix
+  (SEC exchange map — the SPRO index-collision fix). Cached 10 min.
 
 ### 7.2 Duplicate, flood and noise gate (`TV_SETUP` in `tv-setups.ts`)
 

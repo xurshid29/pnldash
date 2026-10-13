@@ -49,6 +49,7 @@ Postgres, migrations via `dbmate` in `db/migrations/`.
 | `edge_bars_1m` | Small shared 1-minute warmup store for saved Edge tickers only (not the parked global technical universe) |
 | `edge_events` | Durable Armed/Entry/Bailout transitions with indicator snapshot for review and later journal attribution |
 | `broker_imports` | Per-user uploaded broker statement (IBKR `.tlg`): `account`, `file_hash`, period, fill counts |
+| `screener_ticker_days` | One row per ticker per ET day on the Momentum screen: `ticker`, `et_date`, `max_chg` — feeds the 📐 TradingView watchlist (90-day repeat runners); backfilled by its migration, topped up by `GET /api/tv/watchlist` |
 | `app_settings` | Small global key/value settings (`key` PK, `value` jsonb): `tv_alert_stages` = the 📐 stages that get announced |
 | `trade_executions` | Per-user broker fills: `exec_id` (UNIQUE per user — idempotent re-import), `symbol`, `side`, signed `quantity`/`amount`, `commission`, `executed_at` (ET wall clock), `et_date`. Round-trip *trades* (flat-to-flat, P&L by exit date) are derived in `services/ibkr-tlg.ts`, not stored. Powers the `/journal` P&L calendar |
 

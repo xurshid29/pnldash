@@ -91,7 +91,8 @@ ask.
      (2m before). Settings: "Any alert() function call", session Extended, once
      per bar close, webhook `https://pnldash.uz/api/tv/webhook?key=…`. They run
      on the "runners" watchlist from ⋯ → Copy list: today's screen plus
-     names that ran ≥30% in the last 30 days. **Watchlist alerts follow the
+     names that ran ≥30% in the last 90 days and ≥20% in the last 3 sessions
+     (since 10-12; was 30 days). **Watchlist alerts follow the
      list dynamically**, so adding a symbol needs no alert recreation. A stage
      repeated on the other timeframe within 5 min is logged, not re-announced.
    - **RECLAIM** (v1–v9; month + year lines since v11): FORMING → READY → GO.
@@ -312,6 +313,14 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-13 (night) — WATCHLIST: 90-DAY REPEAT RUNNERS (`9c8c12f`).** Operator: the download
+got smaller (a 01:16 ET download had only 22 "today" names), and "too many tickers
+repeat their big moves once a several days". Coverage of +30% days since 08-15 by a
+list built the night before: 30 d/+30% 64% (today's list), 60 d 74%, 90 d 80%, 120 d
+84% (956 names). 90 d at +30% plus 3 sessions at +20% = 82%, ~850–960 symbols with
+today's names, under TradingView's 1,000. New table `screener_ticker_days` (backfilled
+by its migration, ~24 s; topped up by the endpoint daily), so the list query is ~0.5 s.
 
 **2026-10-12 — WFF "almost silent" + the sidebar outcome label (`8f6dd8f`).** WFF went
 9 → 33 → 8 → 50 → 17. The script found only 4 pullbacks, and **all 4 pinged**,
