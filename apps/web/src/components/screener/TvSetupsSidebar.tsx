@@ -250,7 +250,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
         void withList(async (list) => {
           await navigator.clipboard.writeText(list.symbols.join(','));
           setCopied(saveCopied(list.symbols, null));
-          message.success(`Copied ${list.symbols.length} symbols — ${list.today} on today's screen + ${list.runners} runners (≥+${list.min_chg}% in ${list.days}d)`);
+          message.success(`Copied ${list.symbols.length} symbols — ${list.today} on today's screen + ${list.runners} runners (≥+${list.min_chg}% in ${list.days}d, ≥+${list.recent_min_chg}% in the last 3 sessions)`);
         });
       } else if (key === 'download') {
         void withList((list) => {

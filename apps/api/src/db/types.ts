@@ -39,6 +39,14 @@ export interface ScreenerSettingsTable {
   updated_at: Generated<Date>;
 }
 
+// One row per ticker per ET day on our Momentum screen, with the day's highest
+// change % (migration 20261012200000_screener_ticker_days; the 📐 TV watchlist).
+export interface ScreenerTickerDaysTable {
+  ticker: string;
+  et_date: ColumnType<string, string, string>;   // YYYY-MM-DD
+  max_chg: ColumnType<string, string | number, string | number>;   // numeric
+}
+
 // Small global key/value settings (migration 20261006090000_app_settings).
 export interface AppSettingsTable {
   key: string;
@@ -452,6 +460,7 @@ export interface Database {
   users: UsersTable;
   screener_settings: ScreenerSettingsTable;
   app_settings: AppSettingsTable;
+  screener_ticker_days: ScreenerTickerDaysTable;
   screener_cycles: ScreenerCyclesTable;
   screener_results: ScreenerResultsTable;
   ignition_results: IgnitionResultsTable;

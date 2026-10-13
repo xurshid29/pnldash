@@ -136,46 +136,108 @@ router.put('/settings', authMiddleware, async (req, res) => {
   res.json({ data: { announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED } });
 });
 
-// GET /api/tv/watchlist[?days=30&min_chg=30] — the symbols for the TradingView
-// watchlist the setup alert runs on: every name on today's Momentum screen,
-// then every name that ran ≥ min_chg % on our screen in the last `days` days
-// (the six examples that defined the setup had all been on our screen in the
-// 2–3 weeks before their setup day). The Pine script filters to today's top
-// gainers itself, so a wide list costs nothing but catches second-day names.
-// Nasdaq names carry the NASDAQ: prefix (the SPRO index-collision fix); the
-// rest stay bare and TradingView resolves them. Cached 10 min — it scans a
-// month of screener_results.
+// GET /api/tv/watchlist[?days=90&min_chg=30&recent_days=5&recent_min_chg=20] —
+// the symbols for the TradingView watchlist the 📐 alerts run on, today's
+// Momentum names first, then:
+//   - every name that ran ≥ min_chg % on our screen in the last `days` days —
+//     repeat runners (operator, 2026-10-12: "too many tickers repeat their big
+//     moves once a several days"). Of the +30% days since mid-August, a list
+//     built the night before held 64% at 30 days, 80% at 90 days;
+//   - every name ≥ recent_min_chg % in the last `recent_days` calendar days
+//     (≈ 3 sessions — the script's own gainer rule: +20% in the last 3
+//     sessions), so second-day names are on an overnight download too.
+// With today's names that's ~850–960 symbols, under TradingView's 1,000 per
+// list (WATCHLIST_MAX trims the oldest first). The script filters to gainers
+// itself, so a wide list costs nothing. Nasdaq names carry the NASDAQ: prefix
+// (the SPRO index-collision fix). History comes from screener_ticker_days
+// (one row per ticker per day, topped up here), today from screener_results.
+// Cached 10 min.
 const WATCHLIST_TTL_MS = 10 * 60_000;
 const WATCHLIST_MAX = 1000;
 const watchlistCache = new Map<string, { at: number; data: unknown }>();
 
+function etToday(): string {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' })
+    .format(new Date());
+}
+
+// Add the complete ET days missing from screener_ticker_days (the migration
+// filled history up to its deploy day). Once per ET day; a day is ~100k rows
+// read by the polled_at index. Errors are logged and the list uses what's there.
+let tickerDaysReadyFor = '';
+async function topUpTickerDays(today: string): Promise<void> {
+  if (tickerDaysReadyFor === today) return;
+  try {
+    await getDb().transaction().execute(async (trx) => {
+      await sql`set local random_page_cost = 1.1`.execute(trx);
+      await sql`set local jit = off`.execute(trx);
+      const res = await sql`
+        insert into screener_ticker_days (ticker, et_date, max_chg)
+        select r.ticker, (c.polled_at at time zone 'America/New_York')::date, max(r.change_pct)
+        from screener_results r
+        join screener_cycles c on c.id = r.cycle_id
+        where r.change_pct is not null
+          and c.polled_at >= coalesce(
+                ((select max(et_date) from screener_ticker_days) + 1)::timestamp at time zone 'America/New_York',
+                (${today}::date - 120)::timestamp at time zone 'America/New_York')
+          and c.polled_at < (${today}::date)::timestamp at time zone 'America/New_York'
+        group by 1, 2
+        on conflict (ticker, et_date) do update set max_chg = excluded.max_chg
+      `.execute(trx);
+      const n = Number(res.numAffectedRows ?? 0);
+      if (n > 0) console.log(`[tv-setup] watchlist history topped up: ${n} ticker-days`);
+    });
+    tickerDaysReadyFor = today;
+  } catch (err) {
+    console.error('[tv-setup] watchlist history top-up failed:', err instanceof Error ? err.message : err);
+  }
+}
+
+const intParam = (v: unknown, def: number, lo: number, hi: number) =>
+  Math.min(hi, Math.max(lo, Number.parseInt(String(v ?? def), 10) || def));
+const numParam = (v: unknown, def: number) => {
+  const n = Number(v ?? def);
+  return Number.isFinite(n) ? Math.min(1000, Math.max(0, n)) : def;
+};
+
 router.get('/watchlist', authMiddleware, async (req, res) => {
-  const days = Math.min(60, Math.max(1, Number.parseInt(String(req.query.days ?? '30'), 10) || 30));
-  const minChgRaw = Number(req.query.min_chg ?? 30);
-  const minChg = Number.isFinite(minChgRaw) ? Math.min(1000, Math.max(0, minChgRaw)) : 30;
-  const cacheKey = `${days}|${minChg}`;
+  const days = intParam(req.query.days, 90, 1, 180);
+  const minChg = numParam(req.query.min_chg, 30);
+  const recentDays = intParam(req.query.recent_days, 5, 0, 30);
+  const recentMinChg = numParam(req.query.recent_min_chg, 20);
+  const today = etToday();
+  const cacheKey = `${today}|${days}|${minChg}|${recentDays}|${recentMinChg}`;
   const hit = watchlistCache.get(cacheKey);
   if (hit && Date.now() - hit.at < WATCHLIST_TTL_MS) return res.json({ data: hit.data });
 
+  await topUpTickerDays(today);
   let rows: Array<{ ticker: string; today: boolean }>;
   try {
-    ({ rows } = await sql<{ ticker: string; today: boolean }>`
-      WITH d AS (
-        SELECT r.ticker,
-               max(c.polled_at) AS last_seen,
-               max(r.change_pct) AS max_chg,
-               bool_or((c.polled_at AT TIME ZONE 'America/New_York')::date
-                       = (now() AT TIME ZONE 'America/New_York')::date) AS today
-        FROM screener_results r
-        JOIN screener_cycles c ON c.id = r.cycle_id
-        WHERE c.polled_at > now() - make_interval(days => ${days}::int)
-        GROUP BY r.ticker
-      )
-      SELECT ticker, today FROM d
-      WHERE today OR max_chg >= ${minChg}::numeric
-      ORDER BY today DESC, last_seen DESC
-      LIMIT ${WATCHLIST_MAX}::int
-    `.execute(getDb()));
+    rows = await getDb().transaction().execute(async (trx) => {
+      await sql`set local random_page_cost = 1.1`.execute(trx);
+      await sql`set local jit = off`.execute(trx);
+      const { rows: r } = await sql<{ ticker: string; today: boolean }>`
+        with t as (
+          select r.ticker, max(c.polled_at) as last_seen
+          from screener_results r
+          join screener_cycles c on c.id = r.cycle_id
+          where c.polled_at >= (${today}::date)::timestamp at time zone 'America/New_York'
+          group by r.ticker
+        ),
+        h as (
+          select ticker, max(et_date) as last_day
+          from screener_ticker_days
+          where (et_date >= ${today}::date - ${days}::int and max_chg >= ${minChg}::numeric)
+             or (et_date >= ${today}::date - ${recentDays}::int and max_chg >= ${recentMinChg}::numeric)
+          group by ticker
+        )
+        select coalesce(t.ticker, h.ticker) as ticker, t.ticker is not null as today
+        from t full join h on h.ticker = t.ticker
+        order by (t.ticker is not null) desc, t.last_seen desc nulls last, h.last_day desc nulls last
+        limit ${WATCHLIST_MAX}::int
+      `.execute(trx);
+      return r;
+    });
   } catch (err) {
     console.error('[tv-setup] watchlist query failed:', err instanceof Error ? err.message : err);
     return res.status(500).json({ error: 'Watchlist query failed' });
@@ -189,6 +251,8 @@ router.get('/watchlist', authMiddleware, async (req, res) => {
     runners: rows.filter((r) => !r.today).length,
     days,
     min_chg: minChg,
+    recent_days: recentDays,
+    recent_min_chg: recentMinChg,
     generated_at: new Date().toISOString(),
   };
   watchlistCache.set(cacheKey, { at: Date.now(), data });

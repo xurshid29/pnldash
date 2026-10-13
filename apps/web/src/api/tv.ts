@@ -4,9 +4,11 @@ import type { TvStage } from './types';
 export interface TvWatchlist {
   symbols: string[];   // TradingView symbols, Nasdaq names NASDAQ:-prefixed
   today: number;       // names from today's Momentum screen
-  runners: number;     // recent runners (≥ min_chg % on our screen in the last `days`)
+  runners: number;     // repeat runners (≥ min_chg % in the last `days`) + second-day names (≥ recent_min_chg % in the last recent_days)
   days: number;
   min_chg: number;
+  recent_days: number;     // calendar days ≈ 3 sessions
+  recent_min_chg: number;
   generated_at: string;
 }
 
