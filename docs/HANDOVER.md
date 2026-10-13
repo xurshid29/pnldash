@@ -321,6 +321,9 @@ list built the night before: 30 d/+30% 64% (today's list), 60 d 74%, 90 d 80%, 1
 84% (956 names). 90 d at +30% plus 3 sessions at +20% = 82%, ~850–960 symbols with
 today's names, under TradingView's 1,000. New table `screener_ticker_days` (backfilled
 by its migration, ~24 s; topped up by the endpoint daily), so the list query is ~0.5 s.
+TradingView limits checked against our last 8 days: 1,000 triggers per watchlist alert
+per 3 min (our peak 17) and 15 per symbol (peak 7, the 30s alert). Re-check the per-symbol
+peak at the ~10-24 grading, since v16 can add pullback messages on wild names.
 
 **2026-10-12 — WFF "almost silent" + the sidebar outcome label (`8f6dd8f`).** WFF went
 9 → 33 → 8 → 50 → 17. The script found only 4 pullbacks, and **all 4 pinged**,
