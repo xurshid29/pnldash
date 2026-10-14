@@ -241,9 +241,15 @@ export async function fetchScreener(opts: ScreenerOptions): Promise<ScreenerRow[
       floatValue = sharesOut;
       floatIsProxy = true;
     } else {
-      continue;
+      // Neither (2026-10-14): JBDI ran 1 → 9 on 10-12 and never reached our
+      // screen — Finviz had no float, shares outstanding or market cap for it,
+      // and this used to `continue`. Keep the row with an unknown float; the
+      // cap below only applies to a known size (the grade skips its float
+      // factor, the UI shows —).
+      floatValue = null;
+      floatIsProxy = false;
     }
-    if (floatValue >= opts.floatMaxM) continue;
+    if (floatValue != null && floatValue >= opts.floatMaxM) continue;
     const meta = metaByTicker.get(ticker);
     const avg_volume = numScaled(r[11]);   // v=131 col 11 = Avg Volume; Finviz returns this with K/M/B suffix
     const volume = num(r[14]);
