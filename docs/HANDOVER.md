@@ -303,6 +303,9 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
   (`.github/workflows/build-images.yml`). Check `:latest` against
   `:sha-<short>` first, then cancel the queued run so it can't restart
   nginx later, inside 07:00–11:00 ET.
+- **Finviz sometimes has no size data** (no float, shares or market cap) for new or foreign
+  listings. `fetchScreener` keeps those rows with `float_m` null since 10-14 (JBDI).
+  Anything that filters on float must treat null as unknown, not as zero or too big.
 - The droplet's `git pull` once failed mid-deploy with "expected flush
   after ref listing" (a GitHub HTTPS hiccup); rerunning the deploy job fixed
   it.
@@ -313,6 +316,14 @@ no producer); `TICKFEED_ENABLED=true` but inert. `TV_WEBHOOK_SECRET` set 10-03
 ## Session log 2026-10-01 → 10-05 (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-14 — JBDI MISSED: FINVIZ HAD NO FLOAT (`a1b74e6`).** JBDI ran ~1 → 9 on 10-12 and
+never reached `screener_results`, so it wasn't on the 📐 watchlist either. Finviz lists
+it with empty Shares Float, Shares Outstanding and Market Cap, and `fetchScreener`
+dropped rows with neither. Now kept with `float_m` null: no float cap, the grade skips
+its float factor (never trained on null floats, so possibly a notch low), and Float
+shows —. Rare: 0 of 10 screen rows at 05:15 ET. A float from SEC or Yahoo for these
+names is a possible follow-up.
 
 **2026-10-13 (night) — WATCHLIST: 90-DAY REPEAT RUNNERS (`9c8c12f`).** Operator: the download
 got smaller (a 01:16 ET download had only 22 "today" names), and "too many tickers
