@@ -75,10 +75,12 @@ function todayEtDate(): string {
   }).format(new Date());
 }
 
-function fmtEtTime(iso: string | null): string {
+// Times show on the operator's clock (Asia/Tashkent, 2026-10-17); the date
+// picker stays the ET trading day, so one US session is one date.
+function fmtLocalTime(iso: string | null): string {
   if (!iso) return '—';
   return new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York',
+    timeZone: 'Asia/Tashkent',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
@@ -191,12 +193,12 @@ export function HistoryByDayPanel({ payload, onOpenCatalyst }: Props) {
         },
       },
       {
-        title: 'First → Last (ET)',
+        title: 'First → Last',
         key: 'window',
         width: 140,
         render: (_v, row) => (
           <Text type="secondary" style={{ fontSize: 11 }}>
-            {fmtEtTime(row.first_at)} → {fmtEtTime(row.last_at)}
+            {fmtLocalTime(row.first_at)} → {fmtLocalTime(row.last_at)}
           </Text>
         ),
       },

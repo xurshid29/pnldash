@@ -58,7 +58,7 @@ export function TradingViewWidget({ symbol, interval, containerId, theme = 'dark
           autosize: true,
           symbol,
           interval,
-          timezone: 'America/New_York',
+          timezone: 'Asia/Tashkent',   // the operator's clock, like their own TradingView (2026-10-17)
           theme,
           style: '1',
           locale: 'en',

@@ -115,12 +115,10 @@ export function SetupsHistoryTable({ date }: { date: string }) {
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
-      title: 'Time', key: 'at', width: 92,
+      title: 'Time', key: 'at', width: 64,
       sorter: (a, b) => a.at - b.at, defaultSortOrder: 'descend',
       render: (_v, e) => (
-        <span style={{ whiteSpace: 'nowrap' }}>
-          {hhmm(e.at, LOCAL_TZ)} <Text type="secondary" style={{ fontSize: 10 }}>{hhmm(e.at, 'America/New_York')} ET</Text>
-        </span>
+        <span style={{ whiteSpace: 'nowrap' }}>{hhmm(e.at, LOCAL_TZ)}</span>
       ),
     },
     { title: '', key: 'links', width: 64, render: (_v, e) => <TickerLinks ticker={e.ticker} /> },
