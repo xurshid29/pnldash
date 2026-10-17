@@ -29,6 +29,7 @@ import { TickerLinks } from '../common/TickerLinks';
 import { CatalystBadge } from '../common/CatalystBadge';
 import { ShelfBadge } from '../common/ShelfBadge';
 import { fmtPct, fmtPrice, num } from '../../utils/format';
+import { SetupsHistoryTable } from './SetupsHistoryTable';
 
 const { Text } = Typography;
 
@@ -87,13 +88,16 @@ function fmtEtTime(iso: string | null): string {
 export function HistoryByDayPanel({ payload, onOpenCatalyst }: Props) {
   const { selected, setSelected } = useSelection();
   const [date, setDate] = useState<string>(todayEtDate());
-  const [screen, setScreen] = useState<HistoryByDayScreen>('momentum');
+  // 'setups' (2026-10-17): the day's 📐 TradingView setups instead of a screen.
+  const [screen, setScreen] = useState<HistoryByDayScreen | 'setups'>('momentum');
+  const serverScreen: HistoryByDayScreen = screen === 'setups' ? 'momentum' : screen;
   const ignitionEnabled = payload?.components?.ignition ?? false;
 
   const { data, isFetching } = useQuery({
-    queryKey: ['history-by-day', date, screen],
-    queryFn: () => screenerApi.historyByDay(date, screen),
+    queryKey: ['history-by-day', date, serverScreen],
+    queryFn: () => screenerApi.historyByDay(date, serverScreen),
     staleTime: 60_000,
+    enabled: screen !== 'setups',
   });
 
   // Shelf badges come off whichever live payload currently knows the ticker.
@@ -293,20 +297,25 @@ export function HistoryByDayPanel({ payload, onOpenCatalyst }: Props) {
         />
         <Segmented
           size="small"
-          options={ignitionEnabled
-            ? [
-                { label: 'Ignition', value: 'ignition' },
-                { label: 'Momentum', value: 'momentum' },
-              ]
-            : [{ label: 'Momentum', value: 'momentum' }]}
+          options={[
+            ...(ignitionEnabled ? [{ label: 'Ignition', value: 'ignition' }] : []),
+            { label: 'Momentum', value: 'momentum' },
+            { label: '📐 Setups', value: 'setups' },
+          ]}
           value={screen}
-          onChange={(v) => setScreen(v as HistoryByDayScreen)}
+          onChange={(v) => setScreen(v as HistoryByDayScreen | 'setups')}
         />
-        <Text type="secondary" style={{ fontSize: 11 }}>
-          {isFetching ? <Spin size="small" /> : `${rows.length} row${rows.length === 1 ? '' : 's'}`}
-        </Text>
+        {screen !== 'setups' && (
+          <Text type="secondary" style={{ fontSize: 11 }}>
+            {isFetching ? <Spin size="small" /> : `${rows.length} row${rows.length === 1 ? '' : 's'}`}
+          </Text>
+        )}
       </div>
-      {rows.length === 0 && !isFetching ? (
+      {screen === 'setups' ? (
+        <div style={{ flex: '1 1 auto', minHeight: 0 }}>
+          <SetupsHistoryTable date={date} />
+        </div>
+      ) : rows.length === 0 && !isFetching ? (
         <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
           <Empty
             image={Empty.PRESENTED_IMAGE_SIMPLE}

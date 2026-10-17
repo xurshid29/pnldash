@@ -104,9 +104,11 @@ router.get('/ema-debug', authMiddleware, (req, res) => {
 router.get('/alerts', authMiddleware, async (req, res) => {
   const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
   if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
-  const dayExpr = dayParam
-    ? sql<boolean>`(at AT TIME ZONE 'America/New_York')::date = ${dayParam}::date`
-    : sql<boolean>`(at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`;
+  // The ET day as a range on `at` (indexed with tier, event), not a cast of it
+  // (2026-10-17: the History tab's 📐 Setups view browses past days here).
+  const day = dayParam ? sql`${dayParam}::date` : sql`(now() AT TIME ZONE 'America/New_York')::date`;
+  const dayExpr = sql<boolean>`at >= (${day})::timestamp AT TIME ZONE 'America/New_York'
+    AND at < ((${day}) + 1)::timestamp AT TIME ZONE 'America/New_York'`;
   const rows = await getDb()
     .selectFrom('tier_events')
     .select(['event', 'ticker', 'at', 'meta'])
