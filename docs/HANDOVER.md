@@ -322,6 +322,9 @@ setups, like history tab does?" The History tab's screen switch has "📐 Setups
 day's events (30s/1m merged), the PULLBACK outcome, grade and change at the signal,
 filters for switched-on stages / GO / PULLBACK / ⭐ only, paginated. It reads
 `GET /api/screener/alerts?day=`, whose day filter is now a range.
+Then (`721125b`), at the operator's request, all displayed times use Asia/Tashkent: the
+History tab's first→last times, the setups view and the embedded TradingView charts.
+Date pickers stay on the ET trading day. **Show new times on the Tashkent clock.**
 
 **2026-10-14 — JBDI MISSED: FINVIZ HAD NO FLOAT (`a1b74e6`).** JBDI ran ~1 → 9 on 10-12 and
 never reached `screener_results`, so it wasn't on the 📐 watchlist either. Finviz lists
