@@ -6,7 +6,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
-import { DEFAULT_ANNOUNCED, parseStageList, parseTvMessage, pastCap, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
+import { BREAKOUT_STAGES, DEFAULT_ANNOUNCED, parseStageList, parseTvMessage, pastCap, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
 
 // TradingView ↔ dashboard bridge for the 📐 VWAP setup (services/tv-setups.ts).
 const router = Router();
@@ -97,6 +97,11 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
       return res.status(429).json({ error: 'Too many alerts' });
     }
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
+    // v17 BB breakout: stored and shown, never announced (its own delivery path).
+    if (BREAKOUT_STAGES.has(sig.stage)) {
+      const ev = poller.deliverTvBreakout(sig);
+      return res.json({ data: { id: ev.id, notified: false } });
+    }
     const why = verdict !== 'quiet' ? undefined
       : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped'
         : sig.stage === 'go' && !onMomentum ? 'offlist' : 'repeat';

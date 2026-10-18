@@ -347,6 +347,84 @@ def selftest_pullback():
     return ok and ok_both and ok_cap and ok_brk and ok_v16
 
 
+BO = dict(length=20,       # BB length (on the chart's bars: 30s on the 30s alert)
+          mult=2.0,        # BB StdDev
+          touch=True)      # TOUCH: the forming 1m candle reaches the band before the minute closes
+
+
+def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
+    """Mirror of the script's BB breakout (v17) on the chart's bars (30s on the 30s alert).
+    bars: dicts with t (aware datetime, bar open), o, h, l, c, v. Candles are clock minutes.
+    Returns (t, 'TOUCH' | 'BREAKOUT' | 'TRIGGERED', close, upper, trigger, stop) per signal."""
+    p = dict(BO, **(params or {}))
+    n, mult = p['length'], p['mult']
+    closes, out = [], []
+    cmin = chigh = clow = None
+    touched = False
+    prev_c = prev_u = None
+    arm_min = trig = stop = None
+    for b in bars:
+        closes.append(b['c'])
+        win = closes[-n:]
+        upper = None
+        if len(win) == n:
+            m = sum(win) / n
+            upper = m + mult * max(sum(x * x for x in win) / n - m * m, 0.0) ** 0.5
+        ts = int(b['t'].timestamp())
+        minute = ts - ts % 60
+        if cmin is None or minute != cmin:
+            if arm_min is not None and minute > arm_min:
+                arm_min = None                       # the trigger candle passed (or had no trades)
+            cmin, chigh, clow, touched = minute, b['h'], b['l'], False
+        else:
+            chigh, clow = max(chigh, b['h']), min(clow, b['l'])
+        ends = (ts + bar_sec) % 60 == 0
+        fresh = prev_c is not None and prev_u is not None and prev_c <= prev_u
+        can = upper is not None and (gainer_of is None or gainer_of(b))
+        ev = None
+        if arm_min is not None and cmin == arm_min and b['h'] >= trig:
+            arm_min = None
+            if can:
+                ev = 'TRIGGERED'
+        if ev is None and can and p['touch'] and not ends and not touched and fresh and chigh >= upper:
+            touched, ev = True, 'TOUCH'
+        if ends:
+            if ev is None and can and fresh and b['c'] > upper:
+                arm_min, trig, stop, ev = cmin + 60, chigh + (0.0001 if chigh < 1 else 0.01), clow, 'BREAKOUT'
+            prev_c, prev_u = b['c'], upper
+        if ev:
+            out.append((b['t'], ev, b['c'], upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None))
+    return out
+
+
+def selftest_breakout():
+    """Synthetic 30s bars: a flat base, then a 1m candle that touches the band at the half-minute
+    and closes above it (TOUCH, BREAKOUT), a next candle over its high (TRIGGERED), then a candle
+    above the band right after the breakout (not a fresh one: nothing). A second path: a breakout
+    whose next candle stalls under the trigger (no TRIGGERED)."""
+    import datetime as dt
+    t0 = dt.datetime(2026, 10, 16, 9, 30, tzinfo=ET)
+    def bars_of(path):   # (high, low, close) per 30s bar
+        return [{'t': t0 + dt.timedelta(seconds=30 * k), 'o': c, 'h': h, 'l': lo, 'c': c, 'v': 100}
+                for k, (h, lo, c) in enumerate(path)]
+    base = [(1.001, 0.999, 1.0) if k % 2 else (1.0, 0.998, 0.999) for k in range(30)]
+    run = [(1.03, 1.0, 1.02), (1.05, 1.02, 1.045),     # 09:45: touches at :00 (seen at :30), closes above → TOUCH, BREAKOUT
+           (1.06, 1.045, 1.055), (1.07, 1.05, 1.06),   # 09:46: at the 1.06 trigger (1.05 + a $0.01 tick) in its first half → TRIGGERED
+           (1.08, 1.06, 1.075), (1.09, 1.07, 1.085)]   # 09:47: above the band again, not fresh → nothing
+    events = simulate_breakout(bars_of(base + run))
+    got = [(e[0].strftime('%H:%M:%S'), e[1]) for e in events]
+    want = [('09:45:00', 'TOUCH'), ('09:45:30', 'BREAKOUT'), ('09:46:00', 'TRIGGERED')]
+    bo = [e for e in events if e[1] == 'BREAKOUT']
+    ok_levels = bool(bo) and abs(bo[0][4] - 1.06) < 1e-9 and bo[0][5] == 1.0
+    stall = [(1.0005, 0.999, 1.0), (1.05, 1.0, 1.045),          # 09:45: no touch in its first half, closes above → BREAKOUT
+             (1.04, 1.03, 1.035), (1.055, 1.03, 1.04)]           # 09:46: never reaches 1.06 → no TRIGGERED
+    got2 = [e[1] for e in simulate_breakout(bars_of(base + stall))]
+    ok = got == want and ok_levels and got2 == ['BREAKOUT']
+    print('BB breakout (v17):', got, '| trigger/stop', 'OK' if ok_levels else 'WRONG', '| stalled:', got2, '→',
+          'OK' if ok else f'UNEXPECTED (want {want} and [BREAKOUT])')
+    return ok
+
+
 def selftest():
     """Synthetic check of the GO rules (run: python3 pinesim.py).
     Crash: a month-start line built on thin volume collapses under a flat basis on one
@@ -389,4 +467,4 @@ def selftest():
 
 
 if __name__ == '__main__':
-    raise SystemExit(0 if (selftest() & selftest_pullback()) else 1)
+    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout()) else 1)

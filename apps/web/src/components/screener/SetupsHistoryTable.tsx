@@ -18,6 +18,7 @@ import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
 import { TvStageTag, fmtSignedPct, fmtTf, lineDistanceText, lineTokens } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
+import { BreakoutsHistoryTable } from './BreakoutsHistoryTable';
 import { fmtPct, fmtPrice } from '../../utils/format';
 
 const { Text } = Typography;
@@ -37,7 +38,7 @@ interface SetupEvent {
   outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
-type StageFilter = 'on' | 'all' | 'go' | 'pullback';
+type StageFilter = 'on' | 'all' | 'go' | 'pullback' | 'bo';
 
 function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const sorted = alerts
@@ -182,21 +183,22 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             { label: 'All stages', value: 'all' },
             { label: 'GO', value: 'go' },
             { label: 'PULLBACK', value: 'pullback' },
+            { label: '⚡ Breakouts', value: 'bo' },
           ]}
         />
         <Checkbox checked={momentumOnly} onChange={(e) => setMomentumOnly(e.target.checked)}>
           <span style={{ fontSize: 12 }}>⭐ on Momentum only</span>
         </Checkbox>
-        <Text type="secondary" style={{ fontSize: 11 }}>
+        {stageFilter !== 'bo' && <Text type="secondary" style={{ fontSize: 11 }}>
           {isFetching ? <Spin size="small" /> : (
             <>
               {visible.length} setup{visible.length === 1 ? '' : 's'} · {gos} GO · {pullbacks.length} PULLBACK
               {pullbacks.length > 0 && <> (<span style={{ color: '#52c41a' }}>{held} held</span> / <span style={{ color: '#ff4d4f' }}>{broke} broke</span>)</>}
             </>
           )}
-        </Text>
+        </Text>}
       </div>
-      {visible.length === 0 && !isFetching ? (
+      {stageFilter === 'bo' ? <BreakoutsHistoryTable date={date} momentumOnly={momentumOnly} /> : visible.length === 0 && !isFetching ? (
         <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<Text type="secondary" style={{ fontSize: 12 }}>No 📐 setups for {date} with these filters.</Text>} />
         </div>

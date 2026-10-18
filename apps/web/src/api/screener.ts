@@ -11,12 +11,19 @@ import type {
   OutcomesScreen,
   OpportunityAlert,
   ScreenerFilterSnapshot,
+  TvBreakout,
 } from './types';
 
 export const screenerApi = {
   // The day's opportunity-alert log (default today, ET), newest first.
   async alerts(day?: string): Promise<OpportunityAlert[]> {
     const res = await apiClient.get<OpportunityAlert[]>(`/api/screener/alerts${day ? `?day=${encodeURIComponent(day)}` : ''}`);
+    return res.data;
+  },
+
+  // The day's 📐 BB breakout signals (script v17; default today, ET), newest first.
+  async breakouts(day?: string): Promise<TvBreakout[]> {
+    const res = await apiClient.get<TvBreakout[]>(`/api/screener/breakouts${day ? `?day=${encodeURIComponent(day)}` : ''}`);
     return res.data;
   },
 

@@ -1,8 +1,9 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v16 (2026-10-10).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v17 (2026-10-18).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
-// Two setups in one script, so the same two watchlist alerts carry both.
+// Three setups in one script, so the same two watchlist alerts carry all of them
+// (3, the BB breakout, only sends from the 30s alert).
 // 1) RECLAIM: a top gainer pulls back under its month-anchored VWAP while the
 // Bollinger basis (SMA 20) curls up beneath it; the trade is the reclaim. Since
 // v11 the same rules also run on the year-anchored VWAP, each line with its own
@@ -24,6 +25,12 @@
 // Each line runs its own setup, and every message carries its touch number (the
 // operator rates the first pullback after the first big move highest; our own
 // data found the second as good — docs/vwap-setup.md §13.5).
+// 3) BB BREAKOUT (v17): on a 1m candle against a 30s Bollinger Band (20, 2).
+//   TOUCH      the forming 1m candle reaches the upper band by its half-minute → get ready
+//   BREAKOUT   the 1m candle closes above the band (the close before it didn't) → buy stop over its high
+//   TRIGGERED  the next 1m candle trades over that high
+// It runs on the 30s alert only: the 30s chart has the 30s band natively, and the
+// 1m candles are built from its bars.
 // Run it as TradingView watchlist alerts — one on 1m and one on 30s (Premium allows 2):
 // Symbols = the runners list (dashboard → 📐 sidebar ⋯ → Copy list), session Extended,
 // condition = this script → "Any alert() function call", once per bar close,
@@ -68,6 +75,12 @@ pbWin      = input.float(10.0,  "HELD: price runs % above the PULLBACK close", g
 pbMax      = input.int(0,       "Script cap: stop a line after N failed pullbacks a day (0 = none; the dashboard applies the cap since v16)", minval = 0, group = "Pullback to VWAP (v10)")
 pbCapMark  = input.int(2,       "Chart: pullbacks after N failed ones are drawn gray (the dashboard's cap)", minval = 1, group = "Pullback to VWAP (v10)")
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
+boOn       = input.bool(true,         "Breakout setup on", group = "BB breakout (v17)")
+boTf       = input.timeframe("30S",   "Sends only from the alert on this chart timeframe (its bars are the band's)", group = "BB breakout (v17)")
+boLen      = input.int(20,            "BB length", minval = 2, group = "BB breakout (v17)")
+boMult     = input.float(2.0,         "BB StdDev", minval = 0.1, group = "BB breakout (v17)")
+boMinGain  = input.float(20.0,        "Today's gainers: day high at least % (-100 = filter off)", group = "BB breakout (v17)")
+boTouchOn  = input.bool(true,         "TOUCH: the forming 1m candle reaches the band", group = "BB breakout (v17)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -460,3 +473,110 @@ plotshape(fireY == 2 and fireM != 2, "Ready (year)", shape.triangleup, location.
 plotshape(fireY == 3 and fireM != 3, "Go (year)", shape.labelup, location.belowbar, color.blue, text = "GO", textcolor = color.white, size = size.small)
 alertcondition(fireM == 2 or fireY == 2, "READY", "READY {{ticker}} {{close}} | tf {{interval}}")
 alertcondition(fireM == 3 or fireY == 3, "GO", "GO {{ticker}} {{close}} | tf {{interval}}")
+
+// ── 3) BB BREAKOUT (v17) ──────────────────────────────────────────────────────
+// The operator's third setup (2026-10-18; NWGL, HODO, XLAB, SGRX, XXII on 10-15/16):
+// a 1m chart with the Bollinger Band computed on 30s bars ("the 1m upper band
+// crosses the 1m chart too often"). A 1m candle closes above the upper band and
+// the next candle takes out its high. Measured on 20 sessions of +20% names
+// (research/bb-breakout): about break-even on its own, so the dashboard stores
+// and grades every signal and pings none (a trial).
+//   TOUCH      the forming candle's high reaches the band before the minute closes
+//              (on 30s bars: at the half-minute), the last 1m close was under it
+//   BREAKOUT   the 1m candle closes above the band, the close before it didn't;
+//              the trade is a buy stop one tick over its high, the stop its low
+//   TRIGGERED  a bar of the next 1m candle trades at or over that trigger
+//              (seen at the 30s bar's close); the candle passing without it ends it
+// The band is this chart's own (30s on the 30s alert). Candles are clock minutes
+// built from the chart's bars; a minute with no trades has no candle. Alerts go
+// out only from the chart timeframe `boTf`, so the 1m alert stays silent.
+boActive = boOn and timeframe.period == boTf
+boBasis  = ta.sma(close, boLen)
+boUpper  = boBasis + boMult * ta.stdev(close, boLen)
+boGainer = boMinGain <= -100 or (not na(dayHighGain) and dayHighGain >= boMinGain) or
+     (useAhGain and not na(ahGain) and ahGain >= boMinGain)
+
+var int   boMin     = na      // the clock minute (ms) the forming 1m candle started
+var float boCHigh   = na
+var float boCLow    = na
+var float boCVol    = 0.0
+var bool  boTouched = false
+var float boPrevC   = na      // the last finished 1m candle's close…
+var float boPrevU   = na      // …and the band at that close
+var int   boArmMin  = na      // an armed BREAKOUT: the minute its trigger candle starts
+var float boTrig    = na
+var float boStop    = na
+var float boVolX    = na
+var boVols = array.new<float>()   // the last 20 finished candles' volumes
+var boLows = array.new<float>()   // the last 30 finished candles' lows
+
+int boMinNow = time - time % 60000
+if na(boMin) or boMinNow != boMin
+    if not na(boArmMin) and boMinNow > boArmMin
+        boArmMin := na                         // the trigger candle passed (or had no trades)
+    boMin     := boMinNow
+    boCHigh   := high
+    boCLow    := low
+    boCVol    := volume
+    boTouched := false
+else
+    boCHigh := math.max(boCHigh, high)
+    boCLow  := math.min(boCLow, low)
+    boCVol  := boCVol + volume
+bool boEnds  = time_close % 60000 == 0           // this bar closes the 1m candle
+bool boFresh = not na(boPrevC) and not na(boPrevU) and boPrevC <= boPrevU
+float boLow30 = array.size(boLows) > 0 ? math.min(array.min(boLows), boCLow) : boCLow
+float boRun30 = (close / boLow30 - 1) * 100      // the run over the last 30 minutes
+
+int boEv = 0   // 1 TOUCH, 2 BREAKOUT, 3 TRIGGERED
+bool boCan = boActive and inWindow and boGainer and not na(boUpper)
+if not na(boArmMin) and boMin == boArmMin and high >= boTrig
+    boArmMin := na
+    if boCan
+        boEv := 3
+if boEv == 0 and boCan and boTouchOn and not boEnds and not boTouched and boFresh and boCHigh >= boUpper
+    boTouched := true
+    boEv := 1
+if boEnds
+    boVolX := array.size(boVols) > 0 and array.avg(boVols) > 0 ? boCVol / array.avg(boVols) : na
+    if boEv == 0 and boCan and boFresh and close > boUpper
+        boArmMin := boMin + 60000
+        boTrig   := boCHigh + syminfo.mintick
+        boStop   := boCLow
+        boEv := 2
+    boPrevC := close
+    boPrevU := boUpper
+    array.push(boVols, boCVol)
+    if array.size(boVols) > 20
+        array.shift(boVols)
+    array.push(boLows, boCLow)
+    if array.size(boLows) > 30
+        array.shift(boLows)
+
+// The message — a contract with services/tv-setups.ts parseTvMessage:
+//   TOUCH XLAB 2.29 | upper 2.3 (-0.4%) | sVWAP 2.01 (+13.9%) | day high +80% | run30 +12% | tf 30S
+//   BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S
+//   TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02 (+19.8%) | day high +92% | run30 +19% | tf 30S
+boMsg(int ev) =>
+    string msg = (ev == 1 ? "TOUCH" : ev == 2 ? "BREAKOUT" : "TRIGGERED") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
+    msg += " | upper " + str.tostring(boUpper, format.mintick) + " (" + pctVs(boUpper) + "%)"
+    if ev >= 2
+        msg += " | trigger " + str.tostring(boTrig, format.mintick) + " | stop " + str.tostring(boStop, format.mintick)
+    if not na(svwap)
+        msg += " | sVWAP " + str.tostring(svwap, format.mintick) + " (" + pctVs(svwap) + "%)"
+    if not na(dayHighGain)
+        msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
+    if not na(ahGain)
+        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
+    if ev == 2 and not na(boVolX)
+        msg += " | vol " + str.tostring(boVolX, "#.#") + "x"
+    if not na(boRun30)
+        msg += " | run30 +" + str.tostring(math.max(boRun30, 0), "#") + "%"
+    msg + " | tf " + timeframe.period
+
+if boEv > 0
+    alert(boMsg(boEv), alert.freq_once_per_bar_close)
+plot(boActive ? boUpper : na, "BB upper (breakout)", color.new(color.fuchsia, 40))
+plotshape(boEv == 1, "BB touch", shape.circle, location.abovebar, color.fuchsia, size = size.tiny)
+plotshape(boEv == 2, "Breakout", shape.labeldown, location.abovebar, color.fuchsia, text = "BO", textcolor = color.white, size = size.small)
+plotshape(boEv == 3, "Triggered", shape.triangleup, location.belowbar, color.fuchsia, size = size.small)

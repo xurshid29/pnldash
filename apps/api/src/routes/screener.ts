@@ -113,6 +113,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     .selectFrom('tier_events')
     .select(['event', 'ticker', 'at', 'meta'])
     .where('tier', '=', 'alert')
+    .where('event', '!=', 'tv_breakout')   // v17 BB breakouts: GET /breakouts (thousands a day)
     .where(dayExpr)
     .orderBy('ticker').orderBy('at')
     .limit(3000)
@@ -183,6 +184,42 @@ router.get('/alerts', authMiddleware, async (req, res) => {
   for (const a of out) a.kinds.sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y));
   out.sort((x, y) => y.at.localeCompare(x.at));
   res.json({ data: out });
+});
+
+// GET /api/screener/breakouts[?day=YYYY-MM-DD] — the 📐 BB breakout signals
+// (script v17: TOUCH / BREAKOUT / TRIGGERED from the 30s alert) for an ET day,
+// newest first. Stored and graded only, never announced; the 📐 sidebar lists
+// the live ones (fed between polls by the SSE 'breakout' event) and the History
+// tab the day's.
+router.get('/breakouts', authMiddleware, async (req, res) => {
+  const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
+  if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
+  const day = dayParam ? sql`${dayParam}::date` : sql`(now() AT TIME ZONE 'America/New_York')::date`;
+  const rows = await getDb()
+    .selectFrom('tier_events')
+    .select(['ticker', 'at', 'meta'])
+    .where('tier', '=', 'alert')
+    .where('event', '=', 'tv_breakout')
+    .where(sql<boolean>`at >= (${day})::timestamp AT TIME ZONE 'America/New_York'
+      AND at < ((${day}) + 1)::timestamp AT TIME ZONE 'America/New_York'`)
+    .orderBy('at', 'desc')
+    .limit(10000)
+    .execute();
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const str = (v: unknown) => (typeof v === 'string' ? v : null);
+  res.json({
+    data: rows.map((r) => {
+      const m = (r.meta ?? {}) as Record<string, unknown>;
+      return {
+        id: str(m.id) ?? `${r.ticker}:${new Date(r.at).getTime()}`, ticker: r.ticker,
+        at: str(m.at) ?? new Date(r.at).toISOString(), stage: str(m.stage) ?? '',
+        price: num(m.price), upper: num(m.upper), upper_pct: num(m.upper_pct), trigger: num(m.trigger), stop: num(m.stop),
+        svwap: num(m.svwap), spx_pct: num(m.spx_pct), day_gain: num(m.day_gain), ah_gain: num(m.ah_gain),
+        vol_x: num(m.vol_x), run30: num(m.run30), tf: str(m.tf),
+        chg: num(m.chg), grade: str(m.grade), float_m: num(m.float_m), rv1: num(m.rv1), on_screen: m.on_screen === true,
+      };
+    }),
+  });
 });
 
 // GET /api/screener/vwap-debug[?ticker=X] — live ↑ VWAP reclaim tracker

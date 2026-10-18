@@ -100,7 +100,9 @@ The baseline, any minute of these days: +10% before −5% 15% of the time.
   normal spread, so this is a heads-up for the operator's discretion, not a
   mechanical edge. That's the same verdict as the PULLBACK.
 
-## How it would be built (proposed, not built)
+## How it would be built (proposed 2026-10-18; built the same day as script v17 — `docs/vwap-setup.md` §14)
+
+The operator chose store-and-grade-only and no FADED message, and added TOUCH, an early warning at the half-minute.
 
 - **In the 📐 Pine script (v17), on the 30s alert.** TradingView Premium allows 2
   watchlist alerts and both run this script, so a separate script would need a

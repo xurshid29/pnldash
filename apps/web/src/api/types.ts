@@ -376,6 +376,33 @@ export interface TvSetupInfo {
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }
+// 📐 BB breakout (script v17, 2026-10-18): a 1m candle against the 30s BB upper
+// band, from the 30s alert. Stored and graded, never announced — GET
+// /api/screener/breakouts and the SSE 'breakout' event, not the alert log.
+export type BoStage = 'touch' | 'breakout' | 'triggered';
+export interface TvBreakout {
+  id: string;
+  ticker: string;
+  at: string;
+  stage: BoStage;
+  price: number | null;
+  upper: number | null;       // the 30s BB upper band at the signal
+  upper_pct: number | null;   // price vs the band, %
+  trigger: number | null;     // BREAKOUT / TRIGGERED: the buy stop (signal candle high + 1 tick)
+  stop: number | null;        // BREAKOUT / TRIGGERED: the signal candle's low
+  svwap: number | null;
+  spx_pct: number | null;     // price vs the session VWAP, %
+  day_gain: number | null;
+  ah_gain: number | null;
+  vol_x: number | null;       // BREAKOUT: the candle's volume vs the last 20 candles
+  run30: number | null;       // close vs the lowest low of the last 30 minutes, %
+  tf: string | null;
+  chg: number | null;         // our Momentum row at that moment (null off the list)
+  grade: string | null;
+  float_m: number | null;
+  rv1: number | null;
+  on_screen: boolean;
+}
 export interface OpportunityAlert {
   id: string;
   ticker: string;

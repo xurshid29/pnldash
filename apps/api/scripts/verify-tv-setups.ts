@@ -8,7 +8,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, lineTokens,
-  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, type TvSetupSignal,
+  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, BREAKOUT_STAGES, type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -366,6 +366,35 @@ console.log('Telegram format');
   check('fallback message renders without levels', bare.includes('<b>GO</b>') && !bare.includes('mVWAP $') && !bare.includes('undefined') && !bare.includes('null'), bare);
 }
 
+console.log('BB breakout (v17, 2026-10-18)');
+{
+  const bo = parseTvMessage('BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S');
+  check('BREAKOUT parses', bo?.stage === 'breakout' && bo.ticker === 'XLAB' && bo.price === 2.38, JSON.stringify(bo));
+  check('…band, trigger, stop', bo?.upper === 2.33 && bo.upper_pct === 2.1 && bo.trigger === 2.41 && bo.stop === 2.25, JSON.stringify(bo));
+  check('…sVWAP, day high, volume, run30, timeframe', bo?.svwap === 2.01 && bo.spx_pct === 18.4 && bo.day_gain === 90
+    && bo.vol_x === 3.2 && bo.run30 === 17 && bo.tf === '30S' && bo.run_pct === null, JSON.stringify(bo));
+  check('…no line, no month/year VWAP', bo?.line === null && bo.mvwap === null && lineTokens('breakout', null).length === 0, JSON.stringify(bo));
+  const touch = parseTvMessage('TOUCH NWGL 0.1302 | upper 0.1305 (-0.2%) | sVWAP 0.1101 (+18.3%) | day high +45% | run30 +31% | tf 30S');
+  check('TOUCH parses (price under the band: negative %)', touch?.stage === 'touch' && touch.upper === 0.1305 && touch.upper_pct === -0.2
+    && touch.trigger === null && touch.stop === null && touch.run30 === 31, JSON.stringify(touch));
+  const trig = parseTvMessage('TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02 (+19.8%) | day high +92% | ah +12% | run30 +19% | tf 30S');
+  check('TRIGGERED parses', trig?.stage === 'triggered' && trig.trigger === 2.41 && trig.stop === 2.25 && trig.ah_gain === 12, JSON.stringify(trig));
+  check('JSON breakout', parseTvMessage({ stage: 'breakout', ticker: 'SGRX', price: 1.02, upper: 1.0, trigger: 1.03, stop: 0.97 })?.trigger === 1.03);
+  check('the three stages are the breakout set, not in the ⚙ menu',
+    ['touch', 'breakout', 'triggered'].every((x) => BREAKOUT_STAGES.has(x as never) && !TV_STAGE_ORDER.includes(x as never)));
+  check('old messages are not breakouts', parseTvMessage('GO VEEA 3.34 | mVWAP 3.21 (4.0%) | tf 1')?.upper === null);
+
+  const T0 = 1_792_166_400;   // 2026-10-16 11:20 ET
+  const g = new TvSetupGate();
+  check('BREAKOUT is stored quietly, never announced', g.admit(bo!, T0) === 'quiet');
+  check('…a re-delivery within 20 s is dropped', g.admit(bo!, T0 + 5) === 'drop');
+  check('…a new BREAKOUT 90 s later is a real event (not the 2-min duplicate rule)', g.admit(bo!, T0 + 90) === 'quiet');
+  check('TOUCH and TRIGGERED are quiet too', g.admit(touch!, T0 + 100) === 'quiet' && g.admit(trig!, T0 + 110) === 'quiet');
+  check('quiet even on a Momentum name', new TvSetupGate().admit(bo!, T0, true, true) === 'quiet');
+  check('a breakout leaves the VWAP setups alone: a GO right after still announces',
+    g.admit(parseTvMessage('GO XLAB 2.40 | mVWAP 2.3 (+4.3%) | basis 2.31 (0.4%) | line month | tf 30S | via reclaim')!, T0 + 120, false, true) === 'notify');
+}
+
 console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -380,7 +409,11 @@ console.log('Contract — the Pine script still emits what the parser reads');
     // v15: the day's PULLBACK cap counts failed pullbacks, not every touch
     's.fails < pbMax', 's.fails := s.fails + 1',
     // v16: no cap in the script by default; each PULLBACK says how many failed before it
-    'pbMax == 0 or s.fails < pbMax', '" | fails "', 'fails := math.min(fails, pbY.fails)', 'pbCapMark']) {
+    'pbMax == 0 or s.fails < pbMax', '" | fails "', 'fails := math.min(fails, pbY.fails)', 'pbCapMark',
+    // v17: the BB breakout, on 1m candles built from the 30s alert's bars
+    '"TOUCH"', '"BREAKOUT"', '"TRIGGERED"', '" | upper "', '" | trigger "', '" | stop "', '" | run30 +"',
+    'boActive = boOn and timeframe.period == boTf', 'time_close % 60000 == 0', 'boPrevC <= boPrevU', 'high >= boTrig',
+    'boTrig   := boCHigh + syminfo.mintick']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

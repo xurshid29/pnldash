@@ -33,9 +33,38 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held';
+export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'touch' | 'breakout' | 'triggered';
 // The PULLBACK setup's stages (script v10); the rest belong to the reclaim setup.
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
+// The BB breakout's stages (script v17): a 1m candle against the 30s upper band.
+// No VWAP line; stored as tier_events event 'tv_breakout', never announced.
+export const BREAKOUT_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['touch', 'breakout', 'triggered']);
+// One stored BB-breakout signal: the tier_events meta (event 'tv_breakout'),
+// the SSE 'breakout' payload and a row of GET /api/screener/breakouts.
+export interface TvBreakoutEvent {
+  id: string;
+  ticker: string;
+  at: string;
+  stage: TvStage;
+  price: number | null;
+  upper: number | null;
+  upper_pct: number | null;
+  trigger: number | null;
+  stop: number | null;
+  svwap: number | null;
+  spx_pct: number | null;
+  day_gain: number | null;
+  ah_gain: number | null;
+  vol_x: number | null;
+  run30: number | null;
+  tf: string | null;
+  // our context at that moment (the Momentum row, when on our screen)
+  chg: number | null;
+  grade: string | null;
+  float_m: number | null;
+  rv1: number | null;
+  on_screen: boolean;
+}
 // Which VWAP line(s) a message is about. PULLBACK setup: session / month /
 // year (v14); reclaim setup: month / year (v11). Lines that fired the same
 // stage on one bar are named together in script order, e.g. "session+month".
@@ -48,7 +77,7 @@ const LINE_ORDER: TvLineName[] = ['session', 'month', 'year'];
 // The individual lines of a message; a reclaim message without a line (before
 // v11) is the month line.
 export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvLineName[] {
-  if (!line) return PULLBACK_STAGES.has(stage) ? [] : ['month'];
+  if (!line) return PULLBACK_STAGES.has(stage) || BREAKOUT_STAGES.has(stage) ? [] : ['month'];
   if (line === 'both') return PULLBACK_STAGES.has(stage) ? ['session', 'month'] : ['month', 'year'];
   return line.split('+') as TvLineName[];
 }
@@ -86,6 +115,12 @@ export interface TvSetupSignal {
   touch?: number | null;      // pullbacks to this line today, this one included
   fails?: number | null;      // script v16+, PULLBACK: failed pullbacks on the line before this one (null = older script, which capped itself)
   peak_pct?: number | null;   // PULLBACK: highest bar high above the line before it, %
+  // BB breakout (script v17)
+  upper?: number | null;      // the 30s BB upper band at the signal
+  upper_pct?: number | null;  // price vs that band, %
+  trigger?: number | null;    // BREAKOUT / TRIGGERED: the buy stop (signal candle high + 1 tick)
+  stop?: number | null;       // BREAKOUT / TRIGGERED: the signal candle's low
+  run30?: number | null;      // close vs the lowest low of the last 30 minutes, %
 }
 
 export const TV_SETUP = {
@@ -111,6 +146,11 @@ export const TV_SETUP = {
   // −0.64%, the B+ ones +0.90% on n 17 in October). Grade ~10-24.
   pb_cap: 2,
   pb_cap_exempt: 'B+' as string,
+  // BB breakout (script v17, operator 2026-10-18: "store and grade only, and
+  // display them in our dashboard"). Its stages are never announced. TOUCH and
+  // BREAKOUT can recur within minutes on a choppy name, so only a re-delivery
+  // inside this window is dropped (the 2-min dup_sec would drop real events).
+  bo_dup_sec: 20,
   // GO is announced only for a ticker on our Momentum list (operator,
   // 2026-10-18, after the first live grading: off-list GOs won 12% and barely
   // moved, median best +2.3% in an hour, against 23% and +6.2% on Momentum).
@@ -165,6 +205,7 @@ export function goStrength(sig: TvSetupSignal, at: Date, onMomentum: boolean): T
 
 const STAGES: Record<string, TvStage> = {
   forming: 'forming', ready: 'ready', go: 'go', pullback: 'pullback', broken: 'broken', held: 'held',
+  touch: 'touch', breakout: 'breakout', triggered: 'triggered',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
@@ -238,6 +279,11 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     touch: toNum(o.touch),
     peak_pct: toNum(o.peak_pct),
     fails: toNum(o.fails),
+    upper: toNum(o.upper),
+    upper_pct: toNum(o.upper_pct),
+    trigger: toNum(o.trigger),
+    stop: toNum(o.stop),
+    run30: toNum(o.run30),
   };
 }
 
@@ -260,6 +306,7 @@ function toPath(v: unknown): TvPath | null {
 //   READY SAIQ 6.5 | mVWAP 4.1 (+58.5%) | yVWAP 7.0 (-7.1%) | basis 6.3 (-10.0%) | line year | day high +336% | tf 1 | path base   (v11)
 //   PULLBACK MI 5.31 | sVWAP 4.67 (+13.7%) | mVWAP 4.65 (+14.2%) | yVWAP 5.2 (+2.1%) | line year | touch 1 | peak +27% | tf 1   (v14)
 //   PULLBACK WFF 3.53 | sVWAP 3.12 (+13.1%) | mVWAP 3.11 (+13.5%) | yVWAP 3.39 (+4.1%) | line year | touch 4 | fails 2 | peak +45% | tf 30S   (v16)
+//   BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S   (v17)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -275,7 +322,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
       return null;
     }
   }
-  const head = /^(FORMING|READY|GO|PULLBACK|BROKEN|HELD)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(FORMING|READY|GO|PULLBACK|BROKEN|HELD|TOUCH|BREAKOUT|TRIGGERED)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
@@ -284,6 +331,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const sv = line('sVWAP');
   const yv = line('yVWAP');
   const bb = line('basis');
+  const up = line('upper');
   const day = /day\s+high\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);   // v1/v2 wrote "+-2%" for a negative day
   const ah = /\bah\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const tf = /\btf\s+([0-9A-Za-z]+)/i.exec(text);
@@ -295,6 +343,9 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const touch = /\btouch\s+(\d+)\b/i.exec(text);
   const fails = /\bfails\s+(\d+)\b/i.exec(text);
   const peak = /\bpeak\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
+  const trigger = /\btrigger\s+\$?(\d*\.?\d+)/i.exec(text);
+  const stop = /\bstop\s+\$?(\d*\.?\d+)/i.exec(text);
+  const run30 = /\brun30\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -318,6 +369,11 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     touch: toNum(touch?.[1]),
     peak_pct: toNum(peak?.[1]),
     fails: toNum(fails?.[1]),
+    upper: toNum(up?.[1]),
+    upper_pct: toNum(up?.[2]),
+    trigger: toNum(trigger?.[1]),
+    stop: toNum(stop?.[1]),
+    run30: toNum(run30?.[1]),
   };
 }
 
@@ -366,8 +422,11 @@ export class TvSetupGate {
     // minutes after one on the session line is a second event, not a re-delivery.
     const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}`;
     const prev = this.lastExact.get(exact);
-    if (prev != null && nowSec - prev < TV_SETUP.dup_sec) return 'drop';
+    const breakout = BREAKOUT_STAGES.has(sig.stage);
+    if (prev != null && nowSec - prev < (breakout ? TV_SETUP.bo_dup_sec : TV_SETUP.dup_sec)) return 'drop';
     this.lastExact.set(exact, nowSec);
+    // The BB breakout is stored and graded, never announced (a trial, 2026-10-18).
+    if (breakout) return 'quiet';
 
     const tokens = lineTokens(sig.stage, sig.line);
     const event = `${sig.ticker}|${sig.stage}|${tokens.join('+')}`;
@@ -427,8 +486,11 @@ export class TvSetupGate {
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
   forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD',
+  touch: 'TOUCH', breakout: 'BREAKOUT', triggered: 'TRIGGERED',
 };
-const STAGE_ICON: Record<TvStage, string> = { forming: '🟡', ready: '🟠', go: '🟢', pullback: '↩️', broken: '✖️', held: '✅' };
+const STAGE_ICON: Record<TvStage, string> = {
+  forming: '🟡', ready: '🟠', go: '🟢', pullback: '↩️', broken: '✖️', held: '✅', touch: '⚪', breakout: '⚡', triggered: '🚀',
+};
 const STAGE_HINT: Record<TvStage, string> = {
   forming: 'setup forming — open the chart',
   ready: 'entry zone',
@@ -436,6 +498,9 @@ const STAGE_HINT: Record<TvStage, string> = {
   pullback: 'back near VWAP after the run — be ready',
   broken: 'closed under VWAP — setup broken',
   held: 'held — ran +10% from the pullback',
+  touch: 'the 1m candle is at the 30s BB upper band — get ready',
+  breakout: '1m close above the 30s BB upper band — buy stop over its high',
+  triggered: 'the next candle took the breakout high',
 };
 // The line(s) a message is about, in words: "session + month VWAP".
 function lineName(sig: TvSetupSignal): string {

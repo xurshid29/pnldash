@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v16** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v17** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1081,6 +1081,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-05 | server | `a5a5520` | The 5-min PULLBACK limit counts per line (§7.2). Operator: "lets do what you suggested" after MI's 15:21 ET session-line pullback (+10% two minutes later) was only logged behind a year-line PULLBACK 3½ min earlier. A line already announced in another combination stays logged. Replayed on 10-05: 169 → 174 announcements. Regression: 164 checks. |
 | 2026-10-10 | v16 | `fe6fd4a` | Operator, after WFF 10-09 (a year-line pullback at 12:35 ET, blocked as touch 4 after two BROKEN, ran +40%): "we should not limit pullbacks or increase the cap at least for session top gainers maybe? Or at least, for >B grades?" Measured on the session line (`study.py --cap-strong`, 06-12 → 10-09): the cap blocks 1.8 touches/day at −0.64% (stop, +10%); the bigger the day's gain the worse (+100–200%: −0.88%, +200%+: −0.95%), so no top-gainer exemption; grade B+ or better: +0.90% on n 17, all October, unproven. So the cap moved to the server and the B+ idea runs as a measured trial: the script no longer caps (`pbMax` 0) and every PULLBACK carries `fails N` (failed pullbacks on its line before it, the lowest of the lines named); the server keeps PULLBACKs past 2 failures quiet unless the ticker is on Momentum at B+ or better (`TV_SETUP.pb_cap`, `pb_cap_exempt`), and stores `fails` / `capped` / `cap_exempt`. Chart: past-the-cap pullbacks are gray (`pbCapMark`). The sidebar tags them "past cap"; Telegram says "N failed before". Cap tweaks no longer need a new script. Replica: `max_touches` 0 + `alert_fails`, v16 self-test. Regression: 194 checks. Grade the exemption ~10-24. |
 | 2026-10-18 | server + UI | `9751510` | After the first live grading (§9.1), the operator chose: "lets keep only Momentum ones" (GO announcements), wait on the year line, and add the sidebar mark. A GO on a ticker not on our Momentum list is now quiet (`TV_SETUP.go_momentum_only`): stored, graded and shown dimmed, with no toast, sound or Telegram. In the 10 graded days it would have silenced ~34 of ~85 GO pings a day. The 📐 sidebar tags an announced PULLBACK **↺ held before** when its line already HELD today, else **↺ touch 3+**. In the grading these held 33–36%, against 24% for the rest; quiet ones past the cap held 6%, so they get no tag. No script change, so no alert recreation. Regression: 202 checks. |
+| 2026-10-18 | v17 | (this release) | The operator's third setup, the BB breakout (§14). Their words: "catch breakouts, when candle crosses over the bb upper row and the next candle crosses prev candle high", on a 1m chart with a 30s BB (20, 2). They asked for an early warning ("some signal when first candle touches … so I'd be prepared"), store and grade only, shown on the dashboard, and no exit message. New stages: TOUCH (the forming 1m candle reaches the band at the half-minute), BREAKOUT (1m close above it, with the buy stop and the stop) and TRIGGERED (the next candle takes the high). They run on the 30s alert only (`boTf`), with today's gainers ≥+20% (`boMinGain`). Server: stored as `tier_events` event `tv_breakout`, never announced, a 20 s re-delivery window (`TV_SETUP.bo_dup_sec`), `GET /api/screener/breakouts` and an SSE `breakout` event. Dashboard: a ⚡ BB BREAKOUTS list in the 📐 sidebar and History → 📐 Setups → ⚡ Breakouts. Replica: `simulate_breakout`, self-test `selftest_breakout`. Regression: 229 checks. **Paste the script and recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1291,3 +1292,95 @@ synthetic path through PULLBACK → HELD → PULLBACK → BROKEN → through →
 daily cap. The study imports the same class, so a logic change goes into the
 `.pine` file and `PullbackLine` together (§10). Then rerun the self-test, the
 study and `verify-tv-setups.ts`.
+
+## 14. The BB breakout (script v17, 2026-10-18)
+
+### 14.1 The operator's definition
+
+Five charts from the 10-15/10-16 sessions: NWGL, HODO, XLAB, SGRX, XXII. The
+chart is 1m, with a Bollinger Band (20, SMA, 2.0) computed on **30s** bars. They
+chose 30s because "the 1m upper row crosses the 1m chart too often". The setup:
+"breakouts, when candle crosses over the bb upper row and the next candle
+crosses prev candle high". They also asked for "some signal when first candle
+touches … so I'd be prepared for the BREAKOUT". Their MACD is 30s 4/26/10.
+
+### 14.2 What our data says (research/bb-breakout, 20 sessions, measured before building)
+
+The replica uses Yahoo 1m bars and a 1m BB(10) in place of the 30s band, since
+we have no 30s data.
+- **The raw rule is about break-even at ~440 trades a day** on +20% names.
+- **MACD filters nothing:** it was positive and rising on 99.7% of breakouts.
+- **Hot names move more, in both directions:** A+, 10–50% over sVWAP, a big run.
+- **The best exit is the first close back under the band.**
+- **A gate** (on Momentum, and A+ or 10–50% over sVWAP) gives ~37 trades a day at
+  +0.77%. But the median trade loses, and 0.5% slippage each way turns it
+  negative.
+
+So the operator chose **store and grade only**: every signal is kept and shown,
+and none pings.
+
+### 14.3 The rules (group "BB breakout (v17)")
+
+| Stage | When | Message extras |
+|---|---|---|
+| TOUCH | A bar inside a 1m candle (the half-minute on 30s bars) whose candle high so far reaches the upper band. The last 1m close must be under its band. Once per minute | `upper` |
+| BREAKOUT | The bar that closes the 1m candle closes above the band, and the close before it didn't | `upper`, `trigger` = candle high + 1 tick, `stop` = candle low, `vol` = candle volume ÷ the last 20 candles |
+| TRIGGERED | A bar of the next 1m candle trades at or over `trigger`, seen at its 30s close. If the candle passes without it (or has no trades), the breakout ends silently | `upper`, `trigger`, `stop` |
+
+- **Candles** are clock minutes built from the chart's bars.
+- **The band** is the chart's own: `boLen` 20, `boMult` 2.0.
+- **Sends only on the `boTf` timeframe** (30S). The 1m alert computes nothing
+  that matters and stays silent. A 1m chart shows no breakout markers; a 30s
+  chart shows the band in fuchsia, with TOUCH dots, BO labels and TRIGGERED
+  triangles.
+- **Today's gainers only:** day high ≥ `boMinGain` (+20%), or the after-hours
+  move. No 3-session runner look-back. The study's universe was today's +20%
+  names.
+- Inside the alert window, like the other setups.
+
+### 14.4 The message
+
+```
+TOUCH NWGL 0.1302 | upper 0.1305 (-0.2%) | sVWAP 0.1101 (+18.3%) | day high +45% | run30 +31% | tf 30S
+BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S
+TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02 (+19.8%) | day high +92% | run30 +19% | tf 30S
+```
+
+`run30` is the close against the lowest low of the last 30 minutes. The
+parser (`parseTvMessage`) reads `upper`, `trigger`, `stop` and `run30`, and
+`verify-tv-setups.ts` pins both sides.
+
+### 14.5 Our side
+
+- **Gate:** the stages are in `BREAKOUT_STAGES`. Only a re-delivery within 20 s
+  is dropped (`TV_SETUP.bo_dup_sec`), because a choppy name can TOUCH twice in
+  two minutes. Everything else is stored quietly. They aren't in the ⚙ stage
+  menu, because announcing them would be a code change.
+- **Storage:** `poller.deliverTvBreakout` writes a `tier_events` row (tier
+  `alert`, event `tv_breakout`; the meta is `TvBreakoutEvent`, with our grade,
+  change and on-screen at that moment). It also pushes an SSE `breakout` event.
+  No Telegram, no toast or sound, no `payload.alerts` entry.
+- **Reading:** `GET /api/screener/breakouts[?day=]`, newest first.
+  `GET /api/screener/alerts` leaves these rows out, so its 3,000-row cap stays
+  for the VWAP setups.
+- **Sidebar:** the ⚡ BB BREAKOUTS list at the top of the 📐 sidebar, one row per
+  ticker while live:
+  - TOUCH 75 s, BREAKOUT 80 s, TRIGGERED 10 min;
+  - 🔥 = the study's gate (on Momentum and A+, or 10–50% over sVWAP), sorted
+    first;
+  - hidden tickers are skipped.
+- **History:** History → 📐 Setups → ⚡ Breakouts shows one row per BREAKOUT,
+  with its TOUCH and TRIGGERED.
+
+### 14.6 Grading (~2026-11-01)
+
+`grade_live.py` reads `tv_setup` rows. The breakout grading needs an
+`export-live.sql` variant for `tv_breakout` and the study's measures:
+- the trigger rate;
+- +10% before the stop;
+- the band exit;
+- the 🔥 gate against the rest.
+
+It runs on TradingView's own 30s band and pre-market volume, which also checks
+the 1m BB(10) stand-in. Then ask the operator whether to ping the 🔥 ones.
+

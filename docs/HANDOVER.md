@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-18 (Sun), last code commit `9751510`
+## START HERE — state at 2026-10-18 (Sun), last code commit: script v17 (BB breakout)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail, the History /
@@ -82,8 +82,9 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
    unseen, because Finviz had no size data for it. Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView setups — script v16** (`apps/web/src/tv/mvwap-bb-setup.pine`),
-   pasted and both alerts recreated 10-10. **Verified live:** WFF on 10-12 carried
+5. **📐 TradingView setups — script v17** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+   **v17 (10-18, BB breakout, §14) is NOT pasted yet: the operator must paste it and
+   recreate both alerts.** v16 was pasted and both alerts recreated 10-10. **Verified live:** WFF on 10-12 carried
    `fails` 0/1/2, and a past-the-cap PULLBACK pinged via the B+ exemption.
    TradingView computes the setups because we can't build month/year VWAPs with
    pre-market volume (Yahoo's extended-hours bars have no volume; our snapshots
@@ -171,7 +172,13 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
      day, half of them GOs.
    - **Decided 10-18 (`9751510`):** GO pings only for Momentum names; year line —
      wait, no mute; sidebar marks ↺ held before / ↺ touch 3+ on announced pullbacks.
-2. **BB-upper breakout — the operator's 3rd setup (10-18), measured, NOT built.**
+2. **BB-upper breakout — the operator's 3rd setup (10-18): BUILT as script v17;
+   waiting for the operator to paste it and recreate both alerts.**
+   - TOUCH / BREAKOUT / TRIGGERED from the 30s alert.
+   - Stored and graded only, never pinged.
+   - ⚡ list in the 📐 sidebar, plus History → ⚡ Breakouts.
+   - `docs/vwap-setup.md` §14. Grade ~11-01 (needs a `tv_breakout` export).
+   - The measurement that led to it:
    - The rule: a 1m candle closes above a **30s** BB(20,2) upper band, and the
      next candle takes its high. `research/bb-breakout/README.md`.
    - On 20 sessions of +20% names: ~440 trades a day, break-even.
@@ -180,8 +187,6 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
      (both halves +), but the median trade loses and 0.5% slippage each way turns it
      negative, so it's a heads-up.
    - Best exit: the first close back under the band.
-   - **Proposed build:** 📐 script v17, on the 30s alert. BREAKOUT (trigger +
-     stop) → TRIGGERED → FADED, with a server gate. Waiting for the operator's go.
 3. **Re-grade the live A+…D grade** (overdue, planned ~10-15) from
    `screener_results.grade`, same label. Pipeline: `research/momentum-grade/`.
    Never hand-edit POINTS/CUTS.
@@ -262,6 +267,35 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-18 (Sun, evening) — SCRIPT v17: THE BB BREAKOUT, BUILT.** The operator's
+decisions: "1 - yes; 2 - store and grade only I think, and also, display them in our
+dashboard; 3 - only BREAKOUT and TRIGGERED". Plus: "I'd like to have some signal when
+first candle touches … so I'd be prepared for the BREAKOUT" → TOUCH.
+- **Pine:** a third block that sends only when `timeframe.period == boTf` ("30S").
+  - 1m candles are built from the 30s bars (clock minutes), against the chart's own
+    BB(20, 2).
+  - TOUCH = the first non-closing bar of a minute whose candle-high reaches the band,
+    after a 1m close under it.
+  - BREAKOUT = a 1m close above the band after one under it. Trigger = high + mintick,
+    stop = candle low.
+  - TRIGGERED = a bar of the next minute with high ≥ trigger.
+  - Today's gainers (`boMinGain` 20) only.
+- **Server:**
+  - `BREAKOUT_STAGES`; the gate stores them quietly with a 20 s re-delivery window.
+  - `deliverTvBreakout` writes `tier_events` event `tv_breakout` and the SSE `breakout`
+    event.
+  - `GET /api/screener/breakouts`. `/alerts` now excludes `tv_breakout`: its 3,000-row
+    cap would otherwise drop VWAP rows (~3,000 breakout rows/day expected).
+- **Web:**
+  - `BreakoutList` (5 s clock, live windows TOUCH 75 s / BREAKOUT 80 s / TRIGGERED
+    10 min, 🔥 = the study's gate) at the top of the sidebar.
+  - `BreakoutsHistoryTable` (History → ⚡ Breakouts).
+  - The SSE listener writes into the `['screener','breakouts','today']` cache.
+- **Checks:** replica `simulate_breakout` + `selftest_breakout`; 229 regression checks.
+- **Unverifiable here:** the Pine compile (the operator's paste is the compile), and
+  whether TradingView's per-symbol limit (15 per 3 min) holds on wild names. Re-check
+  the peaks at grading.
 
 **2026-10-18 (Sun, later) — BB-UPPER BREAKOUT MEASURED (`research/bb-breakout/`).**
 - **The ask:** the operator sent 5 charts (NWGL, HODO, XLAB, SGRX, XXII; 10-15/16)

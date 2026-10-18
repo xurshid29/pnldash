@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { formatTvSetupAlert, goStrength, gradeAtLeast, lineTokens, pastCap, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal } from './tv-setups.js';
+import { formatTvSetupAlert, goStrength, gradeAtLeast, lineTokens, pastCap, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvBreakoutEvent, type TvSetupSignal } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -4047,6 +4047,33 @@ class PollerService {
       }
     }
     return alert;
+  }
+
+  // 📐 BB breakout (script v17): TOUCH / BREAKOUT / TRIGGERED from the 30s alert.
+  // Store and grade only (operator, 2026-10-18): a tier_events row (event
+  // 'tv_breakout', read by GET /api/screener/breakouts) and an SSE 'breakout'
+  // event for the 📐 sidebar's breakout list. No Telegram, toast or sound, and
+  // no payload.alerts entry (thousands a day would crowd out the VWAP setups).
+  deliverTvBreakout(sig: TvSetupSignal): TvBreakoutEvent {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const row = this.lastPayload?.rows.find((r) => r.ticker === sig.ticker) ?? null;
+    const ev: TvBreakoutEvent = {
+      id: `${sig.ticker}:${nowSec}:tv_breakout:${sig.stage}${sig.tf ? `:${sig.tf}` : ''}`,
+      ticker: sig.ticker, at: new Date(nowSec * 1000).toISOString(), stage: sig.stage,
+      price: sig.price, upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null,
+      trigger: sig.trigger ?? null, stop: sig.stop ?? null,
+      svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, day_gain: sig.day_gain, ah_gain: sig.ah_gain,
+      vol_x: sig.vol_x, run30: sig.run30 ?? null, tf: sig.tf,
+      chg: row?.change_pct ?? null, grade: row?.grade ?? null, float_m: row?.float_m ?? null, rv1: row?.rel_vol_1min ?? null,
+      on_screen: row != null,
+    };
+    recordTierEvent('alert', 'tv_breakout', sig.ticker, { ...ev });
+    console.log(`[tv-breakout] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%)` +
+      (sig.trigger != null ? ` · trigger ${sig.trigger} · stop ${sig.stop ?? '?'}` : '') +
+      ` · sVWAP ${sig.spx_pct ?? '?'}% · run30 ${sig.run30 ?? '?'}% · tf ${sig.tf ?? '?'}` +
+      (row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'));
+    broadcast('breakout', ev);
+    return ev;
   }
 
   // Phone delivery for opportunity alerts. Per-kind mutes via ALERTS_DISABLED

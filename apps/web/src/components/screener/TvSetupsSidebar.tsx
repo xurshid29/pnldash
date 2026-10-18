@@ -12,6 +12,7 @@ import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
 import { TvStageTag, StrengthTag, tvLevelsText, fmtTf, isPullbackStage, lineTokens, lineDistanceText } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
+import { BreakoutList } from './BreakoutList';
 import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
 
@@ -150,6 +151,9 @@ const HOW_TO = (
     <div style={{ marginTop: 8, color: '#8c8c8c' }}>
       <b>Reading the list.</b> A GO pings only when the name is on Momentum (⭐); off-list GOs show dimmed.
       <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
+      <div style={{ marginTop: 6 }}>
+        <b>⚡ BB breakouts</b> (v17, the 30s alert only; listed, never pinged): <b>TOUCH</b> when the forming 1m candle reaches the 30s BB upper band (at the half-minute), <b>BREAKOUT</b> when it closes above it (buy stop over its high, stop its low), <b>TRIGGERED</b> when the next candle takes the high. 🔥 = on Momentum and A+, or 10–50% over sVWAP — on 20 sessions those did +0.77% a trade against −0.04% for the rest.
+      </div>
     </div>
   </div>
 );
@@ -400,7 +404,8 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
         </div>
       )}
       <div style={{ flex: '1 1 auto', minHeight: 0, overflow: 'auto' }}>
-        <div style={{ padding: '4px 8px', fontSize: 10, color: '#8c8c8c', letterSpacing: 0.5, background: '#141414' }}>
+        <BreakoutList payload={payload} />
+        <div style={{ padding: '4px 8px', fontSize: 10, color: '#8c8c8c', letterSpacing: 0.5, background: '#141414', marginTop: 2 }}>
           LIVE · {live.length}
         </div>
         {live.length === 0 && (
