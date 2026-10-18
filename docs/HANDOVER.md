@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-18 (Sun), last code commit `60cfed0` (script v17, BB breakout)
+## START HERE — state at 2026-10-18 (Sun), last code commit: script v18 (BB breakout drawn on 1m charts)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail, the History /
@@ -82,9 +82,11 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
    unseen, because Finviz had no size data for it. Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView setups — script v17** (`apps/web/src/tv/mvwap-bb-setup.pine`).
-   **v17 (10-18, BB breakout, §14) is NOT pasted yet: the operator must paste it and
-   recreate both alerts.** v16 was pasted and both alerts recreated 10-10. **Verified live:** WFF on 10-12 carried
+5. **📐 TradingView setups — script v18** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+   - v17 (10-18, the BB breakout, §14) was pasted and compiled.
+   - **v18 (the same day: the breakout drawn on 1m charts from 30s bars, plus the
+     missing-half-minute fix) must be pasted, and both alerts recreated.**
+   - v16 was pasted and both alerts recreated 10-10. **Verified live:** WFF on 10-12 carried
    `fails` 0/1/2, and a past-the-cap PULLBACK pinged via the B+ exemption.
    TradingView computes the setups because we can't build month/year VWAPs with
    pre-market volume (Yahoo's extended-hours bars have no volume; our snapshots
@@ -267,6 +269,21 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-18 (Sun, evening) — SCRIPT v18: THE BREAKOUT ON 1m CHARTS.**
+- **The ask:** the operator pasted v17 (it compiled; the status line showed the new inputs) and asked
+  "I don't see a bb upper line". v17 drew only on the 30s chart. Then: "lets do a v18 with 30s bars
+  from a 1m chart (or configurable maybe)".
+- **What v18 does:** a 1m chart draws the band and the TOUCH / BO / TRIGGERED marks from
+  `request.security_lower_tf(…, "30S", …)`.
+  - New inputs: BB timeframe `boBandTf`, Alerts from `boTf`, Draw `boShow`.
+  - The 30s request only happens when a 1m chart draws or sends, so a 1m watchlist alert created
+    with Draw off costs nothing.
+- **A fix found while mirroring it:** a minute with no closing 30s bar left v17's "previous close"
+  stale; now it is closed on its last bar.
+- **Checks:** the replica's `simulate_breakout_1m` matches the 30s path on 1,314 random-walk
+  signals; 232 regression checks.
+- **Watch:** the 1m watchlist alert's load (900 symbols × 30s intrabars) if Draw is on.
 
 **2026-10-18 (Sun, evening) — SCRIPT v17: THE BB BREAKOUT, BUILT.** The operator's
 decisions: "1 - yes; 2 - store and grade only I think, and also, display them in our

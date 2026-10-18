@@ -412,8 +412,11 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'pbMax == 0 or s.fails < pbMax', '" | fails "', 'fails := math.min(fails, pbY.fails)', 'pbCapMark',
     // v17: the BB breakout, on 1m candles built from the 30s alert's bars
     '"TOUCH"', '"BREAKOUT"', '"TRIGGERED"', '" | upper "', '" | trigger "', '" | stop "', '" | run30 +"',
-    'boActive = boOn and timeframe.period == boTf', 'time_close % 60000 == 0', 'boPrevC <= boPrevU', 'high >= boTrig',
-    'boTrig   := boCHigh + syminfo.mintick']) {
+    'boSend     = boValid and timeframe.period == boTf', 'time_close % 60000 == 0', 'boPrevC <= boPrevU', 'high >= boTrig',
+    'boCHigh + syminfo.mintick',
+    // v18: drawn on a 1m chart from the 30s bars inside each candle
+    'request.security_lower_tf(syminfo.tickerid, boUse1m ? boBandTf : timeframe.period, boBand())', 'boInTouch := true',
+    'boNative ? not boEnds and boCHigh >= boUp : boInTouch']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

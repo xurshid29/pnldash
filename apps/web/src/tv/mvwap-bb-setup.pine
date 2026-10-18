@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v17 (2026-10-18).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v18 (2026-10-18).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Three setups in one script, so the same two watchlist alerts carry all of them
@@ -29,8 +29,9 @@
 //   TOUCH      the forming 1m candle reaches the upper band by its half-minute → get ready
 //   BREAKOUT   the 1m candle closes above the band (the close before it didn't) → buy stop over its high
 //   TRIGGERED  the next 1m candle trades over that high
-// It runs on the 30s alert only: the 30s chart has the 30s band natively, and the
-// 1m candles are built from its bars.
+// It sends from the 30s alert only: the 30s chart has the 30s band natively, and the
+// 1m candles are built from its bars. v18 also draws it on a 1m chart, from the
+// 30s bars inside each candle.
 // Run it as TradingView watchlist alerts — one on 1m and one on 30s (Premium allows 2):
 // Symbols = the runners list (dashboard → 📐 sidebar ⋯ → Copy list), session Extended,
 // condition = this script → "Any alert() function call", once per bar close,
@@ -76,11 +77,13 @@ pbMax      = input.int(0,       "Script cap: stop a line after N failed pullback
 pbCapMark  = input.int(2,       "Chart: pullbacks after N failed ones are drawn gray (the dashboard's cap)", minval = 1, group = "Pullback to VWAP (v10)")
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
 boOn       = input.bool(true,         "Breakout setup on", group = "BB breakout (v17)")
-boTf       = input.timeframe("30S",   "Sends only from the alert on this chart timeframe (its bars are the band's)", group = "BB breakout (v17)")
+boBandTf   = input.timeframe("30S",   "BB timeframe (the band; the chart's own, or read from a 1m chart — v18)", group = "BB breakout (v17)")
+boTf       = input.timeframe("30S",   "Alerts from: the alert on this chart timeframe (30S = soonest; 1 = at the 1m close)", group = "BB breakout (v17)")
 boLen      = input.int(20,            "BB length", minval = 2, group = "BB breakout (v17)")
 boMult     = input.float(2.0,         "BB StdDev", minval = 0.1, group = "BB breakout (v17)")
 boMinGain  = input.float(20.0,        "Today's gainers: day high at least % (-100 = filter off)", group = "BB breakout (v17)")
 boTouchOn  = input.bool(true,         "TOUCH: the forming 1m candle reaches the band", group = "BB breakout (v17)")
+boShow     = input.bool(true,         "Draw the band and markers (on the band's own chart, or a 1m chart — v18)", group = "BB breakout (v17)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -474,7 +477,7 @@ plotshape(fireY == 3 and fireM != 3, "Go (year)", shape.labelup, location.belowb
 alertcondition(fireM == 2 or fireY == 2, "READY", "READY {{ticker}} {{close}} | tf {{interval}}")
 alertcondition(fireM == 3 or fireY == 3, "GO", "GO {{ticker}} {{close}} | tf {{interval}}")
 
-// ── 3) BB BREAKOUT (v17) ──────────────────────────────────────────────────────
+// ── 3) BB BREAKOUT (v17; v18 draws it on a 1m chart too) ──────────────────────
 // The operator's third setup (2026-10-18; NWGL, HODO, XLAB, SGRX, XXII on 10-15/16):
 // a 1m chart with the Bollinger Band computed on 30s bars ("the 1m upper band
 // crosses the 1m chart too often"). A 1m candle closes above the upper band and
@@ -487,12 +490,34 @@ alertcondition(fireM == 3 or fireY == 3, "GO", "GO {{ticker}} {{close}} | tf {{i
 //              the trade is a buy stop one tick over its high, the stop its low
 //   TRIGGERED  a bar of the next 1m candle trades at or over that trigger
 //              (seen at the 30s bar's close); the candle passing without it ends it
-// The band is this chart's own (30s on the 30s alert). Candles are clock minutes
-// built from the chart's bars; a minute with no trades has no candle. Alerts go
-// out only from the chart timeframe `boTf`, so the 1m alert stays silent.
-boActive = boOn and timeframe.period == boTf
-boBasis  = ta.sma(close, boLen)
-boUpper  = boBasis + boMult * ta.stdev(close, boLen)
+// Candles are clock minutes; a minute with no trades has no candle. Two ways to
+// see the band (`boBandTf`, 30S):
+//   on its own chart (30s): the chart's BB, 1m candles built from its bars;
+//   on a 1m chart (v18): the 30s bars inside each candle (request.security_lower_tf),
+//   so TOUCH is any 30s bar before the last reaching the band, and a TOUCH and a
+//   BREAKOUT can land on one 1m bar (the chart then shows the BREAKOUT).
+// Same rules either way. Alerts go out only from the chart timeframe `boTf` (the
+// 30s alert: a TOUCH comes 30 s before the candle closes; from the 1m alert it
+// would arrive with the BREAKOUT). Other chart timeframes draw nothing.
+boChartSec = timeframe.in_seconds(timeframe.period)
+boBandSec  = timeframe.in_seconds(boBandTf)
+boNative   = boChartSec == boBandSec and boChartSec <= 60
+boFrom1m   = boChartSec == 60 and boBandSec < 60
+boValid    = boOn and (boNative or boFrom1m)
+boSend     = boValid and timeframe.period == boTf
+boBasis    = ta.sma(close, boLen)
+boUpper    = boBasis + boMult * ta.stdev(close, boLen)
+// The band on the 30s bars inside a 1m bar, and their highs. Requested on every
+// chart (a request can't be conditional); off a 1m chart, or on one that neither
+// draws nor sends the breakout (the 1m watchlist alert created with "Draw" off),
+// it asks for the chart's own timeframe, which is one cheap value per bar.
+boUse1m = boFrom1m and (boShow or boSend)
+boBand() =>
+    float b = ta.sma(close, boLen)
+    [b + boMult * ta.stdev(close, boLen), high]
+[boInUp, boInHigh] = request.security_lower_tf(syminfo.tickerid, boUse1m ? boBandTf : timeframe.period, boBand())
+int   boInN = array.size(boInUp)
+float boUp  = boNative ? boUpper : boUse1m and boInN > 0 ? array.get(boInUp, boInN - 1) : na   // the band at this bar's close
 boGainer = boMinGain <= -100 or (not na(dayHighGain) and dayHighGain >= boMinGain) or
      (useAhGain and not na(ahGain) and ahGain >= boMinGain)
 
@@ -509,11 +534,26 @@ var float boStop    = na
 var float boVolX    = na
 var boVols = array.new<float>()   // the last 20 finished candles' volumes
 var boLows = array.new<float>()   // the last 30 finished candles' lows
+var bool  boDone    = true    // the forming candle has closed
+var float boLastC   = na      // the forming candle's latest close and band, to close it
+var float boLastU   = na      // if its closing 30s bar has no trades (and so no bar)
 
 int boMinNow = time - time % 60000
 if na(boMin) or boMinNow != boMin
+    if not boDone and not na(boLastC)
+        // The last candle's closing 30s bar had no trades: close it on its last bar
+        // (no BREAKOUT for it, but the next candle's "fresh" test stays right).
+        boPrevC := boLastC
+        boPrevU := boLastU
+        array.push(boVols, boCVol)
+        if array.size(boVols) > 20
+            array.shift(boVols)
+        array.push(boLows, boCLow)
+        if array.size(boLows) > 30
+            array.shift(boLows)
     if not na(boArmMin) and boMinNow > boArmMin
         boArmMin := na                         // the trigger candle passed (or had no trades)
+    boDone    := false
     boMin     := boMinNow
     boCHigh   := high
     boCLow    := low
@@ -523,35 +563,49 @@ else
     boCHigh := math.max(boCHigh, high)
     boCLow  := math.min(boCLow, low)
     boCVol  := boCVol + volume
-bool boEnds  = time_close % 60000 == 0           // this bar closes the 1m candle
+bool boEnds  = time_close % 60000 == 0           // this bar closes the 1m candle (every bar of a 1m chart)
 bool boFresh = not na(boPrevC) and not na(boPrevU) and boPrevC <= boPrevU
 float boLow30 = array.size(boLows) > 0 ? math.min(array.min(boLows), boCLow) : boCLow
 float boRun30 = (close / boLow30 - 1) * 100      // the run over the last 30 minutes
 
-int boEv = 0   // 1 TOUCH, 2 BREAKOUT, 3 TRIGGERED
-bool boCan = boActive and inWindow and boGainer and not na(boUpper)
+// TOUCH on a 1m chart: a 30s bar before the candle's last whose candle high so far reaches its band.
+bool boInTouch = false
+if boUse1m and boInN > 1
+    float runHi = na
+    for k = 0 to boInN - 2
+        runHi := na(runHi) ? array.get(boInHigh, k) : math.max(runHi, array.get(boInHigh, k))
+        float uk = array.get(boInUp, k)
+        if not boInTouch and not na(uk) and runHi >= uk
+            boInTouch := true
+
+boLastC := close
+boLastU := boUp
+bool boCalc    = boValid and inWindow and boGainer and not na(boUp)
+bool boTrigEv  = false
+bool boTouchEv = false
+bool boBreakEv = false
 if not na(boArmMin) and boMin == boArmMin and high >= boTrig
     boArmMin := na
-    if boCan
-        boEv := 3
-if boEv == 0 and boCan and boTouchOn and not boEnds and not boTouched and boFresh and boCHigh >= boUpper
+    boTrigEv := boCalc
+if boCalc and boTouchOn and not boTouched and boFresh and (boNative ? not boEnds and boCHigh >= boUp : boInTouch)
     boTouched := true
-    boEv := 1
+    boTouchEv := true
 if boEnds
     boVolX := array.size(boVols) > 0 and array.avg(boVols) > 0 ? boCVol / array.avg(boVols) : na
-    if boEv == 0 and boCan and boFresh and close > boUpper
-        boArmMin := boMin + 60000
-        boTrig   := boCHigh + syminfo.mintick
-        boStop   := boCLow
-        boEv := 2
+    if boCalc and boFresh and close > boUp
+        boArmMin  := boMin + 60000
+        boTrig    := boCHigh + syminfo.mintick
+        boStop    := boCLow
+        boBreakEv := true
     boPrevC := close
-    boPrevU := boUpper
+    boPrevU := boUp
     array.push(boVols, boCVol)
     if array.size(boVols) > 20
         array.shift(boVols)
     array.push(boLows, boCLow)
     if array.size(boLows) > 30
         array.shift(boLows)
+    boDone := true
 
 // The message — a contract with services/tv-setups.ts parseTvMessage:
 //   TOUCH XLAB 2.29 | upper 2.3 (-0.4%) | sVWAP 2.01 (+13.9%) | day high +80% | run30 +12% | tf 30S
@@ -559,7 +613,7 @@ if boEnds
 //   TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02 (+19.8%) | day high +92% | run30 +19% | tf 30S
 boMsg(int ev) =>
     string msg = (ev == 1 ? "TOUCH" : ev == 2 ? "BREAKOUT" : "TRIGGERED") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
-    msg += " | upper " + str.tostring(boUpper, format.mintick) + " (" + pctVs(boUpper) + "%)"
+    msg += " | upper " + str.tostring(boUp, format.mintick) + " (" + pctVs(boUp) + "%)"
     if ev >= 2
         msg += " | trigger " + str.tostring(boTrig, format.mintick) + " | stop " + str.tostring(boStop, format.mintick)
     if not na(svwap)
@@ -574,9 +628,13 @@ boMsg(int ev) =>
         msg += " | run30 +" + str.tostring(math.max(boRun30, 0), "#") + "%"
     msg + " | tf " + timeframe.period
 
-if boEv > 0
-    alert(boMsg(boEv), alert.freq_once_per_bar_close)
-plot(boActive ? boUpper : na, "BB upper (breakout)", color.new(color.fuchsia, 40))
-plotshape(boEv == 1, "BB touch", shape.circle, location.abovebar, color.fuchsia, size = size.tiny)
-plotshape(boEv == 2, "Breakout", shape.labeldown, location.abovebar, color.fuchsia, text = "BO", textcolor = color.white, size = size.small)
-plotshape(boEv == 3, "Triggered", shape.triangleup, location.belowbar, color.fuchsia, size = size.small)
+if boSend and boTrigEv
+    alert(boMsg(3), alert.freq_once_per_bar_close)
+if boSend and boTouchEv
+    alert(boMsg(1), alert.freq_once_per_bar_close)
+if boSend and boBreakEv
+    alert(boMsg(2), alert.freq_once_per_bar_close)
+plot(boShow and boValid ? boUp : na, "BB upper (breakout)", color.new(color.fuchsia, 40))
+plotshape(boShow and boTouchEv and not boBreakEv, "BB touch", shape.circle, location.abovebar, color.fuchsia, size = size.tiny)
+plotshape(boShow and boBreakEv, "Breakout", shape.labeldown, location.abovebar, color.fuchsia, text = "BO", textcolor = color.white, size = size.small)
+plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar, color.fuchsia, size = size.small)

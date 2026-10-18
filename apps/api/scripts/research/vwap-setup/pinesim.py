@@ -352,48 +352,113 @@ BO = dict(length=20,       # BB length (on the chart's bars: 30s on the 30s aler
           touch=True)      # TOUCH: the forming 1m candle reaches the band before the minute closes
 
 
+def _bands(closes, n, mult):
+    """TradingView ta.sma / ta.stdev (population) upper band per bar; None while warming up."""
+    out = []
+    for i in range(len(closes)):
+        win = closes[max(0, i - n + 1):i + 1]
+        if len(win) < n:
+            out.append(None)
+            continue
+        m = sum(win) / n
+        out.append(m + mult * max(sum(x * x for x in win) / n - m * m, 0.0) ** 0.5)
+    return out
+
+
+def _tick(p):
+    return 0.0001 if p < 1 else 0.01
+
+
 def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
-    """Mirror of the script's BB breakout (v17) on the chart's bars (30s on the 30s alert).
-    bars: dicts with t (aware datetime, bar open), o, h, l, c, v. Candles are clock minutes.
-    Returns (t, 'TOUCH' | 'BREAKOUT' | 'TRIGGERED', close, upper, trigger, stop) per signal."""
+    """Mirror of the script's BB breakout on its own chart (v17; the 30s alert): the band on the
+    chart's bars, 1m candles built from them. bars: dicts with t (aware datetime, bar open),
+    o, h, l, c, v. Returns (t, stage, close, upper, trigger, stop) per signal; one bar can carry
+    TRIGGERED and TOUCH/BREAKOUT only in theory (the fresh test keeps them apart).
+    v18: a candle whose closing 30s bar had no trades is closed on its last bar when the next
+    minute starts (no BREAKOUT for it), so the next candle's "fresh" test stays right."""
     p = dict(BO, **(params or {}))
-    n, mult = p['length'], p['mult']
-    closes, out = [], []
+    ups = _bands([b['c'] for b in bars], p['length'], p['mult'])
+    out = []
     cmin = chigh = clow = None
-    touched = False
-    prev_c = prev_u = None
+    touched, done = False, True
+    prev_c = prev_u = last_c = last_u = None
     arm_min = trig = stop = None
-    for b in bars:
-        closes.append(b['c'])
-        win = closes[-n:]
-        upper = None
-        if len(win) == n:
-            m = sum(win) / n
-            upper = m + mult * max(sum(x * x for x in win) / n - m * m, 0.0) ** 0.5
+    for b, upper in zip(bars, ups):
         ts = int(b['t'].timestamp())
         minute = ts - ts % 60
         if cmin is None or minute != cmin:
+            if not done and last_c is not None:
+                prev_c, prev_u = last_c, last_u        # closed on its last bar
             if arm_min is not None and minute > arm_min:
                 arm_min = None                       # the trigger candle passed (or had no trades)
+            done = False
             cmin, chigh, clow, touched = minute, b['h'], b['l'], False
         else:
             chigh, clow = max(chigh, b['h']), min(clow, b['l'])
         ends = (ts + bar_sec) % 60 == 0
         fresh = prev_c is not None and prev_u is not None and prev_c <= prev_u
+        last_c, last_u = b['c'], upper
         can = upper is not None and (gainer_of is None or gainer_of(b))
-        ev = None
+        evs = []
         if arm_min is not None and cmin == arm_min and b['h'] >= trig:
             arm_min = None
             if can:
-                ev = 'TRIGGERED'
-        if ev is None and can and p['touch'] and not ends and not touched and fresh and chigh >= upper:
-            touched, ev = True, 'TOUCH'
+                evs.append('TRIGGERED')
+        if can and p['touch'] and not touched and fresh and not ends and chigh >= upper:
+            touched = True
+            evs.append('TOUCH')
         if ends:
-            if ev is None and can and fresh and b['c'] > upper:
-                arm_min, trig, stop, ev = cmin + 60, chigh + (0.0001 if chigh < 1 else 0.01), clow, 'BREAKOUT'
-            prev_c, prev_u = b['c'], upper
-        if ev:
+            if can and fresh and b['c'] > upper:
+                arm_min, trig, stop = cmin + 60, chigh + _tick(chigh), clow
+                evs.append('BREAKOUT')
+            prev_c, prev_u, done = b['c'], upper, True
+        for ev in evs:
             out.append((b['t'], ev, b['c'], upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None))
+    return out
+
+
+def simulate_breakout_1m(bars30, params=None, gainer_of=None):
+    """Mirror of the script's v18 1m-chart path: the band on the 30s bars, read inside each 1m bar
+    (request.security_lower_tf). TOUCH = a 30s bar before the candle's last whose candle high so
+    far reaches its band; BREAKOUT = the 1m close above the band at the last 30s bar; TRIGGERED =
+    the next 1m bar's high at or over the trigger. Same returns as simulate_breakout, stamped with
+    the 1m bar's open."""
+    p = dict(BO, **(params or {}))
+    ups = _bands([b['c'] for b in bars30], p['length'], p['mult'])
+    minutes = {}
+    for b, u in zip(bars30, ups):
+        ts = int(b['t'].timestamp())
+        minutes.setdefault(ts - ts % 60, []).append((b, u))
+    out = []
+    prev_c = prev_u = None
+    arm_min = trig = stop = None
+    for mts in sorted(minutes):
+        inner = minutes[mts]
+        b0 = inner[0][0]
+        h, lo, c = max(x[0]['h'] for x in inner), min(x[0]['l'] for x in inner), inner[-1][0]['c']
+        upper = inner[-1][1]
+        if arm_min is not None and mts > arm_min:
+            arm_min = None
+        fresh = prev_c is not None and prev_u is not None and prev_c <= prev_u
+        can = upper is not None and (gainer_of is None or gainer_of(b0))
+        run_hi, in_touch = None, False
+        for x, u in inner[:-1]:
+            run_hi = x['h'] if run_hi is None else max(run_hi, x['h'])
+            if not in_touch and u is not None and run_hi >= u:
+                in_touch = True
+        evs = []
+        if arm_min is not None and mts == arm_min and h >= trig:
+            arm_min = None
+            if can:
+                evs.append('TRIGGERED')
+        if can and p['touch'] and fresh and in_touch:
+            evs.append('TOUCH')
+        if can and fresh and c > upper:
+            arm_min, trig, stop = mts + 60, h + _tick(h), lo
+            evs.append('BREAKOUT')
+        prev_c, prev_u = c, upper
+        for ev in evs:
+            out.append((b0['t'], ev, c, upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None))
     return out
 
 
@@ -401,12 +466,15 @@ def selftest_breakout():
     """Synthetic 30s bars: a flat base, then a 1m candle that touches the band at the half-minute
     and closes above it (TOUCH, BREAKOUT), a next candle over its high (TRIGGERED), then a candle
     above the band right after the breakout (not a fresh one: nothing). A second path: a breakout
-    whose next candle stalls under the trigger (no TRIGGERED)."""
+    whose next candle stalls under the trigger (no TRIGGERED). v18: a 1m chart reading the 30s bars
+    marks the same minutes as the 30s alert sends (random walks), and a minute whose closing 30s
+    bar is missing no longer leaves the next candle's "fresh" test stale."""
     import datetime as dt
+    import random
     t0 = dt.datetime(2026, 10, 16, 9, 30, tzinfo=ET)
-    def bars_of(path):   # (high, low, close) per 30s bar
+    def bars_of(path, skip=()):   # (high, low, close) per 30s bar; `skip` = bar indexes with no trades
         return [{'t': t0 + dt.timedelta(seconds=30 * k), 'o': c, 'h': h, 'l': lo, 'c': c, 'v': 100}
-                for k, (h, lo, c) in enumerate(path)]
+                for k, (h, lo, c) in enumerate(path) if k not in skip]
     base = [(1.001, 0.999, 1.0) if k % 2 else (1.0, 0.998, 0.999) for k in range(30)]
     run = [(1.03, 1.0, 1.02), (1.05, 1.02, 1.045),     # 09:45: touches at :00 (seen at :30), closes above → TOUCH, BREAKOUT
            (1.06, 1.045, 1.055), (1.07, 1.05, 1.06),   # 09:46: at the 1.06 trigger (1.05 + a $0.01 tick) in its first half → TRIGGERED
@@ -422,7 +490,36 @@ def selftest_breakout():
     ok = got == want and ok_levels and got2 == ['BREAKOUT']
     print('BB breakout (v17):', got, '| trigger/stop', 'OK' if ok_levels else 'WRONG', '| stalled:', got2, '→',
           'OK' if ok else f'UNEXPECTED (want {want} and [BREAKOUT])')
-    return ok
+
+    # v18: the 1m chart's marks = the 30s alert's signals, minute for minute, on random walks
+    # with breakouts (every 30s bar present).
+    def minute_set(evs):
+        return sorted({(int(e[0].timestamp()) // 60, e[1]) for e in evs})
+    random.seed(7)
+    mismatches, total = 0, 0
+    for trial in range(40):
+        px, path = 1.0, []
+        for k in range(400):
+            px *= 1 + random.gauss(0, 0.004) + (0.03 if random.random() < 0.02 else 0.0)
+            hi, lo = px * (1 + abs(random.gauss(0, 0.004))), px * (1 - abs(random.gauss(0, 0.004)))
+            path.append((hi, lo, px))
+        a = minute_set(simulate_breakout(bars_of(path)))
+        b = minute_set(simulate_breakout_1m(bars_of(path)))
+        total += len(a)
+        mismatches += a != b
+    ok_1m = mismatches == 0 and total > 100
+    print(f'v18 1m chart marks what the 30s alert sends: {total} signals on 40 random paths, {mismatches} paths differ →',
+          'OK' if ok_1m else 'UNEXPECTED')
+
+    # v18: a closed-above candle (09:45), then 09:46 with only its first 30s bar (back under the
+    # band), then 09:47 closing above → a fresh BREAKOUT. v17 kept 09:45 as the last close and missed it.
+    gap = base + [(1.03, 1.0, 1.02), (1.05, 1.02, 1.045),       # 09:45 BREAKOUT
+                  (1.01, 0.99, 1.0), (0, 0, 0),                  # 09:46: first half only (index 33 skipped)
+                  (1.02, 1.0, 1.01), (1.08, 1.01, 1.075)]        # 09:47: closes above the band
+    got3 = [(e[0].strftime('%H:%M:%S'), e[1]) for e in simulate_breakout(bars_of(gap, skip={33})) if e[1] == 'BREAKOUT']
+    ok_gap = got3 == [('09:45:30', 'BREAKOUT'), ('09:47:30', 'BREAKOUT')]
+    print('v18 a candle with no closing 30s bar is closed on its last bar:', got3, '→', 'OK' if ok_gap else 'UNEXPECTED')
+    return ok and ok_1m and ok_gap
 
 
 def selftest():
