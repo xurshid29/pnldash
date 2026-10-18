@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-10-18
+# Session Handover — updated 2026-10-18 (📐 graded)
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -154,15 +154,23 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **Grade the 📐 rows (due now; there's data since 10-03).** SQL: `docs/vwap-setup.md`
-   §9 / §13.6. History → 📐 Setups shows days at a glance.
-   - PULLBACK by line (session / month / year), touch, time of day and outcome.
-     BROKEN/HELD rows give outcomes, even off-screen.
-   - RECLAIM by line, stage, timeframe, and the GO-strength checks.
-   - **The B+ cap exemption** (since 10-10): capped+exempt vs capped+quiet outcomes.
-     Keep, widen or drop it.
-   - 30s vs 1m quality, and per-symbol trigger peaks against TradingView's 15 per
-     3 min (10-14: 7 on 30s).
+1. **📐 graded (10-18, 10 sessions 10-05 → 10-16; `docs/vwap-setup.md` §9.1,
+   `research/vwap-setup/grade_live.py`). The operator still has to decide on the follow-ups.**
+   - PULLBACK: 26% held, 64% broke. −0.8% a trade exiting on BROKEN, −0.3%
+     with a stop 0.5% under the line. A heads-up, the same as the four-month study.
+     - The month line held 26%, the session line 28%; the year line is the weakest
+       (22%, n 74).
+     - Touch 3+ is the best touch (36% held, +0.6%), touch 1 the worst.
+     - 07:00–12:00 ET is the weakest window; a name still at A+/A breaks 75%.
+   - **B+ cap exemption: keep it.** 63 exempt pings: 35% held, +0.6%. 16 quiet ones:
+     6% held, −3.7%. 22 tickers only; re-grade ~11-01.
+   - GO: −1.1% a trade, 19% win. 💪 predicts how far it moves, not which way.
+     GOs off Momentum barely move.
+   - Trigger peaks 7 per symbol / 21 per alert per 3 min: fine. 150–210 📐 pings a
+     day, half of them GOs.
+   - **Ask the operator:** GO announcements (all / Momentum only / off in ⚙);
+     mute the year line on the phone (`tv_year`)?; a "touch 3+ / held before"
+     sidebar mark? Nothing has changed yet.
 2. **Re-grade the live A+…D grade** (overdue, planned ~10-15) from
    `screener_results.grade`, same label. Pipeline: `research/momentum-grade/`.
    Never hand-edit POINTS/CUTS.
@@ -243,6 +251,27 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-18 (Sun) — FIRST LIVE 📐 GRADING.** `research/vwap-setup/grade_live.py`
+reads `export-live.sql`: 9,721 rows → 6,503 events after merging the 30s/1m copies
+(History rule). Yahoo 1m price paths (with pre/post prices) cover 81% of signals
+inside a bar's range; the 78 that are >3% off are left out. Full tables:
+`docs/vwap-setup.md` §9.1.
+- **PULLBACK:** 905 announced on 261 tickers. 26% held, 64% broke, −0.77% a trade
+  on BROKEN's close, −0.29% with a stop 0.5% under the line.
+  - Month line 26% held, session line 28%, year line 22%.
+  - Touch 1 24% → touch 3+ 36% (+0.6%).
+  - 07:00–12:00 ET 24% held (−1.5%); 04:00–07:00 and 12:00–16:00 ≈ flat.
+  - A+/A at the pullback: 75% broke (−2.2%). B+ (includes faded A names) −0.3%.
+- **Cap exemption:** exempt 63 (35% held, +0.58%) vs quiet 16 (6%, −3.67%). Keep it.
+  MNDR/AEHL make up 18 of the 63.
+- **GO:** 868 announced. 19% win, −1.07%. 💪4 reaches +10% within 60 min 48% of
+  the time vs 💪0 8%, but drops 5% first 74% vs 26%. On Momentum at grade A:
+  +0.31% (n 98). First GO of a line −1.47%, later ones −0.67%.
+- **Gotcha found while grading:** compare TradingView's price with the Yahoo bar
+  the signal *closed on*, not the bar starting at delivery time. Fast names move
+  5–9% in that minute.
+- Decisions are open (START HERE item 1).
 
 **2026-10-14 / 10-18 — ONE TV ALERT OR TWO?** Events merged across timeframes (same ticker,
 stage and line within 5 min), 7 days from 10-06: only 49% were caught by both. 30s alone

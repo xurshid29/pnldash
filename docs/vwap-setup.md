@@ -9,13 +9,13 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v15** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v16** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
 | First live session | Mon 2026-10-05 |
-| Grade it | ~2026-10-17 (the "Grading plan" section below has the SQL) |
-| Status | **The reclaim edge is unmeasured** — the evidence is six hand-picked winners. The PULLBACK setup's session-line version measured about break-even on four months of our data (§13.5) |
+| Grade it | **First live grading 2026-10-18 (§9.1)**, `research/vwap-setup/grade_live.py`; re-grade ~2026-11-01 |
+| Status | **Graded live on 10 sessions (§9.1).** PULLBACK: 26% held, about break-even with a stop under the line, the same as the four-month session-line study (§13.5). The month line is no better than the session line, and later touches beat the first. GO: −1.1% a trade, and 💪 predicts the size of the move, not its direction. The B+ cap exemption works as intended |
 
 ---
 
@@ -867,6 +867,116 @@ and the 2026-08 session-VWAP reclaim result.
 Also ask the operator to import a fresh IBKR `.tlg`. The journal stops at
 2026-06-18, and their real P&L on these trades is the other half of the answer.
 
+### 9.1 First live grading — 2026-10-18 (10 sessions, 10-05 → 10-16)
+
+`research/vwap-setup/grade_live.py` (export with `export-live.sql`, ~5 min with
+the Yahoo download). 9,721 rows → 6,503 events after merging the 30s/1m/2m
+copies, the History tab's rule. The price path is Yahoo 1m bars, with
+pre- and post-market prices; 81% of signals sit inside a Yahoo bar's range,
+and 78 that are more than 3% off are left out of the price columns.
+
+Measures:
+- **held / broke**: TradingView's own outcome messages.
+- **tv**: a trade priced on those messages alone. HELD at its price, BROKEN at
+  its close: the operator's close-under-the-line exit.
+- **win**: +10% before −5%, within 60 min.
+- **stop**: a stop 0.5% under the line, a +10% target, out at 60 min. This is
+  the rule `research/vwap-pullback` used, so the numbers compare with §13.5.
+- **Baseline:** any minute of the same ticker-days, win 13% / loss 29%.
+
+**PULLBACK: a good heads-up, not a mechanical edge. Same as the four-month
+session-line study (§13.5).**
+
+| announced PULLBACKs | n | tickers | held | broke | tv | stop |
+|---|---:|---:|---:|---:|---:|---:|
+| all | 905 | 261 | 26% | 64% | −0.77% | −0.29% |
+| session line | 490 | 183 | 28% | 66% | −0.62% | −0.20% |
+| month line | 413 | 211 | 26% | 61% | −0.88% | −0.29% |
+| year line | 74 | 34 | 22% | 68% | −1.74% | −1.15% |
+| touch 1 | 562 | 249 | 24% | 64% | −1.17% | −0.57% |
+| touch 2 | 198 | 97 | 27% | 63% | −0.57% | −0.19% |
+| touch 3+ | 145 | 51 | 36% | 62% | +0.39% | +0.62% |
+| 04:00–07:00 ET | 128 | 55 | 34% | 66% | −0.18% | −0.06% |
+| 07:00–12:00 ET | 394 | 178 | 24% | 70% | −1.53% | −0.69% |
+| 12:00–16:00 ET | 197 | 94 | 27% | 55% | +0.14% | +0.20% |
+| on Momentum, grade A+/A | 160 | 96 | 23% | 75% | −2.16% | −1.45% |
+| on Momentum, grade B+ | 343 | 131 | 31% | 67% | −0.28% | +0.02% |
+| off Momentum | 306 | 146 | 23% | 55% | −0.62% | +0.09% |
+
+- **The month line is not better than the session line** on these 10 days.
+  The operator's impression was that it works more often. The year line is the
+  weakest line, on a small sample.
+- **Later touches beat the first one, again.** A third touch only exists when
+  the line held before, because the cap counts failures. A line that has
+  already held is the stronger line. "The first bounce is best" didn't hold
+  here either.
+- **The operator's main window, 07:00–12:00 ET (16:00–21:00 Tashkent), is the
+  weakest stretch for pullbacks.** It has the biggest moves, but they go both
+  ways.
+- **A name still graded A+/A when it pulls back breaks 75% of the time.** The
+  stored grade is fade-capped, so B+ includes A-tier names that faded ≥8% off
+  their 10-min high, the faster drops. It fits "A+ is two-way".
+- **A stop just under the line beats waiting for BROKEN by ~0.5 points a
+  trade** (−0.29% vs −0.77%). A broken pullback's close averages −5.2% from
+  the entry. Same finding as §13.5.
+- Every day lands between −1.8% and +0.5% (tv). No single day carries the
+  result.
+
+**The B+ cap exemption (since 10-10): keep it as it is.**
+
+| v16 PULLBACKs | n | tickers | held | tv | stop |
+|---|---:|---:|---:|---:|---:|
+| fails 0 | 354 | 156 | 23% | −1.31% | −0.99% |
+| fails 1 | 107 | 55 | 21% | −1.87% | −1.00% |
+| past the cap, exempt (pinged) | 63 | 22 | 35% | +0.58% | +0.63% |
+| past the cap, quiet | 16 | 7 | 6% | −3.67% | −4.23% |
+
+The exemption sorts the two groups as intended. Fourteen of the 16 quiet ones
+were off Momentum, mostly after hours. The sample is concentrated: MNDR 9 and
+AEHL 9, and without MNDR the exempt group is +1.04%. Don't widen it to B:
+B-or-lower pullbacks did −1.9%. Re-grade around 11-01 with more tickers.
+
+**GO (reclaim) is the weaker of the two announced stages.**
+
+| announced GOs | n | tickers | win | loss | ≥+10% in 60 min | stop |
+|---|---:|---:|---:|---:|---:|---:|
+| all | 868 | 242 | 19% | 59% | 32% | −1.07% |
+| month line | 706 | 233 | 19% | 60% | 32% | −1.03% |
+| year line | 152 | 41 | 18% | 55% | 29% | −1.17% |
+| 💪0 | 95 | 60 | 8% | 26% | 8% | −0.92% |
+| 💪2 | 245 | 138 | 20% | 68% | 34% | −0.92% |
+| 💪4 | 111 | 67 | 23% | 74% | 48% | −1.75% |
+| on Momentum | 528 | 170 | 23% | 66% | 41% | −0.83% |
+| off Momentum | 340 | 138 | 12% | 47% | 17% | −1.48% |
+| on Momentum, grade A | 98 | 58 | 33% | 60% | 52% | +0.31% |
+| first GO of the day (ticker + line) | 423 | 242 | 16% | 60% | 29% | −1.47% |
+| a later GO | 445 | 146 | 22% | 58% | 35% | −0.67% |
+
+- **💪 GO strength predicts how far it moves, not which way.** Each check
+  (morning, run-up, volume, on Momentum) raises both the +10% and the −5%
+  rates, so the trade P&L stays flat. Read 💪 as "this will move". Keep it a
+  tag; it makes a bad filter.
+- **Off-Momentum GOs barely move** (median best +2.3% in an hour). `via cross`
+  GOs barely move either (+2.8%).
+- READY (quiet since 10-06): 2,036 events, median best +3.1% in an hour.
+  53% of READY ticker-line-timeframe days reached GO.
+
+**Timeframes and limits.**
+- Events both alerts caught are the best. 30s-only pullbacks are the weakest
+  (tv −1.45%), but each alert still catches events the other misses, so keep
+  both.
+- TradingView trigger peaks: 7 per symbol per 3 min (30s, WFF; the limit is
+  15), and 21 per alert per 3 min (the limit is 1,000).
+
+**Volume.** 150–210 📐 announcements a day since 10-06, about half of them GOs.
+95–150 of them buzz, because they're on Momentum.
+
+**Decisions this feeds (the operator's call; nothing changed yet):**
+- GO announcements: keep them, keep only on-Momentum GOs, or switch GO off in ⚙.
+- The year line: keep the trial, or mute it on the phone (`tv_year`).
+- Whether a "touch 3+ / held before" mark on the sidebar is worth having.
+- The B+ exemption stays; re-grade ~11-01.
+
 ## 10. Changing the script — the procedure
 
 1. Edit `apps/web/src/tv/mvwap-bb-setup.pine` and **bump the version** in its
@@ -1163,6 +1273,11 @@ GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
   snapshots.
 - Ask for the operator's IBKR `.tlg`: their discretionary entries at the line
   are what this setup lives on.
+
+**Graded 2026-10-18 on 10 sessions: §9.1.** The month line held 26% vs the
+session line's 28%. Touch 3+ was the best touch, 07:00–12:00 ET was the
+weakest window, and a stop just under the line beat the close exit by ~0.5
+points a trade.
 
 ### 13.7 Replay and changes
 

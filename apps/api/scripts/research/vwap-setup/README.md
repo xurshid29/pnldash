@@ -63,3 +63,23 @@ FORMING/READY as v4 and only changes GO:
 |---|---|---|---|---|---|---|
 | v4 basis cross | 9 | +5.9% | 1 | 8 | +11.6% | 0 |
 | v5 reclaim or cross | 12 | +15.7% | 2 | 12 | +18.7% | 2 |
+
+## Grading the live signals — `grade_live.py`
+
+Scores every live 📐 signal (`tier_events` tier `alert`, event `tv_setup`)
+against what price did next. It merges the 30s/1m copies of an event, the way
+the History tab does. A PULLBACK is scored on TradingView's own HELD/BROKEN
+messages and on Yahoo 1m price paths: +10% vs −5% first, the best move in
+30/60 min, and a stop 0.5% under the line. The same split tables cover GO,
+GO strength, the cap exemption, the timeframes and TradingView's trigger
+limits.
+
+```bash
+mkdir -p /tmp/vwap-setup
+ssh root@<droplet> 'cd /root/projects/pnldash && docker compose -f docker-compose.prod.yml exec -T postgres psql -U pnldash -d pnldash -q' < export-live.sql > /tmp/vwap-setup/live.csv
+python3 grade_live.py /tmp/vwap-setup/live.csv          # everything (~5 min on the first run: one Yahoo request per ticker-week)
+python3 grade_live.py /tmp/vwap-setup/live.csv pb       # PULLBACK only; also: go, misc
+```
+
+Yahoo keeps 1m bars for ~30 days, so grade within a month of the signals.
+Results of the first grading (2026-10-18): `docs/vwap-setup.md` §9.1.
