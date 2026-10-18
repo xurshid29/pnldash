@@ -62,6 +62,7 @@ Postgres, migrations via `dbmate` in `db/migrations/`.
 - **Types:** Kysely `Database` interface in `apps/api/src/db/types.ts` mirrors migrations
 - **Imports:** ESM only (`type: module`); local imports keep the `.js` extension at runtime (`import x from './foo.js'`)
 - **Frontend state:** TanStack Query for server state; React Context only for cross-cutting concerns (auth)
+- **Displayed times:** the operator's clock, `Asia/Tashkent` (UTC+5, also the embedded TradingView charts); date pickers stay on the ET trading day (one US session = one date). Server-side day logic is ET
 
 ## Polling architecture (how the web service replicates the bash script)
 
