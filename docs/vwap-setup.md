@@ -637,6 +637,7 @@ TradingView servers                                   pnldash droplet
 | A READY on a line that already had a READY announced today (ET day; since 2026-10-05) | `ready_once_per_day` | `quiet`. Before the first webhook after a deploy, the gate reloads today's announced READYs from `tier_events` |
 | The ticker had this stage announced in the last 5 min (a month READY, then a year READY a minute later). **PULLBACK counts per line** (since 2026-10-05, `a5a5520`): only a line announced in the last 5 min blocks it, in any combination | `notify_merge_sec` 300 | `log`. Only announcements count, so a quiet event never blocks the next one |
 | A PULLBACK past the day's cap: `fails` ≥ 2 on every line it names (script v16+; older scripts capped themselves) | `pb_cap` 2, `pb_cap_exempt` 'B+' | `quiet`, unless the ticker is on our Momentum list at grade B+ or better (a trial since 2026-10-10, after WFF) — then it announces, and Telegram says it's past the cap. Rows carry `fails`, `capped`, `cap_exempt` |
+| A GO on a ticker that isn't on our Momentum list (since 2026-10-18, `9751510`, after the first live grading §9.1: off-list GOs won 12% and barely moved) | `go_momentum_only` true | `quiet`. The sidebar shows it with a dimmed pill. FORMING/READY/PULLBACK off the list are unaffected |
 | More than 120 webhooks a minute | `max_per_min` 120 | `flood` → 429, so a leaked key or runaway alert can't spam the phone |
 
 **The noise cut (operator, 2026-10-05):** "we need to cut noise a little bit
@@ -971,10 +972,12 @@ B-or-lower pullbacks did −1.9%. Re-grade around 11-01 with more tickers.
 **Volume.** 150–210 📐 announcements a day since 10-06, about half of them GOs.
 95–150 of them buzz, because they're on Momentum.
 
-**Decisions this feeds (the operator's call; nothing changed yet):**
-- GO announcements: keep them, keep only on-Momentum GOs, or switch GO off in ⚙.
-- The year line: keep the trial, or mute it on the phone (`tv_year`).
-- Whether a "touch 3+ / held before" mark on the sidebar is worth having.
+**What the operator decided (2026-10-18, `9751510`):**
+- **GO is announced only on Momentum names** (§7.2, `go_momentum_only`).
+- **The year line: wait.** The trial keeps running and nothing is muted.
+- **The sidebar marks proven lines:** ↺ held before (199 announced pullbacks:
+  33% held, tv +0.26%) or ↺ touch 3+ (39 more: 36%), against 24% held and
+  −1.2% for the other 667. Announced pullbacks only.
 - The B+ exemption stays; re-grade ~11-01.
 
 ## 10. Changing the script — the procedure
@@ -1077,6 +1080,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-05 | server | `6bc9437` | Noise cut, no script change, so no alert recreation. Operator: "we need to cut noise a little bit … I hide broken, held, forming setups, and READY also can be limited". FORMING, BROKEN and HELD are now quiet (stored with `quiet: true`, graded and shown in the sidebar, never announced), and READY is announced once per ticker and line per ET day (§7.2). The gate spots timeframe copies per line, and its 5-min limit only counts announcements. Replayed on 10-05: 372 → 154 announcements, buzzing pushes 106 → 55. Regression: 153 checks. |
 | 2026-10-05 | server | `a5a5520` | The 5-min PULLBACK limit counts per line (§7.2). Operator: "lets do what you suggested" after MI's 15:21 ET session-line pullback (+10% two minutes later) was only logged behind a year-line PULLBACK 3½ min earlier. A line already announced in another combination stays logged. Replayed on 10-05: 169 → 174 announcements. Regression: 164 checks. |
 | 2026-10-10 | v16 | `fe6fd4a` | Operator, after WFF 10-09 (a year-line pullback at 12:35 ET, blocked as touch 4 after two BROKEN, ran +40%): "we should not limit pullbacks or increase the cap at least for session top gainers maybe? Or at least, for >B grades?" Measured on the session line (`study.py --cap-strong`, 06-12 → 10-09): the cap blocks 1.8 touches/day at −0.64% (stop, +10%); the bigger the day's gain the worse (+100–200%: −0.88%, +200%+: −0.95%), so no top-gainer exemption; grade B+ or better: +0.90% on n 17, all October, unproven. So the cap moved to the server and the B+ idea runs as a measured trial: the script no longer caps (`pbMax` 0) and every PULLBACK carries `fails N` (failed pullbacks on its line before it, the lowest of the lines named); the server keeps PULLBACKs past 2 failures quiet unless the ticker is on Momentum at B+ or better (`TV_SETUP.pb_cap`, `pb_cap_exempt`), and stores `fails` / `capped` / `cap_exempt`. Chart: past-the-cap pullbacks are gray (`pbCapMark`). The sidebar tags them "past cap"; Telegram says "N failed before". Cap tweaks no longer need a new script. Replica: `max_touches` 0 + `alert_fails`, v16 self-test. Regression: 194 checks. Grade the exemption ~10-24. |
+| 2026-10-18 | server + UI | `9751510` | After the first live grading (§9.1), the operator chose: "lets keep only Momentum ones" (GO announcements), wait on the year line, and add the sidebar mark. A GO on a ticker not on our Momentum list is now quiet (`TV_SETUP.go_momentum_only`): stored, graded and shown dimmed, with no toast, sound or Telegram. In the 10 graded days it would have silenced ~34 of ~85 GO pings a day. The 📐 sidebar tags an announced PULLBACK **↺ held before** when its line already HELD today, else **↺ touch 3+**. In the grading these held 33–36%, against 24% for the rest; quiet ones past the cap held 6%, so they get no tag. No script change, so no alert recreation. Regression: 202 checks. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 

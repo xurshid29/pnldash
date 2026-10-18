@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-18 (Sun), last code commit `721125b` (deployed)
+## START HERE — state at 2026-10-18 (Sun), last code commit `9751510`
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail, the History /
@@ -64,7 +64,7 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
      toasts and sounds, and Telegram.
    - **📐 sidebar** (`TvSetupsSidebar.tsx`): one row per ticker with its current
      state. Line 1: Finviz/TV buttons · ticker · ⭐ if on Momentum · stage pill (line
-     S/M/Y, touch #) · "past cap" · **✓ held / ✗ broke + time** on a closed
+     S/M/Y, touch #) · "past cap" · **↺ held before / ↺ touch 3+** (10-18) · **✓ held / ✗ broke + time** on a closed
      pullback · 💪 on a GO · age. Line 2: current change % and grade, then the
      distance to the line, or "since %" once resolved. Sections: **Live** (READY ≤30
      min, GO ≤15, an open PULLBACK ≤60) and **Earlier today**. A stage switched off
@@ -120,6 +120,7 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
    - **Announcing** (`TvSetupGate` in `services/tv-setups.ts`):
      - the ⚙ stage switches (`app_settings` `tv_alert_stages`, now `["go","pullback"]`);
      - READY once per ticker and line per day;
+     - **GO only for Momentum names** (10-18, `go_momentum_only`; off-list GOs are quiet);
      - quiet rows are stored (`quiet: true`), graded, and shown in History.
      - On Telegram, Momentum names buzz and off-list names are silent.
    - **Year line (v14):** from this year's 60-minute bars via `request.security`, so
@@ -168,9 +169,8 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
      GOs off Momentum barely move.
    - Trigger peaks 7 per symbol / 21 per alert per 3 min: fine. 150–210 📐 pings a
      day, half of them GOs.
-   - **Ask the operator:** GO announcements (all / Momentum only / off in ⚙);
-     mute the year line on the phone (`tv_year`)?; a "touch 3+ / held before"
-     sidebar mark? Nothing has changed yet.
+   - **Decided 10-18 (`9751510`):** GO pings only for Momentum names; year line —
+     wait, no mute; sidebar marks ↺ held before / ↺ touch 3+ on announced pullbacks.
 2. **Re-grade the live A+…D grade** (overdue, planned ~10-15) from
    `screener_results.grade`, same label. Pipeline: `research/momentum-grade/`.
    Never hand-edit POINTS/CUTS.
@@ -271,7 +271,16 @@ inside a bar's range; the 78 that are >3% off are left out. Full tables:
 - **Gotcha found while grading:** compare TradingView's price with the Yahoo bar
   the signal *closed on*, not the bar starting at delivery time. Fast names move
   5–9% in that minute.
-- Decisions are open (START HERE item 1).
+- **Operator's decisions, shipped as `9751510`:** "1 - lets keep only Momentum ones; 2 - lets wait; 3 - ok".
+  - A GO off Momentum is quiet (`TV_SETUP.go_momentum_only`; poller `tvOnMomentum`, the latest cycle's rows).
+    That would have been ~34 of ~85 GO pings a day.
+  - Year line: no change.
+  - The sidebar tags announced pullbacks **↺ held before** (that line HELD earlier today) or **↺ touch 3+**.
+    Measured: 199 + 39 pullbacks, 33–36% held vs 24% for the other 667. Quiet ones aren't tagged
+    (past the cap and quiet: 6%).
+  - Regression 202 checks.
+  - The pill still shows `#1` in white. The operator rates the first bounce highest, but on our data it's the
+    weakest touch. Left as it is; ask before changing it.
 
 **2026-10-14 / 10-18 — ONE TV ALERT OR TWO?** Events merged across timeframes (same ticker,
 stage and line within 5 min), 7 days from 10-06: only 49% were caught by both. 30s alone
