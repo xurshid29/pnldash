@@ -171,14 +171,25 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
      day, half of them GOs.
    - **Decided 10-18 (`9751510`):** GO pings only for Momentum names; year line —
      wait, no mute; sidebar marks ↺ held before / ↺ touch 3+ on announced pullbacks.
-2. **Re-grade the live A+…D grade** (overdue, planned ~10-15) from
+2. **BB-upper breakout — the operator's 3rd setup (10-18), measured, NOT built.**
+   - The rule: a 1m candle closes above a **30s** BB(20,2) upper band, and the
+     next candle takes its high. `research/bb-breakout/README.md`.
+   - On 20 sessions of +20% names: ~440 trades a day, break-even.
+   - MACD filters nothing (positive on 99.7% of breakouts).
+   - A gate (on Momentum and A+, or 10–50% over sVWAP) gives ~37 a day at +0.77%
+     (both halves +), but the median trade loses and 0.5% slippage each way turns it
+     negative, so it's a heads-up.
+   - Best exit: the first close back under the band.
+   - **Proposed build:** 📐 script v17, on the 30s alert. BREAKOUT (trigger +
+     stop) → TRIGGERED → FADED, with a server gate. Waiting for the operator's go.
+3. **Re-grade the live A+…D grade** (overdue, planned ~10-15) from
    `screener_results.grade`, same label. Pipeline: `research/momentum-grade/`.
    Never hand-edit POINTS/CUTS.
-3. **Grade the opportunity alerts** (overdue) with `alert_study.py`. The phone
+4. **Grade the opportunity alerts** (overdue) with `alert_study.py`. The phone
    still gets 🅰️/⚡/📰; ask whether they want those at all.
-4. **IBKR .tlg** — the operator said (10-06) they'll send one. It's needed to match
+5. **IBKR .tlg** — the operator said (10-06) they'll send one. It's needed to match
    their real trades to alerts.
-5. **Offered, not built (ask before doing any):**
+6. **Offered, not built (ask before doing any):**
    - a pullback-to-BB-basis setup for names far above VWAP (WFF 10-12; measurable
      on our data);
    - a MACD-at-PULLBACK study (histogram rising/falling, MACD line vs 0, a
@@ -188,7 +199,7 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
    - a passive "vs VWAP" column on Momentum;
    - the operator's failed setups added to `replay.py` (Yahoo 1m only reaches back
      ~30 days).
-6. Long-open: journal attribution (trades ↔ grade/rows at entry); Ross's 1m-MACD
+7. Long-open: journal attribution (trades ↔ grade/rows at entry); Ross's 1m-MACD
    exit tell as a live feature.
 
 **Gotchas before touching things:**
@@ -251,6 +262,31 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-18 (Sun, later) — BB-UPPER BREAKOUT MEASURED (`research/bb-breakout/`).**
+- **The ask:** the operator sent 5 charts (NWGL, HODO, XLAB, SGRX, XXII; 10-15/16)
+  and asked how to test the setup and alert on it in TradingView. "Catch breakouts,
+  when candle crosses over the bb upper row and the next candle crosses prev candle
+  high". The chart is 1m with a **30s** BB (20, SMA, 2), because the 1m band "crosses
+  too often". They asked about MACD (their 30s MACD is 4/26/10) and RVol/volume.
+- **The replay:** Yahoo 1m with ETH prices. The 30s band is approximated by 1m
+  BB(10), since we have no 30s data. Universe: 1,263 ticker-days ≥+20%, 09-21 → 10-16.
+- **The operator's 8 windows:** 6 trigger, 15 of 17 entries reach +10% first.
+- **Universe:** raw ~440 trades/day, 18% +10% before the stop, band exit +0.03%.
+  - MACD proxy positive and rising on 99.7% of breakouts → useless as a filter.
+  - Hot-name context separates trades but in both directions: A+, ≥10% over sVWAP,
+    day ≥100%, run30 ≥20%, big candle, RTH bar volume ≥8×.
+  - The first break after ≥60 quiet bars is the weakest.
+  - The trigger wait: +0.03% vs −0.23% for buying every signal close.
+  - The best of 5 exits is the first close back under the band. Basis, trail,
+    15 min and a +10% target are all worse.
+  - Gate candidate (on Momentum and A+, or 10–50% over sVWAP): 37/day, +0.77%,
+    halves +1.00/+0.56. But median −0.57%, the top 1% carries it, and 0.5%
+    slippage each way gives −0.23%.
+- **Advice given:** build it into the 📐 script (v17) on the **30s alert** (exact
+  30s band, 1m candles from 30s pairs, trigger seen within 30 s), with stages
+  BREAKOUT / TRIGGERED / FADED and a server gate. Then a 2-week live trial graded on
+  TradingView's own numbers. Waiting for the operator's decisions.
 
 **2026-10-18 (Sun) — FIRST LIVE 📐 GRADING.** `research/vwap-setup/grade_live.py`
 reads `export-live.sql`: 9,721 rows → 6,503 events after merging the 30s/1m copies
