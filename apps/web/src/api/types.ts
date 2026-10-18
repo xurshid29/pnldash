@@ -396,6 +396,9 @@ export interface TvBreakout {
   ah_gain: number | null;
   vol_x: number | null;       // BREAKOUT: the candle's volume vs the last 20 candles
   run30: number | null;       // close vs the lowest low of the last 30 minutes, %
+  band_slope: number | null;  // v19: the band now vs at the close 5 candles ago, %
+  off_high: number | null;    // v19: the close vs the day's high so far, %
+  strong: boolean | null;     // v19: band not falling and within 10% of the high (null before v19)
   tf: string | null;
   chg: number | null;         // our Momentum row at that moment (null off the list)
   grade: string | null;

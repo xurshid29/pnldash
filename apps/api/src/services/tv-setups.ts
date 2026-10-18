@@ -39,6 +39,12 @@ export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback
 // The BB breakout's stages (script v17): a 1m candle against the 30s upper band.
 // No VWAP line; stored as tier_events event 'tv_breakout', never announced.
 export const BREAKOUT_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['touch', 'breakout', 'triggered']);
+// v19: a strong breakout — the band not falling over the last 5 candles and the
+// close within TV_SETUP.bo_strong_off % of the day's high. Null without the context.
+export function boStrong(slope: number | null | undefined, offHigh: number | null | undefined): boolean | null {
+  if (slope == null || offHigh == null) return null;
+  return slope >= TV_SETUP.bo_strong_slope && offHigh >= -TV_SETUP.bo_strong_off;
+}
 // One stored BB-breakout signal: the tier_events meta (event 'tv_breakout'),
 // the SSE 'breakout' payload and a row of GET /api/screener/breakouts.
 export interface TvBreakoutEvent {
@@ -57,6 +63,9 @@ export interface TvBreakoutEvent {
   ah_gain: number | null;
   vol_x: number | null;
   run30: number | null;
+  band_slope: number | null;  // v19
+  off_high: number | null;    // v19
+  strong: boolean | null;     // v19: boStrong(); null for a v17/v18 message
   tf: string | null;
   // our context at that moment (the Momentum row, when on our screen)
   chg: number | null;
@@ -121,6 +130,8 @@ export interface TvSetupSignal {
   trigger?: number | null;    // BREAKOUT / TRIGGERED: the buy stop (signal candle high + 1 tick)
   stop?: number | null;       // BREAKOUT / TRIGGERED: the signal candle's low
   run30?: number | null;      // close vs the lowest low of the last 30 minutes, %
+  band_slope?: number | null; // v19: the band now vs at the close 5 candles ago, %
+  off_high?: number | null;   // v19: the close vs the day's high so far, % (≤ 0)
 }
 
 export const TV_SETUP = {
@@ -151,6 +162,13 @@ export const TV_SETUP = {
   // BREAKOUT can recur within minutes on a choppy name, so only a re-delivery
   // inside this window is dropped (the 2-min dup_sec would drop real events).
   bo_dup_sec: 20,
+  // v19 (operator 2026-10-18, after XLAB's 18:14 / 19:30 BOs): a breakout is
+  // "strong" when the band isn't falling over the last 5 candles and the close
+  // is within 10% of the day's high. On 20 sessions strong ones did +0.41% a
+  // trade and weak ones −0.17% (both halves); 🔥 strong +1.22%, 🔥 weak +0.06%.
+  // Weak ones are dimmed on the dashboard (and drawn gray on the chart).
+  bo_strong_slope: 0,
+  bo_strong_off: 10,
   // GO is announced only for a ticker on our Momentum list (operator,
   // 2026-10-18, after the first live grading: off-list GOs won 12% and barely
   // moved, median best +2.3% in an hour, against 23% and +6.2% on Momentum).
@@ -284,6 +302,8 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     trigger: toNum(o.trigger),
     stop: toNum(o.stop),
     run30: toNum(o.run30),
+    band_slope: toNum(o.band_slope ?? o.slope),
+    off_high: toNum(o.off_high),
   };
 }
 
@@ -346,6 +366,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const trigger = /\btrigger\s+\$?(\d*\.?\d+)/i.exec(text);
   const stop = /\bstop\s+\$?(\d*\.?\d+)/i.exec(text);
   const run30 = /\brun30\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
+  const slope = /\bslope\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
+  const offHigh = /\boff\s+high\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -374,6 +396,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     trigger: toNum(trigger?.[1]),
     stop: toNum(stop?.[1]),
     run30: toNum(run30?.[1]),
+    band_slope: toNum(slope?.[1]),
+    off_high: toNum(offHigh?.[1]),
   };
 }
 

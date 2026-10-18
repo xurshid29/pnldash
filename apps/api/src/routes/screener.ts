@@ -215,7 +215,9 @@ router.get('/breakouts', authMiddleware, async (req, res) => {
         at: str(m.at) ?? new Date(r.at).toISOString(), stage: str(m.stage) ?? '',
         price: num(m.price), upper: num(m.upper), upper_pct: num(m.upper_pct), trigger: num(m.trigger), stop: num(m.stop),
         svwap: num(m.svwap), spx_pct: num(m.spx_pct), day_gain: num(m.day_gain), ah_gain: num(m.ah_gain),
-        vol_x: num(m.vol_x), run30: num(m.run30), tf: str(m.tf),
+        vol_x: num(m.vol_x), run30: num(m.run30),
+        band_slope: num(m.band_slope), off_high: num(m.off_high), strong: typeof m.strong === 'boolean' ? m.strong : null,
+        tf: str(m.tf),
         chg: num(m.chg), grade: str(m.grade), float_m: num(m.float_m), rv1: num(m.rv1), on_screen: m.on_screen === true,
       };
     }),

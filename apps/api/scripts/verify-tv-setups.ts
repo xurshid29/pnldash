@@ -8,7 +8,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, lineTokens,
-  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, BREAKOUT_STAGES, type TvSetupSignal,
+  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, BREAKOUT_STAGES, boStrong, type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -383,6 +383,15 @@ console.log('BB breakout (v17, 2026-10-18)');
   check('the three stages are the breakout set, not in the ⚙ menu',
     ['touch', 'breakout', 'triggered'].every((x) => BREAKOUT_STAGES.has(x as never) && !TV_STAGE_ORDER.includes(x as never)));
   check('old messages are not breakouts', parseTvMessage('GO VEEA 3.34 | mVWAP 3.21 (4.0%) | tf 1')?.upper === null);
+  // v19: the band's slope over 5 candles and the close vs the day's high → strong / weak
+  const v19 = parseTvMessage('BREAKOUT XLAB 3.15 | upper 3.12 (+1.0%) | trigger 3.2 | stop 2.95 | sVWAP 2.4 (+31.3%) | day high +180% | vol 1.4x | run30 +6% | slope -4.2% | off high -12.5% | tf 30S');
+  check('v19 parses slope and off high', v19?.band_slope === -4.2 && v19.off_high === -12.5 && v19.day_gain === 180 && v19.run30 === 6, JSON.stringify(v19));
+  check('…"off high" is not read as the day high', parseTvMessage('TOUCH X 1.0 | upper 1.0 (0.0%) | off high -3.0% | tf 30S')?.day_gain === null);
+  check('a v17/v18 message has no context', bo?.band_slope === null && bo.off_high === null && boStrong(bo.band_slope, bo.off_high) === null);
+  check('strong: band not falling and within 10% of the high (XLAB 19:30-type is weak)',
+    boStrong(4.1, -1.2) === true && boStrong(0, -10) === true && boStrong(-0.1, -1) === false && boStrong(3, -10.1) === false
+    && boStrong(v19!.band_slope, v19!.off_high) === false && TV_SETUP.bo_strong_slope === 0 && TV_SETUP.bo_strong_off === 10);
+  check('JSON context', parseTvMessage({ stage: 'breakout', ticker: 'X', band_slope: 2, off_high: -3 })?.band_slope === 2);
 
   const T0 = 1_792_166_400;   // 2026-10-16 11:20 ET
   const g = new TvSetupGate();
@@ -416,7 +425,10 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'boCHigh + syminfo.mintick',
     // v18: drawn on a 1m chart from the 30s bars inside each candle
     'request.security_lower_tf(syminfo.tickerid, boUse1m ? boBandTf : timeframe.period, boBand())', 'boInTouch := true',
-    'boNative ? not boEnds and boCHigh >= boUp : boInTouch']) {
+    'boNative ? not boEnds and boCHigh >= boUp : boInTouch',
+    // v19: strong / weak context in the message and the marker colours
+    '" | slope "', '" | off high "', 'boSlope >= boStrSlope', 'boOff >= -boStrOff', 'boStrong ? color.fuchsia : color.gray',
+    'array.push(boUps, boLastU)']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

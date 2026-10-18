@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v18 (2026-10-18).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v19 (2026-10-18).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Three setups in one script, so the same two watchlist alerts carry all of them
@@ -84,6 +84,8 @@ boMult     = input.float(2.0,         "BB StdDev", minval = 0.1, group = "BB bre
 boMinGain  = input.float(20.0,        "Today's gainers: day high at least % (-100 = filter off)", group = "BB breakout (v17)")
 boTouchOn  = input.bool(true,         "TOUCH: the forming 1m candle reaches the band", group = "BB breakout (v17)")
 boShow     = input.bool(true,         "Draw the band and markers (on the band's own chart, or a 1m chart — v18)", group = "BB breakout (v17)")
+boStrSlope = input.float(0.0,         "Strong: the band up at least % over the last 5 candles (v19; weak = gray)", group = "BB breakout (v17)")
+boStrOff   = input.float(10.0,        "Strong: the close at most % under the day's high (v19)", group = "BB breakout (v17)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -499,6 +501,13 @@ alertcondition(fireM == 3 or fireY == 3, "GO", "GO {{ticker}} {{close}} | tf {{i
 // Same rules either way. Alerts go out only from the chart timeframe `boTf` (the
 // 30s alert: a TOUCH comes 30 s before the candle closes; from the 1m alert it
 // would arrive with the BREAKOUT). Other chart timeframes draw nothing.
+// v19 (operator: "some BOs are not very accurate maybe? 18:14, 18:44, 19:30" on
+// XLAB 10-16): each signal says how the band moved over the last 5 candles
+// (`slope`) and how far the close is under the day's high (`off high`). Strong =
+// the band not falling and the close within 10% of the high; weak ones are drawn
+// gray and the dashboard dims them. On 20 sessions (research/bb-breakout) strong
+// breakouts did +0.41% a trade and weak ones -0.17%, the same in both halves;
+// a bounce into a band still falling from the top (XLAB 19:30) is the weak kind.
 boChartSec = timeframe.in_seconds(timeframe.period)
 boBandSec  = timeframe.in_seconds(boBandTf)
 boNative   = boChartSec == boBandSec and boChartSec <= 60
@@ -537,6 +546,10 @@ var boLows = array.new<float>()   // the last 30 finished candles' lows
 var bool  boDone    = true    // the forming candle has closed
 var float boLastC   = na      // the forming candle's latest close and band, to close it
 var float boLastU   = na      // if its closing 30s bar has no trades (and so no bar)
+var boUps = array.new<float>()    // the band at the close of the last 5 finished candles (v19)
+var float boArmSlope  = na        // the armed BREAKOUT's context, repeated on its TRIGGERED
+var float boArmOff    = na
+var bool  boArmStrong = false
 
 int boMinNow = time - time % 60000
 if na(boMin) or boMinNow != boMin
@@ -551,6 +564,9 @@ if na(boMin) or boMinNow != boMin
         array.push(boLows, boCLow)
         if array.size(boLows) > 30
             array.shift(boLows)
+        array.push(boUps, boLastU)
+        if array.size(boUps) > 5
+            array.shift(boUps)
     if not na(boArmMin) and boMinNow > boArmMin
         boArmMin := na                         // the trigger candle passed (or had no trades)
     boDone    := false
@@ -580,6 +596,10 @@ if boUse1m and boInN > 1
 
 boLastC := close
 boLastU := boUp
+// v19 context: the band now vs at the close 5 candles ago, and the close vs the day's high so far.
+float boSlope  = array.size(boUps) >= 5 and array.get(boUps, 0) > 0 ? (boUp / array.get(boUps, 0) - 1) * 100 : na
+float boOff    = not na(dayHigh) and dayHigh > 0 ? (close / dayHigh - 1) * 100 : na
+bool  boStrong = not na(boSlope) and boSlope >= boStrSlope and not na(boOff) and boOff >= -boStrOff
 bool boCalc    = boValid and inWindow and boGainer and not na(boUp)
 bool boTrigEv  = false
 bool boTouchEv = false
@@ -596,6 +616,9 @@ if boEnds
         boArmMin  := boMin + 60000
         boTrig    := boCHigh + syminfo.mintick
         boStop    := boCLow
+        boArmSlope  := boSlope
+        boArmOff    := boOff
+        boArmStrong := boStrong
         boBreakEv := true
     boPrevC := close
     boPrevU := boUp
@@ -605,11 +628,16 @@ if boEnds
     array.push(boLows, boCLow)
     if array.size(boLows) > 30
         array.shift(boLows)
+    array.push(boUps, boUp)
+    if array.size(boUps) > 5
+        array.shift(boUps)
     boDone := true
 
 // The message — a contract with services/tv-setups.ts parseTvMessage:
 //   TOUCH XLAB 2.29 | upper 2.3 (-0.4%) | sVWAP 2.01 (+13.9%) | day high +80% | run30 +12% | tf 30S
-//   BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S
+//   BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | slope +4.1% | off high -1.2% | tf 30S
+// v19: `slope` (the band over the last 5 candles) and `off high` (the close vs the day's high);
+// a TRIGGERED repeats its BREAKOUT's.
 //   TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02 (+19.8%) | day high +92% | run30 +19% | tf 30S
 boMsg(int ev) =>
     string msg = (ev == 1 ? "TOUCH" : ev == 2 ? "BREAKOUT" : "TRIGGERED") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
@@ -626,6 +654,12 @@ boMsg(int ev) =>
         msg += " | vol " + str.tostring(boVolX, "#.#") + "x"
     if not na(boRun30)
         msg += " | run30 +" + str.tostring(math.max(boRun30, 0), "#") + "%"
+    float sl  = ev == 3 ? boArmSlope : boSlope
+    float offH = ev == 3 ? boArmOff : boOff
+    if not na(sl)
+        msg += " | slope " + (sl >= 0 ? "+" : "") + str.tostring(sl, "#.0") + "%"
+    if not na(offH)
+        msg += " | off high " + str.tostring(offH, "#.0") + "%"
     msg + " | tf " + timeframe.period
 
 if boSend and boTrigEv
@@ -635,6 +669,7 @@ if boSend and boTouchEv
 if boSend and boBreakEv
     alert(boMsg(2), alert.freq_once_per_bar_close)
 plot(boShow and boValid ? boUp : na, "BB upper (breakout)", color.new(color.fuchsia, 40))
-plotshape(boShow and boTouchEv and not boBreakEv, "BB touch", shape.circle, location.abovebar, color.fuchsia, size = size.tiny)
-plotshape(boShow and boBreakEv, "Breakout", shape.labeldown, location.abovebar, color.fuchsia, text = "BO", textcolor = color.white, size = size.small)
-plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar, color.fuchsia, size = size.small)
+// v19: strong signals fuchsia, weak ones (band falling, or >10% under the day's high) gray.
+plotshape(boShow and boTouchEv and not boBreakEv, "BB touch", shape.circle, location.abovebar, boStrong ? color.fuchsia : color.gray, size = size.tiny)
+plotshape(boShow and boBreakEv, "Breakout", shape.labeldown, location.abovebar, boStrong ? color.fuchsia : color.gray, text = "BO", textcolor = color.white, size = size.small)
+plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar, boArmStrong ? color.fuchsia : color.gray, size = size.small)

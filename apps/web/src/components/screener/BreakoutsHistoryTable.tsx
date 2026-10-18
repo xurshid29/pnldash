@@ -14,6 +14,7 @@ import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
 import { GradeCell } from '../common/GradeCell';
 import { fmtPct } from '../../utils/format';
+import { isHot, weakWhy } from './breakoutContext';
 
 const { Text } = Typography;
 const LOCAL_TZ = 'Asia/Tashkent'; // the operator's clock
@@ -24,11 +25,6 @@ interface Row {
   at: number;                       // ms
   touchAt: number | null;           // a TOUCH earlier in the same minute
   triggeredAt: number | null;       // the TRIGGERED that followed (next candle)
-}
-
-// The study's gate (research/bb-breakout): on Momentum and A+, or 10–50% over sVWAP.
-function isHot(b: TvBreakout): boolean {
-  return b.on_screen && (b.grade === 'A+' || (b.spx_pct != null && b.spx_pct >= 10 && b.spx_pct < 50));
 }
 
 function buildRows(all: TvBreakout[]): Row[] {
@@ -70,6 +66,9 @@ export function BreakoutsHistoryTable({ date, momentumOnly }: { date: string; mo
   const triggered = visible.filter((r) => r.triggeredAt != null).length;
   const hot = visible.filter((r) => isHot(r.b));
   const touches = (data ?? []).filter((b) => b.stage === 'touch' && (!momentumOnly || b.on_screen)).length;
+  const strong = visible.filter((r) => r.b.strong === true);
+  const weak = visible.filter((r) => r.b.strong === false);
+  const trig = (rs: Row[]) => rs.filter((r) => r.triggeredAt != null).length;
 
   const columns: ColumnsType<Row> = useMemo(() => [
     {
@@ -93,10 +92,21 @@ export function BreakoutsHistoryTable({ date, momentumOnly }: { date: string; mo
       render: (_v, r) => (
         <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
           {r.touchAt != null && <Text type="secondary" style={{ fontSize: 11 }}>touch → </Text>}
-          <span style={{ color: '#ffadd2', fontWeight: 600 }}>BREAKOUT</span>
+          <span style={{ color: r.b.strong === false ? '#8c8c8c' : '#ffadd2', fontWeight: 600 }}>BREAKOUT</span>
           {isHot(r.b) && <span style={{ color: '#ff7a45', marginLeft: 4 }}>🔥</span>}
         </span>
       ),
+    },
+    {
+      title: 'Context', key: 'ctx', width: 150,
+      sorter: (a, b) => Number(a.b.strong === true) - Number(b.b.strong === true),
+      render: (_v, r) => {
+        const w = weakWhy(r.b);
+        if (r.b.strong == null) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
+        return w
+          ? <Text type="secondary" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>weak: {w}</Text>
+          : <span style={{ fontSize: 11, color: '#95de64', whiteSpace: 'nowrap' }}>strong · band {signed(r.b.band_slope)}</span>;
+      },
     },
     {
       title: 'Triggered', key: 'trig', width: 92,
@@ -147,6 +157,7 @@ export function BreakoutsHistoryTable({ date, momentumOnly }: { date: string; mo
             <>
               ⚡ {visible.length} BREAKOUT{visible.length === 1 ? '' : 'S'} · {triggered} triggered
               {visible.length > 0 && ` (${Math.round((triggered / visible.length) * 100)}%)`} · {touches} TOUCH · 🔥 {hot.length}
+              {(strong.length > 0 || weak.length > 0) && ` · strong ${strong.length} (${trig(strong)} triggered) / weak ${weak.length} (${trig(weak)} triggered)`}
               {' '}· stored and graded, never pinged (script v17, 30s alert)
             </>
           )}

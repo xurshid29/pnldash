@@ -6,6 +6,7 @@ import { useHiddenTickers } from '../../hooks/useHiddenTickers';
 import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
+import { isHot, weakWhy } from './breakoutContext';
 
 const { Text } = Typography;
 
@@ -18,12 +19,6 @@ const STAGE: Record<BoStage, { label: string; color: string; bg: string }> = {
   breakout: { label: 'BREAKOUT', color: '#fff', bg: '#9e1068' },
   triggered: { label: 'TRIGGERED', color: '#fff', bg: '#237804' },
 };
-// The study's gate (research/bb-breakout): on Momentum and either A+ or 10–50%
-// over the session VWAP. +0.77% a trade vs −0.04% for the rest, on 20 sessions.
-function isHot(b: TvBreakout): boolean {
-  return b.on_screen && (b.grade === 'A+' || (b.spx_pct != null && b.spx_pct >= 10 && b.spx_pct < 50));
-}
-
 function px(p: number | null): string {
   return p == null ? '—' : `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
 }
@@ -39,7 +34,7 @@ function ageText(sec: number): string {
 // BREAKOUT). One row per ticker, its latest signal while it is live: TOUCH →
 // BREAKOUT (buy stop over the candle high, stop its low) → TRIGGERED. Never a
 // sound or toast. 🔥 marks the ones the study rated (A+ or 10–50% over sVWAP
-// on Momentum); they sort first.
+// on Momentum, and strong); they sort first. Weak ones (v19) are dimmed and say why.
 export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
   const { breakouts } = useBreakouts();
   const { hidden } = useHiddenTickers();
@@ -59,7 +54,8 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
   for (const b of visible) if (!latest.has(b.ticker)) latest.set(b.ticker, b);   // newest first
   const live = [...latest.values()]
     .filter((b) => (now - Date.parse(b.at)) / 1000 <= LIVE_SEC[b.stage])
-    .sort((x, y) => Number(isHot(y)) - Number(isHot(x)) || Date.parse(y.at) - Date.parse(x.at));
+    .sort((x, y) => Number(isHot(y)) - Number(isHot(x)) || Number(x.strong === false) - Number(y.strong === false)
+      || Date.parse(y.at) - Date.parse(x.at));
   const nBreakouts = visible.filter((b) => b.stage === 'breakout').length;
   const nTriggered = visible.filter((b) => b.stage === 'triggered').length;
 
@@ -82,7 +78,8 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
         </div>
       )}
       {show && live.map((b) => {
-        const st = STAGE[b.stage];
+        const weak = weakWhy(b);
+        const st = weak ? { ...STAGE[b.stage], bg: '#434343', color: '#bfbfbf' } : STAGE[b.stage];
         const r = rowByTicker.get(b.ticker);
         const nowPx = r?.price != null ? Number(r.price) : null;
         const since = nowPx != null && b.trigger != null && b.trigger > 0 ? (nowPx / b.trigger - 1) * 100 : null;
@@ -93,7 +90,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
             onClick={() => setSelected(b.ticker)}
             style={{
               padding: '5px 8px', borderBottom: '1px solid #262626', cursor: 'pointer',
-              background: b.ticker === selected ? '#111d2c' : undefined, opacity: r ? 1 : 0.7,
+              background: b.ticker === selected ? '#111d2c' : undefined, opacity: weak ? 0.5 : r ? 1 : 0.7,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -102,6 +99,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
               {r && <span style={{ color: '#fadb14', fontSize: 11 }}>⭐</span>}
               <span style={{ fontSize: 10, fontWeight: 700, color: st.color, background: st.bg, padding: '0 5px', borderRadius: 3 }}>{st.label}</span>
               {isHot(b) && <span style={{ fontSize: 10, color: '#ff7a45' }}>🔥 {b.grade === 'A+' ? 'A+' : `${signed(b.spx_pct, 0)} vs sVWAP`}</span>}
+              {weak && <span style={{ fontSize: 10, color: '#8c8c8c', whiteSpace: 'nowrap' }}>weak: {weak}</span>}
               <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{ageText((now - Date.parse(b.at)) / 1000)}</Text>
             </div>
             <div style={{ fontSize: 11, color: '#8c8c8c', paddingLeft: 40, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>

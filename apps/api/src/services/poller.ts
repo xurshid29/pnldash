@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { formatTvSetupAlert, goStrength, gradeAtLeast, lineTokens, pastCap, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvBreakoutEvent, type TvSetupSignal } from './tv-setups.js';
+import { boStrong, formatTvSetupAlert, goStrength, gradeAtLeast, lineTokens, pastCap, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvBreakoutEvent, type TvSetupSignal } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -4063,14 +4063,18 @@ class PollerService {
       price: sig.price, upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null,
       trigger: sig.trigger ?? null, stop: sig.stop ?? null,
       svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, day_gain: sig.day_gain, ah_gain: sig.ah_gain,
-      vol_x: sig.vol_x, run30: sig.run30 ?? null, tf: sig.tf,
+      vol_x: sig.vol_x, run30: sig.run30 ?? null,
+      band_slope: sig.band_slope ?? null, off_high: sig.off_high ?? null, strong: boStrong(sig.band_slope, sig.off_high),
+      tf: sig.tf,
       chg: row?.change_pct ?? null, grade: row?.grade ?? null, float_m: row?.float_m ?? null, rv1: row?.rel_vol_1min ?? null,
       on_screen: row != null,
     };
     recordTierEvent('alert', 'tv_breakout', sig.ticker, { ...ev });
     console.log(`[tv-breakout] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%)` +
       (sig.trigger != null ? ` · trigger ${sig.trigger} · stop ${sig.stop ?? '?'}` : '') +
-      ` · sVWAP ${sig.spx_pct ?? '?'}% · run30 ${sig.run30 ?? '?'}% · tf ${sig.tf ?? '?'}` +
+      ` · sVWAP ${sig.spx_pct ?? '?'}% · run30 ${sig.run30 ?? '?'}%` +
+      (ev.strong != null ? ` · ${ev.strong ? 'strong' : 'weak'} (band ${sig.band_slope}%, ${sig.off_high}% off high)` : '') +
+      ` · tf ${sig.tf ?? '?'}` +
       (row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'));
     broadcast('breakout', ev);
     return ev;

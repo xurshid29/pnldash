@@ -349,7 +349,17 @@ def selftest_pullback():
 
 BO = dict(length=20,       # BB length (on the chart's bars: 30s on the 30s alert)
           mult=2.0,        # BB StdDev
-          touch=True)      # TOUCH: the forming 1m candle reaches the band before the minute closes
+          touch=True,      # TOUCH: the forming 1m candle reaches the band before the minute closes
+          strong_slope=0.0,   # v19: strong = the band up at least % over the last 5 candles…
+          strong_off=10.0)    # …and the close at most % under the day's high
+
+
+def _context(upper, ups5, close, day_high, p):
+    """v19: (band slope over the last 5 finished candles %, close vs the day's high %, strong)."""
+    slope = (upper / ups5[0] - 1) * 100 if len(ups5) >= 5 and ups5[0] and upper is not None else None
+    off = (close / day_high - 1) * 100 if day_high else None
+    strong = slope is not None and slope >= p['strong_slope'] and off is not None and off >= -p['strong_off']
+    return slope, off, strong
 
 
 def _bands(closes, n, mult):
@@ -372,7 +382,7 @@ def _tick(p):
 def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
     """Mirror of the script's BB breakout on its own chart (v17; the 30s alert): the band on the
     chart's bars, 1m candles built from them. bars: dicts with t (aware datetime, bar open),
-    o, h, l, c, v. Returns (t, stage, close, upper, trigger, stop) per signal; one bar can carry
+    o, h, l, c, v. Returns (t, stage, close, upper, trigger, stop, slope, off_high, strong) per signal; a bar can carry
     TRIGGERED and TOUCH/BREAKOUT only in theory (the fresh test keeps them apart).
     v18: a candle whose closing 30s bar had no trades is closed on its last bar when the next
     minute starts (no BREAKOUT for it), so the next candle's "fresh" test stays right."""
@@ -383,12 +393,17 @@ def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
     touched, done = False, True
     prev_c = prev_u = last_c = last_u = None
     arm_min = trig = stop = None
+    ups5, day, day_high, armed_ctx = [], None, None, (None, None, False)
     for b, upper in zip(bars, ups):
         ts = int(b['t'].timestamp())
         minute = ts - ts % 60
+        d = b['t'].astimezone(ET).date()
+        day_high = b['h'] if d != day else max(day_high, b['h'])
+        day = d
         if cmin is None or minute != cmin:
             if not done and last_c is not None:
                 prev_c, prev_u = last_c, last_u        # closed on its last bar
+                ups5 = (ups5 + [last_u])[-5:]
             if arm_min is not None and minute > arm_min:
                 arm_min = None                       # the trigger candle passed (or had no trades)
             done = False
@@ -398,6 +413,7 @@ def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
         ends = (ts + bar_sec) % 60 == 0
         fresh = prev_c is not None and prev_u is not None and prev_c <= prev_u
         last_c, last_u = b['c'], upper
+        ctx = _context(upper, ups5, b['c'], day_high, p)
         can = upper is not None and (gainer_of is None or gainer_of(b))
         evs = []
         if arm_min is not None and cmin == arm_min and b['h'] >= trig:
@@ -409,11 +425,13 @@ def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
             evs.append('TOUCH')
         if ends:
             if can and fresh and b['c'] > upper:
-                arm_min, trig, stop = cmin + 60, chigh + _tick(chigh), clow
+                arm_min, trig, stop, armed_ctx = cmin + 60, chigh + _tick(chigh), clow, ctx
                 evs.append('BREAKOUT')
             prev_c, prev_u, done = b['c'], upper, True
+            ups5 = (ups5 + [upper])[-5:]
         for ev in evs:
-            out.append((b['t'], ev, b['c'], upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None))
+            c3 = armed_ctx if ev == 'TRIGGERED' else ctx
+            out.append((b['t'], ev, b['c'], upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None) + c3)
     return out
 
 
@@ -432,11 +450,16 @@ def simulate_breakout_1m(bars30, params=None, gainer_of=None):
     out = []
     prev_c = prev_u = None
     arm_min = trig = stop = None
+    ups5, day, day_high, armed_ctx = [], None, None, (None, None, False)
     for mts in sorted(minutes):
         inner = minutes[mts]
         b0 = inner[0][0]
         h, lo, c = max(x[0]['h'] for x in inner), min(x[0]['l'] for x in inner), inner[-1][0]['c']
         upper = inner[-1][1]
+        d = b0['t'].astimezone(ET).date()
+        day_high = h if d != day else max(day_high, h)
+        day = d
+        ctx = _context(upper, ups5, c, day_high, p)
         if arm_min is not None and mts > arm_min:
             arm_min = None
         fresh = prev_c is not None and prev_u is not None and prev_c <= prev_u
@@ -454,11 +477,13 @@ def simulate_breakout_1m(bars30, params=None, gainer_of=None):
         if can and p['touch'] and fresh and in_touch:
             evs.append('TOUCH')
         if can and fresh and c > upper:
-            arm_min, trig, stop = mts + 60, h + _tick(h), lo
+            arm_min, trig, stop, armed_ctx = mts + 60, h + _tick(h), lo, ctx
             evs.append('BREAKOUT')
         prev_c, prev_u = c, upper
+        ups5 = (ups5 + [upper])[-5:]
         for ev in evs:
-            out.append((b0['t'], ev, c, upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None))
+            c3 = armed_ctx if ev == 'TRIGGERED' else ctx
+            out.append((b0['t'], ev, c, upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None) + c3)
     return out
 
 
@@ -493,8 +518,8 @@ def selftest_breakout():
 
     # v18: the 1m chart's marks = the 30s alert's signals, minute for minute, on random walks
     # with breakouts (every 30s bar present).
-    def minute_set(evs):
-        return sorted({(int(e[0].timestamp()) // 60, e[1]) for e in evs})
+    def minute_set(evs):   # v19: BREAKOUT / TRIGGERED also agree on strong vs weak (TOUCH is judged mid-candle on 30s)
+        return sorted({(int(e[0].timestamp()) // 60, e[1], e[8] if e[1] != 'TOUCH' else None) for e in evs}, key=str)
     random.seed(7)
     mismatches, total = 0, 0
     for trial in range(40):
@@ -519,7 +544,19 @@ def selftest_breakout():
     got3 = [(e[0].strftime('%H:%M:%S'), e[1]) for e in simulate_breakout(bars_of(gap, skip={33})) if e[1] == 'BREAKOUT']
     ok_gap = got3 == [('09:45:30', 'BREAKOUT'), ('09:47:30', 'BREAKOUT')]
     print('v18 a candle with no closing 30s bar is closed on its last bar:', got3, '→', 'OK' if ok_gap else 'UNEXPECTED')
-    return ok and ok_1m and ok_gap
+
+    # v19: the 09:45 breakout out of a flat base at the day's high is strong; a bounce into a band
+    # still falling from a spike, well under the day's high, is weak (XLAB 19:30 on 10-16).
+    strong_bo = [e for e in events if e[1] == 'BREAKOUT']
+    fade = [(1.455 - 0.00625 * k, 1.445 - 0.00625 * k, 1.45 - 0.00625 * k) for k in range(24)]   # 12 min down from the spike
+    flat = [(1.302, 1.298, 1.30) if k % 2 else (1.301, 1.297, 1.299) for k in range(8)]
+    spike = base + [(1.6, 1.0, 1.5), (1.6, 1.4, 1.45)] + fade + flat + [(1.31, 1.30, 1.305), (1.42, 1.30, 1.40)]
+    weak_bo = [e for e in simulate_breakout(bars_of(spike)) if e[1] == 'BREAKOUT']
+    ok_ctx = (bool(strong_bo) and strong_bo[0][8] is True and strong_bo[0][6] >= 0 and strong_bo[0][7] > -10
+              and bool(weak_bo) and weak_bo[-1][8] is False and (weak_bo[-1][6] < 0 or weak_bo[-1][7] < -10))
+    print('v19 strong / weak:', [(e[0].strftime('%H:%M:%S'), round(e[6], 1), round(e[7], 1), e[8]) for e in strong_bo + weak_bo[-1:]],
+          '→', 'OK' if ok_ctx else 'UNEXPECTED')
+    return ok and ok_1m and ok_gap and ok_ctx
 
 
 def selftest():

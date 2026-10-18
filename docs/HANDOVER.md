@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-18 (Sun), last code commit `4c285bf` (script v18, BB breakout drawn on 1m charts)
+## START HERE — state at 2026-10-18 (Sun), last code commit: script v19 (BB breakout strong / weak)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail, the History /
@@ -83,9 +83,10 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
 5. **📐 TradingView setups — script v18** (`apps/web/src/tv/mvwap-bb-setup.pine`).
-   - v17 (10-18, the BB breakout, §14) was pasted and compiled.
-   - **v18 (the same day: the breakout drawn on 1m charts from 30s bars, plus the
-     missing-half-minute fix) must be pasted, and both alerts recreated.**
+   - v17 (10-18, the BB breakout, §14) and v18 (drawn on 1m charts) were pasted and
+     work ("everything is working fine").
+   - **v19 (the same day: strong/weak context, weak BOs gray) must be pasted, and
+     both alerts recreated.**
    - v16 was pasted and both alerts recreated 10-10. **Verified live:** WFF on 10-12 carried
    `fails` 0/1/2, and a past-the-cap PULLBACK pinged via the B+ exemption.
    TradingView computes the setups because we can't build month/year VWAPs with
@@ -269,6 +270,21 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-18 (Sun, evening) — SCRIPT v19: STRONG / WEAK BREAKOUTS.**
+- **The ask:** "some BOs are not very accurate maybe? 18:14, 18:44, or 19:30?" (XLAB 10-16). All
+  three followed the rule; none triggered (no ▲), so no trade.
+- **Measured** (`research/bb-breakout`, 20 sessions):
+  - band falling >2% −0.58%/trade vs rising >2% +0.23%;
+  - ≥10% under the day's high negative vs ≤3% under +0.52%;
+  - strong (band not falling and ≤10% under the high) +0.41% vs weak −0.17%, both halves;
+  - 🔥 strong +1.22% vs 🔥 weak +0.06%.
+- **What v19 does:**
+  - every message carries `slope` and `off high`;
+  - weak = gray on the chart, dimmed on the dashboard with the reason; 🔥 needs strong;
+  - server knobs `bo_strong_slope` 0 / `bo_strong_off` 10, `boStrong()`;
+  - History gets a Context column and strong/weak trigger counts.
+- **Unchanged:** nothing is filtered; it's still store-and-grade only.
 
 **2026-10-18 (Sun, evening) — SCRIPT v18: THE BREAKOUT ON 1m CHARTS.**
 - **The ask:** the operator pasted v17 (it compiled; the status line showed the new inputs) and asked
