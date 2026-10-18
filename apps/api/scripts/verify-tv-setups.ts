@@ -328,6 +328,23 @@ console.log('PULLBACK cap moved to the server (v16, 2026-10-10)');
   check('Telegram: no failures, no mention', !zero.includes('failed before'), zero);
 }
 
+console.log('GO only for Momentum names (2026-10-18)');
+{
+  const go = parseTvMessage('GO SAFX 0.2717 | mVWAP 0.2555 (+6.3%) | basis 0.2564 (0.4%) | line month | day high +61% | tf 30S | via cross');
+  const T0 = 1_792_195_121;   // 2026-10-16 19:58 ET
+  check('the rule is on', TV_SETUP.go_momentum_only === true);
+  const g = new TvSetupGate();
+  check('GO off Momentum → quiet (stored, no ping)', g.admit(go!, T0, false, false) === 'quiet');
+  check('…its 1m copy is logged', g.admit({ ...go!, tf: '1' }, T0 + 36, false, false) === 'log');
+  check('a quiet off-list GO leaves the slot free: on Momentum 6 min later → announces', g.admit(go!, T0 + 360, false, true) === 'notify');
+  check('GO on Momentum → announces', new TvSetupGate().admit(go!, T0, false, true) === 'notify');
+  check('the default (no Momentum info) keeps the old behaviour', new TvSetupGate().admit(go!, T0) === 'notify');
+  const pb = parseTvMessage('PULLBACK SAFX 0.26 | sVWAP 0.25 (+4.0%) | mVWAP 0.2555 (+1.8%) | line month | touch 1 | fails 0 | peak +30% | tf 1');
+  check('a PULLBACK off Momentum still announces', new TvSetupGate().admit(pb!, T0, false, false) === 'notify');
+  const rd = parseTvMessage('READY SAFX 0.25 | mVWAP 0.2555 (-2.2%) | basis 0.24 (-6.1%) | line month | day high +61% | tf 1 | path base');
+  check('a READY off Momentum is unaffected', new TvSetupGate().admit(rd!, T0, false, false) === 'notify');
+}
+
 console.log('Telegram format');
 {
   const html = formatTvSetupAlert(

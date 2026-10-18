@@ -110,6 +110,19 @@ function lineDistance(s: TvSetupInfo): string {
   return lineDistanceText(s, first) ?? '';
 }
 
+// A pullback to a line that already held today, or its 3rd+ touch (a 3rd
+// touch only comes after one held: the cap counts failures). First live
+// grading, 2026-10-18: these held 33–36% vs 24% for the rest. Announced
+// pullbacks only — the quiet ones past the cap held 6%.
+function provenLine(c: TickerCard, e: SetupEvent): string | null {
+  if (e.setup.stage !== 'pullback' || !e.notified) return null;
+  const lines = lineTokens('pullback', e.setup.line);
+  const heldBefore = c.events.some((x) => x.setup.stage === 'held' && x.at < e.at
+    && lineTokens('held', x.setup.line).some((t) => lines.includes(t)));
+  if (heldBefore) return '↺ held before';
+  return (e.setup.touch ?? 0) >= 3 ? '↺ touch 3+' : null;
+}
+
 function age(ms: number): string {
   const m = Math.max(0, Math.round(ms / 60_000));
   return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}`;
@@ -134,6 +147,10 @@ const HOW_TO = (
     <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>30 seconds</b>.</div>
     <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
+    <div style={{ marginTop: 8, color: '#8c8c8c' }}>
+      <b>Reading the list.</b> A GO pings only when the name is on Momentum (⭐); off-list GOs show dimmed.
+      <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
+    </div>
   </div>
 );
 
@@ -294,6 +311,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     const since = nowPx != null && e.price != null && e.price > 0 ? (nowPx / e.price - 1) * 100 : null;
     const expanded = open.has(c.ticker);
     const resolved = c.resolved;
+    const proven = provenLine(c, e);
     return (
       <div
         key={c.ticker}
@@ -312,6 +330,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           <TvStageTag stage={s.stage} dim={!e.notified} path={s.path} line={s.line} touch={s.touch} />
           {/* v16: past the day's cap — pings only for a B+-or-better Momentum name */}
           {s.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
+          {proven && <span style={{ fontSize: 10, color: '#95de64', whiteSpace: 'nowrap' }}>{proven}</span>}
           {c.outcome && (
             <span style={{ fontSize: 10, color: c.outcome.stage === 'held' ? '#52c41a' : '#ff4d4f', whiteSpace: 'nowrap' }}>
               {c.outcome.stage === 'held' ? '✓ held' : '✗ broke'} {hhmm(c.outcome.at)}

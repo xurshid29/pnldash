@@ -3935,6 +3935,11 @@ class PollerService {
     return row != null && gradeAtLeast(row.grade, TV_SETUP.pb_cap_exempt);
   }
 
+  // The ticker is in the latest cycle's Momentum rows (TV_SETUP.go_momentum_only).
+  tvOnMomentum(ticker: string): boolean {
+    return this.lastPayload?.rows.some((r) => r.ticker === ticker) ?? false;
+  }
+
   // 📐 TradingView VWAP-setup signal (POST /api/tv/webhook → tv-setups.ts),
   // delivered like a cycle's opportunity alerts but immediately: a
   // tier_events row for grading, the engine's recent list (payload.alerts →
@@ -3954,7 +3959,8 @@ class PollerService {
   // v16: why 'capped' = a PULLBACK past TV_SETUP.pb_cap failures on a ticker that
   // isn't B+ or better on Momentum; `capExempt` = past the cap but announced anyway.
   // Rows carry `fails`, `capped`, `cap_exempt` for the grading.
-  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'repeat' | 'capped', capExempt = false): OpportunityAlert {
+  // why 'offlist' (2026-10-18) = a GO on a ticker not on our Momentum list.
+  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'repeat' | 'capped' | 'offlist', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
     const at = new Date(nowSec * 1000).toISOString();
@@ -4013,7 +4019,8 @@ class PollerService {
       `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
       (mode === 'log' ? ' · repeat (logged only)'
         : mode === 'quiet' ? (why === 'repeat' ? ' · quiet (READY already announced on this line today)'
-          : why === 'capped' ? ` · quiet (past the cap: ${sig.fails} failed on this line)` : ' · quiet (stage switched off)')
+          : why === 'capped' ? ` · quiet (past the cap: ${sig.fails} failed on this line)`
+            : why === 'offlist' ? ' · quiet (GO off our Momentum list)' : ' · quiet (stage switched off)')
         : capExempt ? ` · past the cap (${sig.fails} failed), announced for grade ${row?.grade ?? '?'}` : ''),
     );
     if (mode === 'notify') {

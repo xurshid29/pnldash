@@ -111,6 +111,11 @@ export const TV_SETUP = {
   // −0.64%, the B+ ones +0.90% on n 17 in October). Grade ~10-24.
   pb_cap: 2,
   pb_cap_exempt: 'B+' as string,
+  // GO is announced only for a ticker on our Momentum list (operator,
+  // 2026-10-18, after the first live grading: off-list GOs won 12% and barely
+  // moved, median best +2.3% in an hour, against 23% and +6.2% on Momentum).
+  // Off-list GOs are quiet: stored, graded and shown dimmed in the 📐 sidebar.
+  go_momentum_only: true,
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
@@ -320,8 +325,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
 // deliver the same alert twice, and the watchlist alert runs on two timeframes
 // (1m and 30s), so one event arrives twice: the first copy counts, the second
 // is only logged. A first copy is then 'quiet' (stored and shown in the 📐
-// sidebar, not announced) for a stage switched off in the ⚙ menu or a READY
-// repeat, else announced — at most once per ticker + stage (PULLBACK: per
+// sidebar, not announced) for a stage switched off in the ⚙ menu, a READY
+// repeat, a PULLBACK past the cap or a GO off our Momentum list, else announced — at most once per ticker + stage (PULLBACK: per
 // line) per 5 min; the rest are logged.
 export type TvVerdict = 'notify' | 'quiet' | 'log' | 'drop' | 'flood';
 
@@ -347,8 +352,9 @@ export class TvSetupGate {
   }
 
   // `capExempt`: a PULLBACK past the cap may still announce (v16 — the caller
-  // knows the ticker's Momentum row and grade).
-  admit(sig: TvSetupSignal, nowSec: number, capExempt = false): TvVerdict {
+  // knows the ticker's Momentum row and grade). `onMomentum`: the ticker is on
+  // our Momentum list now; off it, a GO is quiet (go_momentum_only).
+  admit(sig: TvSetupSignal, nowSec: number, capExempt = false, onMomentum = true): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
     if (this.recent.length >= TV_SETUP.max_per_min) return 'flood';
     this.recent.push(nowSec);
@@ -371,6 +377,7 @@ export class TvSetupGate {
 
     if (!this.announced.has(sig.stage)) return 'quiet';
     if (pastCap(sig) && !capExempt) return 'quiet';
+    if (sig.stage === 'go' && TV_SETUP.go_momentum_only && !onMomentum) return 'quiet';
     const readyKeys = sig.stage === 'ready' && TV_SETUP.ready_once_per_day ? tokens.map((t) => `${sig.ticker}|${t}`) : [];
     if (readyKeys.length > 0) {
       this.rollDay(nowSec);

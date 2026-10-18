@@ -89,14 +89,17 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     // v16: a PULLBACK past the cap still pings for a B+-or-better Momentum ticker.
     const capped = pastCap(sig);
     const capExempt = capped && poller.tvCapExempt(sig.ticker);
-    const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt);
+    // 2026-10-18: a GO pings only for a ticker on our Momentum list.
+    const onMomentum = poller.tvOnMomentum(sig.ticker);
+    const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt, onMomentum);
     if (verdict === 'flood') {
       console.warn(`[tv-setup] flood guard — dropped ${sig.stage} ${sig.ticker}`);
       return res.status(429).json({ error: 'Too many alerts' });
     }
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
     const why = verdict !== 'quiet' ? undefined
-      : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped' : 'repeat';
+      : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped'
+        : sig.stage === 'go' && !onMomentum ? 'offlist' : 'repeat';
     const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
   } catch (err) {
