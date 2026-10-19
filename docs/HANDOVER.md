@@ -85,8 +85,8 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 5. **📐 TradingView setups — script v18** (`apps/web/src/tv/mvwap-bb-setup.pine`).
    - v17 (10-18, the BB breakout, §14) and v18 (drawn on 1m charts) were pasted and
      work ("everything is working fine").
-   - **v19 (the same day: strong/weak context, weak BOs gray) must be pasted, and
-     both alerts recreated.**
+   - v19 (the same day: strong/weak context, weak BOs gray) was pasted and both alerts
+     recreated; the operator confirmed it works (10-19).
    - v16 was pasted and both alerts recreated 10-10. **Verified live:** WFF on 10-12 carried
    `fails` 0/1/2, and a past-the-cap PULLBACK pinged via the B+ exemption.
    TradingView computes the setups because we can't build month/year VWAPs with
@@ -270,6 +270,20 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-19 — v19 CONFIRMED LIVE; HODO "second waves" stay weak.** The operator asked
+whether HODO 10-16's 13:30 and 19:26 (Tashkent) BOs should be strong. Both had a rising band
+but sat >10% under the day's high: 13:30 was ~14% under the 13:00 opening spike, and 19:26 was
+~36% under the 13:43 top.
+- **Measured** (band rising, >10% under the day's high, by when that high was set):
+  - <30 min ago: −1.89%/trade;
+  - 30 min–2 h ago: −0.37%;
+  - >2 h ago (a new leg): −0.06%;
+  - vs strong: +0.41%.
+- **A hybrid** that also counts a >2 h-old high when near the 60-min high would make 19:26 strong,
+  but dilutes strong to +0.19% (🔥 strong +1.11%).
+- **Advice:** keep v19. An orange "second wave" tier was offered, not built. The operator replied
+  "everything is working as expected" (10-19), so v19 stays.
 
 **2026-10-18 (Sun, evening) — SCRIPT v19: STRONG / WEAK BREAKOUTS.**
 - **The ask:** "some BOs are not very accurate maybe? 18:14, 18:44, or 19:30?" (XLAB 10-16). All
