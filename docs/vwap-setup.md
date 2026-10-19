@@ -1445,7 +1445,7 @@ the 1m BB(10) stand-in. Then ask the operator whether to ping the 🔥 ones.
   - Price level as a spread proxy: no separation.
 
 
-## 15. Companion: the RVol indicator (`apps/web/src/tv/rvol.pine`, v1, 2026-10-19)
+## 15. Companion: the RVol indicator (`apps/web/src/tv/rvol.pine`, v2, 2026-10-19)
 
 The operator asked for "a rvol indicator pine script as well, maybe it would
 help some confirmations". It's a display indicator in its own pane, with no
@@ -1460,10 +1460,26 @@ read the same:
   Drawn as a line.
 - **RVol Day** = today's volume, pre-market included, ÷ the average daily
   volume, as ×.
-- The average daily volume covers the last 63 regular sessions, up to
-  yesterday. That's about Finviz's 3-month "Avg Volume", read from TradingView's
-  daily bars, so values can differ a little from the dashboard's Finviz-based
-  ones.
+- **The average daily volume (v2) comes from the chart's own intraday bars:**
+  each past session's regular-hours volume, averaged over the last 20 loaded
+  sessions, up to yesterday.
+  - Why: v1 used daily bars, and the operator's TradingView live feed is
+    partial. On 10-19 the intraday volume was 10–18% of the full market (Cboe
+    only, no exchange real-time data). Against the dashboard at the same
+    moments, TCRT read RVol 5m 302% vs 3,558%, Day 0.12× vs 1.19×, and AAME
+    read Day 28× vs 175×.
+  - Daily bars are often the full count, so v1's live-vs-daily ratio read
+    6–12× low. XLAB looked right only because its TradingView daily average
+    was low too (547K vs Finviz's 3.18M).
+  - Taking both sides from the same feed cancels that.
+  - The table's **Feed** line shows the last session's chart volume as a share
+    of its daily bar: about 100% means a full feed, about 15% a partial one.
+  - 20 sessions is what a 1m chart loads; Finviz averages about 63. So on a
+    name with recent huge days, it reads somewhat lower.
+  - With fewer than 3 sessions loaded, it falls back to the daily bars.
+- **On the live bar (v2)**, RVol 1m and 5m are the trailing 60 s / 5 min: the
+  part of the oldest bar still inside the window is blended in. In v1, RVol 1m
+  fell to about 0 at the start of every minute (TCRT 14% with 55 s left).
 - **Colours are the dashboard's.**
   - Green from 1,000%; gold from 10,000% (5m) or 15,000% (1m).
   - Red 1m when it's hot (≥1,000%) while the day change fell 2+ points over

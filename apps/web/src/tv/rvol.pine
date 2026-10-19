@@ -1,13 +1,23 @@
 //@version=6
-// pnldash RVol — the dashboard's RVol 1m / 5m / Day on a TradingView chart. Script version: v1 (2026-10-19).
+// pnldash RVol — the dashboard's RVol 1m / 5m / Day on a TradingView chart. Script version: v2 (2026-10-19).
 // Docs: docs/vwap-setup.md §15. The same definitions as the Momentum table
 // (apps/api/src/services/poller.ts), so the numbers read the same:
 //   RVol 5m  = volume over the last 5 minutes ÷ (average daily volume ÷ 78) × 100%
 //   RVol 1m  = volume over the last minute ÷ (average daily volume ÷ 390) × 100%
 //   RVol Day = today's volume, pre-market included ÷ average daily volume
-// 100% = a typical slice of an ordinary day. The average daily volume is the last
-// 63 sessions (~3 months, like Finviz's "Avg Volume"), up to yesterday, so it
-// doesn't move during the day.
+// 100% = a typical slice of an ordinary day.
+// v2: the average comes from the CHART'S OWN intraday bars — each past session's
+// regular-hours volume, averaged over the last 20 loaded sessions — not from daily
+// bars. A TradingView account without the exchanges' real-time data gets a partial
+// live feed (Cboe): on 10-19 its intraday volume was 10–18% of the full market
+// (TCRT, AAME, XLAB vs Finviz), while daily bars are often the full count, so v1's
+// live/daily ratio read 6–12x low. Both sides from the same feed cancel that. The
+// table's "Feed" line shows the last session's chart volume as a share of its daily
+// bar: ~100% = a full feed, ~15% = partial (then only ratios are meaningful, which
+// is what this pane shows). With too few sessions loaded it falls back to daily bars.
+// v2 also measures RVol 1m and 5m over the trailing 60 s / 5 min on the live bar:
+// the part of the oldest bar the window still covers is blended in, so RVol 1m no
+// longer drops to ~0 at the start of every minute.
 // Colours follow the dashboard: green from 1,000%, gold from 10,000% (5m) or
 // 15,000% (1m); a hot 1m while the price fell 2+ points of day change over that
 // minute is red (sell-side volume).
@@ -20,7 +30,8 @@
 // percent: right-click the pane's scale → Logarithmic.
 indicator("pnldash RVol", shorttitle = "RVol", overlay = false, precision = 0)
 
-advLen    = input.int(63,      "Average daily volume: last N sessions (63 ≈ Finviz's 3-month Avg Volume)", minval = 5)
+baseDays  = input.int(20,      "Average from the chart's own last N sessions (the live feed's volume, v2)", minval = 3, maxval = 60)
+advLen    = input.int(63,      "Fallback: daily bars, last N sessions (63 ≈ Finviz's 3-month Avg Volume)", minval = 5)
 show5     = input.bool(true,   "RVol 5m (columns)")
 show1     = input.bool(true,   "RVol 1m (line)")
 burst1    = input.float(4000,  "Burst: RVol 1m at least %", minval = 0, group = "Markers")
@@ -29,18 +40,39 @@ hotMin    = input.float(3000,  "Drying up: on a name whose RVol 5m is at least %
 dryRatio  = input.float(0.5,   "Drying up: RVol 1m under this share of RVol 5m", minval = 0.05, maxval = 1, group = "Markers")
 showTable = input.bool(true,   "Values table (top right)")
 
-// Yesterday's 63-session average daily volume and close, from regular-session daily
-// bars. `[1]` with lookahead_on is the non-repainting form: today never leaks in.
+// Yesterday's daily-bar average volume, volume and close (regular session). `[1]`
+// with lookahead_on is the non-repainting form: today never leaks in.
 dSym = ticker.new(syminfo.prefix, syminfo.ticker, session.regular)
-[adv, prevClose] = request.security(dSym, "D", [ta.sma(volume, advLen)[1], close[1]], lookahead = barmerge.lookahead_on)
+[advDaily, prevDayVol, prevClose] = request.security(dSym, "D", [ta.sma(volume, advLen)[1], volume[1], close[1]], lookahead = barmerge.lookahead_on)
+
+// v2: each finished session's regular-hours volume, summed from this chart's bars.
+// The first loaded session can start mid-day, so it isn't counted.
+var sessVols = array.new<float>()
+var float rthVol = 0.0
+var int   daysSeen = 0
+if timeframe.change("D")
+    if daysSeen >= 2 and rthVol > 0
+        array.push(sessVols, rthVol)
+        if array.size(sessVols) > baseDays
+            array.shift(sessVols)
+    daysSeen := daysSeen + 1
+    rthVol := 0.0
+if session.ismarket
+    rthVol := rthVol + volume
+bool  fromChart = timeframe.isintraday and array.size(sessVols) >= 3
+float adv  = fromChart ? array.avg(sessVols) : advDaily
+float feed = array.size(sessVols) > 0 and prevDayVol > 0 ? array.get(sessVols, array.size(sessVols) - 1) / prevDayVol : na
 
 chartSec = timeframe.in_seconds()
 ok1 = timeframe.isintraday and chartSec <= 60 and 60 % chartSec == 0
 ok5 = timeframe.isintraday and chartSec <= 300 and 300 % chartSec == 0
 int n1 = ok1 ? int(60 / chartSec) : 1     // bars in a minute (exact: the chart divides it)
 int n5 = ok5 ? int(300 / chartSec) : 1
-vol1 = math.sum(volume, n1)
-vol5 = math.sum(volume, n5)
+// The live bar is only part-way through: blend in the share of the bar just outside
+// the window that the trailing 60 s / 5 min still covers.
+float frac = barstate.isrealtime and time_close > time ? math.max(0.0, math.min(1.0, float(timenow - time) / float(time_close - time))) : 1.0
+vol1 = math.sum(volume, n1) + nz(volume[n1]) * (1 - frac)
+vol5 = math.sum(volume, n5) + nz(volume[n5]) * (1 - frac)
 float rv1 = ok1 and adv > 0 ? vol1 / (adv / 390) * 100 : na
 float rv5 = ok5 and adv > 0 ? vol5 / (adv / 78) * 100 : na
 
@@ -71,7 +103,7 @@ alertcondition(burst and not burst[1], "RVol burst", "RVol burst {{ticker}} {{cl
 alertcondition(dry and not dry[1], "RVol drying up", "RVol drying up {{ticker}} {{close}}: 1m under half of 5m")
 
 pct(float v) => na(v) ? "—" : str.tostring(math.round(v)) + "%"
-var table tb = table.new(position.top_right, 2, 5, bgcolor = color.new(color.black, 25), border_width = 1)
+var table tb = table.new(position.top_right, 2, 6, bgcolor = color.new(color.black, 25), border_width = 1)
 if showTable and barstate.islast
     table.cell(tb, 0, 0, "RVol 1m", text_color = color.gray, text_size = size.small)
     table.cell(tb, 1, 0, pct(rv1), text_color = col1, text_size = size.small)
@@ -82,4 +114,6 @@ if showTable and barstate.islast
     table.cell(tb, 0, 3, "Bar vol", text_color = color.gray, text_size = size.small)
     table.cell(tb, 1, 3, na(barX) ? "—" : str.tostring(barX, "#.#") + "x (20 bars)", text_color = color.silver, text_size = size.small)
     table.cell(tb, 0, 4, "Avg day vol", text_color = color.gray, text_size = size.small)
-    table.cell(tb, 1, 4, na(adv) ? "—" : str.tostring(adv, format.volume), text_color = color.silver, text_size = size.small)
+    table.cell(tb, 1, 4, na(adv) ? "—" : str.tostring(adv, format.volume) + (fromChart ? " (chart, " + str.tostring(array.size(sessVols)) + "d)" : " (daily bars)"), text_color = color.silver, text_size = size.small)
+    table.cell(tb, 0, 5, "Feed", text_color = color.gray, text_size = size.small)
+    table.cell(tb, 1, 5, na(feed) ? "—" : str.tostring(math.round(feed * 100)) + "% of the full volume" + (feed < 0.8 ? " (partial)" : ""), text_color = not na(feed) and feed < 0.8 ? #faad14 : color.silver, text_size = size.small)

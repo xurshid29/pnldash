@@ -271,6 +271,19 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-19 (07:50 ET) — RVOL v2: THE OPERATOR'S TRADINGVIEW VOLUME IS A PARTIAL FEED.** Operator: "is our
+RVol indicator working correctly?" (TCRT: gray while running).
+- **What we found:** against the dashboard at the same moments, TradingView's live intraday volume is
+  ~10–18% of the full market. TCRT 5m 302% vs 3,558%, Day 0.12× vs 1.19×; AAME Day 28× vs 175×.
+  Daily-bar averages are often full (TCRT 6.3M vs 6.6M), so v1 read 6–12× low. XLAB matched only
+  because its TradingView daily average was low too (547K vs 3.18M).
+- **v2:**
+  - the average comes from the chart's own last 20 sessions (same feed), with a fallback to daily bars;
+  - the live bar uses trailing 60 s / 5 min (v1's RVol 1m read ~0 at each new minute);
+  - a "Feed %" line in the table.
+- **Untouched:** the 📐 script only uses volume ratios (vol x, VWAP weights), so it's unaffected.
+- **Option for the operator:** TradingView's exchange real-time data gives full volume on every chart.
+
 **2026-10-19 — ⚡ BREAKOUT ALARM ON THE DASHBOARD.** Operator: "I should get notified at least in the
 dashboard when BO fires, I usually get late to react when I get the triangle".
 - **What it does:** `BreakoutAlerts` rings at the BREAKOUT (sound + 60 s toast with the buy stop and
