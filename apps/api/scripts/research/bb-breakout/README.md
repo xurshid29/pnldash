@@ -127,3 +127,43 @@ The operator chose store-and-grade-only and no FADED message, and added TOUCH, a
   - the operator pastes v17 and recreates both alerts;
   - grade live after ~2 weeks with `grade_live.py`, which uses TradingView's
     own 30s band and pre-market volume.
+
+## An earlier breakout? — 2026-10-19 (`early_study.py`)
+
+WORX 10-19 ran 1.40 → 2.54 with no BO. Its first close above the band (10:12 ET)
+came at +9%, under the +20% gainer filter. By +20% it was already riding above the
+band, so there was never a fresh cross. The operator asked for an earlier trigger
+(+5–10%) with a volume confirmation.
+
+**This test fixes a bias in the one above.** `study.py`'s universe is days that
+*ended* +20%, which flatters any rule firing below +20%: a "first becomes a +20%
+gainer above the band" rule showed +2.48% there.
+
+`early_study.py` uses the TradingView watchlist as built the night before:
+- ≥+30% on our screen in the prior 90 days, or ≥+20% in the prior 3 sessions;
+- 16,745 ticker-days, 1,059 names, 20 sessions;
+- every name, whether it moved that day or not.
+
+| rule (next candle takes the high, band exit) | trades/day | avg | halves |
+|---|---:|---:|---|
+| first reaches +5% while above the band | 33.7 | −1.48% | −1.71 / −1.27 |
+| first reaches +10% | 25.2 | −1.52% | −1.89 / −1.13 |
+| first reaches +20% (the +2.48% rule above) | 14.1 | −0.98% | −2.27 / +0.58 |
+| fresh BO, day ≥ +20% (v17–v19) | 289.7 | −0.22% | −0.35 / −0.07 |
+| first +10%, pre-market | 11.5 | −2.67% | −3.44 / −1.97 |
+| first +10%, regular hours | 10.8 | +0.14% | +0.09 / +0.20 |
+| **first +10%, regular hours, candle volume ≥ 2× last 20** | **7.8** | **+0.29%** | **+0.19 / +0.38** |
+| first +10%, regular hours, RVol 5m ≥ 1,000% | 3.6 | +0.46% | +1.73 / −0.34 |
+| first +10%, regular hours, RVol 5m ≥ 3,000% | 1.4 | −1.44% | |
+
+- An earlier trigger doesn't help on the watchlist as a whole. Most names that
+  touch +5–10% at the band stall.
+- Before and after regular hours, early breakouts lose clearly.
+- The only version that holds in both halves is regular hours, first time at
+  +10%, with candle volume ≥ 2× its last 20 (+0.29%, ~8/day). It's thin:
+  slippage would erase it.
+- RVol 5m confirmation is unstable, and very hot RVol is worse.
+- Volume is regular hours only, because Yahoo has no pre/post volume.
+
+**Proposed for v20 (operator to confirm):** an "early +10%" BO on exactly that
+rule, as a graded trial.
