@@ -1414,3 +1414,44 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
 It runs on TradingView's own 30s band and pre-market volume, which also checks
 the 1m BB(10) stand-in. Then ask the operator whether to ping the 🔥 ones.
 
+
+## 15. Companion: the RVol indicator (`apps/web/src/tv/rvol.pine`, v1, 2026-10-19)
+
+The operator asked for "a rvol indicator pine script as well, maybe it would
+help some confirmations". It's a display indicator in its own pane, with no
+webhook, so it doesn't use a watchlist alert. Copy it from the 📐 sidebar's
+⋯ → **Copy RVol script**.
+
+**The same definitions as the Momentum table** (`poller.ts`), so the numbers
+read the same:
+- **RVol 5m** = volume over the last 5 minutes ÷ (average daily volume ÷ 78) ×
+  100%. Drawn as columns.
+- **RVol 1m** = the last minute's volume ÷ (average daily volume ÷ 390) × 100%.
+  Drawn as a line.
+- **RVol Day** = today's volume, pre-market included, ÷ the average daily
+  volume, as ×.
+- The average daily volume covers the last 63 regular sessions, up to
+  yesterday. That's about Finviz's 3-month "Avg Volume", read from TradingView's
+  daily bars, so values can differ a little from the dashboard's Finviz-based
+  ones.
+- **Colours are the dashboard's.**
+  - Green from 1,000%; gold from 10,000% (5m) or 15,000% (1m).
+  - Red 1m when it's hot (≥1,000%) while the day change fell 2+ points over
+    that minute: sell-side volume.
+- **Markers** (inputs), from the 2026-06-12 RVol study:
+  - ▲ burst: 1m ≥ 4,000% and 5m ≥ 5,000%, the Heat burst bonus.
+  - ● drying up: 1m under half of 5m on a name with 5m ≥ 3,000%. In the study,
+    35.8% went on, against 47.8%. It's an exit tell.
+  - Both are also offered as optional single-chart `alertcondition`s.
+- **The table** (top right) shows the last values plus "Bar vol" (this bar
+  against the last 20 bars: the GO-strength and breakout volume check) and the
+  average daily volume.
+- **Charts:** 1m and seconds charts. RVol 1m needs a chart that divides a
+  minute, RVol 5m one that divides 5 minutes. Set the pane's scale to
+  Logarithmic, since values run from tens to millions of percent.
+
+**What our data says about volume as confirmation:** it's direction-blind.
+- Hot volume made moves bigger both ways in the GO strength check (§9.1) and
+  in the breakout study (research/bb-breakout).
+- The best-measured uses are the 1m+5m burst pair as "where the action is" and
+  the drying-up tell as an exit assist, not volume as an entry filter.

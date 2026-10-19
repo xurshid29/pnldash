@@ -15,6 +15,7 @@ import { GradeCell } from '../common/GradeCell';
 import { BreakoutList } from './BreakoutList';
 import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
+import rvolScript from '../../tv/rvol.pine?raw';
 
 const { Text } = Typography;
 const LOCAL_TZ = 'Asia/Tashkent'; // UTC+5, the operator's clock
@@ -148,6 +149,7 @@ const HOW_TO = (
     <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>30 seconds</b>.</div>
     <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
+    <div><b>RVol</b> (optional): ⋯ → <b>Copy RVol script</b> → a new Pine Editor tab → Add to chart. It shows the Momentum table's RVol 1m / 5m / Day in its own pane, in the same units; set the pane's scale to Logarithmic. No alert needed.</div>
     <div style={{ marginTop: 8, color: '#8c8c8c' }}>
       <b>Reading the list.</b> A GO pings only when the name is on Momentum (⭐); off-list GOs show dimmed.
       <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
@@ -264,6 +266,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
       { key: 'copy', label: 'Copy list' },
       { key: 'download', label: 'Download .txt' },
       { key: 'script', label: 'Copy Pine script' },
+      { key: 'rvol', label: 'Copy RVol script' },
       { key: 'howto', label: 'How to set up the alerts' },
     ],
     onClick: ({ key }: { key: string }) => {
@@ -287,6 +290,10 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
       } else if (key === 'script') {
         navigator.clipboard.writeText(pineScript)
           .then(() => message.success('Pine script copied — paste it into the TradingView Pine Editor'))
+          .catch(() => message.error('Clipboard blocked by the browser'));
+      } else if (key === 'rvol') {
+        navigator.clipboard.writeText(rvolScript)
+          .then(() => message.success('RVol script copied — paste it into a new Pine Editor tab and Add to chart (no alert needed)'))
           .catch(() => message.error('Clipboard blocked by the browser'));
       } else {
         setHowTo(true);

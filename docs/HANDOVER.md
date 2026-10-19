@@ -271,6 +271,16 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-19 — RVOL PINE INDICATOR (`apps/web/src/tv/rvol.pine`, `docs/vwap-setup.md` §15).**
+Operator: "I'd to have a rvol indicator pine script as well, maybe it would help some
+confirmations". It's a display-only pane, copied from the sidebar ⋯ → Copy RVol script; no alert slot.
+- **Definitions:** the dashboard's RVol 1m / 5m / Day (avg daily volume ÷ 390 / ÷ 78, 63
+  sessions ≈ Finviz's 3-month) and its colours, including the red sell-side 1m.
+- **Markers:** ▲ burst (1m ≥ 4,000% and 5m ≥ 5,000%) and ● drying up (1m < ½ of 5m on a 5m ≥ 3,000%
+  name, the 06-12 exit tell). A table shows bar vol vs 20 bars.
+- **Told the operator:** volume is direction-blind in our data. It's for "where the action is"
+  and exits, not an entry filter. Pine compile unverified (the operator's paste is the compile).
+
 **2026-10-19 — v19 CONFIRMED LIVE; HODO "second waves" stay weak.** The operator asked
 whether HODO 10-16's 13:30 and 19:26 (Tashkent) BOs should be strong. Both had a rising band
 but sat >10% under the day's high: 13:30 was ~14% under the 13:00 opening spike, and 19:26 was
