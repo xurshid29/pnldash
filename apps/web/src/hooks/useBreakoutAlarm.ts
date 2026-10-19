@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 export type BreakoutAlarm = 'off' | 'hot' | 'strong' | 'momentum' | 'all';
 
 export const BREAKOUT_ALARM_OPTIONS: Array<{ value: BreakoutAlarm; label: string; hint: string }> = [
-  { value: 'off', label: 'Off', hint: 'listed only' },
+  { value: 'off', label: 'Off', hint: 'listed only (early BOs ring at every other level)' },
   { value: 'hot', label: '🔥 only', hint: 'strong, on Momentum, A+ or 10–50% over sVWAP' },
   { value: 'strong', label: 'Strong on Momentum', hint: 'pink BOs on ⭐ names' },
   { value: 'momentum', label: 'All on Momentum', hint: 'pink and gray on ⭐ names' },

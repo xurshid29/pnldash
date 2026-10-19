@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v19** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v20** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1084,6 +1084,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-18 | v17 | `60cfed0` | The operator's third setup, the BB breakout (§14). Their words: "catch breakouts, when candle crosses over the bb upper row and the next candle crosses prev candle high", on a 1m chart with a 30s BB (20, 2). They asked for an early warning ("some signal when first candle touches … so I'd be prepared"), store and grade only, shown on the dashboard, and no exit message. New stages: TOUCH (the forming 1m candle reaches the band at the half-minute), BREAKOUT (1m close above it, with the buy stop and the stop) and TRIGGERED (the next candle takes the high). They run on the 30s alert only (`boTf`), with today's gainers ≥+20% (`boMinGain`). Server: stored as `tier_events` event `tv_breakout`, never announced, a 20 s re-delivery window (`TV_SETUP.bo_dup_sec`), `GET /api/screener/breakouts` and an SSE `breakout` event. Dashboard: a ⚡ BB BREAKOUTS list in the 📐 sidebar and History → 📐 Setups → ⚡ Breakouts. Replica: `simulate_breakout`, self-test `selftest_breakout`. Regression: 229 checks. **Paste the script and recreate both alerts.** |
 | 2026-10-18 | v18 | `4c285bf` | Operator, after pasting v17: "I don't see a bb upper line" on their 1m chart (v17 drew only on the 30s chart), then "lets do a v18 with 30s bars from a 1m chart (or configurable maybe)". A 1m chart now draws the breakout's band and its TOUCH / BO / TRIGGERED marks from the 30s bars inside each candle (`request.security_lower_tf`). The rules are the same: TOUCH = a 30s bar before the candle's last reaching the band; when TOUCH and BREAKOUT fall on one 1m bar, the chart shows the BREAKOUT. New inputs: **BB timeframe** (`boBandTf`, 30S), **Alerts from** (`boTf`, 30S: the soonest; 1 = at the 1m close) and **Draw** (`boShow`). The 30s request is made only when a 1m chart draws or sends; otherwise the script requests the chart's own timeframe, which costs nothing. Fix: a 1m candle whose closing 30s bar had no trades is closed on its last bar when the next minute starts. In v17 it stayed open, so the next candle's "fresh" test used a stale close. Replica: `simulate_breakout_1m` marks exactly what the 30s path sends on 40 random walks (1,314 signals), and a missing-half-minute test. Regression: 232 checks. **Paste the script and recreate both alerts.** |
 | 2026-10-18 | v19 | `b66dedc` | Operator, after v18: "some BOs are not very accurate maybe? For example, at 18:14, 18:44, or 19:30?" (XLAB 10-16). All three followed the rule and none triggered: the next candle never took their high, so no trade. But 18:14 (out of a flat, quiet stretch) and 19:30 (a bounce into a band still falling from the 19:14 top, ~12% under the day's high) are the weaker kind. Measured on the 20-session study: band falling >2% −0.58% a trade vs rising >2% +0.23%; ≥10% under the day's high negative vs within 3% of it +0.52%. **Strong** = the band not falling over the last 5 candles and the close within 10% of the day's high: +0.41% a trade vs −0.17% for the rest, the same in both halves; 🔥 strong +1.22% vs 🔥 weak +0.06%. Every signal now carries `slope` (the band over 5 candles) and `off high`. Weak ones are drawn gray on the chart (`boStrSlope` 0, `boStrOff` 10) and dimmed on the dashboard with the reason; the server computes strong (`TV_SETUP.bo_strong_slope` / `bo_strong_off`, `boStrong()`); 🔥 needs strong. Nothing is filtered: every signal is still stored and graded. Replica: the context in both paths, and the 30s and 1m paths agree on strong vs weak for every BREAKOUT and TRIGGERED. Regression: 243 checks. **Paste the script and recreate both alerts.** |
+| 2026-10-19 | v20 | (this release) | Operator, after WORX ran 1.40 → 2.54 with no BO (its first close above the band at +9%, under the +20% filter; by +20% it was riding the band, so never a fresh cross): "+20% would be too late maybe? Maybe earlier, such as 5-10% and some confirmation such as rvol or current vol". Measured on every night-before watchlist name (`research/bb-breakout/early_study.py`, 16,745 ticker-days): first reaching +5/+10/+20% above the band loses (−1.5% to −1.0%), in pre-market clearly (−2.7%). The +2.48% "first-gainer" result from the +20%-days study was hindsight. The one version that holds in both halves: **regular hours, the first candle of the day to reach +10%, closing above the band, candle volume ≥ 2× its last 20** (+0.29% a trade, ~8/day). That's the **early BO**: no +20% filter and no fresh-cross test. Its TRIGGERED doesn't need the +20% filter either. The message carries `early +10%`, the chart draws an orange "E", and the dashboard tags it "early +10%" and rings it at every alarm level but Off. Inputs `boEarlyOn` / `boEarlyGain` 10 / `boEarlyVol` 2. Replica: early logic in both paths plus a self-test. Regression: 252 checks. **Paste the script and recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1328,6 +1329,7 @@ and none pings.
 | TOUCH | A bar inside a 1m candle (the half-minute on 30s bars) whose candle high so far reaches the upper band. The last 1m close must be under its band. Once per minute | `upper` |
 | BREAKOUT | The bar that closes the 1m candle closes above the band, and the close before it didn't | `upper`, `trigger` = candle high + 1 tick, `stop` = candle low, `vol` = candle volume ÷ the last 20 candles |
 | TRIGGERED | A bar of the next 1m candle trades at or over `trigger`, seen at its 30s close. If the candle passes without it (or has no trades), the breakout ends silently | `upper`, `trigger`, `stop` |
+| BREAKOUT, **early** (v20) | The first candle of the day whose day high reaches +10% (`boEarlyGain`, vs the prior regular close), in regular hours, closing above the band, with candle volume ≥ 2× its last 20 (`boEarlyVol`). No +20% filter, no fresh-cross test; at most one a day. Its TRIGGERED skips the +20% filter too | `early +10%`, plus everything a BREAKOUT carries |
 
 - **Candles** are clock minutes built from the chart's bars.
 - **The band** is the chart's own: `boLen` 20, `boMult` 2.0.
@@ -1375,6 +1377,8 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
 - `run30` is the close against the lowest low of the last 30 minutes.
 - `slope` and `off high` (v19) are the strong/weak context, on every message
   from v19 on.
+- `early +10%` (v20) marks an early BREAKOUT and its TRIGGERED:
+  `BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | sVWAP 1.41 (+6.4%) | day high +10% | vol 6.1x | run30 +9% | early +10% | slope +2.0% | off high -1.3% | tf 30S`.
 - The parser (`parseTvMessage`) reads `upper`, `trigger`, `stop`, `run30`,
   `slope` and `off high`. `verify-tv-setups.ts` pins both sides.
 
@@ -1412,6 +1416,8 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
     operator: "I'd like to get grey BOs as well"), or all. A **Test** button
     next to it plays the alarm and says when Alerts is OFF.
   - It follows Alerts ON/OFF and the hidden tickers.
+  - Early BOs (v20) ring at every level except Off, with an orange edge. They
+    fire before a name is a +20% gainer, and often before it's on Momentum.
   - A BO that reaches the list more than 90 s late (a reconnect) doesn't ring.
   - Telegram stays off: the server still never announces breakouts.
   - Rate on 10-19, 04:00–06:06 ET: 45 BOs, 34 on Momentum, 5 strong on
@@ -1431,6 +1437,9 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
 
 It runs on TradingView's own 30s band and pre-market volume, which also checks
 the 1m BB(10) stand-in. Then ask the operator whether to ping the 🔥 ones.
+
+**Grade the early BO (v20) separately.** The study expects +0.29% a trade at
+~8 a day, both halves positive but thin.
 
 **Also test at that grading** (from the operator's 10-19 charts, checked on the
 20-session study first):

@@ -351,7 +351,16 @@ BO = dict(length=20,       # BB length (on the chart's bars: 30s on the 30s aler
           mult=2.0,        # BB StdDev
           touch=True,      # TOUCH: the forming 1m candle reaches the band before the minute closes
           strong_slope=0.0,   # v19: strong = the band up at least % over the last 5 candles…
-          strong_off=10.0)    # …and the close at most % under the day's high
+          strong_off=10.0,    # …and the close at most % under the day's high
+          early=True,         # v20: the early BO — the first candle of the day to reach +early_gain%,
+          early_gain=10.0,    #      regular hours, closing above the band, on early_vol× its last 20
+          early_vol=2.0)      #      candles' volume (needs prev_close)
+
+
+def _rth(t):
+    """Regular hours, 09:30–16:00 ET (Pine: session.ismarket on an Extended chart)."""
+    x = t.astimezone(ET)
+    return (x.hour, x.minute) >= (9, 30) and x.hour < 16
 
 
 def _context(upper, ups5, close, day_high, p):
@@ -379,13 +388,15 @@ def _tick(p):
     return 0.0001 if p < 1 else 0.01
 
 
-def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
+def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None, prev_close=None):
     """Mirror of the script's BB breakout on its own chart (v17; the 30s alert): the band on the
     chart's bars, 1m candles built from them. bars: dicts with t (aware datetime, bar open),
     o, h, l, c, v. Returns (t, stage, close, upper, trigger, stop, slope, off_high, strong) per signal; a bar can carry
     TRIGGERED and TOUCH/BREAKOUT only in theory (the fresh test keeps them apart).
     v18: a candle whose closing 30s bar had no trades is closed on its last bar when the next
-    minute starts (no BREAKOUT for it), so the next candle's "fresh" test stays right."""
+    minute starts (no BREAKOUT for it), so the next candle's "fresh" test stays right.
+    v20: with `prev_close` (the prior regular close), the early BO too; each signal tuple then
+    ends with `early` (True for an early BREAKOUT and its TRIGGERED)."""
     p = dict(BO, **(params or {}))
     ups = _bands([b['c'] for b in bars], p['length'], p['mult'])
     out = []
@@ -394,22 +405,26 @@ def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
     prev_c = prev_u = last_c = last_u = None
     arm_min = trig = stop = None
     ups5, day, day_high, armed_ctx = [], None, None, (None, None, False)
+    cvol, vols20, early_done, armed_early = 0.0, [], False, False
     for b, upper in zip(bars, ups):
         ts = int(b['t'].timestamp())
         minute = ts - ts % 60
         d = b['t'].astimezone(ET).date()
+        if d != day:
+            early_done = False
         day_high = b['h'] if d != day else max(day_high, b['h'])
         day = d
         if cmin is None or minute != cmin:
             if not done and last_c is not None:
                 prev_c, prev_u = last_c, last_u        # closed on its last bar
                 ups5 = (ups5 + [last_u])[-5:]
+                vols20 = (vols20 + [cvol])[-20:]
             if arm_min is not None and minute > arm_min:
                 arm_min = None                       # the trigger candle passed (or had no trades)
             done = False
-            cmin, chigh, clow, touched = minute, b['h'], b['l'], False
+            cmin, chigh, clow, touched, cvol = minute, b['h'], b['l'], False, b.get('v', 0)
         else:
-            chigh, clow = max(chigh, b['h']), min(clow, b['l'])
+            chigh, clow, cvol = max(chigh, b['h']), min(clow, b['l']), cvol + b.get('v', 0)
         ends = (ts + bar_sec) % 60 == 0
         fresh = prev_c is not None and prev_u is not None and prev_c <= prev_u
         last_c, last_u = b['c'], upper
@@ -418,24 +433,34 @@ def simulate_breakout(bars, bar_sec=30, params=None, gainer_of=None):
         evs = []
         if arm_min is not None and cmin == arm_min and b['h'] >= trig:
             arm_min = None
-            if can:
+            if (upper is not None) if armed_early else can:   # v20: an early one skips the gainer filter
                 evs.append('TRIGGERED')
         if can and p['touch'] and not touched and fresh and not ends and chigh >= upper:
             touched = True
             evs.append('TOUCH')
+        is_early = False
         if ends:
-            if can and fresh and b['c'] > upper:
-                arm_min, trig, stop, armed_ctx = cmin + 60, chigh + _tick(chigh), clow, ctx
+            avg = sum(vols20) / len(vols20) if vols20 else 0
+            vol_x = cvol / avg if avg > 0 else None
+            first = not early_done and prev_close and (day_high / prev_close - 1) * 100 >= p['early_gain']
+            if first:
+                early_done = True
+            is_early = bool(p['early'] and first and _rth(b['t']) and upper is not None and b['c'] > upper
+                            and vol_x is not None and vol_x >= p['early_vol'])
+            if is_early or (can and fresh and b['c'] > upper):
+                arm_min, trig, stop, armed_ctx, armed_early = cmin + 60, chigh + _tick(chigh), clow, ctx, is_early
                 evs.append('BREAKOUT')
             prev_c, prev_u, done = b['c'], upper, True
             ups5 = (ups5 + [upper])[-5:]
+            vols20 = (vols20 + [cvol])[-20:]
         for ev in evs:
             c3 = armed_ctx if ev == 'TRIGGERED' else ctx
-            out.append((b['t'], ev, b['c'], upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None) + c3)
+            flag = armed_early if ev == 'TRIGGERED' else is_early if ev == 'BREAKOUT' else False
+            out.append((b['t'], ev, b['c'], upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None) + c3 + (flag,))
     return out
 
 
-def simulate_breakout_1m(bars30, params=None, gainer_of=None):
+def simulate_breakout_1m(bars30, params=None, gainer_of=None, prev_close=None):
     """Mirror of the script's v18 1m-chart path: the band on the 30s bars, read inside each 1m bar
     (request.security_lower_tf). TOUCH = a 30s bar before the candle's last whose candle high so
     far reaches its band; BREAKOUT = the 1m close above the band at the last 30s bar; TRIGGERED =
@@ -451,12 +476,16 @@ def simulate_breakout_1m(bars30, params=None, gainer_of=None):
     prev_c = prev_u = None
     arm_min = trig = stop = None
     ups5, day, day_high, armed_ctx = [], None, None, (None, None, False)
+    vols20, early_done, armed_early = [], False, False
     for mts in sorted(minutes):
         inner = minutes[mts]
         b0 = inner[0][0]
         h, lo, c = max(x[0]['h'] for x in inner), min(x[0]['l'] for x in inner), inner[-1][0]['c']
         upper = inner[-1][1]
+        cvol = sum(x[0].get('v', 0) for x in inner)
         d = b0['t'].astimezone(ET).date()
+        if d != day:
+            early_done = False
         day_high = h if d != day else max(day_high, h)
         day = d
         ctx = _context(upper, ups5, c, day_high, p)
@@ -472,18 +501,27 @@ def simulate_breakout_1m(bars30, params=None, gainer_of=None):
         evs = []
         if arm_min is not None and mts == arm_min and h >= trig:
             arm_min = None
-            if can:
+            if (upper is not None) if armed_early else can:
                 evs.append('TRIGGERED')
         if can and p['touch'] and fresh and in_touch:
             evs.append('TOUCH')
-        if can and fresh and c > upper:
-            arm_min, trig, stop, armed_ctx = mts + 60, h + _tick(h), lo, ctx
+        avg = sum(vols20) / len(vols20) if vols20 else 0
+        vol_x = cvol / avg if avg > 0 else None
+        first = not early_done and prev_close and (day_high / prev_close - 1) * 100 >= p['early_gain']
+        if first:
+            early_done = True
+        is_early = bool(p['early'] and first and _rth(b0['t']) and upper is not None and c > upper
+                        and vol_x is not None and vol_x >= p['early_vol'])
+        if is_early or (can and fresh and c > upper):
+            arm_min, trig, stop, armed_ctx, armed_early = mts + 60, h + _tick(h), lo, ctx, is_early
             evs.append('BREAKOUT')
         prev_c, prev_u = c, upper
         ups5 = (ups5 + [upper])[-5:]
+        vols20 = (vols20 + [cvol])[-20:]
         for ev in evs:
             c3 = armed_ctx if ev == 'TRIGGERED' else ctx
-            out.append((b0['t'], ev, c, upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None) + c3)
+            flag = armed_early if ev == 'TRIGGERED' else is_early if ev == 'BREAKOUT' else False
+            out.append((b0['t'], ev, c, upper, trig if ev != 'TOUCH' else None, stop if ev != 'TOUCH' else None) + c3 + (flag,))
     return out
 
 
@@ -556,7 +594,27 @@ def selftest_breakout():
               and bool(weak_bo) and weak_bo[-1][8] is False and (weak_bo[-1][6] < 0 or weak_bo[-1][7] < -10))
     print('v19 strong / weak:', [(e[0].strftime('%H:%M:%S'), round(e[6], 1), round(e[7], 1), e[8]) for e in strong_bo + weak_bo[-1:]],
           '→', 'OK' if ok_ctx else 'UNEXPECTED')
-    return ok and ok_1m and ok_gap and ok_ctx
+
+    # v20: the early BO. A flat base at +5% (prior close 0.95), then a candle whose day high
+    # reaches +10.5% on 3× volume, closing above the band, in regular hours: early BREAKOUT and
+    # TRIGGERED even though the +20% gainer filter says no. Flat volume, or the same path in the
+    # pre-market: nothing. Both paths agree.
+    def vbars(path, start, vols):
+        return [{'t': start + dt.timedelta(seconds=30 * k), 'o': c, 'h': hh, 'l': lo, 'c': c, 'v': vv}
+                for k, ((hh, lo, c), vv) in enumerate(zip(path, vols))]
+    epath = base + run[:4]
+    hot_vol = [100] * len(base) + [300, 300, 150, 150]
+    no_gainer = lambda b: False
+    rth_bars = vbars(epath, t0, hot_vol)
+    got_e = [(e[0].strftime('%H:%M:%S'), e[1], e[9]) for e in simulate_breakout(rth_bars, gainer_of=no_gainer, prev_close=0.95)]
+    got_e1m = [(e[1], e[9]) for e in simulate_breakout_1m(rth_bars, gainer_of=no_gainer, prev_close=0.95) if e[1] != 'TOUCH']
+    flat = [e[1] for e in simulate_breakout(vbars(epath, t0, [100] * len(epath)), gainer_of=no_gainer, prev_close=0.95)]
+    pre = [e[1] for e in simulate_breakout(vbars(epath, t0.replace(hour=6), hot_vol), gainer_of=no_gainer, prev_close=0.95)]
+    ok_early = (got_e == [('09:45:30', 'BREAKOUT', True), ('09:46:00', 'TRIGGERED', True)]
+                and got_e1m == [('BREAKOUT', True), ('TRIGGERED', True)] and flat == [] and pre == [])
+    print('v20 early BO:', got_e, '| 1m chart', got_e1m, '| flat volume', flat, '| pre-market', pre, '→',
+          'OK' if ok_early else 'UNEXPECTED')
+    return ok and ok_1m and ok_gap and ok_ctx and ok_early
 
 
 def selftest():

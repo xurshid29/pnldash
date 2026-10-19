@@ -82,11 +82,12 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
    unseen, because Finviz had no size data for it. Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView setups — script v18** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+5. **📐 TradingView setups — script v20** (`apps/web/src/tv/mvwap-bb-setup.pine`).
    - v17 (10-18, the BB breakout, §14) and v18 (drawn on 1m charts) were pasted and
      work ("everything is working fine").
    - v19 (the same day: strong/weak context, weak BOs gray) was pasted and both alerts
      recreated; the operator confirmed it works (10-19).
+   - **v20 (10-19: the early BO, §14.3) must be pasted, and both alerts recreated.**
    - v16 was pasted and both alerts recreated 10-10. **Verified live:** WFF on 10-12 carried
    `fails` 0/1/2, and a past-the-cap PULLBACK pinged via the B+ exemption.
    TradingView computes the setups because we can't build month/year VWAPs with
@@ -270,6 +271,21 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-19 (after 11:00 ET) — SCRIPT v20: THE EARLY BO.** WORX 10-19 ran 1.40 → 2.54 with no BO: its first
+close above the band came at +9%, under the +20% filter, and by +20% it was riding the band (no fresh cross).
+The operator asked for an earlier trigger (+5–10%) with a volume or RVol confirmation.
+- **Measured on the unbiased universe** (every night-before watchlist name, 16,745 ticker-days,
+  `research/bb-breakout/early_study.py`):
+  - an earlier trigger loses (−1.5% to −1.0%), in pre-market clearly (−2.7%);
+  - the "first-gainer +20%" +2.48% from the +20%-days study was hindsight;
+  - RVol 5m confirmation is unstable;
+  - the only version that holds in both halves is regular hours + the first +10% candle + candle volume
+    ≥ 2× (+0.29%, ~8/day).
+- **Built as v20's early BO:** `early +10%` in the message, an orange "E" on the chart, an "early +10%"
+  tag on the dashboard, and the alarm rings at every level but Off. Its TRIGGERED skips the +20% filter.
+- **Checks:** replica + self-test; 252 regression checks.
+- **The operator must paste v20 and recreate both alerts.** Grade the early BO separately ~11-01.
 
 **2026-10-19 (07:50 ET) — RVOL v2: THE OPERATOR'S TRADINGVIEW VOLUME IS A PARTIAL FEED.** Operator: "is our
 RVol indicator working correctly?" (TCRT: gray while running).

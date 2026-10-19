@@ -66,6 +66,7 @@ export interface TvBreakoutEvent {
   band_slope: number | null;  // v19
   off_high: number | null;    // v19
   strong: boolean | null;     // v19: boStrong(); null for a v17/v18 message
+  early: number | null;       // v20: an early BO (the first +10% candle, regular hours) — its threshold
   tf: string | null;
   // our context at that moment (the Momentum row, when on our screen)
   chg: number | null;
@@ -132,6 +133,7 @@ export interface TvSetupSignal {
   run30?: number | null;      // close vs the lowest low of the last 30 minutes, %
   band_slope?: number | null; // v19: the band now vs at the close 5 candles ago, %
   off_high?: number | null;   // v19: the close vs the day's high so far, % (≤ 0)
+  early?: number | null;      // v20: an early BO's gain threshold (10 = the first +10% candle, regular hours)
 }
 
 export const TV_SETUP = {
@@ -304,6 +306,7 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     run30: toNum(o.run30),
     band_slope: toNum(o.band_slope ?? o.slope),
     off_high: toNum(o.off_high),
+    early: toNum(o.early),
   };
 }
 
@@ -327,6 +330,7 @@ function toPath(v: unknown): TvPath | null {
 //   PULLBACK MI 5.31 | sVWAP 4.67 (+13.7%) | mVWAP 4.65 (+14.2%) | yVWAP 5.2 (+2.1%) | line year | touch 1 | peak +27% | tf 1   (v14)
 //   PULLBACK WFF 3.53 | sVWAP 3.12 (+13.1%) | mVWAP 3.11 (+13.5%) | yVWAP 3.39 (+4.1%) | line year | touch 4 | fails 2 | peak +45% | tf 30S   (v16)
 //   BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S   (v17)
+//   BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | … | early +10% | slope +2.0% | off high -1.3% | tf 30S   (v20)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -368,6 +372,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const run30 = /\brun30\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const slope = /\bslope\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const offHigh = /\boff\s+high\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
+  const early = /\bearly\s+\+?(\d*\.?\d+)\s*%/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -398,6 +403,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     run30: toNum(run30?.[1]),
     band_slope: toNum(slope?.[1]),
     off_high: toNum(offHigh?.[1]),
+    early: toNum(early?.[1]),
   };
 }
 

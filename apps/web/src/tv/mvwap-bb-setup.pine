@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v19 (2026-10-18).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v20 (2026-10-19).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Three setups in one script, so the same two watchlist alerts carry all of them
@@ -86,6 +86,9 @@ boTouchOn  = input.bool(true,         "TOUCH: the forming 1m candle reaches the 
 boShow     = input.bool(true,         "Draw the band and markers (on the band's own chart, or a 1m chart — v18)", group = "BB breakout (v17)")
 boStrSlope = input.float(0.0,         "Strong: the band up at least % over the last 5 candles (v19; weak = gray)", group = "BB breakout (v17)")
 boStrOff   = input.float(10.0,        "Strong: the close at most % under the day's high (v19)", group = "BB breakout (v17)")
+boEarlyOn  = input.bool(true,         "Early BO (v20): the first candle to reach +N% today, regular hours, closing above the band", group = "BB breakout (v17)")
+boEarlyGain = input.float(10.0,       "Early BO: +N% (day high vs the prior close)", group = "BB breakout (v17)")
+boEarlyVol = input.float(2.0,         "Early BO: candle volume at least N× its last 20 candles", minval = 0, group = "BB breakout (v17)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -508,6 +511,15 @@ alertcondition(fireM == 3 or fireY == 3, "GO", "GO {{ticker}} {{close}} | tf {{i
 // gray and the dashboard dims them. On 20 sessions (research/bb-breakout) strong
 // breakouts did +0.41% a trade and weak ones -0.17%, the same in both halves;
 // a bounce into a band still falling from the top (XLAB 19:30) is the weak kind.
+// v20 (operator, 10-19, after WORX ran 1.40 → 2.54 with no BO — its first break came
+// at +9%, and by +20% it was riding the band, never a fresh cross): an EARLY BO on
+// the first candle of the day to reach +10% (day high vs the prior close), in regular
+// hours, closing above the band, on at least 2× its last 20 candles' volume — no
+// +20% filter, no fresh-cross test. Measured on every night-before watchlist name
+// (research/bb-breakout/early_study.py): +0.29% a trade, ~8 a day, both halves;
+// the same rule before or after regular hours lost (-2.7% / -3.2%), and without the
+// volume test it was +0.14%. A trial: the message says `early +10%`, the chart
+// draws an orange "E", and its TRIGGERED doesn't need the +20% filter either.
 boChartSec = timeframe.in_seconds(timeframe.period)
 boBandSec  = timeframe.in_seconds(boBandTf)
 boNative   = boChartSec == boBandSec and boChartSec <= 60
@@ -550,6 +562,10 @@ var boUps = array.new<float>()    // the band at the close of the last 5 finishe
 var float boArmSlope  = na        // the armed BREAKOUT's context, repeated on its TRIGGERED
 var float boArmOff    = na
 var bool  boArmStrong = false
+var bool  boEarlyDone = false     // v20: today's first +boEarlyGain% candle has passed
+var bool  boArmEarly  = false     // the armed BREAKOUT is an early one
+if newDay
+    boEarlyDone := false
 
 int boMinNow = time - time % 60000
 if na(boMin) or boMinNow != boMin
@@ -604,21 +620,31 @@ bool boCalc    = boValid and inWindow and boGainer and not na(boUp)
 bool boTrigEv  = false
 bool boTouchEv = false
 bool boBreakEv = false
+bool boEarlyEv = false
 if not na(boArmMin) and boMin == boArmMin and high >= boTrig
     boArmMin := na
-    boTrigEv := boCalc
+    boTrigEv := boArmEarly ? boValid and inWindow and not na(boUp) : boCalc
 if boCalc and boTouchOn and not boTouched and boFresh and (boNative ? not boEnds and boCHigh >= boUp : boInTouch)
     boTouched := true
     boTouchEv := true
 if boEnds
     boVolX := array.size(boVols) > 0 and array.avg(boVols) > 0 ? boCVol / array.avg(boVols) : na
-    if boCalc and boFresh and close > boUp
+    // v20 early: the first candle of the day whose day high reaches +boEarlyGain%.
+    bool firstCross = not boEarlyDone and not na(dayHighGain) and dayHighGain >= boEarlyGain
+    if firstCross
+        boEarlyDone := true
+    bool early   = boEarlyOn and firstCross and boValid and inWindow and session.ismarket and not na(boUp) and
+         close > boUp and not na(boVolX) and boVolX >= boEarlyVol
+    bool regular = boCalc and boFresh and close > boUp
+    if early or regular
         boArmMin  := boMin + 60000
         boTrig    := boCHigh + syminfo.mintick
         boStop    := boCLow
         boArmSlope  := boSlope
         boArmOff    := boOff
         boArmStrong := boStrong
+        boArmEarly  := early
+        boEarlyEv := early
         boBreakEv := true
     boPrevC := close
     boPrevU := boUp
@@ -639,6 +665,8 @@ if boEnds
 // v19: `slope` (the band over the last 5 candles) and `off high` (the close vs the day's high);
 // a TRIGGERED repeats its BREAKOUT's.
 //   TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02 (+19.8%) | day high +92% | run30 +19% | tf 30S
+// v20: an early BO (and its TRIGGERED) adds `early +10%`:
+//   BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | sVWAP 1.41 (+6.4%) | day high +10% | vol 6.1x | run30 +9% | early +10% | slope +2.0% | off high -1.3% | tf 30S
 boMsg(int ev) =>
     string msg = (ev == 1 ? "TOUCH" : ev == 2 ? "BREAKOUT" : "TRIGGERED") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
     msg += " | upper " + str.tostring(boUp, format.mintick) + " (" + pctVs(boUp) + "%)"
@@ -654,6 +682,8 @@ boMsg(int ev) =>
         msg += " | vol " + str.tostring(boVolX, "#.#") + "x"
     if not na(boRun30)
         msg += " | run30 +" + str.tostring(math.max(boRun30, 0), "#") + "%"
+    if (ev == 2 and boEarlyEv) or (ev == 3 and boArmEarly)
+        msg += " | early +" + str.tostring(boEarlyGain, "#") + "%"
     float sl  = ev == 3 ? boArmSlope : boSlope
     float offH = ev == 3 ? boArmOff : boOff
     if not na(sl)
@@ -671,5 +701,6 @@ if boSend and boBreakEv
 plot(boShow and boValid ? boUp : na, "BB upper (breakout)", color.new(color.fuchsia, 40))
 // v19: strong signals fuchsia, weak ones (band falling, or >10% under the day's high) gray.
 plotshape(boShow and boTouchEv and not boBreakEv, "BB touch", shape.circle, location.abovebar, boStrong ? color.fuchsia : color.gray, size = size.tiny)
-plotshape(boShow and boBreakEv, "Breakout", shape.labeldown, location.abovebar, boStrong ? color.fuchsia : color.gray, text = "BO", textcolor = color.white, size = size.small)
-plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar, boArmStrong ? color.fuchsia : color.gray, size = size.small)
+plotshape(boShow and boBreakEv and not boEarlyEv, "Breakout", shape.labeldown, location.abovebar, boStrong ? color.fuchsia : color.gray, text = "BO", textcolor = color.white, size = size.small)
+plotshape(boShow and boEarlyEv, "Early breakout (v20)", shape.labeldown, location.abovebar, color.orange, text = "E", textcolor = color.white, size = size.small)
+plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar, boArmEarly ? color.orange : boArmStrong ? color.fuchsia : color.gray, size = size.small)

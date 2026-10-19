@@ -15,6 +15,9 @@ const FRESH_SEC = 90;
 
 function rings(b: TvBreakout, level: BreakoutAlarm): boolean {
   if (b.stage !== 'breakout' || level === 'off') return false;
+  // v20 early BOs (~8 a day on the whole watchlist) ring at every level: they
+  // fire before a name is a +20% gainer, often before it's on Momentum.
+  if (b.early != null) return true;
   if (level === 'hot') return b.strong === true && isHot(b);
   if (level === 'strong') return b.strong === true && b.on_screen;
   if (level === 'momentum') return b.on_screen;
@@ -59,7 +62,7 @@ export function BreakoutAlerts() {
       if ((now - Date.parse(b.at)) / 1000 > FRESH_SEC) continue;
       const hot = b.strong === true && isHot(b);
       const risk = b.trigger && b.stop != null ? ` (${((b.stop / b.trigger - 1) * 100).toFixed(1)}%)` : '';
-      const title = `${hot ? '🔥' : '⚡'} BREAKOUT ${b.ticker} — buy > ${px(b.trigger)}`;
+      const title = `${hot ? '🔥' : '⚡'} ${b.early != null ? `EARLY BREAKOUT (+${b.early}%)` : 'BREAKOUT'} ${b.ticker} — buy > ${px(b.trigger)}`;
       const body = [
         `stop ${px(b.stop)}${risk}`,
         b.strong === true ? 'strong' : b.strong === false ? 'weak' : null,
@@ -78,7 +81,7 @@ export function BreakoutAlerts() {
         showProgress: true,
         pauseOnHover: true,
         onClick: () => setSelected(b.ticker),
-        style: { cursor: 'pointer', borderLeft: `4px solid ${hot ? '#fadb14' : b.strong === true ? '#c41d7f' : '#595959'}` },
+        style: { cursor: 'pointer', borderLeft: `4px solid ${b.early != null ? '#fa8c16' : hot ? '#fadb14' : b.strong === true ? '#c41d7f' : '#595959'}` },
       });
     }
   }, [breakouts, isLoading, armed, notification, setSelected]);

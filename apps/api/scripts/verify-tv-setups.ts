@@ -392,6 +392,13 @@ console.log('BB breakout (v17, 2026-10-18)');
     boStrong(4.1, -1.2) === true && boStrong(0, -10) === true && boStrong(-0.1, -1) === false && boStrong(3, -10.1) === false
     && boStrong(v19!.band_slope, v19!.off_high) === false && TV_SETUP.bo_strong_slope === 0 && TV_SETUP.bo_strong_off === 10);
   check('JSON context', parseTvMessage({ stage: 'breakout', ticker: 'X', band_slope: 2, off_high: -3 })?.band_slope === 2);
+  // v20: the early BO (the first +10% candle in regular hours, on 2× volume)
+  const early = parseTvMessage('BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | sVWAP 1.41 (+6.4%) | day high +10% | vol 6.1x | run30 +9% | early +10% | slope +2.0% | off high -1.3% | tf 30S');
+  check('v20 early BO parses', early?.early === 10 && early.day_gain === 10 && early.vol_x === 6.1 && early.trigger === 1.53
+    && early.band_slope === 2 && early.off_high === -1.3, JSON.stringify(early));
+  check('…a regular BO has no early', v19?.early === null && bo?.early === null);
+  check('…its TRIGGERED carries it too', parseTvMessage('TRIGGERED WORX 1.54 | upper 1.46 (+5.5%) | trigger 1.53 | stop 1.39 | early +10% | tf 30S')?.early === 10);
+  check('…and it is stored quietly like every breakout', new TvSetupGate().admit(early!, 1_792_166_400) === 'quiet');
 
   const T0 = 1_792_166_400;   // 2026-10-16 11:20 ET
   const g = new TvSetupGate();
@@ -428,7 +435,9 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'boNative ? not boEnds and boCHigh >= boUp : boInTouch',
     // v19: strong / weak context in the message and the marker colours
     '" | slope "', '" | off high "', 'boSlope >= boStrSlope', 'boOff >= -boStrOff', 'boStrong ? color.fuchsia : color.gray',
-    'array.push(boUps, boLastU)']) {
+    'array.push(boUps, boLastU)',
+    // v20: the early BO
+    '" | early +"', 'dayHighGain >= boEarlyGain', 'boVolX >= boEarlyVol', 'session.ismarket and not na(boUp)', 'boTrigEv := boArmEarly ?']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

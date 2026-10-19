@@ -4065,12 +4065,13 @@ class PollerService {
       svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, day_gain: sig.day_gain, ah_gain: sig.ah_gain,
       vol_x: sig.vol_x, run30: sig.run30 ?? null,
       band_slope: sig.band_slope ?? null, off_high: sig.off_high ?? null, strong: boStrong(sig.band_slope, sig.off_high),
+      early: sig.early ?? null,
       tf: sig.tf,
       chg: row?.change_pct ?? null, grade: row?.grade ?? null, float_m: row?.float_m ?? null, rv1: row?.rel_vol_1min ?? null,
       on_screen: row != null,
     };
     recordTierEvent('alert', 'tv_breakout', sig.ticker, { ...ev });
-    console.log(`[tv-breakout] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%)` +
+    console.log(`[tv-breakout] ${TV_STAGE_LABEL[sig.stage]}${sig.early != null ? ` (early +${sig.early}%)` : ''} ${sig.ticker} $${sig.price ?? '?'} · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%)` +
       (sig.trigger != null ? ` · trigger ${sig.trigger} · stop ${sig.stop ?? '?'}` : '') +
       ` · sVWAP ${sig.spx_pct ?? '?'}% · run30 ${sig.run30 ?? '?'}%` +
       (ev.strong != null ? ` · ${ev.strong ? 'strong' : 'weak'} (band ${sig.band_slope}%, ${sig.off_high}% off high)` : '') +

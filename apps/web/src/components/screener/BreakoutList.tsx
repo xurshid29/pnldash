@@ -114,6 +114,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
               <TickerLink ticker={b.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
               {r && <span style={{ color: '#fadb14', fontSize: 11 }}>⭐</span>}
               <span style={{ fontSize: 10, fontWeight: 700, color: st.color, background: st.bg, padding: '0 5px', borderRadius: 3 }}>{st.label}</span>
+              {b.early != null && <span style={{ fontSize: 10, fontWeight: 700, color: '#fa8c16', whiteSpace: 'nowrap' }}>early +{b.early}%</span>}
               {isHot(b) && <span style={{ fontSize: 10, color: '#ff7a45' }}>🔥 {b.grade === 'A+' ? 'A+' : `${signed(b.spx_pct, 0)} vs sVWAP`}</span>}
               {weak && <span style={{ fontSize: 10, color: '#8c8c8c', whiteSpace: 'nowrap' }}>weak: {weak}</span>}
               <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{ageText((now - Date.parse(b.at)) / 1000)}</Text>

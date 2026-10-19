@@ -93,6 +93,7 @@ export function BreakoutsHistoryTable({ date, momentumOnly }: { date: string; mo
         <span style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
           {r.touchAt != null && <Text type="secondary" style={{ fontSize: 11 }}>touch → </Text>}
           <span style={{ color: r.b.strong === false ? '#8c8c8c' : '#ffadd2', fontWeight: 600 }}>BREAKOUT</span>
+          {r.b.early != null && <span style={{ color: '#fa8c16', fontWeight: 700, marginLeft: 4 }}>early +{r.b.early}%</span>}
           {isHot(r.b) && <span style={{ color: '#ff7a45', marginLeft: 4 }}>🔥</span>}
         </span>
       ),
