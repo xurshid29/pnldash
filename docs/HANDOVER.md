@@ -283,6 +283,7 @@ RVol indicator working correctly?" (TCRT: gray while running).
   - a "Feed %" line in the table.
 - **Untouched:** the 📐 script only uses volume ratios (vol x, VWAP weights), so it's unaffected.
 - **Option for the operator:** TradingView's exchange real-time data gives full volume on every chart.
+- **Installed 10-19 ~08:00 ET** (operator: "updated it"). Next: compare its RVol against the dashboard on a live name.
 
 **2026-10-19 — ⚡ BREAKOUT ALARM ON THE DASHBOARD.** Operator: "I should get notified at least in the
 dashboard when BO fires, I usually get late to react when I get the triangle".
