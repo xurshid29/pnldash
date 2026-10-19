@@ -1414,6 +1414,18 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
 It runs on TradingView's own 30s band and pre-market volume, which also checks
 the 1m BB(10) stand-in. Then ask the operator whether to ping the 🔥 ones.
 
+**Also test at that grading** (from the operator's 10-19 charts, checked on the
+20-session study first):
+- **"Late" breakouts** after a 20–40% run in 30 min (`run30`). XLAB's 13:28 and
+  14:13 strong breakouts both failed. In the study this group did −0.42% a
+  trade (negative in both halves), but ≥40% did +2.58%. That's not monotonic,
+  so there's no rule yet.
+- **Not worth re-testing without new data:**
+  - A tight base before the break: tightest bases were the *worst*, −0.07%.
+  - Loosening the slope cut to −0.5%: strong drops from +0.41% to +0.35%; the
+    −0.5…0% band did −0.16%.
+  - Price level as a spread proxy: no separation.
+
 
 ## 15. Companion: the RVol indicator (`apps/web/src/tv/rvol.pine`, v1, 2026-10-19)
 

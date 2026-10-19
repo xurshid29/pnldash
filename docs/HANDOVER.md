@@ -271,6 +271,21 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-19 — TODAY'S CHARTS (XLAB, AAME, SAFX): NO SETUP CHANGES.** The operator asked how to have
+traded them and whether to improve the setups.
+- **The read:**
+  - AAME and SAFX: no trade (weak breakouts far under a faded 04:00 spike, under sVWAP, spreads
+    ~1.2–1.4%).
+  - XLAB: the strong ▲s at 13:28 / 14:13 failed after +15–20% runs (5.5–5.8% stops); the "weak"
+    13:57 base break (slope −0.1%) ran +14%.
+- **Checked on the 20-session study:**
+  - tight bases are the worst (−0.07%);
+  - slope cut −0.5% is worse (+0.35% vs +0.41%);
+  - price level separates nothing;
+  - only "late after a 20–40% run" (−0.42%, both halves) partly holds, and ≥40% is +2.58%.
+- **Advice:** don't change the setups. Use execution rules (spread vs stop, size by stop, band exit)
+  and test `run30` at the ~11-01 grading (`docs/vwap-setup.md` §14.6).
+
 **2026-10-19 — RVOL PINE INDICATOR (`apps/web/src/tv/rvol.pine`, `docs/vwap-setup.md` §15).**
 Operator: "I'd to have a rvol indicator pine script as well, maybe it would help some
 confirmations". It's a display-only pane, copied from the sidebar ⋯ → Copy RVol script; no alert slot.
