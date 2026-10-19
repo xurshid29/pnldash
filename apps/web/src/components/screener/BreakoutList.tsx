@@ -28,6 +28,17 @@ function px(p: number | null): string {
 function signed(p: number | null, digits = 1): string {
   return p == null ? '—' : `${p >= 0 ? '+' : ''}${p.toFixed(digits)}%`;
 }
+// "touch 16:01:30 → BO 16:02:02 → ▲ 16:02:30" (operator's clock): the signals that
+// led to a row's current stage, so a BO stays visible after it triggers (10-19).
+const TRAIL_LABEL: Record<BoStage, string> = { touch: 'touch', breakout: 'BO', triggered: '▲' };
+function trailOf(all: TvBreakout[], b: TvBreakout): string | null {
+  const at = Date.parse(b.at);
+  const steps = all
+    .filter((x) => x.ticker === b.ticker && Date.parse(x.at) <= at && at - Date.parse(x.at) <= 150_000)
+    .sort((x, y) => Date.parse(x.at) - Date.parse(y.at));
+  if (steps.length < 2) return null;
+  return steps.map((x) => `${TRAIL_LABEL[x.stage]} ${new Date(x.at).toLocaleTimeString('en-GB', { timeZone: 'Asia/Tashkent', hour12: false })}`).join(' → ');
+}
 function ageText(sec: number): string {
   return sec < 90 ? `${Math.max(0, Math.round(sec))}s` : `${Math.round(sec / 60)}m`;
 }
@@ -73,7 +84,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
         onClick={toggle}
         style={{ padding: '4px 8px', fontSize: 10, color: '#8c8c8c', letterSpacing: 0.5, background: '#141414', cursor: 'pointer' }}
       >
-        {show ? '▾' : '▸'} ⚡ BB BREAKOUTS · {live.length} live · {nBreakouts} today, {nTriggered} triggered · no pings (trial)
+        {show ? '▾' : '▸'} ⚡ BB BREAKOUTS · {live.length} live · {nBreakouts} today, {nTriggered} triggered · alarm in ⚙
       </div>
       {show && live.length === 0 && (
         <div style={{ padding: '6px 8px', fontSize: 11, color: '#595959' }}>
@@ -88,6 +99,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
         const nowPx = r?.price != null ? Number(r.price) : null;
         const since = nowPx != null && b.trigger != null && b.trigger > 0 ? (nowPx / b.trigger - 1) * 100 : null;
         const risk = b.trigger != null && b.stop != null && b.trigger > 0 ? (b.stop / b.trigger - 1) * 100 : null;
+        const trail = trailOf(visible, b);
         return (
           <div
             key={b.id}
@@ -120,6 +132,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
               )}
               {b.run30 != null && <> · run30 +{Math.round(b.run30)}%</>}
             </div>
+            {trail && <div style={{ fontSize: 10, color: '#595959', paddingLeft: 40, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{trail}</div>}
           </div>
         );
       })}
