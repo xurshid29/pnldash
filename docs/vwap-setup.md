@@ -1398,6 +1398,20 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
     v19, strong; sorted first;
   - weak ones (v19) are dimmed and say why ("weak: band −4.2%, −12% off high");
   - hidden tickers are skipped.
+- **Dashboard alarm** (2026-10-19, operator: "I should get notified at least in
+  the dashboard when BO fires, I usually get late to react when I get the
+  triangle"):
+  - `BreakoutAlerts` rings at the BREAKOUT (the 1m close), not the TRIGGERED.
+    It plays a distinct sound (high double tap and a rise), opens a 60 s toast
+    ("⚡ BREAKOUT XLAB — buy > $2.90 · stop $2.74 (−5.5%) · strong · ⭐ on
+    Momentum…") and sends a browser notification.
+  - Which ones ring is a per-device level in the header ⚙ (`useBreakoutAlarm`):
+    off, 🔥 only, **strong on Momentum** (default), all on Momentum, or all.
+  - It follows Alerts ON/OFF and the hidden tickers.
+  - A BO that reaches the list more than 90 s late (a reconnect) doesn't ring.
+  - Telegram stays off: the server still never announces breakouts.
+  - Rate on 10-19, 04:00–06:06 ET: 45 BOs, 34 on Momentum, 5 strong on
+    Momentum, 2 🔥. Expect several times that after the open.
 - **History:** History → 📐 Setups → ⚡ Breakouts shows one row per BREAKOUT,
   with its TOUCH and TRIGGERED and (v19) a strong/weak Context column. The
   header counts strong and weak breakouts and how many of each triggered.

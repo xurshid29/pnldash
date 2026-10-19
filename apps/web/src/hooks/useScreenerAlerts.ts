@@ -153,6 +153,18 @@ function setupReadyPing() {
   beep(1175, 190, 0.28, 0.45); // D6
 }
 
+// ⚡ BB BREAKOUT (2026-10-19): a quick high double tap and a rise — unlike every
+// 📐 VWAP sound, so a breakout is recognisable without looking. Gated like all
+// sounds by Alerts ON/OFF (beep), and the notification by notify.
+export function breakoutAlarm(title: string, body: string) {
+  try {
+    beep(1568, 90, 0, 0.5);      // G6
+    beep(1568, 90, 0.12, 0.5);   // G6
+    beep(2093, 200, 0.24, 0.5);  // C7
+  } catch { /* audio context not unlocked */ }
+  notify(title, body);
+}
+
 export function edgeAlertPing(kind: 'armed' | 'entry' | 'bailout') {
   if (kind === 'armed') {
     // Soft preparation cue: the chart has reached a decision zone.

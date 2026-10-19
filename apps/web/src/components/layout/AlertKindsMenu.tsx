@@ -1,7 +1,8 @@
-import { Button, Checkbox, Divider, Popover, Space, Typography } from 'antd';
+import { Button, Checkbox, Divider, Popover, Radio, Space, Typography } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import { DASHBOARD_KINDS, setAlertKind, useAlertKinds, type AlertKind } from '../../hooks/useAlertKinds';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
+import { BREAKOUT_ALARM_OPTIONS, setBreakoutAlarm, useBreakoutAlarm, type BreakoutAlarm } from '../../hooks/useBreakoutAlarm';
 import type { TvStage } from '../../api/types';
 
 const { Text } = Typography;
@@ -23,6 +24,7 @@ const STAGE_LABEL: Record<TvStage, string> = {
 export function AlertKindsMenu() {
   const kinds = useAlertKinds();
   const { settings, save } = useTvAlertStages();
+  const boAlarm = useBreakoutAlarm();
   const content = (
     <Space direction="vertical" size={8} style={{ minWidth: 260 }}>
       {KINDS.map(({ kind, label, hint }) => (
@@ -48,6 +50,23 @@ export function AlertKindsMenu() {
       ) : (
         <Text type="secondary" style={{ fontSize: 11 }}>loading…</Text>
       )}
+      <Divider style={{ margin: '4px 0' }} />
+      <div>
+        <span style={{ fontWeight: 600 }}>⚡ BB breakout alarm</span>
+        <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+          this device only · rings at the BO (buy stop in the toast), before the ▲
+        </Text>
+      </div>
+      <Radio.Group value={boAlarm} onChange={(e) => setBreakoutAlarm(e.target.value as BreakoutAlarm)}>
+        <Space direction="vertical" size={2}>
+          {BREAKOUT_ALARM_OPTIONS.map((o) => (
+            <Radio key={o.value} value={o.value}>
+              <span>{o.label}</span>
+              <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>{o.hint}</Text>
+            </Radio>
+          ))}
+        </Space>
+      </Radio.Group>
     </Space>
   );
   const on = KINDS.filter(({ kind }) => kinds[kind]).length;

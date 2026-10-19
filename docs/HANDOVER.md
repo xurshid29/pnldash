@@ -271,6 +271,16 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-19 — ⚡ BREAKOUT ALARM ON THE DASHBOARD.** Operator: "I should get notified at least in the
+dashboard when BO fires, I usually get late to react when I get the triangle".
+- **What it does:** `BreakoutAlerts` rings at the BREAKOUT (sound + 60 s toast with the buy stop and
+  the stop + browser notification).
+- **Settings:** a per-device ⚙ level (`useBreakoutAlarm`: off / 🔥 / **strong on Momentum** default /
+  all on Momentum / all). It follows Alerts ON/OFF and hidden tickers; a BO more than 90 s late
+  doesn't ring.
+- **Unchanged:** the server still never announces breakouts, so nothing goes to Telegram.
+- **Rate:** 45 BOs and 5 strong-on-Momentum in the first 2 h of 10-19's pre-market.
+
 **2026-10-19 — TODAY'S CHARTS (XLAB, AAME, SAFX): NO SETUP CHANGES.** The operator asked how to have
 traded them and whether to improve the setups.
 - **The read:**
