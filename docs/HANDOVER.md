@@ -280,6 +280,12 @@ dashboard when BO fires, I usually get late to react when I get the triangle".
   doesn't ring.
 - **Unchanged:** the server still never announces breakouts, so nothing goes to Telegram.
 - **Rate:** 45 BOs and 5 strong-on-Momentum in the first 2 h of 10-19's pre-market.
+- **Follow-up 06:50 ET:** XLAB's strong BO at 15:40 Tashkent didn't ring for the operator. The server
+  sent it (strong, on Momentum), the browser had the new build since 15:16, and XLAB wasn't hidden;
+  likely cause: Alerts OFF on that tab (unconfirmed). Shipped:
+  - default level = all on Momentum (the operator wants gray BOs too);
+  - a ⚙ **Test** button that plays the alarm and says when Alerts is OFF;
+  - sidebar BOs stay 5 min with "✗ no trigger" after their candle; TRIGGERED stays 15 min.
 
 **2026-10-19 — TODAY'S CHARTS (XLAB, AAME, SAFX): NO SETUP CHANGES.** The operator asked how to have
 traded them and whether to improve the setups.

@@ -13,7 +13,10 @@ const { Text } = Typography;
 // How long each stage stays on the list. A TOUCH matters until its minute
 // closes; a BREAKOUT until its trigger candle ends (the next minute, then a few
 // seconds for the 30s bar's alert); a TRIGGERED while the trade is young.
-const LIVE_SEC: Record<BoStage, number> = { touch: 75, breakout: 80, triggered: 600 };
+// 10-19: a BREAKOUT stays 5 min (marked "no trigger" once its trigger candle
+// passed), so a glance a few minutes late still finds it.
+const LIVE_SEC: Record<BoStage, number> = { touch: 120, breakout: 300, triggered: 900 };
+const TRIGGER_WINDOW_SEC = 80;
 const STAGE: Record<BoStage, { label: string; color: string; bg: string }> = {
   touch: { label: 'TOUCH', color: '#d9d9d9', bg: '#303030' },
   breakout: { label: 'BREAKOUT', color: '#fff', bg: '#9e1068' },
@@ -79,6 +82,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
       )}
       {show && live.map((b) => {
         const weak = weakWhy(b);
+        const expired = b.stage === 'breakout' && (now - Date.parse(b.at)) / 1000 > TRIGGER_WINDOW_SEC;
         const st = weak ? { ...STAGE[b.stage], bg: '#434343', color: '#bfbfbf' } : STAGE[b.stage];
         const r = rowByTicker.get(b.ticker);
         const nowPx = r?.price != null ? Number(r.price) : null;
@@ -90,7 +94,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
             onClick={() => setSelected(b.ticker)}
             style={{
               padding: '5px 8px', borderBottom: '1px solid #262626', cursor: 'pointer',
-              background: b.ticker === selected ? '#111d2c' : undefined, opacity: weak ? 0.5 : r ? 1 : 0.7,
+              background: b.ticker === selected ? '#111d2c' : undefined, opacity: weak || expired ? 0.5 : r ? 1 : 0.7,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
@@ -105,7 +109,9 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
             <div style={{ fontSize: 11, color: '#8c8c8c', paddingLeft: 40, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {b.stage === 'touch' && <>at the band {px(b.upper)} · {px(b.price)} ({signed(b.upper_pct)})</>}
               {b.stage === 'breakout' && (
-                <><span style={{ color: '#ffadd2' }}>buy &gt; {px(b.trigger)}</span> · stop {px(b.stop)}{risk != null && ` (${signed(risk)})`}</>
+                expired
+                  ? <>✗ no trigger (buy &gt; {px(b.trigger)} never traded)</>
+                  : <><span style={{ color: '#ffadd2' }}>buy &gt; {px(b.trigger)}</span> · stop {px(b.stop)}{risk != null && ` (${signed(risk)})`}</>
               )}
               {b.stage === 'triggered' && (
                 <>in {px(b.trigger)} · stop {px(b.stop)}{since != null && (

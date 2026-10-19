@@ -1393,7 +1393,9 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
   for the VWAP setups.
 - **Sidebar:** the ⚡ BB BREAKOUTS list at the top of the 📐 sidebar, one row per
   ticker while live:
-  - TOUCH 75 s, BREAKOUT 80 s, TRIGGERED 10 min;
+  - TOUCH 2 min, BREAKOUT 5 min (marked "✗ no trigger" once its trigger
+    candle passed), TRIGGERED 15 min — lengthened 10-19 after the operator
+    missed a BO on the list;
   - 🔥 = the study's gate (on Momentum and A+, or 10–50% over sVWAP) and, since
     v19, strong; sorted first;
   - weak ones (v19) are dimmed and say why ("weak: band −4.2%, −12% off high");
@@ -1406,7 +1408,9 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
     ("⚡ BREAKOUT XLAB — buy > $2.90 · stop $2.74 (−5.5%) · strong · ⭐ on
     Momentum…") and sends a browser notification.
   - Which ones ring is a per-device level in the header ⚙ (`useBreakoutAlarm`):
-    off, 🔥 only, **strong on Momentum** (default), all on Momentum, or all.
+    off, 🔥 only, strong on Momentum, **all on Momentum** (default since 10-19,
+    operator: "I'd like to get grey BOs as well"), or all. A **Test** button
+    next to it plays the alarm and says when Alerts is OFF.
   - It follows Alerts ON/OFF and the hidden tickers.
   - A BO that reaches the list more than 90 s late (a reconnect) doesn't ring.
   - Telegram stays off: the server still never announces breakouts.

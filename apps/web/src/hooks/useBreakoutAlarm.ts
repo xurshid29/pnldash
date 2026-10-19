@@ -20,7 +20,8 @@ export const BREAKOUT_ALARM_OPTIONS: Array<{ value: BreakoutAlarm; label: string
 
 const STORAGE_KEY = 'alerts.breakouts';
 const CHANGE_EVENT = 'breakout-alarm-changed';
-const DEFAULT: BreakoutAlarm = 'strong';
+// Default 'momentum' since 10-19 (operator: "I'd like to get grey BOs as well").
+const DEFAULT: BreakoutAlarm = 'momentum';
 
 export function getBreakoutAlarm(): BreakoutAlarm {
   try {

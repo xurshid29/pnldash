@@ -1,8 +1,10 @@
-import { Button, Checkbox, Divider, Popover, Radio, Space, Typography } from 'antd';
+import { App, Button, Checkbox, Divider, Popover, Radio, Space, Typography } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import { DASHBOARD_KINDS, setAlertKind, useAlertKinds, type AlertKind } from '../../hooks/useAlertKinds';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
 import { BREAKOUT_ALARM_OPTIONS, setBreakoutAlarm, useBreakoutAlarm, type BreakoutAlarm } from '../../hooks/useBreakoutAlarm';
+import { useAlertsArmed } from '../../hooks/useAlertsArmed';
+import { breakoutAlarm } from '../../hooks/useScreenerAlerts';
 import type { TvStage } from '../../api/types';
 
 const { Text } = Typography;
@@ -25,6 +27,16 @@ export function AlertKindsMenu() {
   const kinds = useAlertKinds();
   const { settings, save } = useTvAlertStages();
   const boAlarm = useBreakoutAlarm();
+  const armed = useAlertsArmed();
+  const { notification } = App.useApp();
+  // 10-19: check the alarm on this device — sound, toast, browser notification.
+  const testAlarm = () => {
+    const title = '⚡ BREAKOUT TEST — buy > $1.00';
+    const body = armed ? 'stop $0.95 (−5.0%) · this is how a BO alarm looks and sounds'
+      : 'Alerts are OFF in the header — turn them on, or no BO will ring';
+    breakoutAlarm(title, body);
+    notification.open({ key: 'bo-test', title, description: body, placement: 'topRight', duration: 8, style: { borderLeft: '4px solid #c41d7f' } });
+  };
   const content = (
     <Space direction="vertical" size={8} style={{ minWidth: 260 }}>
       {KINDS.map(({ kind, label, hint }) => (
@@ -53,6 +65,7 @@ export function AlertKindsMenu() {
       <Divider style={{ margin: '4px 0' }} />
       <div>
         <span style={{ fontWeight: 600 }}>⚡ BB breakout alarm</span>
+        <Button size="small" type="link" onClick={testAlarm} style={{ padding: '0 6px', height: 18 }}>Test</Button>
         <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
           this device only · rings at the BO (buy stop in the toast), before the ▲
         </Text>
