@@ -1,6 +1,7 @@
 """Offline replica of apps/web/src/tv/mvwap-bb-setup.pine — the reclaim setup (v9 logic = v7 + message
-fields) in simulate() for one line and (v11) simulate_lines() for the month + year lines, and the
-PULLBACK setup (script v10) in PullbackLine / simulate_pullback().
+fields) in simulate() for one line and (v11) simulate_lines() for the month + year lines, the
+PULLBACK setup (script v10) in PullbackLine / simulate_pullback(), the BB breakout (v17–v20) in
+simulate_breakout() / simulate_breakout_1m(), and the VWAP + BB cross (v21) in simulate_vb_cross().
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -617,6 +618,174 @@ def selftest_breakout():
     return ok and ok_1m and ok_gap and ok_ctx and ok_early
 
 
+# ── VWAP + BB cross (script v21) ───────────────────────────────────────────────
+# Inputs, same meaning and defaults as the script's "VWAP + BB cross (v21)" group.
+VB = dict(candle_min=5,       # vbCandleTf: the candle's timeframe, minutes (the chart traded; its session VWAP)
+          bb_min=2,           # vbBbTf: the band's timeframe, minutes
+          length=20, mult=2.0,
+          tol=2.0,            # vbTol: the candle may open up to % above the lower line (0 = under both)
+          window=(240, 1200))  # alertWin in ET minutes [04:00, 20:00); None = always
+
+
+def _bucket(t, minutes):
+    """The bar of `minutes` holding t, aligned to the 04:00 ET session start like
+    timeframe.change(tf) on an Extended chart (2m: even minutes; 45m: 04:00, 04:45, …)."""
+    x = t.astimezone(ET)
+    anchor = x.replace(hour=4, minute=0, second=0, microsecond=0)
+    return anchor + datetime.timedelta(minutes=minutes * int((x - anchor).total_seconds() // (minutes * 60)))
+
+
+def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None):
+    """Mirror of the script's vbStep() (v21) on the alert's bars (30s; a 1m replay works too):
+    candles of p['candle_min'] with their session VWAP (hlc3 × volume of the candles, the forming
+    one live), the upper band of the p['bb_min'] closes (the forming one live), and CROSS at the
+    first bar close inside a candle that opened at or under the higher line and at most p['tol'] %
+    over the lower one (the lines at the close before the candle) with the close above both.
+    The day's first candle never counts. bars: dicts with t (aware datetime, bar open), o, h, l,
+    c, v. Returns (t, close, vwap, upper, candle_open, vol_x, n) per CROSS; `trace` (a list)
+    collects (t, vwap, upper) per bar."""
+    p = dict(VB, **(params or {}))
+    n_len = p['length']
+    out = []
+    closes, last_c, last_bb, day = [], None, None, None
+    pv = v = 0.0
+    c_key = c_open = c_high = c_low = c_close = None
+    c_vol = 0.0
+    start_vw = start_up = prev_vw = prev_up = None
+    fired, count, vols = False, 0, []
+    for b in bars:
+        x = b['t'].astimezone(ET)
+        new_day = x.date() != day
+        day = x.date()
+        bb_key = _bucket(b['t'], p['bb_min'])
+        if last_bb is not None and bb_key != last_bb and last_c is not None:
+            closes = (closes + [last_c])[-(n_len - 1):]
+        last_bb, last_c = bb_key, b['c']
+        upper = None
+        if len(closes) == n_len - 1:
+            win = closes + [b['c']]
+            m = sum(win) / n_len
+            upper = m + p['mult'] * (sum((y - m) ** 2 for y in win) / n_len) ** 0.5
+        key = _bucket(b['t'], p['candle_min'])
+        if new_day or key != c_key or c_open is None:
+            if c_open is not None:
+                vols = (vols + [c_vol])[-20:]
+            if new_day:
+                pv = v = 0.0
+                count = 0
+            elif c_open is not None:
+                pv += (c_high + c_low + c_close) / 3 * c_vol
+                v += c_vol
+            c_key, c_open, c_high, c_low, c_vol = key, b['o'], b['h'], b['l'], b.get('v', 0)
+            start_vw, start_up, fired = (None if new_day else prev_vw), prev_up, False
+        else:
+            c_high, c_low, c_vol = max(c_high, b['h']), min(c_low, b['l']), c_vol + b.get('v', 0)
+        c_close = b['c']
+        vw = (pv + (c_high + c_low + b['c']) / 3 * c_vol) / (v + c_vol) if v + c_vol > 0 else None
+        avg = sum(vols) / len(vols) if vols else None
+        vol_x = c_vol / avg if avg else None
+        m_et = x.hour * 60 + x.minute
+        in_win = p['window'] is None or p['window'][0] <= m_et < p['window'][1]
+        if (in_win and (gainer_of is None or gainer_of(b)) and not fired and vw is not None and upper is not None
+                and start_vw is not None and start_up is not None):
+            hi, lo = max(start_vw, start_up), min(start_vw, start_up)
+            if c_open <= hi and c_open <= lo * (1 + p['tol'] / 100) and b['c'] > vw and b['c'] > upper:
+                fired = True
+                count += 1
+                out.append((b['t'], b['c'], vw, upper, c_open, vol_x, count))
+        if trace is not None:
+            trace.append((b['t'], vw, upper))
+        prev_vw, prev_up = vw, upper
+    return out
+
+
+def selftest_vb():
+    """Synthetic 30s bars for the v21 VWAP + BB cross. Day 1: a heavy spike to 1.20 leaves the
+    VWAP high above a flat 1.00 base; a 5m candle out of the base crosses both lines (CROSS #1),
+    rides on (nothing more in that candle), falls back; the next candle crosses again (#2); one
+    opening above both lines never counts. Day 2: a candle opening 1% over the VWAP and under
+    the band counts with the 2% tolerance, not with 0. Day 3: the day's first candle never counts.
+    No gainer → nothing. And the arithmetic: the live band equals a BB on the 2m closes at every
+    2m close, and the live VWAP equals the 5m candles' VWAP at every 5m close (random walks)."""
+    import datetime as dt
+    import random
+    d1 = dt.datetime(2026, 10, 16, 4, 0, tzinfo=ET)
+
+    def bars_of(start, path, vols=None):   # path: closes (o = h = l = c) or (o, h, l, c) tuples
+        out = []
+        for k, q in enumerate(path):
+            o, h, lo, c = (q, q, q, q) if isinstance(q, float) else q
+            out.append({'t': start + dt.timedelta(seconds=30 * k), 'o': o, 'h': h, 'l': lo, 'c': c,
+                        'v': vols[k] if vols else 100})
+        return out
+
+    spike = [1.20] * 20                                  # 04:00–04:10, heavy volume
+    base = [1.000 if k % 2 else 1.001 for k in range(80)]   # 04:10–04:50
+    cross1 = [1.00, 1.05, 1.10, 1.15, 1.18, 1.12, 1.06, 1.03, 1.01, 1.00]   # 04:50 candle: CROSS at 04:51:30
+    cross2 = [1.00, 1.10, 1.20, 1.30, 1.40, 1.40, 1.40, 1.40, 1.40, 1.40]   # 04:55 candle: CROSS again
+    above = [1.40, 1.45, 1.50, 1.55, 1.60, 1.60, 1.60, 1.60, 1.60, 1.60]    # 05:00 candle: opened above both
+    path1 = spike + base + cross1 + cross2 + above
+    day1 = bars_of(d1, path1, [1000] * 20 + [100] * (len(path1) - 20))
+    got = [(e[0].strftime('%H:%M:%S'), e[6]) for e in simulate_vb_cross(day1)]
+    ok1 = len(got) == 2 and got[0] == ('04:51:30', 1) and got[1][1] == 2 and '04:55:00' <= got[1][0] < '05:00:00'
+    print('v21 VWAP + BB cross, day 1:', got, '→', 'OK' if ok1 else 'UNEXPECTED (want 04:51:30 #1, then #2 in the 04:55 candle)')
+
+    # Day 2: 2m closes alternating 0.97 / 1.01 → VWAP ≈ 0.99, band ≈ 1.03. A candle opening at
+    # 1.00 (1% over the VWAP, under the band) and running to 1.10.
+    d2 = d1 + dt.timedelta(days=1)
+    chop = [(0.97 if (k // 4) % 2 == 0 else 1.01) for k in range(120)]          # 04:00–05:00
+    run = [1.00, 1.02, 1.04, 1.06, 1.08, 1.10, 1.10, 1.10, 1.10, 1.10]         # the 05:00 candle
+    day2 = bars_of(d2, [(c, c, c, c) for c in chop] + [(c, c, c, c) for c in run])
+    tol2 = [e[0].strftime('%H:%M:%S') for e in simulate_vb_cross(day2)]
+    tol0 = [e[0].strftime('%H:%M:%S') for e in simulate_vb_cross(day2, dict(tol=0.0))]
+    ok2 = len(tol2) == 1 and tol2[0] >= '05:00:00' and tol0 == []
+    print('v21 day 2: opened 1% over the VWAP → tol 2%:', tol2, '| tol 0:', tol0, '→', 'OK' if ok2 else 'UNEXPECTED')
+
+    # Day 3 (after day 2's bars): the first candle runs from 1.00 through yesterday's lines.
+    d3 = d2 + dt.timedelta(days=1)
+    day3 = day2 + bars_of(d3, [1.00, 1.10, 1.20, 1.30, 1.30, 1.30, 1.30, 1.30, 1.30, 1.30])
+    first = [e for e in simulate_vb_cross(day3) if e[0] >= d3]
+    no_gainer = simulate_vb_cross(day1, gainer_of=lambda b: False)
+    ok3 = first == [] and no_gainer == []
+    print('v21 the day\'s first candle:', first, '| no gainer:', no_gainer, '→', 'OK' if ok3 else 'UNEXPECTED')
+
+    # Arithmetic on random walks: band vs a BB on the 2m closes, VWAP vs the 5m candles' VWAP.
+    random.seed(21)
+    worst_band = worst_vw = 0.0
+    for trial in range(10):
+        px, path, vols = 2.0, [], []
+        for k in range(600):                                   # 04:00–09:00
+            o = px
+            px *= 1 + random.gauss(0, 0.003)
+            path.append((o, max(o, px) * (1 + abs(random.gauss(0, 0.002))), min(o, px) * (1 - abs(random.gauss(0, 0.002))), px))
+            vols.append(random.randint(50, 5000))
+        bars = bars_of(d1, path, vols)
+        tr = []
+        simulate_vb_cross(bars, trace=tr)
+        by2, by5 = {}, {}
+        for b in bars:
+            by2.setdefault(_bucket(b['t'], 2), []).append(b)
+            by5.setdefault(_bucket(b['t'], 5), []).append(b)
+        keys2 = sorted(by2)
+        ups = _bands([by2[k][-1]['c'] for k in keys2], 20, 2.0)
+        at = {t: (vw, up) for t, vw, up in tr}
+        for k, u in zip(keys2, ups):
+            mine = at[by2[k][-1]['t']][1]
+            if u is not None and mine is not None:
+                worst_band = max(worst_band, abs(mine - u))
+        pv = vv = 0.0
+        for k in sorted(by5):
+            cb = by5[k]
+            h, lo, c, vol = max(x['h'] for x in cb), min(x['l'] for x in cb), cb[-1]['c'], sum(x['v'] for x in cb)
+            pv += (h + lo + c) / 3 * vol
+            vv += vol
+            worst_vw = max(worst_vw, abs(at[cb[-1]['t']][0] - pv / vv))
+    ok4 = worst_band < 1e-9 and worst_vw < 1e-9
+    print(f'v21 arithmetic: band vs BB on 2m closes, worst {worst_band:.1e}; VWAP vs 5m candles, worst {worst_vw:.1e} →',
+          'OK' if ok4 else 'UNEXPECTED')
+    return ok1 and ok2 and ok3 and ok4
+
+
 def selftest():
     """Synthetic check of the GO rules (run: python3 pinesim.py).
     Crash: a month-start line built on thin volume collapses under a flat basis on one
@@ -659,4 +828,4 @@ def selftest():
 
 
 if __name__ == '__main__':
-    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout()) else 1)
+    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb()) else 1)

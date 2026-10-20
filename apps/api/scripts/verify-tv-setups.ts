@@ -275,11 +275,11 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'ready', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, basis: 1.95, basis_pct: -7, day_gain: 25, ah_gain: null,
     tf: '1', path: 'base', go_via: null, vol_x: null, run_pct: null, line: 'month', ...over,
   });
-  check('default switches: READY, GO, PULLBACK on', JSON.stringify(DEFAULT_ANNOUNCED) === '["ready","go","pullback"]');
+  check('default switches: READY, GO, PULLBACK, CROSS on', JSON.stringify(DEFAULT_ANNOUNCED) === '["ready","go","pullback","cross"]');
   check('parseStageList keeps known stages in menu order, drops the rest',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 7])) === '["go","pullback","held"]'
       && parseStageList('go') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists all six stages', TV_STAGE_ORDER.length === 6 && new Set(TV_STAGE_ORDER).size === 6);
+  check('menu order lists all seven stages (v21 adds CROSS)', TV_STAGE_ORDER.length === 7 && new Set(TV_STAGE_ORDER).size === 7);
   const g = new TvSetupGate();
   g.setAnnounced(['go', 'pullback']);
   check('READY switched off → quiet, even the first of the day', g.admit(sig(), T0) === 'quiet' && !g.announces('ready'));
@@ -411,6 +411,60 @@ console.log('BB breakout (v17, 2026-10-18)');
     g.admit(parseTvMessage('GO XLAB 2.40 | mVWAP 2.3 (+4.3%) | basis 2.31 (0.4%) | line month | tf 30S | via reclaim')!, T0 + 120, false, true) === 'notify');
 }
 
+console.log('VWAP + BB cross (v21, 2026-10-20)');
+{
+  const msg = 'CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S';
+  const x = parseTvMessage(msg);
+  check('CROSS parses', x?.stage === 'cross' && x.ticker === 'AIXI' && x.price === 2.61, JSON.stringify(x));
+  check('…session VWAP and the band', x?.svwap === 2.47 && x.spx_pct === 5.7 && x.upper === 2.58 && x.upper_pct === 1.2, JSON.stringify(x));
+  check('…candle open, timeframes, count', x?.candle_open === 2.5 && x.candle_tf === '5' && x.bb_tf === '2' && x.cross_n === 1, JSON.stringify(x));
+  check('…day high, volume, alert timeframe', x?.day_gain === 25 && x.vol_x === 1.8 && x.tf === '30S', JSON.stringify(x));
+  check('…no line, no month VWAP, no breakout fields', x?.line === null && x.mvwap === null && x.trigger === null && lineTokens('cross', null).length === 0, JSON.stringify(x));
+  const hour = parseTvMessage('CROSS WORX 3.9 | sVWAP 3.7 (+5.4%) | upper 3.85 (+1.3%) | open 3.62 | candle 60 | bb 45 | cross 2 | day high +6% | ah +3% | tf 30S');
+  check('1h candles on a 45m band', hour?.candle_tf === '60' && hour.bb_tf === '45' && hour.cross_n === 2 && hour.ah_gain === 3, JSON.stringify(hour));
+  check('a 30s band reads as "30S"', parseTvMessage('CROSS X 1.0 | candle 1 | bb 30s | cross 1 | tf 30S')?.bb_tf === '30S');
+  // Field names a ticker could spell must not be read off the ticker (BlackBerry, Opendoor).
+  const bb = parseTvMessage('CROSS BB 4.52 | sVWAP 4.4 (+2.7%) | upper 4.5 (+0.4%) | open 4.38 | candle 5 | bb 2 | cross 1 | tf 30S');
+  check('ticker BB is not the band timeframe', bb?.ticker === 'BB' && bb.bb_tf === '2' && bb.price === 4.52, JSON.stringify(bb));
+  const op = parseTvMessage('CROSS OPEN 2.31 | sVWAP 2.2 (+5.0%) | upper 2.3 (+0.4%) | open 2.18 | candle 5 | bb 2 | cross 3 | tf 30S');
+  check('ticker OPEN is not the candle open', op?.ticker === 'OPEN' && op.candle_open === 2.18 && op.cross_n === 3, JSON.stringify(op));
+  check('a GO "via cross" has no cross count', parseTvMessage('GO AIXI 1.78 | mVWAP 1.565 (13.7%) | tf 1 | via cross')?.cross_n === null);
+  check('JSON cross', parseTvMessage({ stage: 'cross', ticker: 'NWGL', price: 0.15, candle_tf: '5', bb_tf: 2, cross_n: 1 })?.bb_tf === '2');
+  check('CROSS is in the ⚙ menu, on by default, not a breakout',
+    TV_STAGE_ORDER.includes('cross') && DEFAULT_ANNOUNCED.includes('cross') && !BREAKOUT_STAGES.has('cross')
+      && JSON.stringify(parseStageList(['cross', 'go'])) === '["go","cross"]');
+
+  const T0 = 1_792_166_400;   // 2026-10-16 11:20 ET
+  const g = new TvSetupGate();
+  check('CROSS announces', g.admit(x!, T0) === 'notify');
+  check('…a re-delivery within 20 s is dropped', g.admit(x!, T0 + 10) === 'drop');
+  // The 30s alert alone sends it: the next candle's cross a minute later is a new event,
+  // not a copy to merge (READY/GO/PULLBACK merge for 5 min).
+  const second = parseTvMessage(msg.replace('cross 1', 'cross 2'))!;
+  check('…the next candle\'s cross 60 s later announces too', g.admit(second, T0 + 60) === 'notify');
+  check(`past the cap (cross ${TV_SETUP.vb_cap + 1}) → quiet`,
+    pastCap(parseTvMessage(msg.replace('cross 1', `cross ${TV_SETUP.vb_cap + 1}`))!)
+      && g.admit(parseTvMessage(msg.replace('cross 1', `cross ${TV_SETUP.vb_cap + 1}`))!, T0 + 400) === 'quiet');
+  check(`…cross ${TV_SETUP.vb_cap} still announces`, g.admit(parseTvMessage(msg.replace('cross 1', `cross ${TV_SETUP.vb_cap}`))!, T0 + 800) === 'notify');
+  check('…a CROSS without a count (JSON) is never capped', !pastCap({ ...x!, cross_n: null }));
+  const off = new TvSetupGate();
+  off.setAnnounced(['go', 'pullback']);
+  check('switched off in ⚙ → quiet', off.admit(x!, T0) === 'quiet');
+  check('…GO and PULLBACK unaffected', off.admit(parseTvMessage('GO AIXI 2.61 | mVWAP 2.4 (+8.8%) | tf 1 | via reclaim')!, T0 + 30, false, true) === 'notify');
+  check('off Momentum still announces (no Momentum-only rule)', new TvSetupGate().admit(x!, T0, false, false) === 'notify');
+
+  const html = formatTvSetupAlert(x!, 'NASDAQ:AIXI', { change_pct: 24.1, grade: 'A', float_m: 5.3 });
+  check('Telegram: headline', html.includes('⏫ <b>CROSS</b>') && html.includes('<b>AIXI</b>') && html.includes('$2.61'), html);
+  check('Telegram: names both timeframes', html.includes('the 5m candle crossed over the session VWAP and the 2m BB upper band'), html);
+  check('Telegram: count, open and levels', html.includes('cross 1 today (first)') && html.includes('opened $2.50')
+    && html.includes('sVWAP $2.47 (+5.7%)') && html.includes('2m BB upper $2.58 (+1.2%)'), html);
+  check('Telegram: Momentum, context, links', html.includes('⭐ <b>on Momentum</b> · grade A') && html.includes('day high +25%')
+    && html.includes('volume 1.8× its last 20 candles') && html.includes('tf 30S') && html.includes('symbol=NASDAQ%3AAIXI'), html);
+  const capHtml = formatTvSetupAlert(parseTvMessage('CROSS WORX 3.9 | candle 60 | bb 45 | cross 4 | tf 30S')!, 'NASDAQ:WORX', null);
+  check('Telegram: 1h / 45m, past the cap, off Momentum', capHtml.includes('the 1h candle') && capHtml.includes('the 45m BB upper band')
+    && capHtml.includes('cross 4 today — past the cap') && capHtml.includes('not on our Momentum list') && !capHtml.includes('null'), capHtml);
+}
+
 console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -437,7 +491,13 @@ console.log('Contract — the Pine script still emits what the parser reads');
     '" | slope "', '" | off high "', 'boSlope >= boStrSlope', 'boOff >= -boStrOff', 'boStrong ? color.fuchsia : color.gray',
     'array.push(boUps, boLastU)',
     // v20: the early BO
-    '" | early +"', 'dayHighGain >= boEarlyGain', 'boVolX >= boEarlyVol', 'session.ismarket and not na(boUp)', 'boTrigEv := boArmEarly ?']) {
+    '" | early +"', 'dayHighGain >= boEarlyGain', 'boVolX >= boEarlyVol', 'session.ismarket and not na(boUp)', 'boTrigEv := boArmEarly ?',
+    // v21: the VWAP + BB cross from the 30s alert, drawn on the candle's chart; the setup switches
+    '"CROSS "', '" | sVWAP "', '" | open "', '" | candle "', '" | bb "', '" | cross "',
+    'vbSend = vbOk and timeframe.period == vbTf', 'timeframe.change(vbCandleTf)', 'timeframe.change(vbBbTf)',
+    'vOpen <= vHi and vOpen <= vLo * (1 + vbTol / 100) and close > vVw and close > vBand',
+    'request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())',
+    'if rcOn and rcLines != "Year"', 'if rcOn and rcLines != "Month"', 'if pbOn and inWindow', 'boValid    = boOn and']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));

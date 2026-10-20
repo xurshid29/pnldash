@@ -86,9 +86,10 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
   await Promise.all([loadSettings(), seedGate()]);
   // Express 4 doesn't catch errors thrown after an await — answer them here.
   try {
-    // v16: a PULLBACK past the cap still pings for a B+-or-better Momentum ticker.
+    // v16: a PULLBACK past the cap still pings for a B+-or-better Momentum ticker
+    // (a v21 CROSS past its cap doesn't).
     const capped = pastCap(sig);
-    const capExempt = capped && poller.tvCapExempt(sig.ticker);
+    const capExempt = capped && sig.stage === 'pullback' && poller.tvCapExempt(sig.ticker);
     // 2026-10-18: a GO pings only for a ticker on our Momentum list.
     const onMomentum = poller.tvOnMomentum(sig.ticker);
     const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt, onMomentum);

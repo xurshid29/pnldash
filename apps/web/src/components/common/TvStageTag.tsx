@@ -2,7 +2,8 @@ import type { TvLine, TvLineName, TvSetupInfo, TvStage, TvStrength } from '../..
 
 // 📐 VWAP setup stage pill (TradingView webhook, 2026-10-03). Amber → orange →
 // green as the reclaim setup matures; blue → red/green for the PULLBACK setup
-// (script v10) and its outcome. Used by the 📐 sidebar.
+// (script v10) and its outcome; teal for the VWAP + BB cross (v21, the chart's
+// "VB" marker). Used by the 📐 sidebar.
 export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg: string }> = {
   forming: { label: 'FORMING', color: '#ffe58f', bg: '#3d2f00' },
   ready: { label: 'READY', color: '#ffd591', bg: '#612500' },
@@ -10,6 +11,7 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   pullback: { label: 'PULLBACK', color: '#bae7ff', bg: '#003a8c' },
   broken: { label: 'BROKEN', color: '#ffccc7', bg: '#5c0011' },
   held: { label: 'HELD', color: '#d9f7be', bg: '#135200' },
+  cross: { label: 'CROSS', color: '#b5f5ec', bg: '#00474f' },
 };
 
 export function isPullbackStage(stage: TvStage): boolean {
@@ -18,9 +20,10 @@ export function isPullbackStage(stage: TvStage): boolean {
 
 // The individual lines of a signal (server: tv-setups.ts lineTokens). A
 // reclaim signal without a line (before v11) is the month line; the legacy
-// 'both' was session + month for PULLBACK, month + year for reclaim.
+// 'both' was session + month for PULLBACK, month + year for reclaim. A CROSS
+// names no line (always the session VWAP).
 export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvLineName[] {
-  if (!line) return isPullbackStage(stage) ? [] : ['month'];
+  if (!line) return isPullbackStage(stage) || stage === 'cross' ? [] : ['month'];
   if (line === 'both') return isPullbackStage(stage) ? ['session', 'month'] : ['month', 'year'];
   return line.split('+') as TvLineName[];
 }
@@ -56,8 +59,13 @@ export function fmtTf(tf: string | null | undefined): string {
   return /^\d+S$/i.test(tf) ? tf.toLowerCase() : tf;
 }
 
+// v21 CROSS: "5m/2m" — the candle's timeframe over the band's.
+export function crossTfText(s: TvSetupInfo): string | null {
+  return s.stage === 'cross' && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
+}
+
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { forming: 1, ready: 2, go: 3, pullback: 1, broken: 2, held: 2 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { forming: 1, ready: 2, go: 3, pullback: 1, broken: 2, held: 2, cross: 1 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -65,9 +73,10 @@ export function fmtSignedPct(p: number | null | undefined): string {
 
 // `path` 'fast' (script v2+): the stage came from the fast-approach route —
 // price ran at the line while the basis lagged — shown as a small suffix.
-// PULLBACK-setup stages show their line (S / M / S+M) and touch number (#1 = first).
-export function TvStageTag({ stage, dim, path, line, touch }: {
-  stage: TvStage; dim?: boolean; path?: 'base' | 'fast' | null; line?: TvLine | null; touch?: number | null;
+// PULLBACK-setup stages show their line (S / M / S+M) and touch number (#1 = first);
+// a v21 CROSS its timeframes ("5m/2m", `tfs`) and the day's cross number as `touch`.
+export function TvStageTag({ stage, dim, path, line, touch, tfs }: {
+  stage: TvStage; dim?: boolean; path?: 'base' | 'fast' | null; line?: TvLine | null; touch?: number | null; tfs?: string | null;
 }) {
   const s = TV_STAGE_STYLE[stage];
   const ln = lineTag(stage, line);
@@ -83,6 +92,7 @@ export function TvStageTag({ stage, dim, path, line, touch }: {
       </span>
       {path === 'fast' && <span style={{ color: '#5cdbd3', fontSize: 10, fontWeight: 700, marginLeft: 3 }}>fast</span>}
       {ln && <span style={{ color: ln.color, fontSize: 10, fontWeight: 700, marginLeft: 3 }}>{ln.label}</span>}
+      {tfs && <span style={{ color: '#5cdbd3', fontSize: 10, fontWeight: 700, marginLeft: 3 }}>{tfs}</span>}
       {touch != null && <span style={{ color: touch === 1 ? '#ffffff' : '#8c8c8c', fontSize: 10, fontWeight: 700, marginLeft: 2 }}>#{touch}</span>}
     </span>
   );
@@ -109,6 +119,13 @@ export function strengthText(s: TvSetupInfo): string {
 // "−5.7% vs mVWAP · basis −5.1%" — where price and the basis sat at the signal.
 // PULLBACK setup: "+0.7% vs sVWAP · +51.2% vs mVWAP · ran +17%", its own line first.
 export function tvLevelsText(s: TvSetupInfo): string {
+  // v21 CROSS: "+5.7% vs sVWAP · +1.2% vs 2m BB · opened $2.50"
+  if (s.stage === 'cross') {
+    const parts = [lineDistanceText(s, 'session')];
+    if (s.upper_pct != null) parts.push(`${fmtSignedPct(s.upper_pct).replace('-', '−')} vs ${fmtTf(s.bb_tf ?? null) || '?'} BB`);
+    if (s.candle_open != null) parts.push(`opened ${s.candle_open < 1 ? s.candle_open.toFixed(4) : s.candle_open.toFixed(2)}`);
+    return parts.filter((p): p is string => p != null).join(' · ');
+  }
   // The signal's own line(s) first (a pullback without a line: session, then month)
   const tokens = lineTokens(s.stage, s.line);
   const shown: TvLineName[] = tokens.length > 0 ? tokens : ['session', 'month'];

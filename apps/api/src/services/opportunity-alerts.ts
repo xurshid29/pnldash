@@ -63,7 +63,14 @@ export interface TvSetupInfo {
   yvwap: number | null;
   ypx_pct: number | null;     // price vs the year VWAP, %
   fails?: number | null;      // v16 PULLBACK: failed pullbacks on the line before it
-  capped?: boolean;           // v16: past the cap (TV_SETUP.pb_cap failures)
+  capped?: boolean;           // v16: past the cap (TV_SETUP.pb_cap failures; v21 CROSS: past TV_SETUP.vb_cap crosses)
+  // VWAP + BB cross (script v21); svwap / spx_pct above are its session VWAP
+  upper?: number | null;      // the BB timeframe's upper band at the cross
+  upper_pct?: number | null;  // price vs that band, %
+  candle_tf?: string | null;  // "5", "60", …
+  bb_tf?: string | null;      // "2", "30", …
+  candle_open?: number | null;
+  cross_n?: number | null;    // the day's crosses on the ticker, this one included
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe
 }

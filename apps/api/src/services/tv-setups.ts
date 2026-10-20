@@ -19,6 +19,10 @@
 // Script v11 (2026-10-05) runs the reclaim setup on the YEAR VWAP too, each
 // line with its own stages; reclaim messages then say `line month|year|both`
 // and carry `yVWAP`.
+// Script v21 (2026-10-20) adds the VWAP + BB cross: one candle of a timeframe the
+// operator picks (5m, 1h, …) crosses over both its session VWAP and the upper BB
+// of another timeframe (2m, 30m, …) — CROSS, sent from the 30s alert the moment
+// a 30s close inside the candle is above both lines.
 //
 // Why TradingView computes it and we don't: the line is a VWAP anchored at the
 // 1st of the month INCLUDING pre-market volume. Yahoo's extended-hours bars
@@ -33,12 +37,15 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'touch' | 'breakout' | 'triggered';
+export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'touch' | 'breakout' | 'triggered' | 'cross';
 // The PULLBACK setup's stages (script v10); the rest belong to the reclaim setup.
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
 // The BB breakout's stages (script v17): a 1m candle against the 30s upper band.
 // No VWAP line; stored as tier_events event 'tv_breakout', never announced.
 export const BREAKOUT_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['touch', 'breakout', 'triggered']);
+// The VWAP + BB cross (script v21): one stage, CROSS; its line is always the
+// session VWAP of the candle timeframe, so a message names no line. Stored as
+// tier_events event 'tv_setup' and announced like GO (⚙ stage switch, the cap).
 // v19: a strong breakout — the band not falling over the last 5 candles and the
 // close within TV_SETUP.bo_strong_off % of the day's high. Null without the context.
 export function boStrong(slope: number | null | undefined, offHigh: number | null | undefined): boolean | null {
@@ -87,7 +94,7 @@ const LINE_ORDER: TvLineName[] = ['session', 'month', 'year'];
 // The individual lines of a message; a reclaim message without a line (before
 // v11) is the month line.
 export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvLineName[] {
-  if (!line) return PULLBACK_STAGES.has(stage) || BREAKOUT_STAGES.has(stage) ? [] : ['month'];
+  if (!line) return PULLBACK_STAGES.has(stage) || BREAKOUT_STAGES.has(stage) || stage === 'cross' ? [] : ['month'];
   if (line === 'both') return PULLBACK_STAGES.has(stage) ? ['session', 'month'] : ['month', 'year'];
   return line.split('+') as TvLineName[];
 }
@@ -134,6 +141,12 @@ export interface TvSetupSignal {
   band_slope?: number | null; // v19: the band now vs at the close 5 candles ago, %
   off_high?: number | null;   // v19: the close vs the day's high so far, % (≤ 0)
   early?: number | null;      // v20: an early BO's gain threshold (10 = the first +10% candle, regular hours)
+  // VWAP + BB cross (script v21): svwap / upper are the candle timeframe's session
+  // VWAP and the BB timeframe's upper band at the 30s close that crossed.
+  candle_tf?: string | null;  // the candle's timeframe: "5", "60", …
+  bb_tf?: string | null;      // the band's timeframe: "2", "30", …
+  candle_open?: number | null; // the candle's open
+  cross_n?: number | null;    // the day's crosses on this ticker, this one included
 }
 
 export const TV_SETUP = {
@@ -171,6 +184,14 @@ export const TV_SETUP = {
   // Weak ones are dimmed on the dashboard (and drawn gray on the chart).
   bo_strong_slope: 0,
   bo_strong_off: 10,
+  // VWAP + BB cross (script v21). The script sends one CROSS per candle from the
+  // 30s alert alone, so there's no other timeframe's copy to merge and a cross on
+  // the next candle is a real event: only a re-delivery inside this window drops.
+  vb_dup_sec: 20,
+  // Past this many crosses on a ticker in a day (the message's `cross N`), a CROSS
+  // is stored and shown, not announced — a name chopping around VWAP crosses on
+  // candle after candle. Untested: grade with the first live weeks.
+  vb_cap: 3,
   // GO is announced only for a ticker on our Momentum list (operator,
   // 2026-10-18, after the first live grading: off-list GOs won 12% and barely
   // moved, median best +2.3% in an hour, against 23% and +6.2% on Momentum).
@@ -225,13 +246,27 @@ export function goStrength(sig: TvSetupSignal, at: Date, onMomentum: boolean): T
 
 const STAGES: Record<string, TvStage> = {
   forming: 'forming', ready: 'ready', go: 'go', pullback: 'pullback', broken: 'broken', held: 'held',
-  touch: 'touch', breakout: 'breakout', triggered: 'triggered',
+  touch: 'touch', breakout: 'breakout', triggered: 'triggered', cross: 'cross',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
 // (no `fails`) capped themselves, so they're never capped here.
+// v21: a CROSS past the day's TV_SETUP.vb_cap crosses on its ticker.
 export function pastCap(sig: TvSetupSignal): boolean {
+  if (sig.stage === 'cross') return sig.cross_n != null && sig.cross_n > TV_SETUP.vb_cap;
   return sig.stage === 'pullback' && sig.fails != null && sig.fails >= TV_SETUP.pb_cap;
+}
+
+// v21 CROSS fields for the alert's setup info and its tier_events row; none on other stages.
+export function crossFields(sig: TvSetupSignal): {
+  upper?: number | null; upper_pct?: number | null; candle_tf?: string | null; bb_tf?: string | null;
+  candle_open?: number | null; cross_n?: number | null;
+} {
+  if (sig.stage !== 'cross') return {};
+  return {
+    upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null, candle_tf: sig.candle_tf ?? null,
+    bb_tf: sig.bb_tf ?? null, candle_open: sig.candle_open ?? null, cross_n: sig.cross_n ?? null,
+  };
 }
 
 const GRADE_LADDER = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'];
@@ -243,7 +278,7 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['ready', 'go', 'pullback', 'forming', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['ready', 'go', 'pullback', 'cross', 'forming', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
@@ -307,7 +342,16 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     band_slope: toNum(o.band_slope ?? o.slope),
     off_high: toNum(o.off_high),
     early: toNum(o.early),
+    candle_tf: toTf(o.candle_tf ?? o.candle),
+    bb_tf: toTf(o.bb_tf ?? o.bb),
+    candle_open: toNum(o.candle_open ?? o.open),
+    cross_n: toNum(o.cross_n ?? o.cross),
   };
+}
+
+function toTf(v: unknown): string | null {
+  const s = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : '';
+  return /^[0-9]+[A-Za-z]?$/.test(s) ? s.toUpperCase() : null;
 }
 
 function toVia(v: unknown): TvGoVia | null {
@@ -331,6 +375,7 @@ function toPath(v: unknown): TvPath | null {
 //   PULLBACK WFF 3.53 | sVWAP 3.12 (+13.1%) | mVWAP 3.11 (+13.5%) | yVWAP 3.39 (+4.1%) | line year | touch 4 | fails 2 | peak +45% | tf 30S   (v16)
 //   BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S   (v17)
 //   BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | … | early +10% | slope +2.0% | off high -1.3% | tf 30S   (v20)
+//   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S   (v21)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -346,7 +391,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
       return null;
     }
   }
-  const head = /^(FORMING|READY|GO|PULLBACK|BROKEN|HELD|TOUCH|BREAKOUT|TRIGGERED)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(FORMING|READY|GO|PULLBACK|BROKEN|HELD|TOUCH|BREAKOUT|TRIGGERED|CROSS)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
@@ -373,6 +418,11 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const slope = /\bslope\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const offHigh = /\boff\s+high\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const early = /\bearly\s+\+?(\d*\.?\d+)\s*%/i.exec(text);
+  // v21 fields, read after a "|" so a ticker can't pass for one (BB, OPEN).
+  const candle = /\|\s*candle\s+([0-9]+[A-Za-z]?)\b/i.exec(text);
+  const bbTf = /\|\s*bb\s+([0-9]+[A-Za-z]?)\b/i.exec(text);
+  const open = /\|\s*open\s+\$?(\d*\.?\d+)/i.exec(text);
+  const crossN = /\|\s*cross\s+(\d+)\b/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -404,6 +454,10 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     band_slope: toNum(slope?.[1]),
     off_high: toNum(offHigh?.[1]),
     early: toNum(early?.[1]),
+    candle_tf: toTf(candle?.[1]),
+    bb_tf: toTf(bbTf?.[1]),
+    candle_open: toNum(open?.[1]),
+    cross_n: toNum(crossN?.[1]),
   };
 }
 
@@ -453,10 +507,15 @@ export class TvSetupGate {
     const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}`;
     const prev = this.lastExact.get(exact);
     const breakout = BREAKOUT_STAGES.has(sig.stage);
-    if (prev != null && nowSec - prev < (breakout ? TV_SETUP.bo_dup_sec : TV_SETUP.dup_sec)) return 'drop';
+    const cross = sig.stage === 'cross';
+    const dupSec = breakout ? TV_SETUP.bo_dup_sec : cross ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
+    if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
     // The BB breakout is stored and graded, never announced (a trial, 2026-10-18).
     if (breakout) return 'quiet';
+    // v21 CROSS: one per candle from the 30s alert alone — no copy to merge, and
+    // no 5-min spacing (the next candle's cross is a new event); the cap limits it.
+    if (cross) return !this.announced.has('cross') || (pastCap(sig) && !capExempt) ? 'quiet' : 'notify';
 
     const tokens = lineTokens(sig.stage, sig.line);
     const event = `${sig.ticker}|${sig.stage}|${tokens.join('+')}`;
@@ -516,10 +575,11 @@ export class TvSetupGate {
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
   forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD',
-  touch: 'TOUCH', breakout: 'BREAKOUT', triggered: 'TRIGGERED',
+  touch: 'TOUCH', breakout: 'BREAKOUT', triggered: 'TRIGGERED', cross: 'CROSS',
 };
 const STAGE_ICON: Record<TvStage, string> = {
   forming: '🟡', ready: '🟠', go: '🟢', pullback: '↩️', broken: '✖️', held: '✅', touch: '⚪', breakout: '⚡', triggered: '🚀',
+  cross: '⏫',
 };
 const STAGE_HINT: Record<TvStage, string> = {
   forming: 'setup forming — open the chart',
@@ -531,7 +591,17 @@ const STAGE_HINT: Record<TvStage, string> = {
   touch: 'the 1m candle is at the 30s BB upper band — get ready',
   breakout: '1m close above the 30s BB upper band — buy stop over its high',
   triggered: 'the next candle took the breakout high',
+  cross: 'the candle crossed over the session VWAP and the BB upper band',
 };
+// A TradingView interval, short: "5" → "5m", "60" → "1h", "30S" → "30s".
+export function fmtTf(tf: string | null | undefined): string {
+  if (!tf) return '?';
+  if (/^\d+$/.test(tf)) {
+    const n = Number(tf);
+    return n >= 60 && n % 60 === 0 ? `${n / 60}h` : `${n}m`;
+  }
+  return /^\d+S$/i.test(tf) ? tf.toLowerCase() : tf;
+}
 // The line(s) a message is about, in words: "session + month VWAP".
 function lineName(sig: TvSetupSignal): string {
   const tokens = lineTokens(sig.stage, sig.line);
@@ -564,6 +634,7 @@ export function formatTvSetupAlert(
   row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
   strength: TvStrength | null = null,
 ): string {
+  if (sig.stage === 'cross') return formatCross(sig, tvSym, row);
   const pb = PULLBACK_STAGES.has(sig.stage);
   const tokens = lineTokens(sig.stage, sig.line);
   const yearish = !pb && tokens.includes('year');
@@ -595,25 +666,65 @@ export function formatTvSetupAlert(
     .map((t) => lvlOf[t]).filter((x): x is string => x != null);
   if (sig.basis != null) lvl.push(`basis ${fmtPx(sig.basis)} (${fmtSigned(sig.basis_pct)})`);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
-  if (row) {
-    const mom = ['⭐ <b>on Momentum</b>'];
-    if (row.grade) mom.push(`grade ${escapeHtml(row.grade)}`);
-    if (row.change_pct != null) mom.push(`now ${fmtSigned(row.change_pct)}`);
-    if (row.float_m != null) mom.push(`float ${row.float_m.toFixed(1)}M`);
-    lines.push(mom.join(' · '));
-  } else {
-    lines.push('<i>not on our Momentum list</i>');
-  }
+  lines.push(momentumLine(row));
   if (strength) lines.push(strengthLine(strength, sig));
+  const ctx = contextParts(sig);
+  if (ctx.length > 0) lines.push(ctx.join(' · '));
+  lines.push(linksLine(sig, tvSym));
+  return lines.join('\n');
+}
+
+// v21 CROSS: "the 5m candle crossed over the session VWAP and the 2m BB upper band".
+function formatCross(
+  sig: TvSetupSignal,
+  tvSym: string,
+  row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
+): string {
+  const bb = fmtTf(sig.bb_tf);
+  const lines = [
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.cross} <b>${TV_STAGE_LABEL.cross}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `<i>the ${fmtTf(sig.candle_tf)} candle crossed over the session VWAP and the ${bb} BB upper band</i>`,
+  ];
+  const what: string[] = [];
+  if (sig.cross_n != null) {
+    what.push(`cross ${sig.cross_n} today${sig.cross_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
+  }
+  if (sig.candle_open != null) what.push(`opened ${fmtPx(sig.candle_open)}`);
+  if (what.length > 0) lines.push(what.join(' · '));
+  const lvl: string[] = [];
+  if (sig.svwap != null) lvl.push(`sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})`);
+  if (sig.upper != null) lvl.push(`${bb} BB upper ${fmtPx(sig.upper)} (${fmtSigned(sig.upper_pct ?? null)})`);
+  if (lvl.length > 0) lines.push(lvl.join(' · '));
+  lines.push(momentumLine(row));
+  const ctx = contextParts(sig, sig.vol_x != null ? [`volume ${sig.vol_x.toFixed(1)}× its last 20 candles`] : []);
+  if (ctx.length > 0) lines.push(ctx.join(' · '));
+  lines.push(linksLine(sig, tvSym));
+  return lines.join('\n');
+}
+
+function momentumLine(row: { change_pct: number | null; grade: string | null; float_m: number | null } | null): string {
+  if (!row) return '<i>not on our Momentum list</i>';
+  const mom = ['⭐ <b>on Momentum</b>'];
+  if (row.grade) mom.push(`grade ${escapeHtml(row.grade)}`);
+  if (row.change_pct != null) mom.push(`now ${fmtSigned(row.change_pct)}`);
+  if (row.float_m != null) mom.push(`float ${row.float_m.toFixed(1)}M`);
+  return mom.join(' · ');
+}
+
+// "day high +41% · after hours +34% · tf 1" (`extra` goes before the timeframe)
+function contextParts(sig: TvSetupSignal, extra: string[] = []): string[] {
   const ctx: string[] = [];
   if (sig.day_gain != null) ctx.push(`day high ${fmtSigned(Math.round(sig.day_gain)).replace('.0%', '%')}`);
   if (sig.ah_gain != null) ctx.push(`after hours ${fmtSigned(Math.round(sig.ah_gain)).replace('.0%', '%')}`);
+  ctx.push(...extra);
   if (sig.tf) ctx.push(`tf ${escapeHtml(sig.tf)}`);
-  if (ctx.length > 0) lines.push(ctx.join(' · '));
+  return ctx;
+}
+
+function linksLine(sig: TvSetupSignal, tvSym: string): string {
   const finviz = `https://finviz.com/quote.ashx?t=${encodeURIComponent(sig.ticker)}`;
   const tv = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tvSym)}`;
-  lines.push(`<a href="${tv}">TradingView</a> · <a href="${finviz}">Finviz</a>`);
-  return lines.join('\n');
+  return `<a href="${tv}">TradingView</a> · <a href="${finviz}">Finviz</a>`;
 }
 
 // "💪 GO strength 3/4 · morning ✓ · run-up +8.1% ✓ · volume 3.2× ✓ · on Momentum ✗"

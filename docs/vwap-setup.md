@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v20** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v21** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v21 a fourth, the **VWAP + BB cross** (§16): a candle of a timeframe you pick crosses over its session VWAP and another timeframe's BB upper band, from the 30s alert. Since v21 every setup has an on/off switch for the chart and the alerts. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -589,6 +589,16 @@ condition instead (one per timeframe). A stage that fires on both timeframes
 within 5 min is announced once; the second copy is logged only (§7.2).
 **After every script update, delete and recreate both alerts.**
 
+**Setup switches (v21).** Each setup has an on/off switch in the script's
+Inputs: "Reclaim setup on" (in Setup), "Pullback setup on", "Breakout setup on"
+and "VWAP + BB cross setup on". Off means no markers and no alerts from that
+setup, and a VWAP line no setup uses isn't drawn. A chart can show only the
+setups you want there. An alert copies the switches (and every other input)
+when it's created, so set them on the chart before creating an alert, and leave
+all four on for the two watchlist alerts unless you mean to silence a setup.
+The new inputs come last in the list, so values saved before v21 keep their
+places.
+
 ## 7. Our side — how a signal travels
 
 ```
@@ -638,6 +648,7 @@ TradingView servers                                   pnldash droplet
 | The ticker had this stage announced in the last 5 min (a month READY, then a year READY a minute later). **PULLBACK counts per line** (since 2026-10-05, `a5a5520`): only a line announced in the last 5 min blocks it, in any combination | `notify_merge_sec` 300 | `log`. Only announcements count, so a quiet event never blocks the next one |
 | A PULLBACK past the day's cap: `fails` ≥ 2 on every line it names (script v16+; older scripts capped themselves) | `pb_cap` 2, `pb_cap_exempt` 'B+' | `quiet`, unless the ticker is on our Momentum list at grade B+ or better (a trial since 2026-10-10, after WFF) — then it announces, and Telegram says it's past the cap. Rows carry `fails`, `capped`, `cap_exempt` |
 | A GO on a ticker that isn't on our Momentum list (since 2026-10-18, `9751510`, after the first live grading §9.1: off-list GOs won 12% and barely moved) | `go_momentum_only` true | `quiet`. The sidebar shows it with a dimmed pill. FORMING/READY/PULLBACK off the list are unaffected |
+| A CROSS (script v21, §16): only a re-delivery inside 20 s drops; there's no other timeframe's copy to merge and no 5-min spacing, since the next candle's cross is a new event. Past the day's cap (`cross N` > 3 on the ticker) | `vb_dup_sec` 20, `vb_cap` 3 | `quiet` past the cap (no B+ exemption) or when CROSS is switched off in ⚙. Off-list names still announce |
 | More than 120 webhooks a minute | `max_per_min` 120 | `flood` → 429, so a leaked key or runaway alert can't spam the phone |
 
 **The noise cut (operator, 2026-10-05):** "we need to cut noise a little bit
@@ -1086,6 +1097,8 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-18 | v19 | `b66dedc` | Operator, after v18: "some BOs are not very accurate maybe? For example, at 18:14, 18:44, or 19:30?" (XLAB 10-16). All three followed the rule and none triggered: the next candle never took their high, so no trade. But 18:14 (out of a flat, quiet stretch) and 19:30 (a bounce into a band still falling from the 19:14 top, ~12% under the day's high) are the weaker kind. Measured on the 20-session study: band falling >2% −0.58% a trade vs rising >2% +0.23%; ≥10% under the day's high negative vs within 3% of it +0.52%. **Strong** = the band not falling over the last 5 candles and the close within 10% of the day's high: +0.41% a trade vs −0.17% for the rest, the same in both halves; 🔥 strong +1.22% vs 🔥 weak +0.06%. Every signal now carries `slope` (the band over 5 candles) and `off high`. Weak ones are drawn gray on the chart (`boStrSlope` 0, `boStrOff` 10) and dimmed on the dashboard with the reason; the server computes strong (`TV_SETUP.bo_strong_slope` / `bo_strong_off`, `boStrong()`); 🔥 needs strong. Nothing is filtered: every signal is still stored and graded. Replica: the context in both paths, and the 30s and 1m paths agree on strong vs weak for every BREAKOUT and TRIGGERED. Regression: 243 checks. **Paste the script and recreate both alerts.** |
 | 2026-10-19 | v20 | `c09bc4d` | Operator, after WORX ran 1.40 → 2.54 with no BO (its first close above the band at +9%, under the +20% filter; by +20% it was riding the band, so never a fresh cross): "+20% would be too late maybe? Maybe earlier, such as 5-10% and some confirmation such as rvol or current vol". Measured on every night-before watchlist name (`research/bb-breakout/early_study.py`, 16,745 ticker-days): first reaching +5/+10/+20% above the band loses (−1.5% to −1.0%), in pre-market clearly (−2.7%). The +2.48% "first-gainer" result from the +20%-days study was hindsight. The one version that holds in both halves: **regular hours, the first candle of the day to reach +10%, closing above the band, candle volume ≥ 2× its last 20** (+0.29% a trade, ~8/day). That's the **early BO**: no +20% filter and no fresh-cross test. Its TRIGGERED doesn't need the +20% filter either. The message carries `early +10%`, the chart draws an orange "E", and the dashboard tags it "early +10%" and rings it at every alarm level but Off. Inputs `boEarlyOn` / `boEarlyGain` 10 / `boEarlyVol` 2. Replica: early logic in both paths plus a self-test. Regression: 252 checks. **Paste the script and recreate both alerts.** |
 
+| 2026-10-20 | v21 | *(this commit)* | The operator's fourth setup, the VWAP + BB cross (§16): "the stock market is colder than before, and it's very hard to trade with 1min timeframe … catch when 1 candle crosses over both session vwap and 1/2 timeframe bollinger bands upper row … alert right at that moment or a little bit earlier", with the timeframes configurable (5m chart + 2m BB, 1h + 30m or 45m, …) and per-setup on/off switches. Examples: AIXI, WORX, NWGL on 5m charts (10-19/20). Premium's two alert slots are taken, so it rides the 30s alert: the candle, its session VWAP and the band are built from the 30s bars, CROSS fires at the first 30s close above both lines inside a candle that opened under both (or within `vbTol` 2% over the lower one), once per candle; the candle's chart replays the same 30s bars. New inputs, all last in the list: `rcOn` (the reclaim switch), `vbOn`, `vbCandleTf` 5, `vbBbTf` 2, `vbLen` 20, `vbMult` 2, `vbTol` 2, `vbGainOn`, `vbTf` 30S, `vbShow`. The VWAP lines are drawn only while a setup that uses them is on. Server: stage `cross` (⚙ switch, `vb_cap` 3, `vb_dup_sec` 20), Telegram `tv_cross`, sidebar/History/toast. Replica `simulate_vb_cross` + `selftest_vb` (the band and VWAP arithmetic checked against direct 2m / 5m computations). Regression: 293 checks. Not measured before building: §16.6. |
+
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
 ### 13.1 The operator's definition
@@ -1514,3 +1527,160 @@ read the same:
   in the breakout study (research/bb-breakout).
 - The best-measured uses are the 1m+5m burst pair as "where the action is" and
   the drying-up tell as an exit assist, not volume as an entry filter.
+
+## 16. The VWAP + BB cross (script v21, 2026-10-20)
+
+### 16.1 The operator's definition
+
+> "currently, the stock market is colder than before, and it's very hard to
+> trade with 1min timeframe … catch when 1 candle crosses over both session
+> vwap and 1/2 timeframe bollinger bands upper row, and I want to get an alert
+> right at that moment or a little bit earlier … vwap and bb timeframes should
+> be configurable … for example, 5min chart timeframe and 2min bb timeframe, or
+> 1hour chart timeframe and 30min bb timeframe (or 45min bb)"
+
+Their charts (10-19/20, 5m candles): the built-in **VWAP Session** (white) and
+the built-in **BB** on the **2-minute** timeframe (20, SMA, 2; its upper band in
+orange), with our script hidden.
+
+| Ticker | When (ET) | What the candle did |
+|---|---|---|
+| AIXI | 10-19 17:15 (after hours) | from ~2.28, under the band (~2.30) and the VWAP (~2.52), to ~2.55 in one candle |
+| AIXI | 10-20 05:05 | out of an hour of flat candles sitting on the VWAP (~2.47) under the band (~2.53), to 2.80; 3.60 the next candle |
+| WORX | 10-19 10:05 | out of a flat 1.40 base on the VWAP, under the band (~1.45), to 1.95 |
+| NWGL | 10-19 16:20 | from ~0.125, under the band (~0.13) and the VWAP (~0.135), to 0.15 |
+
+They also asked for each setup to have its own switch, for the chart and the
+alerts: "enable only new vwap+bb setup and disable our current setups … or
+enable vwap+bb and Pullback setups and disable others".
+
+### 16.2 Design
+
+- **The same script, on the 30s alert.** Premium's two watchlist-alert slots
+  are taken (1m + 30s), so a separate script or a 5m alert would need a third.
+  Like the breakout (§14), the setup sends only from the 30s alert. No new
+  alert, but both must be recreated after the paste.
+- **Built from the 30s bars.** `vbStep()` builds three things:
+  - the candle, with TradingView's own bar boundaries (`timeframe.change`);
+  - its session VWAP, from the candle timeframe's bars (hlc3 × volume, the
+    forming candle live): the same number the chart's VWAP shows on that
+    timeframe;
+  - the band, SMA / StdDev of the BB timeframe's last 19 closes plus the forming
+    one: what the built-in BB shows in real time.
+  Any timeframe that is a multiple of 30s works: 5m / 2m, 1h / 30m, 1h / 45m,
+  15m / 5m, and so on.
+- **At the moment, not at the close.** It fires at the first 30s close above
+  both lines inside the candle, at most 30 s after the cross, while the candle
+  is still open. A wick through the lines inside one 30s bar doesn't count; a
+  touch version would be earlier and noisier.
+- **The chart shows the alerts.** On the candle timeframe's chart (5m by
+  default) the script replays the same 30s bars inside each candle
+  (`request.security_lower_tf`, as v18 did for the breakout), so a teal **VB**
+  marks exactly the candles that sent a CROSS. The 30s chart marks the 30s bar.
+  Other timeframes draw nothing for this setup.
+- **Gainers only, by default.** It uses the same filter as the other setups:
+  +20% day high today or in the last 3 sessions, or after hours. It's
+  recomputed from the 30s bars, because a request can't read the chart's
+  running values. `vbGainOn` off = every watchlist name.
+- **Counted, capped on our side.** Each message carries the day's cross number,
+  and the server decides how many to announce (§16.5). Changing the cap needs
+  no new script.
+
+### 16.3 The rules and inputs (group "VWAP + BB cross (v21)")
+
+- **Start:** the candle's open against the lines at the last 30s close before
+  it, i.e. what the chart shows as the candle opens. It must open at or under
+  the higher line, and at most `vbTol` % above the lower one. Price sitting on
+  the VWAP counts (AIXI 05:05 opened ~1% over it).
+- **CROSS:** a 30s close above the live VWAP and the live band. Once per
+  candle.
+- The day's first candle never counts, since there's no VWAP before it.
+- Only inside the alert window (`alertWin`, 04:00–20:00 ET).
+
+| Input | Default | What it does |
+|---|---|---|
+| `vbOn` | on | the setup's switch (chart and alerts) |
+| `vbCandleTf` | 5 | the candle's timeframe: the chart you trade, and its session VWAP |
+| `vbBbTf` | 2 | the band's timeframe |
+| `vbLen` / `vbMult` | 20 / 2 | the band |
+| `vbTol` | 2 | the candle may open up to this % above the lower line (0 = under both) |
+| `vbGainOn` | on | gainers only (the filter at the top of the script) |
+| `vbTf` | 30S | the alert timeframe it sends from (the candle and band timeframes must be at least this) |
+| `vbShow` | on | draw the band (orange) and the VB markers |
+| `rcOn` | on | the reclaim setup's switch (FORMING / READY / GO), new in v21 |
+
+**How it can differ from the operator's chart.** On a 5m chart, the built-in
+2m BB plots, for each 5m candle, the final value of the last 2m bar that
+started inside it. A 2m bar starting at 09:34 runs to 09:36, past the 5m close.
+Our band is its value at the candle's last 30s close. The VWAP is the same by
+construction, on the same feed.
+
+### 16.4 The message
+
+```
+CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S
+```
+
+- `sVWAP`: the candle timeframe's session VWAP at the cross.
+- `upper`: the BB timeframe's upper band at the cross.
+- `open`: the candle's open.
+- `candle` / `bb`: the two timeframes.
+- `cross`: the day's crosses on this ticker, this one included.
+- `vol`: the candle's volume so far against the average of its last 20 candles
+  (part of a candle against whole ones, so it reads low early in a candle).
+- `ah`: after hours, as in the other messages.
+
+The parser reads `candle`, `bb`, `open` and `cross` only after a `|`, so a
+ticker like BB or OPEN can't pass for a field.
+
+### 16.5 Our side
+
+- **Stage `cross`**, stored as `tier_events` event `tv_setup`. The row adds
+  `upper`, `upper_pct`, `candle_tf`, `bb_tf`, `candle_open` and `cross_n`.
+- **Gate** (§7.2): a re-delivery inside 20 s drops (`vb_dup_sec`). There's no
+  merge, because only the 30s alert sends it. Past `vb_cap` (3) crosses on a
+  ticker in a day it's quiet, with no B+ exemption. It isn't Momentum-only.
+- **⚙ → 📐 Stages that alert → CROSS.** It's on in the defaults, but prod's
+  saved list (`["go","pullback"]`, from before v21) doesn't name it, so on prod
+  it stays off, and hidden from the sidebar like any switched-off stage, until
+  it's ticked.
+- **Dashboard:**
+  - a teal CROSS pill with the timeframes and the day's number (`5m/2m #1`);
+  - live for 15 min, then "since ±x%" like a GO;
+  - a CROSS filter on History → 📐 Setups;
+  - the toast "📐 CROSS AIXI — 5m candle over sVWAP + 2m BB · #1", with the
+    bright-pair sound (as for GO) on Momentum names.
+- **Telegram:** ⏫ CROSS, "the 5m candle crossed over the session VWAP and the
+  2m BB upper band", the count and the open, both levels, Momentum, context.
+  Off-list names arrive silently, as for every 📐 stage. Mute with
+  `ALERTS_DISABLED=tv_cross`.
+
+### 16.6 Not measured before building — what to grade
+
+The operator asked for a tool for a colder market, so it shipped as a heads-up
+on their own rule, without a study first.
+- **Unknowns:** how often it fires (the gainer filter and the cap limit it),
+  whether it's an edge, and the defaults (`vbTol` 2%, read off the AIXI and
+  WORX charts; the cap of 3).
+- **Grade after about two weeks of live rows:** for each CROSS, the best gain
+  and the worst drawdown in 30 and 60 minutes, and +10% vs −5% first. Split by:
+  - cross number (#1 against later);
+  - how the candle opened (under both, or on the VWAP);
+  - on Momentum or not, the grade;
+  - `vol`, and the time of day.
+  Then decide the cap, `vbTol` and a Momentum-only rule.
+- **Offline:** `simulate_vb_cross` can replay it on Yahoo 1m bars as the base
+  (regular-hours VWAP only: Yahoo's pre-market bars carry no volume). Test any
+  "fire earlier" or filter idea on the night-before watchlist universe, not on
+  days that ended +20%.
+
+### 16.7 Replay and changes
+
+- Replica: `research/vwap-setup/pinesim.py`, `simulate_vb_cross` and
+  `selftest_vb`. The self-test checks the stage rules on synthetic days, and
+  checks the band and VWAP arithmetic against a BB on the 2m closes and the 5m
+  candles' VWAP on random walks.
+- Contract: `scripts/verify-tv-setups.ts`, the "VWAP + BB cross (v21)" checks.
+- Procedure: §10. The cap, the stage switch and the announce rules are
+  server-side; a rule change in the script needs a new version and both alerts
+  recreated.

@@ -331,7 +331,9 @@ export interface TickCatch {
 export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // PULLBACK / BROKEN / HELD belong to the PULLBACK setup (script v10, 2026-10-05):
 // price back near the session or month VWAP after a run, then its outcome.
-export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held';
+// CROSS is the VWAP + BB cross (script v21, 2026-10-20): a candle of the chosen
+// timeframe crossed over its session VWAP and another timeframe's BB upper band.
+export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'cross';
 // PULLBACK setup: session / month / year (v14); reclaim setup: month / year
 // (v11). Lines firing the same stage on one bar are named together in script
 // order ("session+month"); the legacy 'both' (v10–v13) meant session + month
@@ -372,7 +374,14 @@ export interface TvSetupInfo {
   yvwap?: number | null;
   ypx_pct?: number | null;    // price vs the year VWAP, %
   fails?: number | null;      // script v16, PULLBACK: failed pullbacks on the line before it
-  capped?: boolean;           // v16: past the cap — pings only for a B+-or-better Momentum ticker
+  capped?: boolean;           // v16: past the cap — pings only for a B+-or-better Momentum ticker (v21 CROSS: past the day's cap, never pings)
+  // VWAP + BB cross (script v21); svwap / spx_pct are the candle timeframe's session VWAP
+  upper?: number | null;      // the BB timeframe's upper band at the cross
+  upper_pct?: number | null;  // price vs that band, %
+  candle_tf?: string | null;  // "5", "60", …
+  bb_tf?: string | null;      // "2", "30", …
+  candle_open?: number | null;
+  cross_n?: number | null;    // the day's crosses on the ticker, this one included
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

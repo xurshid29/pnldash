@@ -208,8 +208,14 @@ function fmtAlertPrice(p: number | null): string {
 }
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
-  forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD',
+  forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS',
 };
+// "5" → "5m", "60" → "1h", "30S" → "30s"
+function shortTf(tf: string | null | undefined): string {
+  if (!tf) return '?';
+  if (/^\d+$/.test(tf)) return Number(tf) >= 60 && Number(tf) % 60 === 0 ? `${Number(tf) / 60}h` : `${tf}m`;
+  return tf.toLowerCase();
+}
 const SHORT_LINE = { session: 'sVWAP', month: 'mVWAP', year: 'yVWAP' } as const;
 function fmtSignedPct(p: number | null): string {
   return p == null ? '?' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -218,6 +224,10 @@ function fmtSignedPct(p: number | null): string {
 export function opportunityTitle(a: OpportunityAlert): string {
   if (a.kinds.includes('tv_setup') && a.setup) {
     const s = a.setup;
+    // v21: "📐 CROSS AIXI — 5m candle over sVWAP + 2m BB · #1"
+    if (s.stage === 'cross') {
+      return `${s.on_screen ? '⭐ ' : ''}📐 CROSS ${a.ticker} — ${shortTf(s.candle_tf)} candle over sVWAP + ${shortTf(s.bb_tf)} BB${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
+    }
     if (s.stage === 'pullback' || s.stage === 'broken' || s.stage === 'held') {
       const tokens = lineTokens(s.stage, s.line);
       const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
@@ -246,6 +256,7 @@ export function opportunityBody(a: OpportunityAlert): string {
     const s = a.setup;
     const bits = [fmtAlertPrice(a.price)];
     if (s.svwap != null) bits.push(`sVWAP ${fmtAlertPrice(s.svwap)}`);
+    if (s.upper != null) bits.push(`${shortTf(s.bb_tf)} BB upper ${fmtAlertPrice(s.upper)}`);
     if (s.mvwap != null) bits.push(`mVWAP ${fmtAlertPrice(s.mvwap)}`);
     if (s.yvwap != null) bits.push(`yVWAP ${fmtAlertPrice(s.yvwap)}`);
     if (s.stage === 'pullback' && s.peak_pct != null) bits.push(`ran +${Math.round(s.peak_pct)}% above the line`);
@@ -337,7 +348,7 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k]) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
-      // Loudest wins: A+ / 📐 GO bright pair > fast-move radar > 📐 READY or
+      // Loudest wins: A+ / 📐 GO / 📐 CROSS (v21) bright pair > fast-move radar > 📐 READY or
       // PULLBACK triple > news chime > soft single tone (every 📐 stage on a
       // ticker that is NOT on our Momentum list — lower priority). 📐 FORMING,
       // BROKEN / HELD and READY repeats never arrive here: the server stores
@@ -345,7 +356,7 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('go')) crossConfirmPing();
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('go') || tvStage('cross')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('ready') || tvStage('pullback')) setupReadyPing();
         else if (audible.some((a) => a.kinds.includes('news'))) chime();

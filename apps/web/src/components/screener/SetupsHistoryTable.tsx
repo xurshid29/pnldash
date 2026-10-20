@@ -16,7 +16,7 @@ import { useSelection } from '../../context/SelectionContext';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, fmtSignedPct, fmtTf, lineDistanceText, lineTokens } from '../common/TvStageTag';
+import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
 import { BreakoutsHistoryTable } from './BreakoutsHistoryTable';
 import { fmtPct, fmtPrice } from '../../utils/format';
@@ -38,7 +38,7 @@ interface SetupEvent {
   outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
-type StageFilter = 'on' | 'all' | 'go' | 'pullback' | 'bo';
+type StageFilter = 'on' | 'all' | 'go' | 'pullback' | 'cross' | 'bo';
 
 function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const sorted = alerts
@@ -49,7 +49,8 @@ function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const last = new Map<string, SetupEvent>();   // ticker|stage|lines → its latest event
   for (const { a, at } of sorted) {
     const s = a.setup!;
-    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}`;
+    // A v21 CROSS comes from one alert: only a copy of the same cross merges, not the next candle's.
+    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : ''}`;
     const prev = last.get(k);
     if (prev && at - prev.at <= MERGE_MS) {
       if (s.tf && !prev.tfs.includes(s.tf)) prev.tfs.push(s.tf);
@@ -105,6 +106,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       if (stageFilter === 'on' && !on.has(st)) return false;
       if (stageFilter === 'go' && st !== 'go') return false;
       if (stageFilter === 'pullback' && st !== 'pullback') return false;
+      if (stageFilter === 'cross' && st !== 'cross') return false;
       return !momentumOnly || e.setup.on_screen;
     });
   }, [events, settings, stageFilter, momentumOnly]);
@@ -113,6 +115,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const held = pullbacks.filter((e) => e.outcome?.stage === 'held').length;
   const broke = pullbacks.filter((e) => e.outcome?.stage === 'broken').length;
   const gos = visible.filter((e) => e.setup.stage === 'go').length;
+  const crosses = visible.filter((e) => e.setup.stage === 'cross').length;
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -137,7 +140,8 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       title: 'Setup', key: 'setup', width: 170,
       render: (_v, e) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <TvStageTag stage={e.setup.stage} dim={!e.notified} path={e.setup.path} line={e.setup.line} touch={e.setup.touch} />
+          <TvStageTag stage={e.setup.stage} dim={!e.notified} path={e.setup.path} line={e.setup.line}
+            touch={e.setup.stage === 'cross' ? e.setup.cross_n : e.setup.touch} tfs={crossTfText(e.setup)} />
           {e.setup.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
         </span>
       ),
@@ -183,6 +187,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             { label: 'All stages', value: 'all' },
             { label: 'GO', value: 'go' },
             { label: 'PULLBACK', value: 'pullback' },
+            { label: 'CROSS', value: 'cross' },
             { label: '⚡ Breakouts', value: 'bo' },
           ]}
         />
@@ -194,6 +199,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             <>
               {visible.length} setup{visible.length === 1 ? '' : 's'} · {gos} GO · {pullbacks.length} PULLBACK
               {pullbacks.length > 0 && <> (<span style={{ color: '#52c41a' }}>{held} held</span> / <span style={{ color: '#ff4d4f' }}>{broke} broke</span>)</>}
+              {crosses > 0 && <> · {crosses} CROSS</>}
             </>
           )}
         </Text>}

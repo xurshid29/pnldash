@@ -16,7 +16,7 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
 ].filter((k) => DASHBOARD_KINDS.includes(k.kind as AlertKind)) as Array<{ kind: AlertKind; label: string; hint: string }>;
 
 const STAGE_LABEL: Record<TvStage, string> = {
-  ready: 'READY', go: 'GO', pullback: 'PULLBACK', forming: 'FORMING', broken: 'BROKEN', held: 'HELD',
+  ready: 'READY', go: 'GO', pullback: 'PULLBACK', forming: 'FORMING', broken: 'BROKEN', held: 'HELD', cross: 'CROSS',
 };
 
 // Click-to-open switches for which opportunity alerts make a sound and a

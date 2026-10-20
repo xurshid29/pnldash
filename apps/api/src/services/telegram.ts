@@ -43,6 +43,7 @@ export type AlertComponent =
   | 'tv_pullback'   // 📐 PULLBACK setup (script v10): price back near VWAP after a run
   | 'tv_broken'     // 📐 … a pullback closed under its line (always a silent message)
   | 'tv_held'       // 📐 … a pullback ran +10% (always a silent message)
+  | 'tv_cross'      // 📐 VWAP + BB cross (script v21): a candle crossed over the session VWAP and the BB upper band
   | 'tv_year';      // 📐 any setup message about the year VWAP alone (reclaim v11, PULLBACK v14)
 let disabledAlerts: Set<string> | null = null;
 export function alertDisabled(component: AlertComponent): boolean {
