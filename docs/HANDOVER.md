@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-10-18 (📐 graded)
+# Session Handover — updated 2026-10-20
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -8,33 +8,40 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-18 (Sun), last code commit `b66dedc` (script v19, BB breakout strong / weak)
+## START HERE — state at 2026-10-20 (Tue, 05:00 ET), last code commit `77df848` (deployed)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
-the **A+…D grade**, the **📐 setups sidebar** in the left rail, the History /
-Watchlist tabs (History has a **📐 Setups** view), Quote Details, and 0–4
+the **A+…D grade**, the **📐 setups sidebar** in the left rail (a ⚡ BB-breakout
+list on top, then the VWAP setups), the History / Watchlist tabs (History has a
+**📐 Setups** view with a **⚡ Breakouts** option), Quote Details, and 0–4
 TradingView charts. The bottom news room is hidden (header **News** switch). The
 operator trades manually off 30s/1m charts, Ross-Cameron style (catalyst first,
 low float), mostly 04:00–11:00 ET, and lives in **Tashkent (UTC+5): every time on
 the dashboard is shown on that clock**. Date pickers stay on the ET trading day.
 
-**Their edge is two VWAP setups that TradingView detects**, delivered by our
-webhook (📐, item 5). They run alerts for **GO + PULLBACK only** (⚙ switches).
-- **RECLAIM:** a recent big gainer sits under its month VWAP (or, trial, its year
-  VWAP) while the BB basis curls up beneath it. GO comes on the reclaim.
-- **PULLBACK:** after a fast run, price comes back to within ~5% above its
-  session, month or year VWAP. The exit is a close under that line. The operator
-  rates PULLBACK highly ("working amazing", 10-06). Anecdotal: on our data it's
-  a good heads-up, not a mechanical edge.
+**Their edge is setups that TradingView detects**, delivered by our webhook (📐,
+item 5), from one Pine script on two watchlist alerts (1m + 30s):
+- **RECLAIM** (month / year VWAP, GO pings only for Momentum names) and
+  **PULLBACK** (back to the session / month / year VWAP after a run; the operator
+  rates it highly). Both graded live 10-18: heads-ups, not mechanical edges.
+- **BB breakout** (10-18): a 1m candle closes above the **30s** BB(20,2) upper band
+  and the next candle takes its high. Stored, shown and graded; the server never
+  announces it, but the dashboard rings a per-device alarm at the BO. v20 added an
+  **early** BO (the first +10% candle in regular hours, on 2× volume).
+- A separate **RVol indicator** (`rvol.pine`, v2) shows the dashboard's RVol on
+  TradingView.
 
 Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 
 **Operator's focus:** "polish/improve our dashboard and strategies/setups". Keep
 each change small, measure it on our data where possible, and ship the same day.
-**Deploy outside 07:00–11:00 ET unless they ask** (check the ET clock first; on
-10-06 a push at 09:14 ET had to be cancelled). They like data before decisions:
-several ideas were measured and rejected (see `docs/vwap-setup.md` and
-`research/vwap-pullback/README.md`).
+**Deploy outside 07:00–11:00 ET unless they ask** (check the ET clock first; a
+deploy restarts the API ~20 s, so webhooks can drop). They like data before
+decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
+§9.1 / §14, `research/vwap-pullback/README.md`, `research/bb-breakout/README.md`).
+**Test any "fire earlier" rule on the night-before watchlist universe**
+(`early_study.py`), not on days that ended +20%: that hindsight turned −0.98% into
++2.48% on 10-19.
 
 **Live in production:**
 1. **Momentum grade A+…D** (`services/momentum-grade.ts`). Fitted on August,
@@ -44,70 +51,63 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
    means "where the action is", not a long signal** (at A+, −10% comes first 29.8%
    vs +10% 25.0%). An unknown float (see item 4) skips the float factor.
 2. **Alerts.**
-   - **Dashboard: 📐 setups only** (since 10-07, `4d1e134`, `DASHBOARD_KINDS` in
-     `useAlertKinds.ts`). Toast, sound and browser notification; Momentum rows
-     pulse and badge only for 📐. Header ⚙ = the 📐 device switch + **📐 Stages
-     that alert** (global, server-side) + Alerts ON/OFF.
+   - **Dashboard, 📐 VWAP setups** (`DASHBOARD_KINDS` = tv_setup only since 10-07):
+     toast, sound and browser notification for the announced stages (⚙: **GO +
+     PULLBACK**). Header ⚙ = the 📐 device switch + **📐 Stages that alert**
+     (global, server-side) + the ⚡ breakout alarm level; Alerts ON/OFF next to it
+     mutes everything on the device.
+   - **Dashboard, ⚡ BB breakout alarm** (10-19, `BreakoutAlerts.tsx`): rings at the
+     **BREAKOUT** (not the ▲): a distinct sound, a 60 s toast "⚡ BREAKOUT X — buy >
+     $… · stop $…", and a notification. The per-device level (`useBreakoutAlarm`):
+     off / 🔥 / strong on Momentum / **all on Momentum (default, pink + gray)** /
+     all. **Early BOs ring at every level but Off.** A BO more than 90 s late
+     doesn't ring. ⚙ has a **Test** button that says when Alerts is OFF.
    - **Phone (Telegram):** the opportunity engine (`services/opportunity-alerts.ts`:
-     🅰️ first A+, ⚡ +10%/60s, 📰 fresh headline, catalyst ≥40) plus 📐.
-     **Tickers hidden on the dashboard today are skipped** (`services/telegram-hidden.ts`,
-     reads `TELEGRAM_USER_ID`'s list, cached 20 s; set in prod 10-07 = `admin`, the
-     only user; that also enabled the bot's `/hidden` and `/unhide`).
+     🅰️ first A+, ⚡ +10%/60s, 📰 fresh headline, catalyst ≥40) plus 📐 VWAP setups.
+     Never breakouts. **Tickers hidden on the dashboard today are skipped**
+     (`services/telegram-hidden.ts`, `TELEGRAM_USER_ID` = admin since 10-07).
 3. **UI.**
    - **No hover tooltips anywhere** (global `.ant-tooltip` hide). Don't add them back.
    - **Momentum columns:** Ticker · Grade · Heat · Chg% · Float · Volume · RVol 1m ·
      RVol 5m · RVol Day · Price · MCap · Country · Appeared.
-   - **Tabs** use `destroyOnHidden`: only the visible tab renders. The Alerts tab
-     was removed 10-06 because its 800-row table re-rendered every cycle.
+   - **Tabs** use `destroyOnHidden`: only the visible tab renders.
    - **Hidden tickers** (Momentum row hide, per user per ET day) are hidden
-     everywhere: Momentum, the 📐 sidebar ("· N hidden"), its TV-list nudge, 📐
-     toasts and sounds, and Telegram.
-   - **📐 sidebar** (`TvSetupsSidebar.tsx`): one row per ticker with its current
-     state. Line 1: Finviz/TV buttons · ticker · ⭐ if on Momentum · stage pill (line
-     S/M/Y, touch #) · "past cap" · **↺ held before / ↺ touch 3+** (10-18) · **✓ held / ✗ broke + time** on a closed
-     pullback · 💪 on a GO · age. Line 2: current change % and grade, then the
-     distance to the line, or "since %" once resolved. Sections: **Live** (READY ≤30
-     min, GO ≤15, an open PULLBACK ≤60) and **Earlier today**. A stage switched off
-     in ⚙ is hidden from the list, but BROKEN/HELD still close a pullback. A dimmed
-     pill means it didn't ping. ⋯ menu: Copy list, Download .txt, Copy Pine script,
-     How to.
-   - **History tab** (ET date picker): Momentum (first→last times in Tashkent;
-     `history-by-day` is ~0.5–1 s since 10-10, ET-day ranges plus a per-query
-     `random_page_cost` 1.1) and **📐 Setups** (`SetupsHistoryTable.tsx`): one row
-     per event, the 30s/1m copies merged, with outcome, grade and change at the
-     signal, filters, paginated 50.
+     everywhere: Momentum, the 📐 sidebar, its TV-list nudge, toasts, sounds,
+     the breakout alarm and Telegram.
+   - **📐 sidebar** (`TvSetupsSidebar.tsx`):
+     - **⚡ BB BREAKOUTS** on top (`BreakoutList.tsx`, fed by `GET
+       /api/screener/breakouts` + the SSE `breakout` event, ~1 s). One row per
+       ticker, its latest stage: TOUCH 2 min, BREAKOUT 5 min ("✗ no trigger" after
+       its candle), TRIGGERED 15 min. Tags: weak (dimmed, with the reason), 🔥,
+       **early +10%**. A third line shows the trail ("touch 16:01:30 → BO 16:02:02 →
+       ▲ 16:02:30"). **Newest first** (10-20), and a row under 20 s old is lit amber.
+     - **VWAP setups:** one row per ticker with its current state (line S/M/Y, touch
+       #, "past cap", ↺ held before / ↺ touch 3+, ✓ held / ✗ broke + time, 💪).
+       Sections Live and Earlier today, newest first. A row that rang in the last
+       20 s is lit amber (10-20).
+     - ⋯ menu: Copy list, Download .txt, **Copy Pine script**, **Copy RVol script**,
+       How to.
+   - **History tab** (ET date picker): Momentum and **📐 Setups**
+     (`SetupsHistoryTable.tsx`, one row per event, 30s/1m merged, outcome, grade at
+     the signal). Its **⚡ Breakouts** option (`BreakoutsHistoryTable.tsx`) lists
+     every BO with its TOUCH / ▲ times, context (strong/weak) and early tag.
    - Embedded TradingView charts use the Asia/Tashkent timezone.
 4. **Screener fetch** (`services/finviz.ts`): rows with **no float and no shares
-   outstanding are kept with `float_m` null** since 10-14. JBDI ran 1 → 9 on 10-12,
-   unseen, because Finviz had no size data for it. Prod filter:
+   outstanding are kept with `float_m` null** since 10-14. Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView setups — script v20** (`apps/web/src/tv/mvwap-bb-setup.pine`).
-   - v17 (10-18, the BB breakout, §14) and v18 (drawn on 1m charts) were pasted and
-     work ("everything is working fine").
-   - v19 (the same day: strong/weak context, weak BOs gray) was pasted and both alerts
-     recreated; the operator confirmed it works (10-19).
-   - **v20 (10-19: the early BO, §14.3) must be pasted, and both alerts recreated.**
-   - v16 was pasted and both alerts recreated 10-10. **Verified live:** WFF on 10-12 carried
-   `fails` 0/1/2, and a past-the-cap PULLBACK pinged via the B+ exemption.
-   TradingView computes the setups because we can't build month/year VWAPs with
-   pre-market volume (Yahoo's extended-hours bars have no volume; our snapshots
-   start when a name hits the screen).
+5. **📐 TradingView script — v20** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+   - **Paste status:** v19 is pasted and confirmed (10-19). **v20 (early BO) was
+     deployed 10-19 12:22 ET, but no early BO had arrived by 10-20 05:00 ET** (about
+     4 were expected in the 10-19 afternoon). The operator probably hasn't pasted
+     v20 and recreated both alerts yet; ask.
    - **Alerts:** two watchlist alerts, **1m + 30s**. Settings: "Any alert() function
      call", session Extended, once per bar close, webhook
-     `https://pnldash.uz/api/tv/webhook?key=…`.
-     - **Keep both.** On 7 days of data each catches events the other misses:
-       30s alone 81% of events, 1m alone 68%. If only one, keep the 30s; 2m and
-       5m are worse (10-14/10-18 analysis).
-     - A copy of the same event from the other timeframe within 5 min is logged,
-       not re-announced.
+     `https://pnldash.uz/api/tv/webhook?key=…`. Keep both (30s alone catches 81%
+     of events, 1m alone 68%). The breakout sends only from the 30s alert.
    - **Watchlist** (⋯ → Copy list / Download): today's screen, plus every name ≥+30%
-     on our screen in the last **90 days**, plus ≥+20% in the last 3 sessions.
-     That's ~850–960 symbols, capped at 1,000. It held 82% of +30% days the night
-     before, against 64% for the old 30-day list. It reads `screener_ticker_days`
-     (topped up by the endpoint daily) and takes ~0.4 s. Re-import it into
-     TradingView after big changes; watchlist alerts follow the list without
-     recreation.
+     on our screen in the last **90 days**, plus ≥+20% in the last 3 sessions
+     (~850–960 symbols, capped at 1,000; `screener_ticker_days`).
    - **RECLAIM:** FORMING → READY → GO, on the month and year lines. Gainer filter:
      +20% today or in the last 3 sessions, or after hours. GO strength 💪0–4 is a tag.
    - **PULLBACK:** on the session, month and year lines, each with its own state.
@@ -116,7 +116,7 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
      - BROKEN = a close under the line; HELD = +10% from the PULLBACK close.
      - **Cap (server-side since v16):** after 2 failed pullbacks (BROKEN or
        straight-through) on a line, a PULLBACK is quiet unless the ticker is on
-       Momentum at **B+ or better**. That's a trial; grade it ~10-24 from the
+       Momentum at **B+ or better**. Kept after the 10-18 grading; re-grade ~11-01 from the
        rows' `capped` / `cap_exempt`. Knobs: `TV_SETUP.pb_cap` / `pb_cap_exempt`.
        Cap changes need no new script.
      - The chart draws past-cap pullbacks gray (`pbCapMark`).
@@ -130,9 +130,6 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
      - On Telegram, Momentum names buzz and off-list names are silent.
    - **Year line (v14):** from this year's 60-minute bars via `request.security`, so
      every timeframe agrees. The script's blue line is the reference.
-   - **Messages / contract:** `parseTvMessage` and `npx tsx scripts/verify-tv-setups.ts`
-     (**194 checks**). The replica `research/vwap-setup/pinesim.py` mirrors the
-     script; run `python3 pinesim.py` for its self-tests.
    - **What our data says** (session line, `research/vwap-pullback/`):
      - PULLBACK is a heads-up, not a mechanical edge: 26–30% of alerts reach +10%
        first, vs 5% for any moment near the line; about break-even with a stop just
@@ -141,8 +138,42 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
        the cap; not counting straight-throughs as failures (10-07, BIYA); a cap
        exemption for top gainers (bigger gains lose more, 10-10, WFF).
      - Month and year lines can only be graded live.
-   - **Full reference:** `docs/vwap-setup.md` (changelog v1–v16 plus server rows, gate
-     table §7.2, grading SQL §9 / §13.6, change procedure §10).
+     - **Live grading 10-18** (10 sessions, §9.1):
+       - PULLBACK 26% held, ≈ break-even with a stop under the line;
+       - the month line is no better than the session line; touch 3+ is the best touch;
+       - 07:00–12:00 ET is the weakest window;
+       - GO −1.1% a trade, and 💪 predicts move size, not direction.
+   - **BB breakout (v17–v20, `docs/vwap-setup.md` §14):**
+     - TOUCH (the forming 1m candle reaches the band at the half-minute) → BREAKOUT
+       (1m close above it after one under it; buy over its high, stop its low) →
+       TRIGGERED (the next candle takes the high). Today's +20% gainers only.
+     - 1m candles built from 30s bars on the 30s alert. A 1m chart draws the same
+       from the 30s bars inside each candle (`request.security_lower_tf`, v18).
+     - **Strong / weak** (v19): weak = the band falling over 5 candles or >10% under
+       the day's high. Gray on the chart, dimmed on the dashboard. Server knobs
+       `TV_SETUP.bo_strong_slope` / `bo_strong_off`, `boStrong()`.
+     - **Early BO** (v20): the first candle of the day to reach +10%, regular hours,
+       above the band, candle volume ≥ 2× its last 20. No +20% filter, no fresh-cross
+       test. Message `early +10%`, an orange "E" on the chart.
+     - Stored as `tier_events` event **`tv_breakout`** (not in `/alerts`, whose
+       3,000-row cap stays for the VWAP setups); a 20 s re-delivery window
+       (`bo_dup_sec`).
+     - Measured (20 sessions): raw ≈ break-even, MACD useless; strong +0.41% vs weak
+       −0.17%; 🔥 strong +1.22%; early BO +0.29% (~8/day). All heads-ups.
+   - **Messages / contract:** `parseTvMessage` and `npx tsx scripts/verify-tv-setups.ts`
+     (**252 checks**). The replica `research/vwap-setup/pinesim.py` mirrors every
+     setup, including the breakout's 30s and 1m paths. Run `python3 pinesim.py`.
+   - **Full reference:** `docs/vwap-setup.md` (changelog v1–v20 plus server rows, gate
+     table §7.2, live grading §9.1, PULLBACK §13, breakout §14, RVol §15).
+6. **RVol indicator** (`apps/web/src/tv/rvol.pine`, **v2**, installed 10-19;
+   `docs/vwap-setup.md` §15).
+   - The dashboard's RVol 1m / 5m / Day and colours, with ▲ burst and ● drying-up
+     markers.
+   - **The operator's TradingView live volume is a partial feed** (~10–18% of the
+     market on 10-19). So v2 averages the chart's own last 20 sessions; v1's
+     daily-bar average read 6–12× low. The table's "Feed" line shows coverage.
+   - The live bar uses a trailing 60 s / 5 min.
+   - Not yet checked against the dashboard on a live name.
 
 **Parked, code kept** — `COMPONENTS_DISABLED` default
 `ignition,momo,setups,ema,swing,outcomes,continuation,edge,vwap,ticks`.
@@ -160,37 +191,14 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **📐 graded (10-18, 10 sessions 10-05 → 10-16; `docs/vwap-setup.md` §9.1,
-   `research/vwap-setup/grade_live.py`). The operator still has to decide on the follow-ups.**
-   - PULLBACK: 26% held, 64% broke. −0.8% a trade exiting on BROKEN, −0.3%
-     with a stop 0.5% under the line. A heads-up, the same as the four-month study.
-     - The month line held 26%, the session line 28%; the year line is the weakest
-       (22%, n 74).
-     - Touch 3+ is the best touch (36% held, +0.6%), touch 1 the worst.
-     - 07:00–12:00 ET is the weakest window; a name still at A+/A breaks 75%.
-   - **B+ cap exemption: keep it.** 63 exempt pings: 35% held, +0.6%. 16 quiet ones:
-     6% held, −3.7%. 22 tickers only; re-grade ~11-01.
-   - GO: −1.1% a trade, 19% win. 💪 predicts how far it moves, not which way.
-     GOs off Momentum barely move.
-   - Trigger peaks 7 per symbol / 21 per alert per 3 min: fine. 150–210 📐 pings a
-     day, half of them GOs.
-   - **Decided 10-18 (`9751510`):** GO pings only for Momentum names; year line —
-     wait, no mute; sidebar marks ↺ held before / ↺ touch 3+ on announced pullbacks.
-2. **BB-upper breakout — the operator's 3rd setup (10-18): BUILT as script v17;
-   waiting for the operator to paste it and recreate both alerts.**
-   - TOUCH / BREAKOUT / TRIGGERED from the 30s alert.
-   - Stored and graded only, never pinged.
-   - ⚡ list in the 📐 sidebar, plus History → ⚡ Breakouts.
-   - `docs/vwap-setup.md` §14. Grade ~11-01 (needs a `tv_breakout` export).
-   - The measurement that led to it:
-   - The rule: a 1m candle closes above a **30s** BB(20,2) upper band, and the
-     next candle takes its high. `research/bb-breakout/README.md`.
-   - On 20 sessions of +20% names: ~440 trades a day, break-even.
-   - MACD filters nothing (positive on 99.7% of breakouts).
-   - A gate (on Momentum and A+, or 10–50% over sVWAP) gives ~37 a day at +0.77%
-     (both halves +), but the median trade loses and 0.5% slippage each way turns it
-     negative, so it's a heads-up.
-   - Best exit: the first close back under the band.
+1. **Ask whether v20 is pasted** (item 5). Then check one RVol v2 reading against the
+   dashboard, and the Feed % it shows.
+2. **The ~11-01 grading** (`grade_live.py` for `tv_setup`; breakouts need a
+   `tv_breakout` export plus the `study.py` measures). §9.1 / §14.6 list it:
+   - PULLBACK by line and touch; the B+ cap exemption (keep, widen or drop);
+   - breakouts: trigger rate, strong vs weak, 🔥, the **early BO** on its own, and
+     "late after a 20–40% run30" (−0.42% in the study);
+   - then ask the operator whether 🔥 / strong breakouts should ping Telegram.
 3. **Re-grade the live A+…D grade** (overdue, planned ~10-15) from
    `screener_results.grade`, same label. Pipeline: `research/momentum-grade/`.
    Never hand-edit POINTS/CUTS.
@@ -199,16 +207,20 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 5. **IBKR .tlg** — the operator said (10-06) they'll send one. It's needed to match
    their real trades to alerts.
 6. **Offered, not built (ask before doing any):**
-   - a pullback-to-BB-basis setup for names far above VWAP (WFF 10-12; measurable
-     on our data);
-   - a MACD-at-PULLBACK study (histogram rising/falling, MACD line vs 0, a
-     break-of-previous-high entry), after the 10-09 MACD question;
+   - a pullback-to-BB-basis setup for names far above VWAP (WFF 10-12);
+   - a MACD-at-PULLBACK study;
    - a float from SEC or Yahoo for names Finviz has no size for;
    - `random_page_cost` 1.1 database-wide (test plans first);
    - a passive "vs VWAP" column on Momentum;
-   - the operator's failed setups added to `replay.py` (Yahoo 1m only reaches back
-     ~30 days).
-7. Long-open: journal attribution (trades ↔ grade/rows at entry); Ross's 1m-MACD
+   - an orange "second wave" breakout tier (HODO 19:26-type; measured ≈ break-even,
+     so the operator kept v19);
+   - TradingView's exchange real-time data subscription (full volume; the operator's
+     call).
+7. **Measured and rejected — don't re-propose without new data:** a tight base
+   before a breakout, a −0.5% slope cut, price level as a spread proxy (10-19); an
+   earlier trigger at +5% or in pre-market (−1.5% / −2.7%); RVol 5m as a breakout
+   confirmation (unstable).
+8. Long-open: journal attribution (trades ↔ grade/rows at entry); Ross's 1m-MACD
    exit tell as a live feature.
 
 **Gotchas before touching things:**
@@ -234,7 +246,11 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
   session VWAP starts at first sight on our screen, so early-move touches can
   differ from TradingView's.
 - **📐 TradingView trigger limits:** ≤15 per symbol per 3 min and ≤1,000 per watchlist
-  alert per 3 min. Peaks over 8 days to 10-13: 7 per symbol, 17 per alert.
+  alert per 3 min. Peaks over 8 days to 10-13: 7 per symbol, 17 per alert. The breakout
+  adds ~3,000 messages a day (TOUCH/BO/▲); re-check the per-symbol peak at the grading.
+- **TradingView volume is a partial feed on the operator's account** (~10–18% of the
+  market). Ratios (bar vol ×, VWAP weights, drying-up) are fine. Never compare it with a
+  full-market average (daily bars, Finviz).
 - **Times:** show new times on the Tashkent clock. Keep date pickers on ET trading
   days (one US session = one date).
 - **Date filters:** never `(ts AT TIME ZONE …)::date = d` on big tables. Use a half-open
@@ -253,7 +269,7 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 - **Live API checks without a browser login:** mint a 2-minute JWT inside the api
   container (`node --input-type=module`, `jsonwebtoken`, `process.env.JWT_SECRET`)
   and `fetch('http://127.0.0.1:3001/...')`, as done for History, watchlist and alerts.
-- **CI stuck in "queued"** (GitHub incident, 10-05): once both images have built, run
+- **CI stuck in "queued"** (GitHub incidents 10-05 and 10-19 — on 10-19 it started by itself after ~25 min; watch it with a background loop on `gh run view`): once both images have built, run
   the Roll out script by hand. Check `:latest` against `:sha-<short>`, then cancel the
   queued run. If the builds never start, `gh run rerun` later; GitHub cancels jobs it
   can't place within ~15 min.
