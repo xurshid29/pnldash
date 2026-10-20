@@ -16,6 +16,9 @@ const { Text } = Typography;
 // 10-19: a BREAKOUT stays 5 min (marked "no trigger" once its trigger candle
 // passed), so a glance a few minutes late still finds it.
 const LIVE_SEC: Record<BoStage, number> = { touch: 120, breakout: 300, triggered: 900 };
+// 10-20 (operator: "its hard to find new row, when I hear the alert sound"): the
+// newest signal is always on top, and lit for this long.
+const FRESH_SEC = 20;
 const TRIGGER_WINDOW_SEC = 80;
 const STAGE: Record<BoStage, { label: string; color: string; bg: string }> = {
   touch: { label: 'TOUCH', color: '#d9d9d9', bg: '#303030' },
@@ -48,7 +51,9 @@ function ageText(sec: number): string {
 // BREAKOUT). One row per ticker, its latest signal while it is live: TOUCH →
 // BREAKOUT (buy stop over the candle high, stop its low) → TRIGGERED. Never a
 // sound or toast. 🔥 marks the ones the study rated (A+ or 10–50% over sVWAP
-// on Momentum, and strong); they sort first. Weak ones (v19) are dimmed and say why.
+// on Momentum, and strong). Weak ones (v19) are dimmed and say why. Newest first
+// (10-20; it used to sort 🔥 and strong first, so a new gray BO landed mid-list),
+// and a row whose signal is under 20 s old is lit amber.
 export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
   const { breakouts } = useBreakouts();
   const { hidden } = useHiddenTickers();
@@ -68,8 +73,7 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
   for (const b of visible) if (!latest.has(b.ticker)) latest.set(b.ticker, b);   // newest first
   const live = [...latest.values()]
     .filter((b) => (now - Date.parse(b.at)) / 1000 <= LIVE_SEC[b.stage])
-    .sort((x, y) => Number(isHot(y)) - Number(isHot(x)) || Number(x.strong === false) - Number(y.strong === false)
-      || Date.parse(y.at) - Date.parse(x.at));
+    .sort((x, y) => Date.parse(y.at) - Date.parse(x.at));
   const nBreakouts = visible.filter((b) => b.stage === 'breakout').length;
   const nTriggered = visible.filter((b) => b.stage === 'triggered').length;
 
@@ -100,13 +104,16 @@ export function BreakoutList({ payload }: { payload: CyclePayload | null }) {
         const since = nowPx != null && b.trigger != null && b.trigger > 0 ? (nowPx / b.trigger - 1) * 100 : null;
         const risk = b.trigger != null && b.stop != null && b.trigger > 0 ? (b.stop / b.trigger - 1) * 100 : null;
         const trail = trailOf(visible, b);
+        const fresh = (now - Date.parse(b.at)) / 1000 < FRESH_SEC;
         return (
           <div
             key={b.id}
             onClick={() => setSelected(b.ticker)}
             style={{
               padding: '5px 8px', borderBottom: '1px solid #262626', cursor: 'pointer',
-              background: b.ticker === selected ? '#111d2c' : undefined, opacity: weak || expired ? 0.5 : r ? 1 : 0.7,
+              borderLeft: `3px solid ${fresh ? '#faad14' : 'transparent'}`,
+              background: fresh ? 'rgba(250, 173, 20, 0.12)' : b.ticker === selected ? '#111d2c' : undefined,
+              opacity: fresh ? 1 : weak || expired ? 0.5 : r ? 1 : 0.7,
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>

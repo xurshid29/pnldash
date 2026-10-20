@@ -222,7 +222,8 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   }, [tvList, copied, hiddenKey]);
 
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
+    // 5 s (was 30 s): the 20-s "just rang" highlight below has to clear on time.
+    const id = setInterval(() => setNow(Date.now()), 5_000);
     return () => clearInterval(id);
   }, []);
 
@@ -323,13 +324,17 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     const expanded = open.has(c.ticker);
     const resolved = c.resolved;
     const proven = provenLine(c, e);
+    // 10-20: a setup that just rang is lit for 20 s, like the ⚡ breakout rows, so
+    // the row behind the sound is easy to find.
+    const fresh = e.notified && now - e.at < 20_000;
     return (
       <div
         key={c.ticker}
         onClick={() => { setSelected(c.ticker); toggleOpen(c.ticker); }}
         style={{
           padding: '5px 8px', borderBottom: '1px solid #262626', cursor: 'pointer',
-          background: c.ticker === selected ? '#111d2c' : undefined,
+          borderLeft: `3px solid ${fresh ? '#faad14' : 'transparent'}`,
+          background: fresh ? 'rgba(250, 173, 20, 0.12)' : c.ticker === selected ? '#111d2c' : undefined,
           opacity: dim ? (r ? 0.7 : 0.45) : r ? 1 : 0.7,
         }}
       >

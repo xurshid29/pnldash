@@ -272,6 +272,15 @@ several ideas were measured and rejected (see `docs/vwap-setup.md` and
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-20 (04:55 ET) — SIDEBAR: NEWEST FIRST + "JUST RANG" HIGHLIGHT.** Operator: "its hard to find new row,
+when I hear the alert sound".
+- **Cause:** the ⚡ list sorted 🔥 and strong first, so a new gray BO (AAME 17s) sat under an older pink one
+  (SLN 53s).
+- **Fix:**
+  - the ⚡ list is now newest first;
+  - ⚡ rows under 20 s old and 📐 VWAP rows that rang in the last 20 s get an amber edge and tint;
+  - the sidebar clock ticks every 5 s (was 30 s).
+
 **2026-10-19 (after 11:00 ET) — SCRIPT v20: THE EARLY BO.** WORX 10-19 ran 1.40 → 2.54 with no BO: its first
 close above the band came at +9%, under the +20% filter, and by +20% it was riding the band (no fresh cross).
 The operator asked for an earlier trigger (+5–10%) with a volume or RVol confirmation.

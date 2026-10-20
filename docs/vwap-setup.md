@@ -1403,6 +1403,10 @@ TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02
   - 🔥 = the study's gate (on Momentum and A+, or 10–50% over sVWAP) and, since
     v19, strong; sorted first;
   - weak ones (v19) are dimmed and say why ("weak: band −4.2%, −12% off high");
+  - **newest first** (since 10-20; it had sorted 🔥 and strong first, so a new gray
+    BO landed mid-list and the operator couldn't find the row behind the alarm).
+    A row whose signal is under 20 s old is lit amber, and so is a 📐 VWAP row
+    that just rang;
   - hidden tickers are skipped.
 - **Dashboard alarm** (2026-10-19, operator: "I should get notified at least in
   the dashboard when BO fires, I usually get late to react when I get the
