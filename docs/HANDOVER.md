@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-20 (Tue, 09:00 ET), script v22 built on top of the deployed v21 `b6c0bcf` (see the session log)
+## START HERE — state at 2026-10-20 (Tue, 11:15 ET), last code commit `e6b3e73` (script v22, deployed)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail (a ⚡ BB-breakout
@@ -234,8 +234,10 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
    - v21 deployed 08:15 ET at the operator's request (`b6c0bcf`); verified: bundle,
      dist, a dry-run CROSS parse on prod, webhooks flowing. The operator held the
      paste for v22;
-   - v22 (VB on month / year): deploy, then the operator pastes v22, recreates both
-     alerts and ticks CROSS in ⚙ if they want its alerts;
+   - v22 (VB on month / year) deployed 11:13 ET (`e6b3e73`); verified: bundle with
+     the v22 script, dist, a dry-run `line month+year` parse, webhooks flowing. Next:
+     the operator pastes v22, recreates both alerts and ticks CROSS in ⚙ if they
+     want its alerts;
    - v22 is the first script with a nested request (§16.2): if TradingView refuses
      it, compute the month / year markers on the chart side;
    - confirm the first CROSS and the first regular-hours early BO arrive;
@@ -345,7 +347,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 
 These are the detailed notes behind START HERE, kept verbatim.
 
-**2026-10-20 (08:30–09:00 ET) — SCRIPT v22: VB ON THE MONTH AND YEAR VWAPS.** Operator: "does our VB setups work
+**2026-10-20 (08:30–11:15 ET) — SCRIPT v22: VB ON THE MONTH AND YEAR VWAPS (deployed 11:13 ET, `e6b3e73`).** Operator: "does our VB setups work
 with monthly, yearly VWAPs or only with session one?" → "it's ok to add a support for month and year, because I'm
 currently enabled VB and disabled RECLAIM GO". They held the v21 paste for it.
 - **What changed:** session, month and year each run their own CROSS (start value, once per candle, daily count);
