@@ -105,7 +105,7 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     }
     const why = verdict !== 'quiet' ? undefined
       : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped'
-        : sig.stage === 'go' && !onMomentum ? 'offlist' : 'repeat';
+        : (sig.stage === 'go' || sig.stage === 'cross') && !onMomentum ? 'offlist' : 'repeat';
     const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
   } catch (err) {

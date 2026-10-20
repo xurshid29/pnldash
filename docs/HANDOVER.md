@@ -192,9 +192,11 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
        so the candles that sent one get a marker: teal **VB** (session), yellow
        **VB M** (month), blue **VB Y** (year).
      - Server: stage `cross` (tier_events `tv_setup`), `vb_dup_sec` 20, no merge,
-       `vb_cap` 3 (`cross N` > 3 quiet, no B+ exemption), Telegram slug `tv_cross`.
-     - **Prod's ⚙ list is `["go","pullback"]`, so CROSS stays off (and hidden from
-       the sidebar) until the operator ticks it.**
+       `vb_cap` 3 (`cross N` > 3 quiet, no B+ exemption), **Momentum names only**
+       (`vb_momentum_only`, 10-20: 20–25 announced an hour otherwise, 4–5 on
+       Momentum), Telegram slug `tv_cross`.
+     - Prod's ⚙ list since 10-20: `["pullback","cross"]` (the operator ticked CROSS
+       and switched GO off).
      - Switches: `rcOn` (new), `pbOn`, `boOn`, `vbOn`. The VWAP lines draw only
        while a setup that uses them is on. v21 inputs come last, because
        TradingView keeps saved input values by position.
@@ -238,8 +240,14 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
      the v22 script, dist, a dry-run `line month+year` parse, webhooks flowing. Next:
      the operator pastes v22, recreates both alerts and ticks CROSS in ⚙ if they
      want its alerts;
-   - v22 is the first script with a nested request (§16.2): if TradingView refuses
-     it, compute the month / year markers on the chart side;
+   - v22 is the first script with a nested request (§16.2). The operator pasted it
+     11:25 ET and it compiled; the first v22 CROSS came 11:30 (`line session`);
+   - **BB breakouts stopped at 08:17 ET 10-20**, when the old alerts were deleted:
+     none in 3 h, while VWAP setups and CROSS kept coming from the same 30s alert.
+     Most likely "Breakout setup on" was unticked on the chart the new 30s alert
+     was made from (an alert copies the switches). The operator was asked to tick
+     all four and recreate the 30s alert; confirm breakouts (and the first early
+     BO) come back;
    - confirm the first CROSS and the first regular-hours early BO arrive;
    - if TradingView's compile rejects something, fix it (the paste is the compile).
    Then check one RVol v2 reading against the dashboard, and the Feed % it shows.
@@ -346,6 +354,17 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-20 (11:30 ET) — v22 LIVE; CROSS MOMENTUM-ONLY; BREAKOUTS STOPPED AT 08:17.**
+- v22 pasted ~11:25 ET and compiled; the first v22 CROSS at 11:30 (SITC, `line session`); both alerts send; no
+  parse errors. The operator had pasted v21 ~08:40 ET (CROSS since 08:44) and ticked CROSS in ⚙ (now
+  `["pullback","cross"]`, GO off).
+- **Volume:** 73 crosses 08:44–11:30 ET on the session line alone; 20–25 announced an hour, 4–5 of them on
+  Momentum. The operator chose Momentum-only announcements ("ok, go ahead"): `TV_SETUP.vb_momentum_only`.
+- **Breakouts:** the last `tv_breakout` row is 08:17:00 ET, when the old alerts were deleted; none since (also
+  no early BO), while the 30s alert's VWAP setups and CROSS keep coming. Most likely the new 30s alert was
+  created with "Breakout setup on" unticked. Asked the operator to tick all four switches and recreate the
+  30s alert.
 
 **2026-10-20 (08:30–11:15 ET) — SCRIPT v22: VB ON THE MONTH AND YEAR VWAPS (deployed 11:13 ET, `e6b3e73`).** Operator: "does our VB setups work
 with monthly, yearly VWAPs or only with session one?" → "it's ok to add a support for month and year, because I'm

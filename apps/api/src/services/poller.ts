@@ -3960,7 +3960,8 @@ class PollerService {
   // isn't B+ or better on Momentum; `capExempt` = past the cap but announced anyway.
   // Rows carry `fails`, `capped`, `cap_exempt` for the grading.
   // why 'offlist' (2026-10-18) = a GO on a ticker not on our Momentum list.
-  // v21 CROSS (tv_cross): why 'capped' = past TV_SETUP.vb_cap crosses on the ticker today.
+  // v21 CROSS (tv_cross): why 'capped' = past TV_SETUP.vb_cap crosses on the line today;
+  // why 'offlist' = not on our Momentum list (vb_momentum_only, 2026-10-20).
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'repeat' | 'capped' | 'offlist', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
@@ -4013,7 +4014,8 @@ class PollerService {
         ` · open ${sig.candle_open ?? '?'} · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
         (sig.vol_x != null ? ` · vol ${sig.vol_x}x` : '') + ` · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: cross ${sig.cross_n} today)` : ' · quiet (stage switched off)') : ''));
+        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: cross ${sig.cross_n} today)`
+          : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
     } else console.log(
       `[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'}` +
       (pb ? ` · ${sig.line ?? '?'} line · touch ${sig.touch ?? '?'}` + (sig.peak_pct != null ? ` · peak +${sig.peak_pct}%` : '') +

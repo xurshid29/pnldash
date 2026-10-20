@@ -194,6 +194,11 @@ export const TV_SETUP = {
   // is stored and shown, not announced — a name chopping around VWAP crosses on
   // candle after candle. Untested: grade with the first live weeks.
   vb_cap: 3,
+  // A CROSS is announced only for a ticker on our Momentum list, like GO
+  // (operator, 2026-10-20: the first morning announced 20–25 an hour on the
+  // session line alone, 4–5 of them on Momentum). Off-list crosses are quiet:
+  // stored, graded and shown dimmed in the 📐 sidebar.
+  vb_momentum_only: true,
   // GO is announced only for a ticker on our Momentum list (operator,
   // 2026-10-18, after the first live grading: off-list GOs won 12% and barely
   // moved, median best +2.3% in an hour, against 23% and +6.2% on Momentum).
@@ -496,7 +501,8 @@ export class TvSetupGate {
 
   // `capExempt`: a PULLBACK past the cap may still announce (v16 — the caller
   // knows the ticker's Momentum row and grade). `onMomentum`: the ticker is on
-  // our Momentum list now; off it, a GO is quiet (go_momentum_only).
+  // our Momentum list now; off it, a GO is quiet (go_momentum_only), and so is a
+  // CROSS (vb_momentum_only).
   admit(sig: TvSetupSignal, nowSec: number, capExempt = false, onMomentum = true): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
     if (this.recent.length >= TV_SETUP.max_per_min) return 'flood';
@@ -517,8 +523,12 @@ export class TvSetupGate {
     // The BB breakout is stored and graded, never announced (a trial, 2026-10-18).
     if (breakout) return 'quiet';
     // v21 CROSS: one per candle from the 30s alert alone — no copy to merge, and
-    // no 5-min spacing (the next candle's cross is a new event); the cap limits it.
-    if (cross) return !this.announced.has('cross') || (pastCap(sig) && !capExempt) ? 'quiet' : 'notify';
+    // no 5-min spacing (the next candle's cross is a new event); the cap and the
+    // Momentum-only rule limit it.
+    if (cross) {
+      const quiet = !this.announced.has('cross') || (pastCap(sig) && !capExempt) || (TV_SETUP.vb_momentum_only && !onMomentum);
+      return quiet ? 'quiet' : 'notify';
+    }
 
     const tokens = lineTokens(sig.stage, sig.line);
     const event = `${sig.ticker}|${sig.stage}|${tokens.join('+')}`;

@@ -452,7 +452,10 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   off.setAnnounced(['go', 'pullback']);
   check('switched off in ⚙ → quiet', off.admit(x!, T0) === 'quiet');
   check('…GO and PULLBACK unaffected', off.admit(parseTvMessage('GO AIXI 2.61 | mVWAP 2.4 (+8.8%) | tf 1 | via reclaim')!, T0 + 30, false, true) === 'notify');
-  check('off Momentum still announces (no Momentum-only rule)', new TvSetupGate().admit(x!, T0, false, false) === 'notify');
+  check('off Momentum → quiet (vb_momentum_only, 2026-10-20)', TV_SETUP.vb_momentum_only && new TvSetupGate().admit(x!, T0, false, false) === 'quiet');
+  check('…on Momentum → announces', new TvSetupGate().admit(x!, T0, false, true) === 'notify');
+  check('…off-list quiet doesn\'t use up the line: the same ticker on Momentum a candle later announces',
+    (() => { const q = new TvSetupGate(); return q.admit(x!, T0, false, false) === 'quiet' && q.admit(second, T0 + 300, false, true) === 'notify'; })());
 
   const html = formatTvSetupAlert(x!, 'NASDAQ:AIXI', { change_pct: 24.1, grade: 'A', float_m: 5.3 });
   check('Telegram: headline', html.includes('⏫ <b>CROSS</b>') && html.includes('<b>AIXI</b>') && html.includes('$2.61'), html);
