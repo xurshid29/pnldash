@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-20 (Tue, 08:20 ET), last code commit `b6c0bcf` (script v21, deployed)
+## START HERE — state at 2026-10-20 (Tue, 09:00 ET), script v22 built on top of the deployed v21 `b6c0bcf` (see the session log)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail (a ⚡ BB-breakout
@@ -29,11 +29,12 @@ item 5), from one Pine script on two watchlist alerts (1m + 30s):
   announces it, but the dashboard rings a per-device alarm at the BO. v20 added an
   **early** BO (the first +10% candle in regular hours, on 2× volume).
 - **VWAP + BB cross** (v21, 10-20, `docs/vwap-setup.md` §16): a candle of a timeframe
-  they pick (default 5m) opens under its session VWAP and another timeframe's BB
-  upper band (default 2m) and crosses over both. CROSS fires at the first 30s close
-  above both, while the candle is open. It rides the 30s alert. Not measured
-  before building; grade it after ~2 weeks. v21 also gives every setup an on/off
-  switch for the chart and the alerts.
+  they pick (default 5m) opens under a VWAP line and another timeframe's BB upper
+  band (default 2m) and crosses over both. The lines are session, and since v22
+  month and year, each its own setup. CROSS fires at the first 30s close above
+  both, while the candle is open. It rides the 30s alert. Not measured before
+  building; grade it after ~2 weeks. v21 also gives every setup an on/off switch
+  for the chart and the alerts. The operator runs VB with RECLAIM GO off (10-20).
 - A separate **RVol indicator** (`rvol.pine`, v2) shows the dashboard's RVol on
   TradingView.
 
@@ -102,7 +103,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
    outstanding are kept with `float_m` null** since 10-14. Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v21** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+5. **📐 TradingView script — v22** (`apps/web/src/tv/mvwap-bb-setup.pine`).
    - **Paste status:**
      - v20 is on the operator's chart (10-20: "I saw GAUZ fire it with the E
        marker"). That E sits on a past candle (GAUZ's first +10% came on 10-16
@@ -111,7 +112,8 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
        bars.
      - The server had no early BO from any ticker as of 10-20 07:00 ET. Whether
        both alerts were recreated with v20 was never answered.
-     - **v21 needs the paste and both alerts recreated anyway**, which settles it.
+     - **v22 needs the paste and both alerts recreated anyway** (the operator held v21
+       back for it), which settles it.
        Then the first regular-hours early BO (from 09:30 ET) and the first CROSS
        confirm both.
    - **Alerts:** two watchlist alerts, **1m + 30s**. Settings: "Any alert() function
@@ -173,15 +175,22 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
        (`bo_dup_sec`).
      - Measured (20 sessions): raw ≈ break-even, MACD useless; strong +0.41% vs weak
        −0.17%; 🔥 strong +1.22%; early BO +0.29% (~8/day). All heads-ups.
-   - **VWAP + BB cross (v21, `docs/vwap-setup.md` §16):**
-     - On the 30s alert, `vbStep()` builds three things from the 30s bars: the
-       candle (`vbCandleTf` 5), its session VWAP (candle-timeframe hlc3 × volume,
-       = the chart's VWAP), and the band (`vbBbTf` 2, the forming close live).
-     - CROSS = the candle opened at or under the higher line and ≤ `vbTol` 2% over
-       the lower one, and a 30s close is above both. Once per candle. The day's
-       first candle never counts.
+   - **VWAP + BB cross (v21; v22 lines, `docs/vwap-setup.md` §16):**
+     - On the 30s alert, `vbStep()` builds these from the 30s bars:
+       - the candle (`vbCandleTf` 5);
+       - its session VWAP (candle-timeframe hlc3 × volume, = the chart's VWAP);
+       - (v22) the month and year VWAPs: hourly sums up to today (`vbAnchors()`,
+         a request inside `vbStep()`, so a nested one in the 5m chart's replay)
+         plus today's candles;
+       - the band (`vbBbTf` 2, the forming close live).
+     - CROSS = the candle opened at or under the higher of the line and the band
+       and ≤ `vbTol` 2% over the lower one, and a 30s close is above both. Once per
+       candle and line, a daily `cross N` per line; lines crossing on one bar are
+       one message (`line session+month`). A line's first candle (day / month /
+       year) never counts. Inputs `vbSession` / `vbMonth` / `vbYear`, all on.
      - The candle timeframe's chart replays the 30s bars (`request.security_lower_tf`),
-       so a teal **VB** marks the candles that sent one.
+       so the candles that sent one get a marker: teal **VB** (session), yellow
+       **VB M** (month), blue **VB Y** (year).
      - Server: stage `cross` (tier_events `tv_setup`), `vb_dup_sec` 20, no merge,
        `vb_cap` 3 (`cross N` > 3 quiet, no B+ exemption), Telegram slug `tv_cross`.
      - **Prod's ⚙ list is `["go","pullback"]`, so CROSS stays off (and hidden from
@@ -190,10 +199,11 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
        while a setup that uses them is on. v21 inputs come last, because
        TradingView keeps saved input values by position.
    - **Messages / contract:** `parseTvMessage` and `npx tsx scripts/verify-tv-setups.ts`
-     (**252 checks**). The replica `research/vwap-setup/pinesim.py` mirrors every
+     (**305 checks**). The replica `research/vwap-setup/pinesim.py` mirrors every
      setup, including the breakout's 30s and 1m paths. Run `python3 pinesim.py`.
-   - **Full reference:** `docs/vwap-setup.md` (changelog v1–v20 plus server rows, gate
-     table §7.2, live grading §9.1, PULLBACK §13, breakout §14, RVol §15).
+   - **Full reference:** `docs/vwap-setup.md` (changelog v1–v22 plus server rows, gate
+     table §7.2, live grading §9.1, PULLBACK §13, breakout §14, RVol §15, VWAP + BB
+     cross §16).
 6. **RVol indicator** (`apps/web/src/tv/rvol.pine`, **v2**, installed 10-19;
    `docs/vwap-setup.md` §15).
    - The dashboard's RVol 1m / 5m / Day and colours, with ▲ burst and ● drying-up
@@ -220,10 +230,14 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **v21:**
-   - deployed 08:15 ET at the operator's request (`b6c0bcf`); verified: bundle, dist, a dry-run CROSS parse on prod, webhooks flowing;
-   - the operator pastes v21, recreates both alerts and ticks CROSS in ⚙ if they
-     want its alerts;
+1. **v21 → v22:**
+   - v21 deployed 08:15 ET at the operator's request (`b6c0bcf`); verified: bundle,
+     dist, a dry-run CROSS parse on prod, webhooks flowing. The operator held the
+     paste for v22;
+   - v22 (VB on month / year): deploy, then the operator pastes v22, recreates both
+     alerts and ticks CROSS in ⚙ if they want its alerts;
+   - v22 is the first script with a nested request (§16.2): if TradingView refuses
+     it, compute the month / year markers on the chart side;
    - confirm the first CROSS and the first regular-hours early BO arrive;
    - if TradingView's compile rejects something, fix it (the paste is the compile).
    Then check one RVol v2 reading against the dashboard, and the Feed % it shows.
@@ -330,6 +344,19 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-20 (08:30–09:00 ET) — SCRIPT v22: VB ON THE MONTH AND YEAR VWAPS.** Operator: "does our VB setups work
+with monthly, yearly VWAPs or only with session one?" → "it's ok to add a support for month and year, because I'm
+currently enabled VB and disabled RECLAIM GO". They held the v21 paste for it.
+- **What changed:** session, month and year each run their own CROSS (start value, once per candle, daily count);
+  lines crossing on one 30s bar are one message (`line session+month`, the lowest count).
+- **The month and year lines:** a 30s chart holds ~10 days, so the days before today come from this year's hourly
+  bars (`vbAnchors()`, inside `vbStep()`), plus today's candles. That makes the 5m chart's replay a nested request,
+  which Pine v6 allows (the first in this script).
+- **Chart and dashboard:** markers teal VB / yellow VB M / blue VB Y; the pill shows S / M / Y; one sidebar thread
+  per line; Telegram and the toast name the line. A v21 message without a line is the session line.
+- **Checks:** 305 regression checks; replica `simulate_vb_cross` per line (`before_of` = hourly sums) + v22
+  self-test (separate session and month crosses, all three joined with no prior history, month VWAP = the formula).
 
 **2026-10-20 (07:00–08:00 ET) — SCRIPT v21: THE VWAP + BB CROSS, AND SETUP SWITCHES.** Operator: "the stock
 market is colder than before, and it's very hard to trade with 1min timeframe … catch when 1 candle crosses

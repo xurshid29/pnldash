@@ -224,9 +224,10 @@ function fmtSignedPct(p: number | null): string {
 export function opportunityTitle(a: OpportunityAlert): string {
   if (a.kinds.includes('tv_setup') && a.setup) {
     const s = a.setup;
-    // v21: "📐 CROSS AIXI — 5m candle over sVWAP + 2m BB · #1"
+    // v21: "📐 CROSS AIXI — 5m candle over sVWAP + 2m BB · #1" (v22: mVWAP / yVWAP too)
     if (s.stage === 'cross') {
-      return `${s.on_screen ? '⭐ ' : ''}📐 CROSS ${a.ticker} — ${shortTf(s.candle_tf)} candle over sVWAP + ${shortTf(s.bb_tf)} BB${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
+      const ln = lineTokens(s.stage, s.line).map((t) => SHORT_LINE[t]).join(' + ');
+      return `${s.on_screen ? '⭐ ' : ''}📐 CROSS ${a.ticker} — ${shortTf(s.candle_tf)} candle over ${ln} + ${shortTf(s.bb_tf)} BB${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
     }
     if (s.stage === 'pullback' || s.stage === 'broken' || s.stage === 'held') {
       const tokens = lineTokens(s.stage, s.line);

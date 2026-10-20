@@ -419,7 +419,8 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   check('…session VWAP and the band', x?.svwap === 2.47 && x.spx_pct === 5.7 && x.upper === 2.58 && x.upper_pct === 1.2, JSON.stringify(x));
   check('…candle open, timeframes, count', x?.candle_open === 2.5 && x.candle_tf === '5' && x.bb_tf === '2' && x.cross_n === 1, JSON.stringify(x));
   check('…day high, volume, alert timeframe', x?.day_gain === 25 && x.vol_x === 1.8 && x.tf === '30S', JSON.stringify(x));
-  check('…no line, no month VWAP, no breakout fields', x?.line === null && x.mvwap === null && x.trigger === null && lineTokens('cross', null).length === 0, JSON.stringify(x));
+  check('…a v21 message: no line (= the session line), no month VWAP, no breakout fields', x?.line === null && x.mvwap === null && x.trigger === null
+    && JSON.stringify(lineTokens('cross', null)) === '["session"]', JSON.stringify(x));
   const hour = parseTvMessage('CROSS WORX 3.9 | sVWAP 3.7 (+5.4%) | upper 3.85 (+1.3%) | open 3.62 | candle 60 | bb 45 | cross 2 | day high +6% | ah +3% | tf 30S');
   check('1h candles on a 45m band', hour?.candle_tf === '60' && hour.bb_tf === '45' && hour.cross_n === 2 && hour.ah_gain === 3, JSON.stringify(hour));
   check('a 30s band reads as "30S"', parseTvMessage('CROSS X 1.0 | candle 1 | bb 30s | cross 1 | tf 30S')?.bb_tf === '30S');
@@ -463,6 +464,23 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   const capHtml = formatTvSetupAlert(parseTvMessage('CROSS WORX 3.9 | candle 60 | bb 45 | cross 4 | tf 30S')!, 'NASDAQ:WORX', null);
   check('Telegram: 1h / 45m, past the cap, off Momentum', capHtml.includes('the 1h candle') && capHtml.includes('the 45m BB upper band')
     && capHtml.includes('cross 4 today — past the cap') && capHtml.includes('not on our Momentum list') && !capHtml.includes('null'), capHtml);
+
+  // v22: the month and year lines, each with its own state; lines crossing on one bar are one message.
+  const both = parseTvMessage('CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S');
+  check('v22 parses the line and all three VWAPs', both?.line === 'session+month' && both.svwap === 2.47 && both.mvwap === 2.55 && both.px_pct === 2.4
+    && both.yvwap === 3.1 && both.ypx_pct === -15.8 && JSON.stringify(lineTokens('cross', both.line)) === '["session","month"]', JSON.stringify(both));
+  const yr = parseTvMessage('CROSS MI 5.31 | sVWAP 4.67 (+13.7%) | mVWAP 4.65 (+14.2%) | yVWAP 5.2 (+2.1%) | upper 5.25 (+1.1%) | open 5.12 | line year | candle 5 | bb 2 | cross 1 | tf 30S');
+  check('…a year-line cross', yr?.line === 'year' && JSON.stringify(lineTokens('cross', yr.line)) === '["year"]', JSON.stringify(yr));
+  const gl = new TvSetupGate();
+  const month1 = parseTvMessage('CROSS MI 5.31 | mVWAP 5.2 (+2.1%) | upper 5.25 (+1.1%) | line month | candle 5 | bb 2 | cross 1 | tf 30S')!;
+  check('lines are separate events: a session cross, then a month cross 30 s later, both announce',
+    gl.admit(parseTvMessage('CROSS MI 5.3 | sVWAP 5.1 (+3.9%) | upper 5.25 (+1.0%) | line session | candle 5 | bb 2 | cross 1 | tf 30S')!, T0) === 'notify'
+      && gl.admit(month1, T0 + 30) === 'notify');
+  check('…a re-delivery of the month cross drops', gl.admit(month1, T0 + 35) === 'drop');
+  const yHtml = formatTvSetupAlert(yr!, 'NASDAQ:MI', null);
+  check('Telegram: names the year line and lists it first', yHtml.includes('crossed over the year VWAP and the 2m BB upper band')
+    && yHtml.indexOf('yVWAP $5.20 (+2.1%)') < yHtml.indexOf('2m BB upper $') && yHtml.indexOf('2m BB upper $') < yHtml.indexOf('sVWAP $4.67'), yHtml);
+  check('Telegram: two lines', formatTvSetupAlert(both!, 'NASDAQ:AIXI', null).includes('crossed over the session + month VWAP'));
 }
 
 console.log('Contract — the Pine script still emits what the parser reads');
@@ -495,8 +513,12 @@ console.log('Contract — the Pine script still emits what the parser reads');
     // v21: the VWAP + BB cross from the 30s alert, drawn on the candle's chart; the setup switches
     '"CROSS "', '" | sVWAP "', '" | open "', '" | candle "', '" | bb "', '" | cross "',
     'vbSend = vbOk and timeframe.period == vbTf', 'timeframe.change(vbCandleTf)', 'timeframe.change(vbBbTf)',
-    'vOpen <= vHi and vOpen <= vLo * (1 + vbTol / 100) and close > vVw and close > vBand',
+    'cOpen <= math.max(lnStart, upStart) and cOpen <= math.min(lnStart, upStart) * (1 + vbTol / 100) and close > ln and close > up',
     'request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())',
+    // v22: the month and year lines from hourly bars + today's candles, per-line state, joined names
+    'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", vbAnchors(), lookahead = barmerge.lookahead_on)',
+    'vbCan(vMStart, vStartUp, vMw, vBand, vOpen, vMFired)', 'vbCan(vYStart, vStartUp, vYw, vBand, vOpen, vYFired)',
+    'vMStart  := vNewMonth ? na : vMPrev', '" | line " + names', 'names := pbJoin(names, "month")',
     'if rcOn and rcLines != "Year"', 'if rcOn and rcLines != "Month"', 'if pbOn and inWindow', 'boValid    = boOn and']) {
     check(`script emits ${part}`, pine.includes(part));
   }

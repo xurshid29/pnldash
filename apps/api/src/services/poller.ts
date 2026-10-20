@@ -4008,7 +4008,7 @@ class PollerService {
     });
     const pb = PULLBACK_STAGES.has(sig.stage);
     if (sig.stage === 'cross') {
-      console.log(`[tv-setup] CROSS ${sig.ticker} $${sig.price ?? '?'} · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
+      console.log(`[tv-setup] CROSS ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%) · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%)` +
         ` · open ${sig.candle_open ?? '?'} · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
         (sig.vol_x != null ? ` · vol ${sig.vol_x}x` : '') + ` · tf ${sig.tf ?? '?'}` +

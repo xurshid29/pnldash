@@ -624,7 +624,8 @@ VB = dict(candle_min=5,       # vbCandleTf: the candle's timeframe, minutes (the
           bb_min=2,           # vbBbTf: the band's timeframe, minutes
           length=20, mult=2.0,
           tol=2.0,            # vbTol: the candle may open up to % above the lower line (0 = under both)
-          window=(240, 1200))  # alertWin in ET minutes [04:00, 20:00); None = always
+          window=(240, 1200),  # alertWin in ET minutes [04:00, 20:00); None = always
+          lines=('session', 'month', 'year'))   # v22: vbSession / vbMonth / vbYear
 
 
 def _bucket(t, minutes):
@@ -635,28 +636,38 @@ def _bucket(t, minutes):
     return anchor + datetime.timedelta(minutes=minutes * int((x - anchor).total_seconds() // (minutes * 60)))
 
 
-def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None):
-    """Mirror of the script's vbStep() (v21) on the alert's bars (30s; a 1m replay works too):
-    candles of p['candle_min'] with their session VWAP (hlc3 × volume of the candles, the forming
-    one live), the upper band of the p['bb_min'] closes (the forming one live), and CROSS at the
-    first bar close inside a candle that opened at or under the higher line and at most p['tol'] %
-    over the lower one (the lines at the close before the candle) with the close above both.
-    The day's first candle never counts. bars: dicts with t (aware datetime, bar open), o, h, l,
-    c, v. Returns (t, close, vwap, upper, candle_open, vol_x, n) per CROSS; `trace` (a list)
-    collects (t, vwap, upper) per bar."""
+def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=None):
+    """Mirror of the script's vbStep() (v21; v22 lines) on the alert's bars (30s; a 1m replay
+    works too): candles of p['candle_min'], the upper band of the p['bb_min'] closes (the forming
+    one live), and per line — session, month, year (p['lines']) — CROSS at the first bar close
+    inside a candle that opened at or under the higher of the line and the band and at most
+    p['tol'] % over the lower one (both at the close before the candle), with the close above
+    both; once per candle and line. The session line is the candles' own VWAP (hlc3 × volume, the
+    forming one live). The month and year lines add `before_of(bar)` → {'month': (pv, v),
+    'year': (pv, v)}: the sums up to the start of the bar's day (the script's hourly
+    vbAnchors()); without it they stay off. A line's first candle (the day's for the session
+    line, the month's / year's) never counts. bars: dicts with t (aware datetime, bar open),
+    o, h, l, c, v. Returns (t, close, {line: vwap}, upper, candle_open, vol_x, names, n) per
+    CROSS message — names like 'session+month', n the lowest daily count of those lines;
+    `trace` (a list) collects (t, {line: vwap}, upper) per bar."""
     p = dict(VB, **(params or {}))
     n_len = p['length']
+    lines = ('session', 'month', 'year')
     out = []
-    closes, last_c, last_bb, day = [], None, None, None
+    closes, last_c, last_bb, day, month, year = [], None, None, None, None, None
     pv = v = 0.0
     c_key = c_open = c_high = c_low = c_close = None
     c_vol = 0.0
-    start_vw = start_up = prev_vw = prev_up = None
-    fired, count, vols = False, 0, []
+    start_up = prev_up = None
+    start = dict.fromkeys(lines)
+    prev = dict.fromkeys(lines)
+    fired = dict.fromkeys(lines, False)
+    count = dict.fromkeys(lines, 0)
+    vols = []
     for b in bars:
         x = b['t'].astimezone(ET)
-        new_day = x.date() != day
-        day = x.date()
+        new_day, new_month, new_year = x.date() != day, (x.year, x.month) != month, x.year != year
+        day, month, year = x.date(), (x.year, x.month), x.year
         bb_key = _bucket(b['t'], p['bb_min'])
         if last_bb is not None and bb_key != last_bb and last_c is not None:
             closes = (closes + [last_c])[-(n_len - 1):]
@@ -672,30 +683,45 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None):
                 vols = (vols + [c_vol])[-20:]
             if new_day:
                 pv = v = 0.0
-                count = 0
+                count = dict.fromkeys(lines, 0)
             elif c_open is not None:
                 pv += (c_high + c_low + c_close) / 3 * c_vol
                 v += c_vol
             c_key, c_open, c_high, c_low, c_vol = key, b['o'], b['h'], b['l'], b.get('v', 0)
-            start_vw, start_up, fired = (None if new_day else prev_vw), prev_up, False
+            start_up = prev_up
+            start = {'session': None if new_day else prev['session'],
+                     'month': None if new_month else prev['month'],
+                     'year': None if new_year else prev['year']}
+            fired = dict.fromkeys(lines, False)
         else:
             c_high, c_low, c_vol = max(c_high, b['h']), min(c_low, b['l']), c_vol + b.get('v', 0)
         c_close = b['c']
-        vw = (pv + (c_high + c_low + b['c']) / 3 * c_vol) / (v + c_vol) if v + c_vol > 0 else None
+        tpv, tv = pv + (c_high + c_low + b['c']) / 3 * c_vol, v + c_vol     # today, the forming candle included
+        vw = {'session': tpv / tv if tv > 0 else None}
+        bef = before_of(b) if before_of else None
+        for ln in ('month', 'year'):
+            sums = bef.get(ln) if bef else None
+            vw[ln] = (sums[0] + tpv) / (sums[1] + tv) if sums is not None and sums[1] + tv > 0 else None
         avg = sum(vols) / len(vols) if vols else None
         vol_x = c_vol / avg if avg else None
         m_et = x.hour * 60 + x.minute
-        in_win = p['window'] is None or p['window'][0] <= m_et < p['window'][1]
-        if (in_win and (gainer_of is None or gainer_of(b)) and not fired and vw is not None and upper is not None
-                and start_vw is not None and start_up is not None):
-            hi, lo = max(start_vw, start_up), min(start_vw, start_up)
-            if c_open <= hi and c_open <= lo * (1 + p['tol'] / 100) and b['c'] > vw and b['c'] > upper:
-                fired = True
-                count += 1
-                out.append((b['t'], b['c'], vw, upper, c_open, vol_x, count))
+        ok = ((p['window'] is None or p['window'][0] <= m_et < p['window'][1]) and (gainer_of is None or gainer_of(b))
+              and upper is not None and start_up is not None)
+        fires = []
+        for ln in lines:
+            if not ok or ln not in p['lines'] or fired[ln] or start[ln] is None or vw[ln] is None:
+                continue
+            hi, lo = max(start[ln], start_up), min(start[ln], start_up)
+            if c_open <= hi and c_open <= lo * (1 + p['tol'] / 100) and b['c'] > vw[ln] and b['c'] > upper:
+                fired[ln] = True
+                count[ln] += 1
+                fires.append(ln)
+        if fires:
+            out.append((b['t'], b['c'], dict(vw), upper, c_open, vol_x, '+'.join(fires), min(count[ln] for ln in fires)))
         if trace is not None:
-            trace.append((b['t'], vw, upper))
-        prev_vw, prev_up = vw, upper
+            trace.append((b['t'], dict(vw), upper))
+        prev_up = upper
+        prev = dict(vw)
     return out
 
 
@@ -726,7 +752,7 @@ def selftest_vb():
     above = [1.40, 1.45, 1.50, 1.55, 1.60, 1.60, 1.60, 1.60, 1.60, 1.60]    # 05:00 candle: opened above both
     path1 = spike + base + cross1 + cross2 + above
     day1 = bars_of(d1, path1, [1000] * 20 + [100] * (len(path1) - 20))
-    got = [(e[0].strftime('%H:%M:%S'), e[6]) for e in simulate_vb_cross(day1)]
+    got = [(e[0].strftime('%H:%M:%S'), e[7]) for e in simulate_vb_cross(day1)]
     ok1 = len(got) == 2 and got[0] == ('04:51:30', 1) and got[1][1] == 2 and '04:55:00' <= got[1][0] < '05:00:00'
     print('v21 VWAP + BB cross, day 1:', got, '→', 'OK' if ok1 else 'UNEXPECTED (want 04:51:30 #1, then #2 in the 04:55 candle)')
 
@@ -779,11 +805,37 @@ def selftest_vb():
             h, lo, c, vol = max(x['h'] for x in cb), min(x['l'] for x in cb), cb[-1]['c'], sum(x['v'] for x in cb)
             pv += (h + lo + c) / 3 * vol
             vv += vol
-            worst_vw = max(worst_vw, abs(at[cb[-1]['t']][0] - pv / vv))
+            worst_vw = max(worst_vw, abs(at[cb[-1]['t']][0]['session'] - pv / vv))
     ok4 = worst_band < 1e-9 and worst_vw < 1e-9
     print(f'v21 arithmetic: band vs BB on 2m closes, worst {worst_band:.1e}; VWAP vs 5m candles, worst {worst_vw:.1e} →',
           'OK' if ok4 else 'UNEXPECTED')
-    return ok1 and ok2 and ok3 and ok4
+
+    # v22: the month line. A flat 1.00 day under a month VWAP held near 1.05 by the days before
+    # (heavy volume): a candle out of the base crosses the session line first (1.03), then the
+    # month line (1.07) — two messages, each line counted on its own. With no history before
+    # today (the month's first day, or the year line on the year's) a line equals the session
+    # one, so all three cross on one bar: one message, "session+month+year".
+    d4 = d1 + dt.timedelta(days=4)
+    flat = [1.000 if k % 2 else 1.001 for k in range(100)]                    # 04:00–04:50 (the band needs 38 min)
+    ramp = [1.00, 1.03, 1.07, 1.08, 1.08, 1.08, 1.08, 1.08, 1.08, 1.08]       # the 04:50 candle
+    day4 = bars_of(d4, flat + ramp)
+    heavy = {'month': (1.05 * 1_000_000, 1_000_000.0)}
+    m_ev = [(e[0].strftime('%H:%M:%S'), e[6], e[7]) for e in simulate_vb_cross(day4, before_of=lambda b: heavy)]
+    ok5 = m_ev == [('04:50:30', 'session', 1), ('04:51:00', 'month', 1)]
+    blank = {'month': (0.0, 0.0), 'year': (0.0, 0.0)}
+    all3 = [(e[6], e[7]) for e in simulate_vb_cross(day4, before_of=lambda b: blank)]
+    solo = [(e[6], e[7]) for e in simulate_vb_cross(day4, params=dict(lines=('month',)), before_of=lambda b: blank)]
+    tr4 = []
+    simulate_vb_cross(day4, before_of=lambda b: heavy, trace=tr4)
+    _, vws, _ = tr4[99]                                                        # 04:49:30, the last bar before the ramp
+    tpv = sum(((max(z['h'] for z in grp) + min(z['l'] for z in grp) + grp[-1]['c']) / 3) * sum(z['v'] for z in grp)
+              for grp in [day4[i:i + 10] for i in range(0, 100, 10)])
+    tv = 100.0 * 100
+    want_m = (1.05 * 1_000_000 + tpv) / (1_000_000 + tv)
+    ok6 = all3 == [('session+month+year', 1)] and solo == [('month', 1)] and abs(vws['month'] - want_m) < 1e-12
+    print('v22 month line:', m_ev, '| no history before today:', all3, '| month only:', solo,
+          f'| month VWAP {vws["month"]:.6f} vs {want_m:.6f} →', 'OK' if ok5 and ok6 else 'UNEXPECTED')
+    return ok1 and ok2 and ok3 and ok4 and ok5 and ok6
 
 
 def selftest():

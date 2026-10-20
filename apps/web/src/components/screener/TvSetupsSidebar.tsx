@@ -49,9 +49,9 @@ interface TickerCard {
 // One setup thread per line combination: reclaim (month / year / month+year)
 // and pullback (session / month / year and combinations). A pullback's BROKEN
 // / HELD also closes an open pullback on any combination sharing one of its lines.
-// The v21 VWAP + BB cross is its own thread.
+// The v21 VWAP + BB cross is its own thread, one per line combination (v22).
 function threadOf(s: TvSetupInfo): string {
-  if (s.stage === 'cross') return 'vb';
+  if (s.stage === 'cross') return `vb:${lineTokens(s.stage, s.line).join('+')}`;
   return `${isPullbackStage(s.stage) ? 'pb' : 'rc'}:${lineTokens(s.stage, s.line).join('+') || 'none'}`;
 }
 
@@ -162,7 +162,7 @@ const HOW_TO = (
         <b>⚡ BB breakouts</b> (v17, the 30s alert only; listed, never pinged): <b>TOUCH</b> when the forming 1m candle reaches the 30s BB upper band (at the half-minute), <b>BREAKOUT</b> when it closes above it (buy stop over its high, stop its low), <b>TRIGGERED</b> when the next candle takes the high. <b>Weak</b> (v19, gray on the chart, dimmed here, with the reason): the band falling over the last 5 candles, or the close more than 10% under the day's high — on 20 sessions strong ones did +0.41% a trade, weak ones −0.17%. 🔥 = strong, on Momentum, and A+ or 10–50% over sVWAP (+1.22% a trade).
       </div>
       <div style={{ marginTop: 6 }}>
-        <b>CROSS</b> (v21, the 30s alert only): a candle of the timeframe you set (default <b>5m</b>) opened under its session VWAP and the upper BB of the other timeframe you set (default <b>2m</b>) — or sitting on the lower line, up to 2% over it — and a 30s close inside it is above both. It rings while the candle is still open; the chart shows a teal <b>VB</b> on that candle (on the candle timeframe's chart). The tag shows the timeframes and the day's cross number (#1 = first); after the 3rd cross of the day a ticker's crosses stay quiet. ⚙ → 📐 Stages that alert → CROSS turns it on or off.
+        <b>CROSS</b> (v21, the 30s alert only): a candle of the timeframe you set (default <b>5m</b>) opened under a VWAP line and the upper BB of the other timeframe you set (default <b>2m</b>) — or sitting on the lower line, up to 2% over it — and a 30s close inside it is above both. The lines (v22): session (<b>S</b>), month (<b>M</b>) and year (<b>Y</b>), each with its own count. It rings while the candle is still open, and on the candle timeframe's chart that candle gets a marker: teal <b>VB</b> (session), yellow <b>VB M</b> (month), blue <b>VB Y</b> (year). The tag shows the line, the timeframes and the day's cross number on that line (#1 = first); after a line's 3rd cross of the day, its crosses stay quiet. ⚙ → 📐 Stages that alert → CROSS turns it on or off.
       </div>
     </div>
   </div>

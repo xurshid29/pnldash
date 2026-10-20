@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v21 (2026-10-20).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v22 (2026-10-20).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Four setups in one script, so the same two watchlist alerts carry all of them
@@ -35,8 +35,8 @@
 // 1m candles are built from its bars. v18 also draws it on a 1m chart, from the
 // 30s bars inside each candle.
 // 4) VWAP + BB CROSS (v21): one candle of a timeframe you pick (5m, 1h, …) crosses
-// over both its session VWAP and the upper Bollinger Band of another timeframe you
-// pick (2m, 30m, 45m, …).
+// over both a VWAP line — session, and (v22) month or year — and the upper Bollinger
+// Band of another timeframe you pick (2m, 30m, 45m, …). Each line runs its own setup.
 //   CROSS      the candle opened under both lines (or sitting on the lower one) and a
 //              30s close inside it is above both → the alert, while the candle is open
 // Built from the 30s alert's bars, like the breakout; drawn on the candle's own chart.
@@ -109,6 +109,9 @@ vbTol      = input.float(2.0,         "The candle may open up to % above the low
 vbGainOn   = input.bool(true,         "Gainers only (the gainer filter at the top)", group = "VWAP + BB cross (v21)")
 vbTf       = input.timeframe("30S",   "Alerts from: the alert on this chart timeframe (30S = soonest)", group = "VWAP + BB cross (v21)")
 vbShow     = input.bool(true,         "Draw the band and markers (on the candle timeframe's chart)", group = "VWAP + BB cross (v21)")
+vbSession  = input.bool(true,         "Lines: session VWAP", inline = "vbl", group = "VWAP + BB cross (v21)")
+vbMonth    = input.bool(true,         "month VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
+vbYear     = input.bool(true,         "year VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -162,10 +165,10 @@ volAvg20 = ta.sma(volume, 20)[1]
 volX     = volAvg20 > 0 ? volume / volAvg20 : na
 runUp10  = (close / close[10] - 1) * 100
 // v21: a line is drawn while a setup that uses it is on.
-plot(rcOn or (pbOn and pbMonth) ? mvwap : na, "mVWAP", color.yellow)
+plot(rcOn or (pbOn and pbMonth) or (vbOn and vbMonth) ? mvwap : na, "mVWAP", color.yellow)
 plot(rcOn ? basis : na, "BB basis", color.green)
-plot((pbOn and pbSession) or vbOn ? svwap : na, "sVWAP", color.purple)
-plot(rcOn or (pbOn and pbYear) ? yvwap : na, "yVWAP", color.blue)
+plot((pbOn and pbSession) or (vbOn and vbSession) ? svwap : na, "sVWAP", color.purple)
+plot(rcOn or (pbOn and pbYear) or (vbOn and vbYear) ? yvwap : na, "yVWAP", color.blue)
 
 // Top gainer: today's high vs the prior regular-session close (like Finviz
 // Change), or the same in any of the last `runnerDays` sessions — a second- or
@@ -726,33 +729,86 @@ plotshape(boShow and boBreakEv and not boEarlyEv, "Breakout", shape.labeldown, l
 plotshape(boShow and boEarlyEv, "Early breakout (v20)", shape.labeldown, location.abovebar, color.orange, text = "E", textcolor = color.white, size = size.small)
 plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar, boArmEarly ? color.orange : boArmStrong ? color.fuchsia : color.gray, size = size.small)
 
-// ── 4) VWAP + BB CROSS (v21) ──────────────────────────────────────────────────
+// ── 4) VWAP + BB CROSS (v21; v22 adds the month and year lines) ───────────────
 // The operator's fourth setup (2026-10-20; AIXI, WORX and NWGL on 5m charts): "the
 // market is colder than before, and it's very hard to trade with 1min timeframe".
 // On a chart of their choice (5m, 1h, …) with its session VWAP and the upper
 // Bollinger Band of another timeframe (2m on the 5m chart; 30m or 45m on the 1h
 // chart), one candle crosses over both lines. They want the alert at that moment,
-// not at the candle's close.
-//   CROSS  the candle opened at or under the higher line and at most vbTol % over the
-//          lower one (price sitting on VWAP counts), and a 30s close inside it is
-//          above both lines as they stand then → the alert; once per candle
+// not at the candle's close. v22 (operator: "it's ok to add a support for month and
+// year"): the same rule on the month and the year VWAP, each line with its own state.
+//   CROSS  the candle opened at or under the higher of its line and the band, and at
+//          most vbTol % over the lower one (price sitting on the line counts), and a
+//          30s close inside it is above both as they stand then → the alert; once
+//          per candle and line
 // Premium's two watchlist-alert slots are taken (1m + 30s), so it rides the 30s alert
-// like the breakout: vbStep() builds the candle, its session VWAP (the candle
-// timeframe's bars, hlc3 × volume, the chart's own VWAP) and the band (SMA / StdDev
-// of the BB timeframe's closes, the forming one live) from the 30s bars. The
-// candle's chart replays the same 30s bars (request.security_lower_tf), so its
-// markers are the alerts. The day's first candle doesn't count (no VWAP before it).
-// Gainers only by default: the filter at the top, recomputed from the 30s bars (a
-// request can't read the chart's running values). Each message counts the day's
-// crosses (`cross N`); the server announces the first few (TV_SETUP.vb_cap).
+// like the breakout: vbStep() builds the candle, its VWAP lines and the band (SMA /
+// StdDev of the BB timeframe's closes, the forming one live) from the 30s bars. The
+// session line is the candle timeframe's own (hlc3 × volume of its candles). A 30s
+// chart doesn't hold a month of history, so the month and year lines take the days
+// before today from this year's hourly bars (vbAnchors(), like the year line since
+// v14) and add today's candles. The candle's chart replays the same 30s bars
+// (request.security_lower_tf), so its markers are the alerts. A line's first candle
+// (the day's for the session line, the month's or year's for the others) doesn't
+// count. Gainers only by default: the filter at the top, recomputed from the 30s bars
+// (a request can't read the chart's running values). Lines firing on one 30s bar are
+// one message (`line session+month`); `cross N` counts the day's crosses on each line
+// (the lowest of the lines named), and the server announces the first few
+// (TV_SETUP.vb_cap).
 vbOk = vbOn and timeframe.in_seconds(vbCandleTf) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vbBbTf) >= timeframe.in_seconds(vbTf)
 
+// The month's and the year's Σ hlc3 × volume and Σ volume up to the start of the
+// current day, on hourly bars (extended hours). They don't depend on the current
+// hour, which is why lookahead_on is safe here (as in yearBefore()).
+vbAnchors() =>
+    var float aMPV  = 0.0
+    var float aMV   = 0.0
+    var float aYPV  = 0.0
+    var float aYV   = 0.0
+    var float aMPVd = 0.0
+    var float aMVd  = 0.0
+    var float aYPVd = 0.0
+    var float aYVd  = 0.0
+    bool aNewDay   = timeframe.change("D")
+    bool aNewMonth = timeframe.change("M")
+    bool aNewYear  = timeframe.change("12M")
+    if aNewDay
+        aMPVd := aMPV
+        aMVd  := aMV
+        aYPVd := aYPV
+        aYVd  := aYV
+    if aNewMonth
+        aMPV  := 0.0
+        aMV   := 0.0
+        aMPVd := 0.0
+        aMVd  := 0.0
+    if aNewYear
+        aYPV  := 0.0
+        aYV   := 0.0
+        aYPVd := 0.0
+        aYVd  := 0.0
+    aMPV := aMPV + hlc3 * volume
+    aMV  := aMV + volume
+    aYPV := aYPV + hlc3 * volume
+    aYV  := aYV + volume
+    [aMPVd, aMVd, aYPVd, aYVd]
+
+// One line's CROSS test: the candle opened at or under the higher of the line and the
+// band and at most vbTol % over the lower one (both as the candle opened), and the
+// close is above both now.
+vbCan(float lnStart, float upStart, float ln, float up, float cOpen, bool fired) =>
+    not fired and not na(lnStart) and not na(upStart) and not na(ln) and not na(up) and cOpen <= math.max(lnStart, upStart) and cOpen <= math.min(lnStart, upStart) * (1 + vbTol / 100) and close > ln and close > up
+
 vbStep() =>
-    // Called on every bar: and/or are lazy in v6, so the timeframe tests come first.
+    // Called on every bar: and/or are lazy in v6, so the timeframe tests and the
+    // request come first.
     bool gNewDay   = timeframe.change("D")
+    bool vNewMonth = timeframe.change("M")
+    bool vNewYear  = timeframe.change("12M")
     bool vNewBb    = timeframe.change(vbBbTf)
     bool vNewCndl  = timeframe.change(vbCandleTf)
     bool vInWin    = not na(time(timeframe.period, alertWin, "America/New_York"))
+    [vMBPV, vMBV, vYBPV, vYBV] = request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", vbAnchors(), lookahead = barmerge.lookahead_on)
     // The gainer filter, as at the top of the script.
     var float gLastReg = na
     var float gPrev    = na
@@ -801,20 +857,28 @@ vbStep() =>
         for i = 0 to vN - 1
             vSq := vSq + math.pow(array.get(vCloses, i) - vMean, 2)
         vBand := vMean + vbMult * math.sqrt(vSq / vbLen)
-    // The candle and its session VWAP.
-    var float vPV      = 0.0     // the day's finished candles: Σ hlc3 × volume…
+    // The candle, and the day's Σ over its finished candles.
+    var float vPV      = 0.0     // Σ hlc3 × volume…
     var float vV       = 0.0     // …and Σ volume
     var float vOpen    = na
     var float vHigh    = na
     var float vLow     = na
     var float vClose   = na
     var float vVol     = 0.0
-    var float vStartVw = na      // the lines when the candle opened (at the last close before it)
-    var float vStartUp = na
-    var float vPrevVw  = na
+    var float vStartUp = na      // the band when the candle opened (at the last close before it)…
+    var float vSStart  = na      // …and each line
+    var float vMStart  = na
+    var float vYStart  = na
     var float vPrevUp  = na
-    var bool  vFired   = false
-    var int   vCount   = 0
+    var float vSPrev   = na
+    var float vMPrev   = na
+    var float vYPrev   = na
+    var bool  vSFired  = false
+    var bool  vMFired  = false
+    var bool  vYFired  = false
+    var int   vSCount  = 0
+    var int   vMCount  = 0
+    var int   vYCount  = 0
     var vVols = array.new<float>()   // the last 20 finished candles' volumes
     if gNewDay or vNewCndl or na(vOpen)
         if not na(vOpen)
@@ -822,9 +886,11 @@ vbStep() =>
             if array.size(vVols) > 20
                 array.shift(vVols)
         if gNewDay
-            vPV    := 0.0
-            vV     := 0.0
-            vCount := 0
+            vPV     := 0.0
+            vV      := 0.0
+            vSCount := 0
+            vMCount := 0
+            vYCount := 0
         else if not na(vOpen)
             vPV := vPV + (vHigh + vLow + vClose) / 3 * vVol
             vV  := vV + vVol
@@ -832,62 +898,102 @@ vbStep() =>
         vHigh    := high
         vLow     := low
         vVol     := volume
-        vStartVw := gNewDay ? na : vPrevVw
         vStartUp := vPrevUp
-        vFired   := false
+        vSStart  := gNewDay ? na : vSPrev
+        vMStart  := vNewMonth ? na : vMPrev
+        vYStart  := vNewYear ? na : vYPrev
+        vSFired  := false
+        vMFired  := false
+        vYFired  := false
     else
         vHigh := math.max(vHigh, high)
         vLow  := math.min(vLow, low)
         vVol  := vVol + volume
     vClose := close
-    float vVw     = vV + vVol > 0 ? (vPV + (vHigh + vLow + close) / 3 * vVol) / (vV + vVol) : na
+    float vTPV    = vPV + (vHigh + vLow + close) / 3 * vVol    // today, the forming candle included
+    float vTV     = vV + vVol
+    float vVw     = vTV > 0 ? vTPV / vTV : na
+    float vMw     = not na(vMBV) and vMBV + vTV > 0 ? (vMBPV + vTPV) / (vMBV + vTV) : na
+    float vYw     = not na(vYBV) and vYBV + vTV > 0 ? (vYBPV + vTPV) / (vYBV + vTV) : na
     float vAvgVol = array.size(vVols) > 0 ? array.avg(vVols) : na
     float vVolX   = not na(vAvgVol) and vAvgVol > 0 ? vVol / vAvgVol : na
-    bool  vFire   = false
-    if vbOk and vInWin and (not vbGainOn or gOk) and not vFired and not na(vVw) and not na(vBand) and not na(vStartVw) and not na(vStartUp)
-        float vHi = math.max(vStartVw, vStartUp)
-        float vLo = math.min(vStartVw, vStartUp)
-        if vOpen <= vHi and vOpen <= vLo * (1 + vbTol / 100) and close > vVw and close > vBand
-            vFired := true
-            vCount := vCount + 1
-            vFire  := true
-    vPrevVw := vVw
+    bool  vOkAll  = vbOk and vInWin and (not vbGainOn or gOk)
+    bool  vFireS  = vOkAll and vbSession and vbCan(vSStart, vStartUp, vVw, vBand, vOpen, vSFired)
+    bool  vFireM  = vOkAll and vbMonth and vbCan(vMStart, vStartUp, vMw, vBand, vOpen, vMFired)
+    bool  vFireY  = vOkAll and vbYear and vbCan(vYStart, vStartUp, vYw, vBand, vOpen, vYFired)
+    if vFireS
+        vSFired := true
+        vSCount := vSCount + 1
+    if vFireM
+        vMFired := true
+        vMCount := vMCount + 1
+    if vFireY
+        vYFired := true
+        vYCount := vYCount + 1
     vPrevUp := vBand
-    [vFire, vVw, vBand, vOpen, gDay, gAh, vVolX, vCount]
+    vSPrev  := vVw
+    vMPrev  := vMw
+    vYPrev  := vYw
+    [vFireS, vFireM, vFireY, vVw, vMw, vYw, vBand, vOpen, gDay, gAh, vVolX, vSCount, vMCount, vYCount]
 
 // On the alert's own chart (30s): the alert, and its markers there.
-[vbFire, vbVw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbN] = vbStep()
+[vbFireS, vbFireM, vbFireY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbNS, vbNM, vbNY] = vbStep()
 // On the candle timeframe's chart: the same 30s bars inside each candle.
 vbView() =>
-    [vwFire, vwVw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwN] = vbStep()
-    [vwFire, vwBand]
+    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY] = vbStep()
+    [vwS, vwM, vwY, vwBand]
 vbBaseSec  = timeframe.in_seconds(vbTf)
 vbChartSec = timeframe.in_seconds(timeframe.period)
 vbLower    = vbOk and vbShow and timeframe.period == vbCandleTf and vbChartSec > vbBaseSec
-[vbInFire, vbInUp] = request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())
-bool  vbMark = false
-float vbUp   = na
+[vbInS, vbInM, vbInY, vbInUp] = request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())
+bool  vbMarkS = false
+bool  vbMarkM = false
+bool  vbMarkY = false
+float vbUp    = na
 if vbLower
-    int vbIn = array.size(vbInFire)
+    int vbIn = array.size(vbInS)
     if vbIn > 0
         vbUp := array.get(vbInUp, vbIn - 1)   // the band at the candle's last 30s close
         for k = 0 to vbIn - 1
-            if array.get(vbInFire, k)
-                vbMark := true
+            if array.get(vbInS, k)
+                vbMarkS := true
+            if array.get(vbInM, k)
+                vbMarkM := true
+            if array.get(vbInY, k)
+                vbMarkY := true
 else if vbOk and vbShow and vbChartSec == vbBaseSec
-    vbMark := vbFire
-    vbUp   := vbBand
+    vbMarkS := vbFireS
+    vbMarkM := vbFireM
+    vbMarkY := vbFireY
+    vbUp    := vbBand
 
-// The message — a contract with services/tv-setups.ts parseTvMessage. sVWAP is the
-// candle timeframe's session VWAP, upper the BB timeframe's band, open the candle's:
-//   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S
+// The message — a contract with services/tv-setups.ts parseTvMessage. The VWAPs are
+// the setup's lines (the candle timeframe's session VWAP, the hourly-anchored month
+// and year VWAPs), upper the BB timeframe's band, open the candle's:
+//   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S
 vbSend = vbOk and timeframe.period == vbTf
 vbMsg() =>
+    string names = ""
+    int    n     = 999
+    if vbFireS
+        names := pbJoin(names, "session")
+        n     := math.min(n, vbNS)
+    if vbFireM
+        names := pbJoin(names, "month")
+        n     := math.min(n, vbNM)
+    if vbFireY
+        names := pbJoin(names, "year")
+        n     := math.min(n, vbNY)
     string msg = "CROSS " + syminfo.ticker + " " + str.tostring(close, format.mintick)
-    msg += " | sVWAP " + str.tostring(vbVw, format.mintick) + " (" + pctVs(vbVw) + "%)"
+    if not na(vbVw)
+        msg += " | sVWAP " + str.tostring(vbVw, format.mintick) + " (" + pctVs(vbVw) + "%)"
+    if not na(vbMw)
+        msg += " | mVWAP " + str.tostring(vbMw, format.mintick) + " (" + pctVs(vbMw) + "%)"
+    if not na(vbYw)
+        msg += " | yVWAP " + str.tostring(vbYw, format.mintick) + " (" + pctVs(vbYw) + "%)"
     msg += " | upper " + str.tostring(vbBand, format.mintick) + " (" + pctVs(vbBand) + "%)"
     msg += " | open " + str.tostring(vbOpen, format.mintick)
-    msg += " | candle " + vbCandleTf + " | bb " + vbBbTf + " | cross " + str.tostring(vbN)
+    msg += " | line " + names + " | candle " + vbCandleTf + " | bb " + vbBbTf + " | cross " + str.tostring(n)
     if not na(vbDayG)
         msg += " | day high " + (vbDayG >= 0 ? "+" : "") + str.tostring(vbDayG, "#") + "%"
     if not na(vbAhG)
@@ -896,7 +1002,11 @@ vbMsg() =>
         msg += " | vol " + str.tostring(vbVolX, "#.#") + "x"
     msg + " | tf " + timeframe.period
 
-if vbSend and vbFire
+if vbSend and (vbFireS or vbFireM or vbFireY)
     alert(vbMsg(), alert.freq_once_per_bar_close)
 plot(vbShow and (vbLower or (vbOk and vbChartSec == vbBaseSec)) ? vbUp : na, "BB upper (VWAP + BB cross)", color.new(color.orange, 20))
-plotshape(vbMark, "VWAP + BB cross", shape.labelup, location.belowbar, color.teal, text = "VB", textcolor = color.white, size = size.small)
+// v22: the marker says which line crossed (the year's, then the month's, first): teal
+// for the session line, yellow "VB M" for the month line, blue "VB Y" for the year line.
+plotshape(vbMarkS and not vbMarkM and not vbMarkY, "VWAP + BB cross (session)", shape.labelup, location.belowbar, color.teal, text = "VB", textcolor = color.white, size = size.small)
+plotshape(vbMarkM and not vbMarkY, "VWAP + BB cross (month, v22)", shape.labelup, location.belowbar, color.yellow, text = "VB M", textcolor = color.black, size = size.small)
+plotshape(vbMarkY, "VWAP + BB cross (year, v22)", shape.labelup, location.belowbar, color.blue, text = "VB Y", textcolor = color.white, size = size.small)

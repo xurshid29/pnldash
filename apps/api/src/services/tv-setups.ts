@@ -22,7 +22,8 @@
 // Script v21 (2026-10-20) adds the VWAP + BB cross: one candle of a timeframe the
 // operator picks (5m, 1h, …) crosses over both its session VWAP and the upper BB
 // of another timeframe (2m, 30m, …) — CROSS, sent from the 30s alert the moment
-// a 30s close inside the candle is above both lines.
+// a 30s close inside the candle is above both lines. v22 runs it on the month and
+// year VWAPs too (`line session|month|year`).
 //
 // Why TradingView computes it and we don't: the line is a VWAP anchored at the
 // 1st of the month INCLUDING pre-market volume. Yahoo's extended-hours bars
@@ -43,8 +44,9 @@ export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback
 // The BB breakout's stages (script v17): a 1m candle against the 30s upper band.
 // No VWAP line; stored as tier_events event 'tv_breakout', never announced.
 export const BREAKOUT_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['touch', 'breakout', 'triggered']);
-// The VWAP + BB cross (script v21): one stage, CROSS; its line is always the
-// session VWAP of the candle timeframe, so a message names no line. Stored as
+// The VWAP + BB cross (script v21): one stage, CROSS, on the candle timeframe's
+// session VWAP — v21 messages name no line — and since v22 also on the month and
+// year VWAPs (`line session|month|year`, combined like PULLBACK's). Stored as
 // tier_events event 'tv_setup' and announced like GO (⚙ stage switch, the cap).
 // v19: a strong breakout — the band not falling over the last 5 candles and the
 // close within TV_SETUP.bo_strong_off % of the day's high. Null without the context.
@@ -94,7 +96,7 @@ const LINE_ORDER: TvLineName[] = ['session', 'month', 'year'];
 // The individual lines of a message; a reclaim message without a line (before
 // v11) is the month line.
 export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvLineName[] {
-  if (!line) return PULLBACK_STAGES.has(stage) || BREAKOUT_STAGES.has(stage) || stage === 'cross' ? [] : ['month'];
+  if (!line) return PULLBACK_STAGES.has(stage) || BREAKOUT_STAGES.has(stage) ? [] : stage === 'cross' ? ['session'] : ['month'];
   if (line === 'both') return PULLBACK_STAGES.has(stage) ? ['session', 'month'] : ['month', 'year'];
   return line.split('+') as TvLineName[];
 }
@@ -376,6 +378,7 @@ function toPath(v: unknown): TvPath | null {
 //   BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S   (v17)
 //   BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | … | early +10% | slope +2.0% | off high -1.3% | tf 30S   (v20)
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S   (v21)
+//   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | … | tf 30S   (v22)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -674,16 +677,18 @@ export function formatTvSetupAlert(
   return lines.join('\n');
 }
 
-// v21 CROSS: "the 5m candle crossed over the session VWAP and the 2m BB upper band".
+// v21 CROSS: "the 5m candle crossed over the session VWAP and the 2m BB upper band";
+// v22 names the month / year line it crossed ("the session + month VWAP").
 function formatCross(
   sig: TvSetupSignal,
   tvSym: string,
   row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
 ): string {
   const bb = fmtTf(sig.bb_tf);
+  const tokens = lineTokens(sig.stage, sig.line);
   const lines = [
     `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.cross} <b>${TV_STAGE_LABEL.cross}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>the ${fmtTf(sig.candle_tf)} candle crossed over the session VWAP and the ${bb} BB upper band</i>`,
+    `<i>the ${fmtTf(sig.candle_tf)} candle crossed over the ${tokens.join(' + ')} VWAP and the ${bb} BB upper band</i>`,
   ];
   const what: string[] = [];
   if (sig.cross_n != null) {
@@ -691,9 +696,15 @@ function formatCross(
   }
   if (sig.candle_open != null) what.push(`opened ${fmtPx(sig.candle_open)}`);
   if (what.length > 0) lines.push(what.join(' · '));
-  const lvl: string[] = [];
-  if (sig.svwap != null) lvl.push(`sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})`);
+  // Levels: the crossed line(s), the band, then the other lines the message carries.
+  const lvlOf: Record<TvLineName, string | null> = {
+    session: sig.svwap != null ? `sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})` : null,
+    month: sig.mvwap != null ? `mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})` : null,
+    year: sig.yvwap != null ? `yVWAP ${fmtPx(sig.yvwap)} (${fmtSigned(sig.ypx_pct ?? null)})` : null,
+  };
+  const lvl = tokens.map((t) => lvlOf[t]).filter((x): x is string => x != null);
   if (sig.upper != null) lvl.push(`${bb} BB upper ${fmtPx(sig.upper)} (${fmtSigned(sig.upper_pct ?? null)})`);
+  lvl.push(...LINE_ORDER.filter((t) => !tokens.includes(t)).map((t) => lvlOf[t]).filter((x): x is string => x != null));
   if (lvl.length > 0) lines.push(lvl.join(' · '));
   lines.push(momentumLine(row));
   const ctx = contextParts(sig, sig.vol_x != null ? [`volume ${sig.vol_x.toFixed(1)}× its last 20 candles`] : []);

@@ -21,16 +21,17 @@ export function isPullbackStage(stage: TvStage): boolean {
 // The individual lines of a signal (server: tv-setups.ts lineTokens). A
 // reclaim signal without a line (before v11) is the month line; the legacy
 // 'both' was session + month for PULLBACK, month + year for reclaim. A CROSS
-// names no line (always the session VWAP).
+// without a line (script v21) is the session line; v22 names session / month / year.
 export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvLineName[] {
-  if (!line) return isPullbackStage(stage) || stage === 'cross' ? [] : ['month'];
+  if (!line) return isPullbackStage(stage) ? [] : stage === 'cross' ? ['session'] : ['month'];
   if (line === 'both') return isPullbackStage(stage) ? ['session', 'month'] : ['month', 'year'];
   return line.split('+') as TvLineName[];
 }
 
 // The line(s) a signal is about, colored like the operator's chart: session
 // VWAP purple, month yellow, year blue, several lines white ("S+Y"). Reclaim
-// signals on the month line alone — the original setup — carry no tag.
+// signals on the month line alone — the original setup — carry no tag; PULLBACK
+// and CROSS (v22) always do.
 const LINE_TAG: Record<TvLineName, { label: string; color: string }> = {
   session: { label: 'S', color: '#b37feb' },
   month: { label: 'M', color: '#fadb14' },
@@ -38,7 +39,7 @@ const LINE_TAG: Record<TvLineName, { label: string; color: string }> = {
 };
 function lineTag(stage: TvStage, line: TvLine | null | undefined): { label: string; color: string } | null {
   const tokens = lineTokens(stage, line);
-  if (tokens.length === 0 || (!isPullbackStage(stage) && tokens.length === 1 && tokens[0] === 'month')) return null;
+  if (tokens.length === 0 || (!isPullbackStage(stage) && stage !== 'cross' && tokens.length === 1 && tokens[0] === 'month')) return null;
   if (tokens.length === 1) return LINE_TAG[tokens[0]];
   return { label: tokens.map((t) => LINE_TAG[t].label).join('+'), color: '#ffffff' };
 }
@@ -119,9 +120,9 @@ export function strengthText(s: TvSetupInfo): string {
 // "−5.7% vs mVWAP · basis −5.1%" — where price and the basis sat at the signal.
 // PULLBACK setup: "+0.7% vs sVWAP · +51.2% vs mVWAP · ran +17%", its own line first.
 export function tvLevelsText(s: TvSetupInfo): string {
-  // v21 CROSS: "+5.7% vs sVWAP · +1.2% vs 2m BB · opened $2.50"
+  // v21 CROSS: "+5.7% vs sVWAP · +1.2% vs 2m BB · opened $2.50" (v22: its own line first)
   if (s.stage === 'cross') {
-    const parts = [lineDistanceText(s, 'session')];
+    const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));
     if (s.upper_pct != null) parts.push(`${fmtSignedPct(s.upper_pct).replace('-', '−')} vs ${fmtTf(s.bb_tf ?? null) || '?'} BB`);
     if (s.candle_open != null) parts.push(`opened ${s.candle_open < 1 ? s.candle_open.toFixed(4) : s.candle_open.toFixed(2)}`);
     return parts.filter((p): p is string => p != null).join(' · ');
