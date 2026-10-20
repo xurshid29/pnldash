@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-20 (Tue, 08:00 ET), script v21 built (see the session log; deploy after 11:00 ET)
+## START HERE — state at 2026-10-20 (Tue, 08:20 ET), last code commit `b6c0bcf` (script v21, deployed)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail (a ⚡ BB-breakout
@@ -221,7 +221,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 
 **Open items, ranked:**
 1. **v21:**
-   - deploy after 11:00 ET;
+   - deployed 08:15 ET at the operator's request (`b6c0bcf`); verified: bundle, dist, a dry-run CROSS parse on prod, webhooks flowing;
    - the operator pastes v21, recreates both alerts and ticks CROSS in ⚙ if they
      want its alerts;
    - confirm the first CROSS and the first regular-hours early BO arrive;
@@ -347,7 +347,7 @@ the chart and alerts. Examples: AIXI, WORX, NWGL on 5m charts (built-in VWAP Ses
   (`tv_cross`), sidebar pill `5m/2m #N`, History filter, toast and sound.
 - **Checks:** 293 regression checks (252 before); replica `simulate_vb_cross` + `selftest_vb` (band and VWAP
   match direct 2m / 5m computations to 1e-13); web build and API tsc clean.
-- **Not measured before building** (§16.6). Prod's saved ⚙ list doesn't name CROSS, so it's off until
+- **Deployed 08:15 ET** (operator: "Lets deploy it now"), `b6c0bcf`. **Not measured before building** (§16.6). Prod's saved ⚙ list doesn't name CROSS, so it's off until
   ticked.
 
 **2026-10-20 (06:55 ET) — v20 CHECK, AND GAUZ'S MISSING BREAKOUTS (parked).** The operator said v20 is
