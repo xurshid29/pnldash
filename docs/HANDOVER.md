@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-20 (Tue, 11:40 ET), last code commit `36fb1af` (script v22 + CROSS Momentum-only, deployed)
+## START HERE — state at 2026-10-21 (Wed, 04:25 ET), last code commit `004a28c` (script v23, deployed)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail (a ⚡ BB-breakout
@@ -359,7 +359,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 
 These are the detailed notes behind START HERE, kept verbatim.
 
-**2026-10-21 (04:05–04:40 ET) — RBNE / WHLR 04:00 GAP-AND-GOS: SCRIPT v23 + FRESH-RUNNER EXEMPTION.**
+**2026-10-21 (04:05–04:25 ET) — RBNE / WHLR 04:00 GAP-AND-GOS: SCRIPT v23 + FRESH-RUNNER EXEMPTION (deployed 04:24 ET, `004a28c`).**
 - **RBNE** (0.398 → open 0.587 at 04:00 → 1.86): nothing from TradingView. It wasn't on the TV watchlist (best
   day in 90 days +15.8%; on our screen first at 04:00:34). Our 🅰️ A+ caught it at 04:02 ($1.63).
 - **WHLR** (0.356 → open 0.43 → 0.93 by 04:12): on the watchlist; TradingView sent a PULLBACK (04:01:03,
