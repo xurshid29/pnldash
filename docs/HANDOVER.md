@@ -103,7 +103,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
    outstanding are kept with `float_m` null** since 10-14. Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v22** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+5. **📐 TradingView script — v23** (`apps/web/src/tv/mvwap-bb-setup.pine`).
    - **Paste status:**
      - v20 is on the operator's chart (10-20: "I saw GAUZ fire it with the E
        marker"). That E sits on a past candle (GAUZ's first +10% came on 10-16
@@ -112,8 +112,9 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
        bars.
      - The server had no early BO from any ticker as of 10-20 07:00 ET. Whether
        both alerts were recreated with v20 was never answered.
-     - **v22 needs the paste and both alerts recreated anyway** (the operator held v21
-       back for it), which settles it.
+     - v22 was pasted 10-20 ~11:25 ET. **v23 (10-21) needs the paste and both alerts
+       recreated**, this time with all four "… setup on" switches ticked (the 30s
+       alert made 10-20 has the breakout off: none since 08:17 ET).
        Then the first regular-hours early BO (from 09:30 ET) and the first CROSS
        confirm both.
    - **Alerts:** two watchlist alerts, **1m + 30s**. Settings: "Any alert() function
@@ -183,18 +184,21 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
          a request inside `vbStep()`, so a nested one in the 5m chart's replay)
          plus today's candles;
        - the band (`vbBbTf` 2, the forming close live).
-     - CROSS = the candle opened at or under the higher of the line and the band
-       and ≤ `vbTol` 2% over the lower one, and a 30s close is above both. Once per
-       candle and line, a daily `cross N` per line; lines crossing on one bar are
-       one message (`line session+month`). A line's first candle (day / month /
-       year) never counts. Inputs `vbSession` / `vbMonth` / `vbYear`, all on.
+     - CROSS (v23) = at a 30s close, the candle's open is at or under the higher of
+       the line and the band **as they stand then** (what the chart draws) and ≤
+       `vbTol` 2% over the lower one, and the close is above both. The day's first
+       candle counts (v21/v22 used the lines at the candle's open and skipped it:
+       silent on the WHLR / RBNE 04:00 gap-and-gos 10-21). Once per candle and line,
+       a daily `cross N` per line; lines crossing on one bar are one message (`line
+       session+month`). Inputs `vbSession` / `vbMonth` / `vbYear`, all on.
      - The candle timeframe's chart replays the 30s bars (`request.security_lower_tf`),
        so the candles that sent one get a marker: teal **VB** (session), yellow
        **VB M** (month), blue **VB Y** (year).
      - Server: stage `cross` (tier_events `tv_setup`), `vb_dup_sec` 20, no merge,
        `vb_cap` 3 (`cross N` > 3 quiet, no B+ exemption), **Momentum names only**
        (`vb_momentum_only`, 10-20: 20–25 announced an hour otherwise, 4–5 on
-       Momentum), Telegram slug `tv_cross`.
+       Momentum) **unless the day high is ≥ +30%** (`vb_fresh_gain`, 10-21: 04:00
+       runners reach our screen after the crossing bar), Telegram slug `tv_cross`.
      - Prod's ⚙ list since 10-20: `["pullback","cross"]` (the operator ticked CROSS
        and switched GO off).
      - Switches: `rcOn` (new), `pbOn`, `boOn`, `vbOn`. The VWAP lines draw only
@@ -354,6 +358,19 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-21 (04:05–04:40 ET) — RBNE / WHLR 04:00 GAP-AND-GOS: SCRIPT v23 + FRESH-RUNNER EXEMPTION.**
+- **RBNE** (0.398 → open 0.587 at 04:00 → 1.86): nothing from TradingView. It wasn't on the TV watchlist (best
+  day in 90 days +15.8%; on our screen first at 04:00:34). Our 🅰️ A+ caught it at 04:02 ($1.63).
+- **WHLR** (0.356 → open 0.43 → 0.93 by 04:12): on the watchlist; TradingView sent a PULLBACK (04:01:03,
+  announced) and a BROKEN (04:01:30, quiet); A+ at 04:03. No CROSS: v22 compared the open with the lines at
+  the candle's start and skipped the day's first candle. The operator: "this one definitely should be
+  considered as a VB … if 1 candle crosses both vwap and bb upper row" → **v23** reads the lines as they stand
+  at the 30s close (what the chart draws) and counts the first candle.
+- **Server:** off-list CROSS with day high ≥ +30% announces (`vb_fresh_gain`), since these runners reach the
+  screen after the crossing bar.
+- **Still open:** breakouts — none since 10-20 08:17 ET. They'd have caught both at 04:00–04:01. The 30s
+  alert needs "Breakout setup on" ticked when recreated (do it with the v23 paste).
 
 **2026-10-20 (11:30 ET) — v22 LIVE; CROSS MOMENTUM-ONLY; BREAKOUTS STOPPED AT 08:17.**
 - v22 pasted ~11:25 ET and compiled; the first v22 CROSS at 11:30 (SITC, `line session`); both alerts send; no

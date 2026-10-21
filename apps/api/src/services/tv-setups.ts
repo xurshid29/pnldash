@@ -199,6 +199,11 @@ export const TV_SETUP = {
   // session line alone, 4–5 of them on Momentum). Off-list crosses are quiet:
   // stored, graded and shown dimmed in the 📐 sidebar.
   vb_momentum_only: true,
+  // …except a runner our 20-s screen hasn't caught yet (operator, 2026-10-21:
+  // RBNE reached the screen at 04:00:34 ET and WHLR at 04:01:14, after the 30s bar
+  // that crossed): a message saying the day high is at least this % still announces.
+  // On 10-20 that would have added 18 off-list crosses on 11 tickers.
+  vb_fresh_gain: 30,
   // GO is announced only for a ticker on our Momentum list (operator,
   // 2026-10-18, after the first live grading: off-list GOs won 12% and barely
   // moved, median best +2.3% in an hour, against 23% and +6.2% on Momentum).
@@ -502,7 +507,7 @@ export class TvSetupGate {
   // `capExempt`: a PULLBACK past the cap may still announce (v16 — the caller
   // knows the ticker's Momentum row and grade). `onMomentum`: the ticker is on
   // our Momentum list now; off it, a GO is quiet (go_momentum_only), and so is a
-  // CROSS (vb_momentum_only).
+  // CROSS (vb_momentum_only) unless its day high is ≥ vb_fresh_gain %.
   admit(sig: TvSetupSignal, nowSec: number, capExempt = false, onMomentum = true): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
     if (this.recent.length >= TV_SETUP.max_per_min) return 'flood';
@@ -526,7 +531,8 @@ export class TvSetupGate {
     // no 5-min spacing (the next candle's cross is a new event); the cap and the
     // Momentum-only rule limit it.
     if (cross) {
-      const quiet = !this.announced.has('cross') || (pastCap(sig) && !capExempt) || (TV_SETUP.vb_momentum_only && !onMomentum);
+      const fresh = sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
+      const quiet = !this.announced.has('cross') || (pastCap(sig) && !capExempt) || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
       return quiet ? 'quiet' : 'notify';
     }
 

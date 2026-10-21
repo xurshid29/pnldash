@@ -454,6 +454,12 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   check('…GO and PULLBACK unaffected', off.admit(parseTvMessage('GO AIXI 2.61 | mVWAP 2.4 (+8.8%) | tf 1 | via reclaim')!, T0 + 30, false, true) === 'notify');
   check('off Momentum → quiet (vb_momentum_only, 2026-10-20)', TV_SETUP.vb_momentum_only && new TvSetupGate().admit(x!, T0, false, false) === 'quiet');
   check('…on Momentum → announces', new TvSetupGate().admit(x!, T0, false, true) === 'notify');
+  check(`…off Momentum but day high ≥ +${TV_SETUP.vb_fresh_gain}% → announces (a runner the screen hasn't caught yet, 2026-10-21)`,
+    new TvSetupGate().admit({ ...x!, day_gain: TV_SETUP.vb_fresh_gain }, T0, false, false) === 'notify'
+      && new TvSetupGate().admit({ ...x!, day_gain: 264 }, T0, false, false) === 'notify'
+      && new TvSetupGate().admit({ ...x!, day_gain: TV_SETUP.vb_fresh_gain - 1 }, T0, false, false) === 'quiet'
+      && new TvSetupGate().admit({ ...x!, day_gain: null }, T0, false, false) === 'quiet');
+  check('…a fresh runner past the cap stays quiet', new TvSetupGate().admit({ ...x!, day_gain: 264, cross_n: TV_SETUP.vb_cap + 1 }, T0, false, false) === 'quiet');
   check('…off-list quiet doesn\'t use up the line: the same ticker on Momentum a candle later announces',
     (() => { const q = new TvSetupGate(); return q.admit(x!, T0, false, false) === 'quiet' && q.admit(second, T0 + 300, false, true) === 'notify'; })());
 
@@ -516,12 +522,14 @@ console.log('Contract — the Pine script still emits what the parser reads');
     // v21: the VWAP + BB cross from the 30s alert, drawn on the candle's chart; the setup switches
     '"CROSS "', '" | sVWAP "', '" | open "', '" | candle "', '" | bb "', '" | cross "',
     'vbSend = vbOk and timeframe.period == vbTf', 'timeframe.change(vbCandleTf)', 'timeframe.change(vbBbTf)',
-    'cOpen <= math.max(lnStart, upStart) and cOpen <= math.min(lnStart, upStart) * (1 + vbTol / 100) and close > ln and close > up',
+    // v23: the lines as they stand at the 30s close (what the chart draws), the day's first candle counts
+    'cOpen <= math.max(ln, up) and cOpen <= math.min(ln, up) * (1 + vbTol / 100) and close > ln and close > up',
+    'vbCan(vVw, vBand, vOpen, vSFired)',
     'request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())',
     // v22: the month and year lines from hourly bars + today's candles, per-line state, joined names
     'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", vbAnchors(), lookahead = barmerge.lookahead_on)',
-    'vbCan(vMStart, vStartUp, vMw, vBand, vOpen, vMFired)', 'vbCan(vYStart, vStartUp, vYw, vBand, vOpen, vYFired)',
-    'vMStart  := vNewMonth ? na : vMPrev', '" | line " + names', 'names := pbJoin(names, "month")',
+    'vbCan(vMw, vBand, vOpen, vMFired)', 'vbCan(vYw, vBand, vOpen, vYFired)',
+    '" | line " + names', 'names := pbJoin(names, "month")',
     'if rcOn and rcLines != "Year"', 'if rcOn and rcLines != "Month"', 'if pbOn and inWindow', 'boValid    = boOn and']) {
     check(`script emits ${part}`, pine.includes(part));
   }

@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v22** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v21 a fourth, the **VWAP + BB cross** (§16): a candle of a timeframe you pick crosses over a VWAP line (session; month and year since v22) and another timeframe's BB upper band, from the 30s alert. Since v21 every setup has an on/off switch for the chart and the alerts. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v23** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v21 a fourth, the **VWAP + BB cross** (§16): a candle of a timeframe you pick crosses over a VWAP line (session; month and year since v22) and another timeframe's BB upper band, from the 30s alert. Since v21 every setup has an on/off switch for the chart and the alerts. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -648,7 +648,7 @@ TradingView servers                                   pnldash droplet
 | The ticker had this stage announced in the last 5 min (a month READY, then a year READY a minute later). **PULLBACK counts per line** (since 2026-10-05, `a5a5520`): only a line announced in the last 5 min blocks it, in any combination | `notify_merge_sec` 300 | `log`. Only announcements count, so a quiet event never blocks the next one |
 | A PULLBACK past the day's cap: `fails` ≥ 2 on every line it names (script v16+; older scripts capped themselves) | `pb_cap` 2, `pb_cap_exempt` 'B+' | `quiet`, unless the ticker is on our Momentum list at grade B+ or better (a trial since 2026-10-10, after WFF) — then it announces, and Telegram says it's past the cap. Rows carry `fails`, `capped`, `cap_exempt` |
 | A GO on a ticker that isn't on our Momentum list (since 2026-10-18, `9751510`, after the first live grading §9.1: off-list GOs won 12% and barely moved) | `go_momentum_only` true | `quiet`. The sidebar shows it with a dimmed pill. FORMING/READY/PULLBACK off the list are unaffected |
-| A CROSS (script v21, §16): only a re-delivery inside 20 s drops (per line: v22's session, month and year crosses are separate events); there's no other timeframe's copy to merge and no 5-min spacing, since the next candle's cross is a new event. Past the day's cap (`cross N` > 3 on the line) | `vb_dup_sec` 20, `vb_cap` 3, `vb_momentum_only` true | `quiet` past the cap (no B+ exemption), when CROSS is switched off in ⚙, or (since 10-20) on a ticker that isn't on our Momentum list; quiet ones show dimmed in the sidebar |
+| A CROSS (script v21, §16): only a re-delivery inside 20 s drops (per line: v22's session, month and year crosses are separate events); there's no other timeframe's copy to merge and no 5-min spacing, since the next candle's cross is a new event. Past the day's cap (`cross N` > 3 on the line) | `vb_dup_sec` 20, `vb_cap` 3, `vb_momentum_only` true, `vb_fresh_gain` 30 | `quiet` past the cap (no B+ exemption), when CROSS is switched off in ⚙, or (since 10-20) on a ticker that isn't on our Momentum list — unless (10-21) the message's day high is ≥ +30%, a runner the screen hasn't caught yet; quiet ones show dimmed in the sidebar |
 | More than 120 webhooks a minute | `max_per_min` 120 | `flood` → 429, so a leaked key or runaway alert can't spam the phone |
 
 **The noise cut (operator, 2026-10-05):** "we need to cut noise a little bit
@@ -1100,6 +1100,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-20 | v21 | `b6c0bcf` | The operator's fourth setup, the VWAP + BB cross (§16): "the stock market is colder than before, and it's very hard to trade with 1min timeframe … catch when 1 candle crosses over both session vwap and 1/2 timeframe bollinger bands upper row … alert right at that moment or a little bit earlier", with the timeframes configurable (5m chart + 2m BB, 1h + 30m or 45m, …) and per-setup on/off switches. Examples: AIXI, WORX, NWGL on 5m charts (10-19/20). Premium's two alert slots are taken, so it rides the 30s alert: the candle, its session VWAP and the band are built from the 30s bars, CROSS fires at the first 30s close above both lines inside a candle that opened under both (or within `vbTol` 2% over the lower one), once per candle; the candle's chart replays the same 30s bars. New inputs, all last in the list: `rcOn` (the reclaim switch), `vbOn`, `vbCandleTf` 5, `vbBbTf` 2, `vbLen` 20, `vbMult` 2, `vbTol` 2, `vbGainOn`, `vbTf` 30S, `vbShow`. The VWAP lines are drawn only while a setup that uses them is on. Server: stage `cross` (⚙ switch, `vb_cap` 3, `vb_dup_sec` 20), Telegram `tv_cross`, sidebar/History/toast. Replica `simulate_vb_cross` + `selftest_vb` (the band and VWAP arithmetic checked against direct 2m / 5m computations). Regression: 293 checks. Not measured before building: §16.6. |
 | 2026-10-20 | v22 | `e6b3e73` | Operator, right after v21: "does our VB setups work with monthly, yearly VWAPs or only with session one?" → "it's ok to add a support for month and year, because I'm currently enabled VB and disabled RECLAIM GO". The cross now runs on the session, month and year VWAP, each line with its own state (once per candle and line, its own daily `cross N`); lines crossing on one 30s bar are one message (`line session+month`, the lowest count). A 30s chart doesn't hold a month of history, so the month and year lines take the days before today from this year's hourly bars (`vbAnchors()`, a request inside `vbStep()`, so the 5m chart's replay asks for it too: a nested request) and add today's candles. A line's first candle (the day's, month's or year's) never counts. New inputs, last: `vbSession` / `vbMonth` / `vbYear` (all on). Markers: teal VB, yellow "VB M", blue "VB Y" (the year's, then the month's, first). Messages carry `sVWAP` / `mVWAP` / `yVWAP` and `line`. Server/UI: a v21 message without a line is the session line; the pill shows S / M / Y; one sidebar thread per line; Telegram and the toast name the line. Replica: per-line `simulate_vb_cross` (`before_of` = the hourly sums) + v22 self-test. Regression: 305 checks. |
 | 2026-10-20 | server | `36fb1af` | CROSS announces only for Momentum names (`TV_SETUP.vb_momentum_only`, like GO's `go_momentum_only`). The first morning announced 20–25 crosses an hour (09:00–11:30 ET, session line only, v21), 4–5 of them on Momentum names; the operator: "ok, go ahead". Off-list crosses are quiet: stored, graded, shown dimmed. No script change. Regression: 307 checks. |
+| 2026-10-21 | v23 + server | *(this commit)* | Operator, on WHLR's 04:00 ET gap-and-go: "this one definitely should be considered as a VB, because what I described was something like, if 1 candle crosses both vwap and bb upper row". The CROSS test now reads the line and the band as they stand at the 30s close, which is what the chart draws for the candle, instead of as they stood at the candle's open; the day's first candle counts (§16.3). A 04:00 gap drags its own VWAP and band over its open, so the body crosses both; v22 was silent on WHLR and RBNE. Server: an off-list CROSS still announces when its day high is ≥ +30% (`vb_fresh_gain`), since a 04:00 runner reaches our 20-s screen after the 30s bar that crossed (RBNE 04:00:34, WHLR 04:01:14); on 10-20 that adds 18 crosses on 11 tickers. Replica: live lines + a WHLR-like self-test. Regression: 309 checks. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1606,15 +1607,20 @@ disabled RECLAIM GO".
 
 ### 16.3 The rules and inputs (group "VWAP + BB cross (v21)")
 
-- **Start:** the candle's open against the lines at the last 30s close before
-  it, i.e. what the chart shows as the candle opens. It must open at or under
-  the higher line, and at most `vbTol` % above the lower one. Price sitting on
-  the VWAP counts (AIXI 05:05 opened ~1% over it).
-- **CROSS:** a 30s close above the live VWAP and the live band. Once per
-  candle.
-- A line's first candle never counts, since there's no line before it: the
-  day's first candle for the session line, the month's and the year's first for
-  the others.
+- **CROSS (v23):** at a 30s close inside the candle, against the line and the
+  band **as they stand at that close** (what the chart draws for the candle):
+  the candle's open is at or under the higher of them and at most `vbTol` %
+  above the lower one, and the close is above both. The body crosses both.
+  Price sitting on the VWAP counts (AIXI 05:05 opened ~1% over it). Once per
+  candle and line. The day's first candle counts.
+- **v21/v22 compared the open with the lines at the close before the candle**
+  and skipped a line's first candle. On WHLR 10-21 the operator: "this one
+  definitely should be considered as a VB … if 1 candle crosses both vwap and
+  bb upper row". The 04:00 ET candle gapped from 0.356 to a 0.43 open, ran to
+  0.65 and closed 0.545. Its own VWAP and the band it dragged up (~0.48–0.50)
+  sat above its open, so on the chart the body crosses both. v22 saw an open far
+  above yesterday's lines (and the day's first candle) and stayed silent. By the
+  same reading WHLR's 04:05 candle (0.55 → 0.70, lines ~0.62–0.64) counts too.
 - Only inside the alert window (`alertWin`, 04:00–20:00 ET).
 
 | Input | Default | What it does |
@@ -1669,6 +1675,10 @@ ticker like BB or OPEN can't pass for a field.
   11:30 ET, session line only) announced 20–25 crosses an hour, only 4–5 of them
   on Momentum names. The operator chose: "ok, go ahead". Off-list crosses are
   quiet: stored, graded and shown dimmed, like off-list GOs.
+- **Except fresh runners** (`vb_fresh_gain` 30, 10-21): an off-list CROSS whose
+  message says the day high is ≥ +30% still announces. A 04:00 gap-and-go
+  crosses within its first 30s bars, before our 20-s screen lists it (RBNE
+  04:00:34, WHLR 04:01:14 ET).
 - **⚙ → 📐 Stages that alert → CROSS.** It's on in the defaults, but prod's
   saved list (`["go","pullback"]`, from before v21) doesn't name it, so on prod
   it stays off, and hidden from the sidebar like any switched-off stage, until

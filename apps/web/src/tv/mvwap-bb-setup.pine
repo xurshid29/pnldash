@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v22 (2026-10-20).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v23 (2026-10-21).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Four setups in one script, so the same two watchlist alerts carry all of them
@@ -737,10 +737,16 @@ plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar,
 // chart), one candle crosses over both lines. They want the alert at that moment,
 // not at the candle's close. v22 (operator: "it's ok to add a support for month and
 // year"): the same rule on the month and the year VWAP, each line with its own state.
-//   CROSS  the candle opened at or under the higher of its line and the band, and at
-//          most vbTol % over the lower one (price sitting on the line counts), and a
-//          30s close inside it is above both as they stand then → the alert; once
-//          per candle and line
+//   CROSS  at a 30s close inside the candle, its open is at or under both the line and
+//          the band as they stand then (at most vbTol % over the lower one: price
+//          sitting on the line counts) and the close is above both → the alert; once
+//          per candle and line. v23 (operator, WHLR 10-21 04:00 ET: "this one
+//          definitely should be considered as a VB … if 1 candle crosses both vwap and
+//          bb upper row"): the lines as they stand at that close — what the chart
+//          draws for the candle — not as they stood when it opened, and the day's
+//          first candle counts. A 04:00 gap-and-go (WHLR 0.36 → open 0.43 → 0.55)
+//          drags its own VWAP and band above its open; v21/v22 saw an open above
+//          yesterday's lines and stayed silent.
 // Premium's two watchlist-alert slots are taken (1m + 30s), so it rides the 30s alert
 // like the breakout: vbStep() builds the candle, its VWAP lines and the band (SMA /
 // StdDev of the BB timeframe's closes, the forming one live) from the 30s bars. The
@@ -748,9 +754,8 @@ plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar,
 // chart doesn't hold a month of history, so the month and year lines take the days
 // before today from this year's hourly bars (vbAnchors(), like the year line since
 // v14) and add today's candles. The candle's chart replays the same 30s bars
-// (request.security_lower_tf), so its markers are the alerts. A line's first candle
-// (the day's for the session line, the month's or year's for the others) doesn't
-// count. Gainers only by default: the filter at the top, recomputed from the 30s bars
+// (request.security_lower_tf), so its markers are the alerts. Gainers only by
+// default: the filter at the top, recomputed from the 30s bars
 // (a request can't read the chart's running values). Lines firing on one 30s bar are
 // one message (`line session+month`); `cross N` counts the day's crosses on each line
 // (the lowest of the lines named), and the server announces the first few
@@ -793,18 +798,16 @@ vbAnchors() =>
     aYV  := aYV + volume
     [aMPVd, aMVd, aYPVd, aYVd]
 
-// One line's CROSS test: the candle opened at or under the higher of the line and the
-// band and at most vbTol % over the lower one (both as the candle opened), and the
-// close is above both now.
-vbCan(float lnStart, float upStart, float ln, float up, float cOpen, bool fired) =>
-    not fired and not na(lnStart) and not na(upStart) and not na(ln) and not na(up) and cOpen <= math.max(lnStart, upStart) and cOpen <= math.min(lnStart, upStart) * (1 + vbTol / 100) and close > ln and close > up
+// One line's CROSS test, on the line and the band as they stand now (v23): the candle's
+// open is at or under the higher of them and at most vbTol % over the lower one, and
+// the close is above both — the candle's body crosses both.
+vbCan(float ln, float up, float cOpen, bool fired) =>
+    not fired and not na(ln) and not na(up) and cOpen <= math.max(ln, up) and cOpen <= math.min(ln, up) * (1 + vbTol / 100) and close > ln and close > up
 
 vbStep() =>
     // Called on every bar: and/or are lazy in v6, so the timeframe tests and the
     // request come first.
     bool gNewDay   = timeframe.change("D")
-    bool vNewMonth = timeframe.change("M")
-    bool vNewYear  = timeframe.change("12M")
     bool vNewBb    = timeframe.change(vbBbTf)
     bool vNewCndl  = timeframe.change(vbCandleTf)
     bool vInWin    = not na(time(timeframe.period, alertWin, "America/New_York"))
@@ -865,14 +868,6 @@ vbStep() =>
     var float vLow     = na
     var float vClose   = na
     var float vVol     = 0.0
-    var float vStartUp = na      // the band when the candle opened (at the last close before it)…
-    var float vSStart  = na      // …and each line
-    var float vMStart  = na
-    var float vYStart  = na
-    var float vPrevUp  = na
-    var float vSPrev   = na
-    var float vMPrev   = na
-    var float vYPrev   = na
     var bool  vSFired  = false
     var bool  vMFired  = false
     var bool  vYFired  = false
@@ -898,10 +893,6 @@ vbStep() =>
         vHigh    := high
         vLow     := low
         vVol     := volume
-        vStartUp := vPrevUp
-        vSStart  := gNewDay ? na : vSPrev
-        vMStart  := vNewMonth ? na : vMPrev
-        vYStart  := vNewYear ? na : vYPrev
         vSFired  := false
         vMFired  := false
         vYFired  := false
@@ -918,9 +909,9 @@ vbStep() =>
     float vAvgVol = array.size(vVols) > 0 ? array.avg(vVols) : na
     float vVolX   = not na(vAvgVol) and vAvgVol > 0 ? vVol / vAvgVol : na
     bool  vOkAll  = vbOk and vInWin and (not vbGainOn or gOk)
-    bool  vFireS  = vOkAll and vbSession and vbCan(vSStart, vStartUp, vVw, vBand, vOpen, vSFired)
-    bool  vFireM  = vOkAll and vbMonth and vbCan(vMStart, vStartUp, vMw, vBand, vOpen, vMFired)
-    bool  vFireY  = vOkAll and vbYear and vbCan(vYStart, vStartUp, vYw, vBand, vOpen, vYFired)
+    bool  vFireS  = vOkAll and vbSession and vbCan(vVw, vBand, vOpen, vSFired)
+    bool  vFireM  = vOkAll and vbMonth and vbCan(vMw, vBand, vOpen, vMFired)
+    bool  vFireY  = vOkAll and vbYear and vbCan(vYw, vBand, vOpen, vYFired)
     if vFireS
         vSFired := true
         vSCount := vSCount + 1
@@ -930,10 +921,6 @@ vbStep() =>
     if vFireY
         vYFired := true
         vYCount := vYCount + 1
-    vPrevUp := vBand
-    vSPrev  := vVw
-    vMPrev  := vMw
-    vYPrev  := vYw
     [vFireS, vFireM, vFireY, vVw, vMw, vYw, vBand, vOpen, gDay, gAh, vVolX, vSCount, vMCount, vYCount]
 
 // On the alert's own chart (30s): the alert, and its markers there.

@@ -640,13 +640,13 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     """Mirror of the script's vbStep() (v21; v22 lines) on the alert's bars (30s; a 1m replay
     works too): candles of p['candle_min'], the upper band of the p['bb_min'] closes (the forming
     one live), and per line — session, month, year (p['lines']) — CROSS at the first bar close
-    inside a candle that opened at or under the higher of the line and the band and at most
-    p['tol'] % over the lower one (both at the close before the candle), with the close above
-    both; once per candle and line. The session line is the candles' own VWAP (hlc3 × volume, the
-    forming one live). The month and year lines add `before_of(bar)` → {'month': (pv, v),
-    'year': (pv, v)}: the sums up to the start of the bar's day (the script's hourly
-    vbAnchors()); without it they stay off. A line's first candle (the day's for the session
-    line, the month's / year's) never counts. bars: dicts with t (aware datetime, bar open),
+    inside a candle whose open is at or under the higher of the line and the band and at most
+    p['tol'] % over the lower one, with the close above both — the line and the band as they
+    stand at that close (v23; v21/v22 took them at the close before the candle and skipped a
+    line's first candle). Once per candle and line. The session line is the candles' own VWAP
+    (hlc3 × volume, the forming one live). The month and year lines add `before_of(bar)` →
+    {'month': (pv, v), 'year': (pv, v)}: the sums up to the start of the bar's day (the script's
+    hourly vbAnchors()); without it they stay off. bars: dicts with t (aware datetime, bar open),
     o, h, l, c, v. Returns (t, close, {line: vwap}, upper, candle_open, vol_x, names, n) per
     CROSS message — names like 'session+month', n the lowest daily count of those lines;
     `trace` (a list) collects (t, {line: vwap}, upper) per bar."""
@@ -654,20 +654,17 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     n_len = p['length']
     lines = ('session', 'month', 'year')
     out = []
-    closes, last_c, last_bb, day, month, year = [], None, None, None, None, None
+    closes, last_c, last_bb, day = [], None, None, None
     pv = v = 0.0
     c_key = c_open = c_high = c_low = c_close = None
     c_vol = 0.0
-    start_up = prev_up = None
-    start = dict.fromkeys(lines)
-    prev = dict.fromkeys(lines)
     fired = dict.fromkeys(lines, False)
     count = dict.fromkeys(lines, 0)
     vols = []
     for b in bars:
         x = b['t'].astimezone(ET)
-        new_day, new_month, new_year = x.date() != day, (x.year, x.month) != month, x.year != year
-        day, month, year = x.date(), (x.year, x.month), x.year
+        new_day = x.date() != day
+        day = x.date()
         bb_key = _bucket(b['t'], p['bb_min'])
         if last_bb is not None and bb_key != last_bb and last_c is not None:
             closes = (closes + [last_c])[-(n_len - 1):]
@@ -688,10 +685,6 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
                 pv += (c_high + c_low + c_close) / 3 * c_vol
                 v += c_vol
             c_key, c_open, c_high, c_low, c_vol = key, b['o'], b['h'], b['l'], b.get('v', 0)
-            start_up = prev_up
-            start = {'session': None if new_day else prev['session'],
-                     'month': None if new_month else prev['month'],
-                     'year': None if new_year else prev['year']}
             fired = dict.fromkeys(lines, False)
         else:
             c_high, c_low, c_vol = max(c_high, b['h']), min(c_low, b['l']), c_vol + b.get('v', 0)
@@ -706,12 +699,12 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
         vol_x = c_vol / avg if avg else None
         m_et = x.hour * 60 + x.minute
         ok = ((p['window'] is None or p['window'][0] <= m_et < p['window'][1]) and (gainer_of is None or gainer_of(b))
-              and upper is not None and start_up is not None)
+              and upper is not None)
         fires = []
         for ln in lines:
-            if not ok or ln not in p['lines'] or fired[ln] or start[ln] is None or vw[ln] is None:
+            if not ok or ln not in p['lines'] or fired[ln] or vw[ln] is None:
                 continue
-            hi, lo = max(start[ln], start_up), min(start[ln], start_up)
+            hi, lo = max(vw[ln], upper), min(vw[ln], upper)
             if c_open <= hi and c_open <= lo * (1 + p['tol'] / 100) and b['c'] > vw[ln] and b['c'] > upper:
                 fired[ln] = True
                 count[ln] += 1
@@ -720,8 +713,6 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
             out.append((b['t'], b['c'], dict(vw), upper, c_open, vol_x, '+'.join(fires), min(count[ln] for ln in fires)))
         if trace is not None:
             trace.append((b['t'], dict(vw), upper))
-        prev_up = upper
-        prev = dict(vw)
     return out
 
 
@@ -730,7 +721,8 @@ def selftest_vb():
     VWAP high above a flat 1.00 base; a 5m candle out of the base crosses both lines (CROSS #1),
     rides on (nothing more in that candle), falls back; the next candle crosses again (#2); one
     opening above both lines never counts. Day 2: a candle opening 1% over the VWAP and under
-    the band counts with the 2% tolerance, not with 0. Day 3: the day's first candle never counts.
+    the band counts with the 2% tolerance, not with 0. Day 3 (v23): the day's first candle counts —
+    a WHLR-like 04:00 gap-and-go crosses the VWAP and band it drags up over its open.
     No gainer → nothing. And the arithmetic: the live band equals a BB on the 2m closes at every
     2m close, and the live VWAP equals the 5m candles' VWAP at every 5m close (random walks)."""
     import datetime as dt
@@ -767,13 +759,19 @@ def selftest_vb():
     ok2 = len(tol2) == 1 and tol2[0] >= '05:00:00' and tol0 == []
     print('v21 day 2: opened 1% over the VWAP → tol 2%:', tol2, '| tol 0:', tol0, '→', 'OK' if ok2 else 'UNEXPECTED')
 
-    # Day 3 (after day 2's bars): the first candle runs from 1.00 through yesterday's lines.
+    # v23: the day's first candle counts, against the lines as they stand. WHLR 10-21: flat at
+    # 0.356 overnight, then the 04:00 candle opens 0.43 (a gap over yesterday's band), runs to
+    # 0.65 and closes 0.55. Its own VWAP and the band it drags up sit above the 0.43 open, so the
+    # body crosses both: CROSS at 04:00:30 (v22 stayed silent). No gainer → nothing.
     d3 = d2 + dt.timedelta(days=1)
-    day3 = day2 + bars_of(d3, [1.00, 1.10, 1.20, 1.30, 1.30, 1.30, 1.30, 1.30, 1.30, 1.30])
-    first = [e for e in simulate_vb_cross(day3) if e[0] >= d3]
+    prev = bars_of(d3 - dt.timedelta(hours=8, minutes=50), [(0.356, 0.357, 0.355, 0.356)] * 100)   # 19:10–20:00 the day before
+    gap = bars_of(d3, [(0.43, 0.50, 0.43, 0.48), (0.48, 0.55, 0.47, 0.52), (0.52, 0.65, 0.50, 0.55),
+                       (0.55, 0.60, 0.53, 0.55)], vols=[3000, 3000, 3000, 3000])
+    first = [(e[0].strftime('%H:%M:%S'), e[6], e[7]) for e in simulate_vb_cross(prev + gap) if e[0] >= d3]
     no_gainer = simulate_vb_cross(day1, gainer_of=lambda b: False)
-    ok3 = first == [] and no_gainer == []
-    print('v21 the day\'s first candle:', first, '| no gainer:', no_gainer, '→', 'OK' if ok3 else 'UNEXPECTED')
+    ok3 = first == [('04:00:30', 'session', 1)] and no_gainer == []
+    print('v23 the day\'s first candle (WHLR-like gap-and-go):', first, '| no gainer:', no_gainer, '→',
+          'OK' if ok3 else 'UNEXPECTED (want 04:00:30 session #1)')
 
     # Arithmetic on random walks: band vs a BB on the 2m closes, VWAP vs the 5m candles' VWAP.
     random.seed(21)
