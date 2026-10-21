@@ -530,6 +530,9 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", vbAnchors(), lookahead = barmerge.lookahead_on)',
     'vbCan(vMw, vBand, vOpen, vMFired)', 'vbCan(vYw, vBand, vOpen, vYFired)',
     '" | line " + names', 'names := pbJoin(names, "month")',
+    // v24: the month and year lines' PULLBACK may touch on the bar's low (a trial); the session line keeps the close
+    'pbLowMY', 'float reach = useLow ? low : close', 'pbS.step(svwap, gainer, false)', 'pbM.step(mvwap, gainer, pbLowMY)',
+    'pbY.step(yvwap, gainer, pbLowMY)',
     'if rcOn and rcLines != "Year"', 'if rcOn and rcLines != "Month"', 'if pbOn and inWindow', 'boValid    = boOn and']) {
     check(`script emits ${part}`, pine.includes(part));
   }

@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v23 (2026-10-21).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v24 (2026-10-21).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Four setups in one script, so the same two watchlist alerts carry all of them
@@ -22,6 +22,8 @@
 // 2) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
+//             (v24 trial, month and year lines: the bar's low within 5% is enough, its close
+//             holding at or above the line)
 //   BROKEN    a close under the line → the setup is over (the operator's exit)
 //   HELD      price runs +10% from the PULLBACK close first
 // Each line runs its own setup, and every message carries its touch number (the
@@ -112,6 +114,7 @@ vbShow     = input.bool(true,         "Draw the band and markers (on the candle 
 vbSession  = input.bool(true,         "Lines: session VWAP", inline = "vbl", group = "VWAP + BB cross (v21)")
 vbMonth    = input.bool(true,         "month VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
 vbYear     = input.bool(true,         "year VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
+pbLowMY    = input.bool(true,         "Month / year lines: a candle's low reaching the band counts, its close holding above the line (v24 trial)", group = "Pullback to VWAP (v10)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -367,7 +370,14 @@ type PbLine
     int   alertBar = na
 
 // One bar of one line's setup: 0 nothing, 1 PULLBACK, 2 BROKEN, 3 HELD.
-method step(PbLine s, float ln, bool canArm) =>
+// v24 (operator, RBNE 10-21 04:10 ET: the dip tagged the month line's band with its
+// low, ~1.20 over a ~1.17 line, but closed 7–8% above it, then ran to 1.92): `useLow`
+// lets the bar's low reach the band, the close still at or above the line. A trial on
+// the month and year lines only — on four months of the session line (research/
+// vwap-pullback --touch low) the low added ~2 alerts a day at 0.3–0.9 points worse a
+// trade, and the month and year lines can only be graded live. Such a PULLBACK's
+// message shows its close more than pbNear % above the line.
+method step(PbLine s, float ln, bool canArm, bool useLow) =>
     int ev = 0
     if not na(ln) and ln > 0
         if s.open
@@ -389,7 +399,8 @@ method step(PbLine s, float ln, bool canArm) =>
                     s.peakPct := stretch
             else
                 s.peakPct := math.max(s.peakPct, stretch)
-                if bar_index > s.armBar and close <= ln * (1 + pbNear / 100)
+                float reach = useLow ? low : close
+                if bar_index > s.armBar and reach <= ln * (1 + pbNear / 100)
                     s.armed   := false
                     s.touches := s.touches + 1
                     if close < ln * (1 - pbBreak / 100)
@@ -422,11 +433,11 @@ int evM = 0
 int evY = 0
 if pbOn and inWindow
     if pbSession
-        evS := pbS.step(svwap, gainer)
+        evS := pbS.step(svwap, gainer, false)
     if pbMonth
-        evM := pbM.step(mvwap, gainer)
+        evM := pbM.step(mvwap, gainer, pbLowMY)
     if pbYear
-        evY := pbY.step(yvwap, gainer)
+        evY := pbY.step(yvwap, gainer, pbLowMY)
 
 // The message — a contract with services/tv-setups.ts parseTvMessage, like the RECLAIM one:
 //   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | fails 0 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1

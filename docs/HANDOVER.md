@@ -103,7 +103,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
    outstanding are kept with `float_m` null** since 10-14. Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v23** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+5. **📐 TradingView script — v24** (`apps/web/src/tv/mvwap-bb-setup.pine`).
    - **Paste status:**
      - v20 is on the operator's chart (10-20: "I saw GAUZ fire it with the E
        marker"). That E sits on a past candle (GAUZ's first +10% came on 10-16
@@ -112,9 +112,10 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
        bars.
      - The server had no early BO from any ticker as of 10-20 07:00 ET. Whether
        both alerts were recreated with v20 was never answered.
-     - v22 was pasted 10-20 ~11:25 ET. **v23 (10-21) needs the paste and both alerts
-       recreated**, this time with all four "… setup on" switches ticked (the 30s
-       alert made 10-20 has the breakout off: none since 08:17 ET).
+     - v23 is on the operator's chart (10-21, the VB M marker on RBNE's 13:00 candle).
+       **v24 (10-21) needs the paste and both alerts recreated**, with all four
+       "… setup on" switches ticked: the 30s alert still has the breakout off (none
+       since 10-20 08:17 ET, also none after 10-21 04:25 while CROSS arrives).
        Then the first regular-hours early BO (from 09:30 ET) and the first CROSS
        confirm both.
    - **Alerts:** two watchlist alerts, **1m + 30s**. Settings: "Any alert() function
@@ -128,7 +129,9 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
      +20% today or in the last 3 sessions, or after hours. GO strength 💪0–4 is a tag.
    - **PULLBACK:** on the session, month and year lines, each with its own state.
      - It arms on a high ≥15% above the line and fires on a later close within 5%
-       above it.
+       above it. **v24 trial (10-21), month and year lines only:** the bar's low
+       within 5% is enough, the close holding at or above the line (`pbLowMY`);
+       grade ~11-01 by `px_pct` / `ypx_pct` > 5 (the trial's additions).
      - BROKEN = a close under the line; HELD = +10% from the PULLBACK close.
      - **Cap (server-side since v16):** after 2 failed pullbacks (BROKEN or
        straight-through) on a line, a PULLBACK is quiet unless the ticker is on
@@ -268,6 +271,8 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
    - breakouts: trigger rate, strong vs weak, 🔥, the **early BO** on its own, and
      "late after a 20–40% run30" (−0.42% in the study);
    - then ask the operator whether 🔥 / strong breakouts should ping Telegram;
+   - the v24 PULLBACK trial on the month / year lines (§13.6): trial additions
+     (close > 5% over the line) vs the rest;
    - CROSS (v21) once it has ~2 weeks of rows (§16.6): frequency, outcome by cross
      # / open position / Momentum / vol; then the cap, `vbTol`, Momentum-only.
 4. **Re-grade the live A+…D grade** (overdue, planned ~10-15) from
@@ -360,6 +365,12 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-21 (05:00–05:15 ET) — SCRIPT v24: THE PULLBACK LOW-TOUCH TRIAL ON THE MONTH AND YEAR LINES.** RBNE 04:10 ET:
+under the session line (a failed touch) and 7–8% over the month line (~1.17), only the low (~1.20) in its 5% band;
+no PULLBACK, then 1.92. The operator: "ok, do the trial for month and year lines". `pbLowMY` (on): a month / year
+PULLBACK may touch on the bar's low, the close holding at or above the line. The session line keeps the close rule
+(measured worse there, 05b18a3). Grade the trial ~11-01. Breakouts are still off in the 30s alert.
 
 **2026-10-21 (04:30–05:00 ET) — PULLBACKS WHLR / RBNE; "CHECK THE LOW?" MEASURED, NOT ADOPTED.**
 - The operator missed PULLBACKs on WHLR (13:08 Tashkent) and RBNE (13:11). WHLR 04:08:30 ET and RBNE 04:20:05 were

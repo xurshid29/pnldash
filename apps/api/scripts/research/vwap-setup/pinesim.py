@@ -267,15 +267,17 @@ class PullbackLine:
         return ev
 
 
-def simulate_pullback(bars, lines, params=None, gainer_of=None):
+def simulate_pullback(bars, lines, params=None, gainer_of=None, low_lines=('month', 'year')):
     """The PULLBACK setup on several lines, e.g. {'session': svwap_of, 'month': mvwap_of, 'year': yvwap_of}
     (in that order, like the script; v14 added the year line). Each line keeps its own state; the lines
     that fire the same event on one bar are one message named after all of them ("session+month"),
     with the lowest touch number and the highest peak. gainer_of(bar) → bool (default: always a gainer).
     Returns the script's messages: (time, PULLBACK|BROKEN|HELD, line, touch, close, first line's value,
-    % vs it, peak %, fails) — `fails` (v16) on PULLBACK only, the lowest of the lines named."""
+    % vs it, peak %, fails) — `fails` (v16) on PULLBACK only, the lowest of the lines named.
+    v24: the lines in `low_lines` (the script's pbLowMY: month and year) touch on the bar's low, the
+    close holding at or above the line; pass low_lines=() for v23 and earlier."""
     p = {**PB, **(params or {})}
-    state = {name: PullbackLine(p) for name in lines}
+    state = {name: PullbackLine({**p, 'touch_on': 'low' if name in low_lines else p['touch_on']}) for name in lines}
     out, day = [], None
     names = {1: 'PULLBACK', 2: 'BROKEN', 3: 'HELD'}
     for i, b in enumerate(bars):
@@ -288,7 +290,7 @@ def simulate_pullback(bars, lines, params=None, gainer_of=None):
         if p['window'] is not None and not (p['window'][0] <= m < p['window'][1]):
             continue
         ok = True if gainer_of is None else gainer_of(b)
-        ev = {name: state[name].step(i, b['h'], b['c'], line_of(b), ok) for name, line_of in lines.items()}
+        ev = {name: state[name].step(i, b['h'], b['c'], line_of(b), ok, b.get('l')) for name, line_of in lines.items()}
         for e in (1, 2, 3):
             hit = [name for name in lines if ev[name] == e]
             if not hit:
@@ -350,7 +352,20 @@ def selftest_pullback():
                and [(e[1], e[2]) for e in three] == [('PULLBACK', 'session+year')])
     print('same event on several lines → one message naming them:', [(e[1], e[2]) for e in both + three], '→',
           'OK' if ok_both else 'UNEXPECTED')
-    return ok and ok_both and ok_cap and ok_brk and ok_v16
+    # v24 trial (RBNE 10-21 04:10 ET): after a run to +25%, a bar's low tags the band (1.03) but it
+    # closes 8% above the line (1.08). The month line takes it as a PULLBACK (the close holds above
+    # the line); the session line, on the close rule, doesn't; v23 (low_lines=()) neither. A wick
+    # through the line that closes under it stays a failed touch on the month line too.
+    def lbars(path):   # (low, close) per bar
+        return [{'t': t0 + dt.timedelta(minutes=k), 'h': max(lo, c), 'l': lo, 'c': c} for k, (lo, c) in enumerate(path)]
+    wick = lbars([(1.00, 1.00), (1.00, 1.25), (1.18, 1.20), (1.03, 1.08), (1.07, 1.10)])
+    v24 = [(e[1], e[2], e[3]) for e in simulate_pullback(wick, {'session': flat, 'month': flat})]
+    v23 = [(e[1], e[2]) for e in simulate_pullback(wick, {'session': flat, 'month': flat}, low_lines=())]
+    thru = [(e[1], e[2]) for e in simulate_pullback(lbars([(1.00, 1.00), (1.00, 1.25), (0.97, 0.99)]), {'month': flat})]
+    ok_v24 = v24 == [('PULLBACK', 'month', 1)] and v23 == [] and thru == []
+    print('v24 month/year touch on the low:', v24, '| v23:', v23, '| wick through, close under:', thru, '→',
+          'OK' if ok_v24 else 'UNEXPECTED')
+    return ok and ok_both and ok_cap and ok_brk and ok_v16 and ok_v24
 
 
 BO = dict(length=20,       # BB length (on the chart's bars: 30s on the 30s alert)

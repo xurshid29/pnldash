@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v23** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v21 a fourth, the **VWAP + BB cross** (§16): a candle of a timeframe you pick crosses over a VWAP line (session; month and year since v22) and another timeframe's BB upper band, from the 30s alert. Since v21 every setup has an on/off switch for the chart and the alerts. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v24** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v21 a fourth, the **VWAP + BB cross** (§16): a candle of a timeframe you pick crosses over a VWAP line (session; month and year since v22) and another timeframe's BB upper band, from the 30s alert. Since v21 every setup has an on/off switch for the chart and the alerts. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1101,6 +1101,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-20 | v22 | `e6b3e73` | Operator, right after v21: "does our VB setups work with monthly, yearly VWAPs or only with session one?" → "it's ok to add a support for month and year, because I'm currently enabled VB and disabled RECLAIM GO". The cross now runs on the session, month and year VWAP, each line with its own state (once per candle and line, its own daily `cross N`); lines crossing on one 30s bar are one message (`line session+month`, the lowest count). A 30s chart doesn't hold a month of history, so the month and year lines take the days before today from this year's hourly bars (`vbAnchors()`, a request inside `vbStep()`, so the 5m chart's replay asks for it too: a nested request) and add today's candles. A line's first candle (the day's, month's or year's) never counts. New inputs, last: `vbSession` / `vbMonth` / `vbYear` (all on). Markers: teal VB, yellow "VB M", blue "VB Y" (the year's, then the month's, first). Messages carry `sVWAP` / `mVWAP` / `yVWAP` and `line`. Server/UI: a v21 message without a line is the session line; the pill shows S / M / Y; one sidebar thread per line; Telegram and the toast name the line. Replica: per-line `simulate_vb_cross` (`before_of` = the hourly sums) + v22 self-test. Regression: 305 checks. |
 | 2026-10-20 | server | `36fb1af` | CROSS announces only for Momentum names (`TV_SETUP.vb_momentum_only`, like GO's `go_momentum_only`). The first morning announced 20–25 crosses an hour (09:00–11:30 ET, session line only, v21), 4–5 of them on Momentum names; the operator: "ok, go ahead". Off-list crosses are quiet: stored, graded, shown dimmed. No script change. Regression: 307 checks. |
 | 2026-10-21 | v23 + server | `004a28c` | Operator, on WHLR's 04:00 ET gap-and-go: "this one definitely should be considered as a VB, because what I described was something like, if 1 candle crosses both vwap and bb upper row". The CROSS test now reads the line and the band as they stand at the 30s close, which is what the chart draws for the candle, instead of as they stood at the candle's open; the day's first candle counts (§16.3). A 04:00 gap drags its own VWAP and band over its open, so the body crosses both; v22 was silent on WHLR and RBNE. Server: an off-list CROSS still announces when its day high is ≥ +30% (`vb_fresh_gain`), since a 04:00 runner reaches our 20-s screen after the 30s bar that crossed (RBNE 04:00:34, WHLR 04:01:14); on 10-20 that adds 18 crosses on 11 tickers. Replica: live lines + a WHLR-like self-test. Regression: 309 checks. |
+| 2026-10-21 | v24 | *(this commit)* | Operator, on RBNE 04:10 ET (its low tagged the month line's band, ~1.20 over ~1.17, but every close stayed 7–8% above, then +60%): "ok, do the trial for month and year lines". A PULLBACK on the month or year line may now touch on the bar's low, the close holding at or above the line (`pbLowMY`, on, the last input); the session line keeps the close rule, since `--touch low` lost 0.3–0.9 points a trade there over four months (§13.5). The message is unchanged: a trial alert shows its close more than 5% above its line. Replica: `simulate_pullback(low_lines=('month','year'))` + a self-test. Regression: 314 checks. |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1169,6 +1170,14 @@ Each line keeps its own state, reset every day.
 2. **PULLBACK** on a *later* bar whose close is within *near* % above the line
    and not more than *break* % under it. A close below that while armed is a
    "through": the touch counts, but no message is sent.
+   - **v24 trial, month and year lines only** (`pbLowMY`, on): the bar's *low*
+     within *near* % is enough, as long as the close holds at or above the line.
+     The operator asked for it after RBNE 10-21 04:10 ET (the low tagged the
+     month line's band, ~1.20 over ~1.17, the close stayed 7–8% above, then
+     +60%). On the session line this lost 0.3–0.9 points a trade over four
+     months (§13.5), so the session line keeps the close rule. Month and year can
+     only be graded live: such a PULLBACK's message shows its close more than
+     *near* % above the line (`px_pct` / `ypx_pct` > 5).
 3. While a pullback is open:
    - **BROKEN** on a close more than *break* % under the line;
    - **HELD** on a high *held* % above the PULLBACK close;
@@ -1302,6 +1311,13 @@ GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
 session line's 28%. Touch 3+ was the best touch, 07:00–12:00 ET was the
 weakest window, and a stop just under the line beat the close exit by ~0.5
 points a trade.
+
+**The v24 trial (month and year lines, the touch on the low), graded with the
+rest ~11-01:** split month- and year-line PULLBACKs by whether the close was
+inside the 5% band (`px_pct` / `ypx_pct` ≤ 5, the old rule) or only the low
+reached it (> 5, the trial's additions). Keep the trial if those additions hold
+as well as the rest with a stop under the line; switch `pbLowMY` off (the
+default, in a new version) if they don't.
 
 ### 13.7 Replay and changes
 
