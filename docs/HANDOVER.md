@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-21 (Wed, 04:25 ET), last code commit `004a28c` (script v23, deployed)
+## START HERE — state at 2026-10-21 (Wed, 05:05 ET), last code commit `ce14eee` (script v24, deployed)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail (a ⚡ BB-breakout
@@ -366,7 +366,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 
 These are the detailed notes behind START HERE, kept verbatim.
 
-**2026-10-21 (05:00–05:15 ET) — SCRIPT v24: THE PULLBACK LOW-TOUCH TRIAL ON THE MONTH AND YEAR LINES.** RBNE 04:10 ET:
+**2026-10-21 (05:00–05:05 ET) — SCRIPT v24: THE PULLBACK LOW-TOUCH TRIAL ON THE MONTH AND YEAR LINES (deployed 05:04 ET, `ce14eee`).** RBNE 04:10 ET:
 under the session line (a failed touch) and 7–8% over the month line (~1.17), only the low (~1.20) in its 5% band;
 no PULLBACK, then 1.92. The operator: "ok, do the trial for month and year lines". `pbLowMY` (on): a month / year
 PULLBACK may touch on the bar's low, the close holding at or above the line. The session line keeps the close rule
