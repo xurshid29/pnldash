@@ -290,7 +290,9 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 8. **Measured and rejected — don't re-propose without new data:** a tight base
    before a breakout, a −0.5% slope cut, price level as a spread proxy (10-19); an
    earlier trigger at +5% or in pre-market (−1.5% / −2.7%); RVol 5m as a breakout
-   confirmation (unstable).
+   confirmation (unstable); a PULLBACK touch on the bar's low instead of the close
+   (10-21: +2 alerts/day, win 26→29%, but 0.3–0.9 pts worse a trade with a stop
+   under the line; a limit just over the line after the alert helps instead).
 9. Long-open: journal attribution (trades ↔ grade/rows at entry); Ross's 1m-MACD
    exit tell as a live feature.
 
@@ -358,6 +360,15 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-21 (04:30–05:00 ET) — PULLBACKS WHLR / RBNE; "CHECK THE LOW?" MEASURED, NOT ADOPTED.**
+- The operator missed PULLBACKs on WHLR (13:08 Tashkent) and RBNE (13:11). WHLR 04:08:30 ET and RBNE 04:20:05 were
+  both received from the 30s alert and announced (neither hidden; both HELD). Their 1m charts show nothing
+  because the dips were inside 1m candles. RBNE 04:09 crashed straight through the session line (a failed
+  touch: the 04:20 one says touch 2, fails 1).
+- "Shouldn't we check the candle low instead of close?" `study.py --touch low` (pinesim `touch_on`), 06-12 →
+  10-20: ~2 more alerts a day, touch-1 win 26.0% → 28.7%, but 0.3–0.9 points worse per trade with a stop under
+  the line. Not adopted. A limit just over the line after the alert beat buying the alert's close in both.
 
 **2026-10-21 (04:05–04:25 ET) — RBNE / WHLR 04:00 GAP-AND-GOS: SCRIPT v23 + FRESH-RUNNER EXEMPTION (deployed 04:24 ET, `004a28c`).**
 - **RBNE** (0.398 → open 0.587 at 04:00 → 1.86): nothing from TradingView. It wasn't on the TV watchlist (best

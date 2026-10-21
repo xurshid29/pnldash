@@ -1312,6 +1312,15 @@ daily cap. The study imports the same class, so a logic change goes into the
 `.pine` file and `PullbackLine` together (§10). Then rerun the self-test, the
 study and `verify-tv-setups.ts`.
 
+**The touch on the bar's low (measured 2026-10-21, not adopted).** The
+operator asked whether the PULLBACK should check the candle's low instead of
+its close. On 06-12 → 10-20 (`study.py --touch low`) it adds about 2 alerts a
+day and lifts the first touch's +10% rate from 26.0% to 28.7%. But every touch
+averages 0.3–0.9 points worse with a stop under the line (touch 2: +0.48% →
+−0.41%): the new alerts are wicks that closed well above the zone, so the stop
+is far away. A limit just over the line after the alert, filled about a
+quarter of the time, did better in both versions (`research/vwap-pullback/README.md`).
+
 ## 14. The BB breakout (script v17, 2026-10-18)
 
 ### 14.1 The operator's definition

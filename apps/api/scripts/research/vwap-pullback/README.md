@@ -100,6 +100,31 @@ On 2026-10-05, SAIQ's touches went: 04:03 win, 04:06 broken at 04:09 (a close
 operator's chart) broke at 12:18 under the strict rule, then ran after an hour
 sitting on the line.
 
+## The touch on the bar's low instead of its close (2026-10-21)
+
+The operator, after WHLR / RBNE on 10-21: "shouldn't we check the candle low
+instead of close when checking the PULLBACK?" `--touch low` counts a bar whose
+low reaches the band (or goes under the line) as the touch, as long as its close
+holds at or above the line; the alert still trades from that bar's close.
+06-12 → 10-20, session line, 1m bars from our 20s snapshots:
+
+| | close (the script) | low |
+|---|---|---|
+| alerts (touch 1 / 2 / 3+) | 967 / 402 / 335 | 1,043 / 451 / 406 (~2 more a day) |
+| +10% before a close under the line, touch 1 | 26.0% | 28.7% |
+| stop 0.5% under the line, +10%: touch 1 / 2 / 3+ | −0.29% / **+0.48%** / −0.20% | −0.69% / −0.41% / −0.51% |
+| entry instead by a limit at line × 1.005 (fills ~25%): touch 1 / 2 / 3+ | +0.15% / −0.05% / +0.45% | +0.36% / +0.56% / +0.82% |
+
+- **Not adopted.** The low adds wicks that tagged the zone but closed well above
+  it. Entering at that close puts the stop under the line far away, and every
+  touch averages 0.3–0.9 points worse.
+- **What helps is the entry, not the trigger.** In both versions a limit just
+  over the line after the alert, filled about a quarter of the time, beat
+  buying the alert's close.
+- A close straight under the line stays a failed touch either way (RBNE 04:09
+  on 10-21). The lows here are the lowest 20s snapshot of each minute, so real
+  wicks reach deeper.
+
 ## Two related questions, measured the same day
 
 **A tight base on the session VWAP, then a breakout** (`base_study.py`; the

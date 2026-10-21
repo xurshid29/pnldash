@@ -50,6 +50,8 @@ ap.add_argument('--arm', type=float, default=15, help='stretch above the line th
 ap.add_argument('--near', type=float, default=5, help='alert band above the line, %%')
 ap.add_argument('--brk', type=float, default=0, help='a close this far under the line breaks the setup, %%')
 ap.add_argument('--grid', action='store_true', help='also sweep --brk and --arm (touch-level summary)')
+ap.add_argument('--touch', choices=['close', 'low'], default='close',
+                help="what reaches the band: the bar's close (the script) or its low, the close holding at/above the line (2026-10-21)")
 ap.add_argument('--list', help="print every setup for a ticker, or 'all'")
 ap.add_argument('--cap', type=int, default=99, help='pullbacks per line per day (99 = uncapped, the default for the touch tables)')
 ap.add_argument('--cap-on', choices=['touches', 'failures', 'broken'], default='touches',
@@ -95,7 +97,7 @@ TD = {(r[0], r[1]): (r[2], r[3]) for r in con.execute("select ticker, day, first
 n_bars, n_days = con.execute("select count(*), count(distinct (ticker, day)) from bars").fetchone()
 span = con.execute("select min(day), max(day) from bars").fetchone()
 print(f"{n_bars:,} 1m bars, {n_days:,} ticker-days, {span[0]} → {span[1]} | arm {ARM:.0%} near {NEAR:.0%} brk {BRK:.0%} "
-      f"win +{WIN:.0%} horizon {HORIZON}m")
+      f"win +{WIN:.0%} horizon {HORIZON}m | touch on the {args.touch}")
 
 
 class Race:
@@ -167,7 +169,7 @@ def run_day(key, bars, arm, events, base):
     first_t, prior_max = TD.get(key, (None, None))
     runner = prior_max is not None and prior_max >= 30
     pl = PullbackLine(dict(arm=arm * 100, near=NEAR * 100, brk=BRK * 100, win=WIN * 100, max_touches=args.cap,
-                           cap_on=args.cap_on, timeout=HORIZON, window=None))
+                           cap_on=args.cap_on, timeout=HORIZON, window=None, touch_on=args.touch))
     ep, open_base, open_side, last_base = None, [], [], -999
     bvols, seen = [], []       # (minute, bar volume) for every bar; (t, o, h, l, c, line) for each bar the setup saw
     prev_vol = prev_t = None
@@ -195,7 +197,7 @@ def run_day(key, bars, arm, events, base):
             r._end('lost', r.last_t, r.last_c / ep['entry'] - 1)
             pl.open, ep = False, None
         was_open, touches = pl.open, pl.touches
-        ev = pl.step(i, h, c, vw, True)
+        ev = pl.step(i, h, c, vw, True, l)
         if ep:
             r = ep['race']
             r.mfe = max(r.mfe, h / ep['entry'] - 1)

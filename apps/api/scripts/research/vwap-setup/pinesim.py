@@ -208,7 +208,10 @@ PB = dict(arm=15.0,        # armed: a bar high at least % above the line (the bi
           cap_on='failures',  # …counts BROKEN + straight-through pullbacks (v15); 'touches' = every touch (v10–v14);
                               # 'broken' = only alerted pullbacks that BROKE (the 2026-10-07 BIYA question)
           timeout=60,      # stop watching a pullback after N bars
-          window=(240, 1200))
+          window=(240, 1200),
+          touch_on='close')  # replica-only study (2026-10-21): 'low' = the touch is a bar whose LOW reaches
+                             # line × (1 + near%) (a wick into the zone or through the line) with the close
+                             # holding at or above line × (1 − brk%); the script uses the close ('close')
 
 
 class PullbackLine:
@@ -224,8 +227,9 @@ class PullbackLine:
         self.fails = 0   # BROKEN + straight-through touches (cap_on='failures'; 'broken': BROKEN only)
         self.alert_fails = None   # v16: failures on the line before the last PULLBACK (the message's `fails`)
 
-    def step(self, i, h, c, ln, can_arm=True):
-        """Bar index i, high, close, the line → 0 nothing, 1 PULLBACK, 2 BROKEN, 3 HELD."""
+    def step(self, i, h, c, ln, can_arm=True, lo=None):
+        """Bar index i, high, close, the line → 0 nothing, 1 PULLBACK, 2 BROKEN, 3 HELD.
+        `lo` (the bar's low) is only read with touch_on='low'."""
         p, ev = self.p, 0
         if ln is None or ln <= 0:
             return 0
@@ -246,7 +250,8 @@ class PullbackLine:
                 if stretch > self.peak_pct:       # replica-only: peak_bar (the script keeps just the %)
                     self.peak_bar = i
                 self.peak_pct = max(self.peak_pct, stretch)
-                if i > self.arm_bar and c <= ln * (1 + p['near'] / 100):
+                reach = lo if (p['touch_on'] == 'low' and lo is not None) else c
+                if i > self.arm_bar and reach <= ln * (1 + p['near'] / 100):
                     self.armed = False
                     self.touches += 1
                     through = c < ln * (1 - p['brk'] / 100)
