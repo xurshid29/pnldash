@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-21 (Wed, 05:05 ET), last code commit `ce14eee` (script v24, deployed)
+## START HERE — state at 2026-10-22 (Thu, 16:10 ET), last code commit `f081873` (script v25, deployed)
 
 **The desk the operator uses.** The Momentum table (Finviz, every 20s) sorted by
 the **A+…D grade**, the **📐 setups sidebar** in the left rail (a ⚡ BB-breakout
@@ -372,7 +372,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 
 These are the detailed notes behind START HERE, kept verbatim.
 
-**2026-10-22 (16:00–16:10 ET) — SCRIPT v25: THE VB BREAK.** Built after the measurement below: LEVEL at a VB
+**2026-10-22 (16:00–16:10 ET) — SCRIPT v25: THE VB BREAK (deployed 16:10 ET, `f081873`).** Built after the measurement below: LEVEL at a VB
 candle's close (stored; the CROSS row shows "break > $X · stop $Y"), BREAK when price reaches one tick over the
 high (announced like CROSS: own ⚙ switch, Momentum or +30%, cap on `break N`); a newer VB candle replaces the
 level, a close under its line cancels it. Inputs relabelled "VB:" / "BO:" (the breakout's "BB timeframe" was set
