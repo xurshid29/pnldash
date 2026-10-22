@@ -17,6 +17,7 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
 
 const STAGE_LABEL: Record<TvStage, string> = {
   ready: 'READY', go: 'GO', pullback: 'PULLBACK', forming: 'FORMING', broken: 'BROKEN', held: 'HELD', cross: 'CROSS',
+  level: 'LEVEL', break: 'BREAK',
 };
 
 // Click-to-open switches for which opportunity alerts make a sound and a

@@ -10,7 +10,7 @@ import { useHiddenTickers } from '../../hooks/useHiddenTickers';
 import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, StrengthTag, tvLevelsText, fmtTf, isPullbackStage, lineTokens, lineDistanceText, crossTfText } from '../common/TvStageTag';
+import { TvStageTag, StrengthTag, tvLevelsText, fmtTf, isPullbackStage, isVbStage, lineTokens, lineDistanceText, crossTfText, vbTriggerText } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
 import { BreakoutList } from './BreakoutList';
 import { fmtPct, fmtPrice } from '../../utils/format';
@@ -22,7 +22,7 @@ const LOCAL_TZ = 'Asia/Tashkent'; // UTC+5, the operator's clock
 
 // What counts as live (operator, 2026-10-05): a setup still forming, a fresh
 // GO or CROSS (v21), or a pullback still waiting at its line. Everything else is "earlier".
-const LIVE_MIN = { forming: 30, ready: 30, go: 15, pullback: 60, cross: 15 } as const;
+const LIVE_MIN = { forming: 30, ready: 30, go: 15, pullback: 60, cross: 15, break: 15 } as const;
 // The 1m and 2m alerts report the same stage separately; within this window
 // they are one event.
 const MERGE_MS = 5 * 60_000;
@@ -51,7 +51,7 @@ interface TickerCard {
 // / HELD also closes an open pullback on any combination sharing one of its lines.
 // The v21 VWAP + BB cross is its own thread, one per line combination (v22).
 function threadOf(s: TvSetupInfo): string {
-  if (s.stage === 'cross') return `vb:${lineTokens(s.stage, s.line).join('+')}`;
+  if (isVbStage(s.stage)) return `vb:${lineTokens(s.stage, s.line).join('+')}`;
   return `${isPullbackStage(s.stage) ? 'pb' : 'rc'}:${lineTokens(s.stage, s.line).join('+') || 'none'}`;
 }
 
@@ -67,9 +67,10 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
   for (const { a, at } of sorted) {
     const s = a.setup!;
     const list = byTicker.get(a.ticker) ?? [];
-    // A v21 CROSS comes from one alert: only a copy of the same cross merges, not the next candle's.
+    // A VB CROSS / LEVEL / BREAK comes from one alert: only a copy of the same one merges, not the next.
     const dup = list.find((e) => e.setup.stage === s.stage && threadOf(e.setup) === threadOf(s) && at - e.at <= MERGE_MS
-      && (s.stage !== 'cross' || e.setup.cross_n === s.cross_n));
+      && (s.stage !== 'cross' || e.setup.cross_n === s.cross_n) && (s.stage !== 'break' || e.setup.break_n === s.break_n)
+      && (s.stage !== 'level' || e.setup.level === s.level));
     if (dup) {
       if (s.tf && !dup.tfs.includes(s.tf)) dup.tfs.push(s.tf);
       dup.notified ||= s.notified;
@@ -82,6 +83,8 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
   for (const [ticker, events] of byTicker) {
     const latest = new Map<string, SetupEvent>();
     for (const e of events) {
+      // v25: a LEVEL only annotates its CROSS row (break > $X); it's never a row's state.
+      if (e.setup.stage === 'level') continue;
       const th = threadOf(e.setup);
       latest.set(th, e);
       if (e.setup.stage === 'broken' || e.setup.stage === 'held') {
@@ -103,7 +106,7 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
     const closer = latest.get(threadOf(current.setup));
     const closed = st === 'pullback' && closer != null && closer !== current
       && (closer.setup.stage === 'broken' || closer.setup.stage === 'held');
-    const resolved = st === 'go' || st === 'cross' || st === 'held' || st === 'broken' || closed;
+    const resolved = st === 'go' || st === 'cross' || st === 'break' || st === 'held' || st === 'broken' || closed;
     const outcome = closed ? { stage: closer!.setup.stage as 'broken' | 'held', at: closer!.at } : null;
     cards.push({ ticker, events, current, live: live != null, resolved, outcome });
   }
@@ -163,6 +166,9 @@ const HOW_TO = (
       </div>
       <div style={{ marginTop: 6 }}>
         <b>CROSS</b> (v21, the 30s alert only): a candle of the timeframe you set (default <b>5m</b>) crosses a VWAP line and the upper BB of the other timeframe you set (default <b>2m</b>): at a 30s close inside it, its open is under both as they stand then (or sitting on the lower one, up to 2% over it) and the close is above both — the body crosses the lines the chart draws for that candle (v23; the day's first candle counts). The lines (v22): session (<b>S</b>), month (<b>M</b>) and year (<b>Y</b>), each with its own count. It rings while the candle is still open, and on the candle timeframe's chart that candle gets a marker: teal <b>VB</b> (session), yellow <b>VB M</b> (month), blue <b>VB Y</b> (year). The tag shows the line, the timeframes and the day's cross number on that line (#1 = first); after a line's 3rd cross of the day, its crosses stay quiet, and so do crosses on names off our Momentum list unless the day high is +30% or more (a runner the screen hasn't caught yet). ⚙ → 📐 Stages that alert → CROSS turns it on or off.
+      </div>
+      <div style={{ marginTop: 6 }}>
+        <b>BREAK</b> (v25): when a VB candle closes, its row shows <b>break &gt; $high · stop $low</b> — place a buy stop there. BREAK rings when price reaches that high (when the buy stop fills); a newer VB candle replaces the level, and a close back under the VWAP line it crossed cancels it. Measured on four months: buying the break beat buying the CROSS by ~0.7 points a trade, and a resting buy stop beat buying after the break by another ~0.7. ⚙ → BREAK turns its alerts on; you can switch CROSS off and keep only BREAK.
       </div>
     </div>
   </div>
@@ -335,6 +341,9 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     // 10-20: a setup that just rang is lit for 20 s, like the ⚡ breakout rows, so
     // the row behind the sound is easy to find.
     const fresh = e.notified && now - e.at < 20_000;
+    // v25: once the VB candle closed, its trigger shows on the CROSS row until it breaks.
+    const lvl = s.stage === 'cross' ? [...c.events].reverse().find((x) => x.setup.stage === 'level' && x.at >= e.at) : undefined;
+    const trigger = lvl && !c.events.some((x) => x.setup.stage === 'break' && x.at >= lvl.at) ? vbTriggerText(lvl.setup) : null;
     return (
       <div
         key={c.ticker}
@@ -351,7 +360,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           <TickerLinks ticker={c.ticker} />
           <TickerLink ticker={c.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
           {r && <span style={{ color: '#fadb14', fontSize: 11 }}>⭐</span>}
-          <TvStageTag stage={s.stage} dim={!e.notified} path={s.path} line={s.line} touch={s.stage === 'cross' ? s.cross_n : s.touch} tfs={crossTfText(s)} />
+          <TvStageTag stage={s.stage} dim={!e.notified} path={s.path} line={s.line} touch={s.stage === 'cross' ? s.cross_n : s.stage === 'break' ? s.break_n : s.touch} tfs={crossTfText(s)} />
           {/* v16: past the day's cap — pings only for a B+-or-better Momentum name */}
           {s.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
           {proven && <span style={{ fontSize: 10, color: '#95de64', whiteSpace: 'nowrap' }}>{proven}</span>}
@@ -371,6 +380,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
             <GradeCell grade={r?.grade} faded={r?.grade_faded} offHigh={r?.off_high_pct} />
           </span>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {trigger && <span style={{ color: '#5cdbd3', fontWeight: 600 }}>{trigger} · </span>}
             {resolved
               ? (since != null
                 ? <span style={{ color: since >= 0 ? '#52c41a' : '#ff4d4f' }}>since {since >= 0 ? '+' : ''}{since.toFixed(1)}%</span>
@@ -384,7 +394,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
               {c.events.map((x) => (
                 <span key={x.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                  <TvStageTag stage={x.setup.stage} dim={!x.notified} line={x.setup.line} touch={x.setup.stage === 'cross' ? x.setup.cross_n : x.setup.touch} />
+                  <TvStageTag stage={x.setup.stage} dim={!x.notified} line={x.setup.line} touch={x.setup.stage === 'cross' ? x.setup.cross_n : x.setup.stage === 'break' ? x.setup.break_n : x.setup.touch} />
                   <Text type="secondary" style={{ fontSize: 10 }}>{hhmm(x.at)}</Text>
                 </span>
               ))}

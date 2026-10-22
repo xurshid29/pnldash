@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { boStrong, crossFields, formatTvSetupAlert, goStrength, gradeAtLeast, lineTokens, pastCap, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvBreakoutEvent, type TvSetupSignal } from './tv-setups.js';
+import { boStrong, formatTvSetupAlert, goStrength, gradeAtLeast, lineTokens, pastCap, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvBreakoutEvent, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3991,7 +3991,7 @@ class PollerService {
         touch: sig.touch ?? null, peak_pct: sig.peak_pct ?? null,
         yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
         fails: sig.fails ?? null, capped: pastCap(sig),
-        ...crossFields(sig),
+        ...vbFields(sig),
         on_screen: row != null, notified: mode === 'notify',
       },
     };
@@ -4005,17 +4005,19 @@ class PollerService {
       chg: alert.change_pct, grade: alert.grade, float_m: alert.float_m, rv1: alert.rel_vol_1min,
       on_screen: row != null, notified: mode === 'notify', quiet: mode === 'quiet',
       fails: sig.fails ?? null, capped: pastCap(sig), cap_exempt: capExempt,
-      ...crossFields(sig),
+      ...vbFields(sig),
     });
     const pb = PULLBACK_STAGES.has(sig.stage);
-    if (sig.stage === 'cross') {
-      console.log(`[tv-setup] CROSS ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
-        ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%) · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%)` +
-        ` · open ${sig.candle_open ?? '?'} · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
+    if (VB_STAGES.has(sig.stage)) {
+      console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
+        ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
+        (sig.stage === 'cross' ? ` · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%) · open ${sig.candle_open ?? '?'} · cross ${sig.cross_n ?? '?'}`
+          : ` · level ${sig.level ?? '?'} · stop ${sig.stop ?? '?'}` + (sig.stage === 'break' ? ` · break ${sig.break_n ?? '?'}` : '')) +
+        ` · day ${sig.day_gain ?? '?'}%` +
         (sig.vol_x != null ? ` · vol ${sig.vol_x}x` : '') + ` · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: cross ${sig.cross_n} today)`
-          : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
+        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: ${sig.stage === 'break' ? `break ${sig.break_n}` : `cross ${sig.cross_n}`} today)`
+          : why === 'offlist' ? ' · quiet (off our Momentum list)' : sig.stage === 'level' ? ' · stored (a LEVEL is never announced)' : ' · quiet (stage switched off)') : ''));
     } else console.log(
       `[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'}` +
       (pb ? ` · ${sig.line ?? '?'} line · touch ${sig.touch ?? '?'}` + (sig.peak_pct != null ? ` · peak +${sig.peak_pct}%` : '') +

@@ -209,6 +209,7 @@ function fmtAlertPrice(p: number | null): string {
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
   forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS',
+  level: 'LEVEL', break: 'BREAK',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -228,6 +229,11 @@ export function opportunityTitle(a: OpportunityAlert): string {
     if (s.stage === 'cross') {
       const ln = lineTokens(s.stage, s.line).map((t) => SHORT_LINE[t]).join(' + ');
       return `${s.on_screen ? '⭐ ' : ''}📐 CROSS ${a.ticker} — ${shortTf(s.candle_tf)} candle over ${ln} + ${shortTf(s.bb_tf)} BB${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
+    }
+    // v25: "📐 BREAK TANH — over the 10m VB high $12.59 · stop $11.80"
+    if (s.stage === 'break' || s.stage === 'level') {
+      const trig = s.level != null ? fmtAlertPrice(s.level) : '?';
+      return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — over the ${shortTf(s.candle_tf)} VB high ${trig}${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}`;
     }
     if (s.stage === 'pullback' || s.stage === 'broken' || s.stage === 'held') {
       const tokens = lineTokens(s.stage, s.line);
@@ -357,7 +363,7 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('go') || tvStage('cross')) crossConfirmPing();
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('go') || tvStage('cross') || tvStage('break')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('ready') || tvStage('pullback')) setupReadyPing();
         else if (audible.some((a) => a.kinds.includes('news'))) chime();

@@ -12,10 +12,17 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   broken: { label: 'BROKEN', color: '#ffccc7', bg: '#5c0011' },
   held: { label: 'HELD', color: '#d9f7be', bg: '#135200' },
   cross: { label: 'CROSS', color: '#b5f5ec', bg: '#00474f' },
+  level: { label: 'LEVEL', color: '#d9d9d9', bg: '#262626' },
+  break: { label: 'BREAK', color: '#ffffff', bg: '#08979c' },
 };
 
 export function isPullbackStage(stage: TvStage): boolean {
   return stage === 'pullback' || stage === 'broken' || stage === 'held';
+}
+
+// The VWAP + BB cross's stages: CROSS (v21), LEVEL and BREAK (v25).
+export function isVbStage(stage: TvStage): boolean {
+  return stage === 'cross' || stage === 'level' || stage === 'break';
 }
 
 // The individual lines of a signal (server: tv-setups.ts lineTokens). A
@@ -23,7 +30,7 @@ export function isPullbackStage(stage: TvStage): boolean {
 // 'both' was session + month for PULLBACK, month + year for reclaim. A CROSS
 // without a line (script v21) is the session line; v22 names session / month / year.
 export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvLineName[] {
-  if (!line) return isPullbackStage(stage) ? [] : stage === 'cross' ? ['session'] : ['month'];
+  if (!line) return isPullbackStage(stage) ? [] : isVbStage(stage) ? ['session'] : ['month'];
   if (line === 'both') return isPullbackStage(stage) ? ['session', 'month'] : ['month', 'year'];
   return line.split('+') as TvLineName[];
 }
@@ -39,7 +46,7 @@ const LINE_TAG: Record<TvLineName, { label: string; color: string }> = {
 };
 function lineTag(stage: TvStage, line: TvLine | null | undefined): { label: string; color: string } | null {
   const tokens = lineTokens(stage, line);
-  if (tokens.length === 0 || (!isPullbackStage(stage) && stage !== 'cross' && tokens.length === 1 && tokens[0] === 'month')) return null;
+  if (tokens.length === 0 || (!isPullbackStage(stage) && !isVbStage(stage) && tokens.length === 1 && tokens[0] === 'month')) return null;
   if (tokens.length === 1) return LINE_TAG[tokens[0]];
   return { label: tokens.map((t) => LINE_TAG[t].label).join('+'), color: '#ffffff' };
 }
@@ -62,11 +69,11 @@ export function fmtTf(tf: string | null | undefined): string {
 
 // v21 CROSS: "5m/2m" — the candle's timeframe over the band's.
 export function crossTfText(s: TvSetupInfo): string | null {
-  return s.stage === 'cross' && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
+  return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { forming: 1, ready: 2, go: 3, pullback: 1, broken: 2, held: 2, cross: 1 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { forming: 1, ready: 2, go: 3, pullback: 1, broken: 2, held: 2, cross: 1, level: 2, break: 3 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -119,7 +126,14 @@ export function strengthText(s: TvSetupInfo): string {
 
 // "−5.7% vs mVWAP · basis −5.1%" — where price and the basis sat at the signal.
 // PULLBACK setup: "+0.7% vs sVWAP · +51.2% vs mVWAP · ran +17%", its own line first.
+// v25: "break > $12.59 · stop $11.80" — the VB candle's trigger and stop.
+export function vbTriggerText(s: TvSetupInfo, verb = 'break >'): string | null {
+  const px = (p: number) => `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
+  return s.level == null ? null : `${verb} ${px(s.level)}${s.stop != null ? ` · stop ${px(s.stop)}` : ''}`;
+}
+
 export function tvLevelsText(s: TvSetupInfo): string {
+  if (s.stage === 'level' || s.stage === 'break') return vbTriggerText(s, s.stage === 'break' ? 'over' : 'break >') ?? '';
   // v21 CROSS: "+5.7% vs sVWAP · +1.2% vs 2m BB · opened $2.50" (v22: its own line first)
   if (s.stage === 'cross') {
     const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));

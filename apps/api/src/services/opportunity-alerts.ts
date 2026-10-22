@@ -71,6 +71,10 @@ export interface TvSetupInfo {
   bb_tf?: string | null;      // "2", "30", …
   candle_open?: number | null;
   cross_n?: number | null;    // the day's crosses on the ticker, this one included
+  // VB break (script v25)
+  level?: number | null;      // LEVEL / BREAK: the VB candle's high
+  stop?: number | null;       // its low
+  break_n?: number | null;    // BREAK: the day's breaks on the ticker
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe
 }

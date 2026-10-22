@@ -645,7 +645,9 @@ VB = dict(candle_min=5,       # vbCandleTf: the candle's timeframe, minutes (the
           length=20, mult=2.0,
           tol=2.0,            # vbTol: the candle may open up to % above the lower line (0 = under both)
           window=(240, 1200),  # alertWin in ET minutes [04:00, 20:00); None = always
-          lines=('session', 'month', 'year'))   # v22: vbSession / vbMonth / vbYear
+          lines=('session', 'month', 'year'),   # v22: vbSession / vbMonth / vbYear
+          brk=True,           # v25 vbBreakOn: the VB candle's high is a trigger (LEVEL / BREAK)
+          brk_cancel=True)    # v25 vbBrkCancel: a close under the line the VB candle crossed cancels it
 
 
 def _bucket(t, minutes):
@@ -656,7 +658,7 @@ def _bucket(t, minutes):
     return anchor + datetime.timedelta(minutes=minutes * int((x - anchor).total_seconds() // (minutes * 60)))
 
 
-def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=None):
+def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=None, levels=None):
     """Mirror of the script's vbStep() (v21; v22 lines) on the alert's bars (30s; a 1m replay
     works too): candles of p['candle_min'], the upper band of the p['bb_min'] closes (the forming
     one live), and per line — session, month, year (p['lines']) — CROSS at the first bar close
@@ -669,7 +671,11 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     hourly vbAnchors()); without it they stay off. bars: dicts with t (aware datetime, bar open),
     o, h, l, c, v. Returns (t, close, {line: vwap}, upper, candle_open, vol_x, names, n) per
     CROSS message — names like 'session+month', n the lowest daily count of those lines;
-    `trace` (a list) collects (t, {line: vwap}, upper) per bar."""
+    `trace` (a list) collects (t, {line: vwap}, upper) per bar.
+    v25: `levels` (a list) collects (t, 'LEVEL'|'BREAK', level, stop, names, break n): LEVEL on the
+    first bar after a VB candle closes (its high and low; a newer VB candle replaces it), BREAK on
+    the first bar from then whose high reaches one tick over the level; a close under the lowest
+    line the candle crossed cancels it (p['brk_cancel']), and so does a new day."""
     p = dict(VB, **(params or {}))
     n_len = p['length']
     lines = ('session', 'month', 'year')
@@ -681,6 +687,7 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     fired = dict.fromkeys(lines, False)
     count = dict.fromkeys(lines, 0)
     vols = []
+    lv, lv_on, brk_n = None, False, 0
     for b in bars:
         x = b['t'].astimezone(ET)
         new_day = x.date() != day
@@ -696,6 +703,12 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
             upper = m + p['mult'] * (sum((y - m) ** 2 for y in win) / n_len) ** 0.5
         key = _bucket(b['t'], p['candle_min'])
         if new_day or key != c_key or c_open is None:
+            if new_day:
+                lv_on, brk_n = False, 0
+            elif p['brk'] and c_open is not None and any(fired.values()):   # the VB candle closed
+                lv, lv_on = dict(high=c_high, low=c_low, lines=[ln for ln in lines if fired[ln]]), True
+                if levels is not None:
+                    levels.append((b['t'], 'LEVEL', c_high, c_low, '+'.join(lv['lines']), None))
             if c_open is not None:
                 vols = (vols + [c_vol])[-20:]
             if new_day:
@@ -731,6 +744,15 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
                 fires.append(ln)
         if fires:
             out.append((b['t'], b['c'], dict(vw), upper, c_open, vol_x, '+'.join(fires), min(count[ln] for ln in fires)))
+        in_win = p['window'] is None or p['window'][0] <= m_et < p['window'][1]
+        if lv_on and in_win:
+            under = [vw[ln] for ln in lv['lines'] if vw[ln] is not None]
+            if b['h'] >= lv['high'] + _tick(lv['high']):
+                lv_on, brk_n = False, brk_n + 1
+                if levels is not None:
+                    levels.append((b['t'], 'BREAK', lv['high'], lv['low'], '+'.join(lv['lines']), brk_n))
+            elif p['brk_cancel'] and under and b['c'] < min(under):
+                lv_on = False
         if trace is not None:
             trace.append((b['t'], dict(vw), upper))
     return out
@@ -767,6 +789,20 @@ def selftest_vb():
     got = [(e[0].strftime('%H:%M:%S'), e[7]) for e in simulate_vb_cross(day1)]
     ok1 = len(got) == 2 and got[0] == ('04:51:30', 1) and got[1][1] == 2 and '04:55:00' <= got[1][0] < '05:00:00'
     print('v21 VWAP + BB cross, day 1:', got, '→', 'OK' if ok1 else 'UNEXPECTED (want 04:51:30 #1, then #2 in the 04:55 candle)')
+    # v25: the 04:50 VB candle (high 1.18, low 1.00) sets a LEVEL at 04:55:00, but that bar closes
+    # at 1.00, under the VWAP (~1.14) → cancelled. The 04:55 VB candle (high 1.40) sets the next at
+    # 05:00:00; 05:00:30's high 1.45 is over 1.41 → BREAK #1. Without the cancel rule the first
+    # level breaks at 04:56:00 (a 1.20 high over 1.19) instead.
+    lvs = []
+    simulate_vb_cross(day1, levels=lvs)
+    got_lv = [(e[0].strftime('%H:%M:%S'), e[1], e[2], e[5]) for e in lvs]
+    keep = []
+    simulate_vb_cross(day1, params=dict(brk_cancel=False), levels=keep)
+    got_keep = [(e[0].strftime('%H:%M:%S'), e[1], e[2]) for e in keep]
+    ok_lv = (got_lv == [('04:55:00', 'LEVEL', 1.18, None), ('05:00:00', 'LEVEL', 1.4, None), ('05:00:30', 'BREAK', 1.4, 1)]
+             and got_keep == [('04:55:00', 'LEVEL', 1.18), ('04:56:00', 'BREAK', 1.18), ('05:00:00', 'LEVEL', 1.4),
+                              ('05:00:30', 'BREAK', 1.4)])
+    print('v25 VB break:', got_lv, '| without the cancel:', got_keep, '→', 'OK' if ok_lv else 'UNEXPECTED')
 
     # Day 2: 2m closes alternating 0.97 / 1.01 → VWAP ≈ 0.99, band ≈ 1.03. A candle opening at
     # 1.00 (1% over the VWAP, under the band) and running to 1.10.
@@ -853,7 +889,7 @@ def selftest_vb():
     ok6 = all3 == [('session+month+year', 1)] and solo == [('month', 1)] and abs(vws['month'] - want_m) < 1e-12
     print('v22 month line:', m_ev, '| no history before today:', all3, '| month only:', solo,
           f'| month VWAP {vws["month"]:.6f} vs {want_m:.6f} →', 'OK' if ok5 and ok6 else 'UNEXPECTED')
-    return ok1 and ok2 and ok3 and ok4 and ok5 and ok6
+    return ok1 and ok2 and ok3 and ok4 and ok5 and ok6 and ok_lv
 
 
 def selftest():

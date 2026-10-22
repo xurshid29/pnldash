@@ -103,7 +103,7 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
    outstanding are kept with `float_m` null** since 10-14. Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v24** (`apps/web/src/tv/mvwap-bb-setup.pine`).
+5. **📐 TradingView script — v25** (`apps/web/src/tv/mvwap-bb-setup.pine`).
    - **Paste status:**
      - v20 is on the operator's chart (10-20: "I saw GAUZ fire it with the E
        marker"). That E sits on a past candle (GAUZ's first +10% came on 10-16
@@ -204,6 +204,12 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
        runners reach our screen after the crossing bar), Telegram slug `tv_cross`.
      - Prod's ⚙ list since 10-20: `["pullback","cross"]` (the operator ticked CROSS
        and switched GO off).
+     - **v25 VB break** (§16.8): LEVEL when a VB candle closes (its high = buy stop,
+       its low = stop; stored, shown on the CROSS row "break > $X · stop $Y"), BREAK
+       when a bar reaches one tick over it (announced like CROSS, own ⚙ switch, cap
+       on `break N`); replaced by a newer VB candle, cancelled on a close under the
+       crossed line, cleared at day end. Measured first: buy stop over the high
+       beats buying the CROSS by 0.6–0.7 pts. The VB inputs say "VB:", the BO ones "BO:".
      - Switches: `rcOn` (new), `pbOn`, `boOn`, `vbOn`. The VWAP lines draw only
        while a setup that uses them is on. v21 inputs come last, because
        TradingView keeps saved input values by position.
@@ -366,7 +372,14 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 
 These are the detailed notes behind START HERE, kept verbatim.
 
-**2026-10-22 (15:45–16:20 ET) — "VB BREAK" (the VB candle's high as a trigger) MEASURED BEFORE BUILDING.** The
+**2026-10-22 (16:00–16:10 ET) — SCRIPT v25: THE VB BREAK.** Built after the measurement below: LEVEL at a VB
+candle's close (stored; the CROSS row shows "break > $X · stop $Y"), BREAK when price reaches one tick over the
+high (announced like CROSS: own ⚙ switch, Momentum or +30%, cap on `break N`); a newer VB candle replaces the
+level, a close under its line cancels it. Inputs relabelled "VB:" / "BO:" (the breakout's "BB timeframe" was set
+for VB — no breakouts 10-20 08:17 → 10-22). The operator must paste v25, check the BO inputs, recreate both
+alerts, and tick BREAK in ⚙.
+
+**2026-10-22 (15:45–16:00 ET) — "VB BREAK" (the VB candle's high as a trigger) MEASURED BEFORE BUILDING.** The
 operator asked for an alert when price crosses the latest VB candle's high (TANH / SHFS 10m). `research/vwap-bb-cross/
 vb_break_study.py` (06-12 → 10-20, session line, 1m bars): a buy stop over the VB candle's high beats buying the
 CROSS by 0.6–0.7 points a trade (5m −1.00% vs −1.61%, 10m −0.98% vs −1.69%; win 24–26% vs 16–18%), still about −1%

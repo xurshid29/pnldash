@@ -38,7 +38,7 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'touch' | 'breakout' | 'triggered' | 'cross';
+export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'touch' | 'breakout' | 'triggered' | 'cross' | 'level' | 'break';
 // The PULLBACK setup's stages (script v10); the rest belong to the reclaim setup.
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
 // The BB breakout's stages (script v17): a 1m candle against the 30s upper band.
@@ -48,6 +48,10 @@ export const BREAKOUT_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['touch', 
 // session VWAP — v21 messages name no line — and since v22 also on the month and
 // year VWAPs (`line session|month|year`, combined like PULLBACK's). Stored as
 // tier_events event 'tv_setup' and announced like GO (⚙ stage switch, the cap).
+// v25 adds its trigger: LEVEL when a VB candle closes (its high = the buy stop, its
+// low = the stop; stored, never announced) and BREAK when price reaches that high
+// (announced like CROSS, its own ⚙ switch).
+export const VB_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['cross', 'level', 'break']);
 // v19: a strong breakout — the band not falling over the last 5 candles and the
 // close within TV_SETUP.bo_strong_off % of the day's high. Null without the context.
 export function boStrong(slope: number | null | undefined, offHigh: number | null | undefined): boolean | null {
@@ -96,7 +100,7 @@ const LINE_ORDER: TvLineName[] = ['session', 'month', 'year'];
 // The individual lines of a message; a reclaim message without a line (before
 // v11) is the month line.
 export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvLineName[] {
-  if (!line) return PULLBACK_STAGES.has(stage) || BREAKOUT_STAGES.has(stage) ? [] : stage === 'cross' ? ['session'] : ['month'];
+  if (!line) return PULLBACK_STAGES.has(stage) || BREAKOUT_STAGES.has(stage) ? [] : VB_STAGES.has(stage) ? ['session'] : ['month'];
   if (line === 'both') return PULLBACK_STAGES.has(stage) ? ['session', 'month'] : ['month', 'year'];
   return line.split('+') as TvLineName[];
 }
@@ -149,6 +153,9 @@ export interface TvSetupSignal {
   bb_tf?: string | null;      // the band's timeframe: "2", "30", …
   candle_open?: number | null; // the candle's open
   cross_n?: number | null;    // the day's crosses on this ticker, this one included
+  // VB break (script v25): `stop` above is the VB candle's low
+  level?: number | null;      // LEVEL / BREAK: the VB candle's high, the trigger
+  break_n?: number | null;    // BREAK: the day's breaks on this ticker, this one included
 }
 
 export const TV_SETUP = {
@@ -204,6 +211,8 @@ export const TV_SETUP = {
   // that crossed): a message saying the day high is at least this % still announces.
   // On 10-20 that would have added 18 off-list crosses on 11 tickers.
   vb_fresh_gain: 30,
+  // A v25 BREAK follows the same rules (its own ⚙ switch, Momentum or fresh, vb_cap on
+  // its own `break N`); a LEVEL is stored and shown in the sidebar, never announced.
   // GO is announced only for a ticker on our Momentum list (operator,
   // 2026-10-18, after the first live grading: off-list GOs won 12% and barely
   // moved, median best +2.3% in an hour, against 23% and +6.2% on Momentum).
@@ -258,7 +267,7 @@ export function goStrength(sig: TvSetupSignal, at: Date, onMomentum: boolean): T
 
 const STAGES: Record<string, TvStage> = {
   forming: 'forming', ready: 'ready', go: 'go', pullback: 'pullback', broken: 'broken', held: 'held',
-  touch: 'touch', breakout: 'breakout', triggered: 'triggered', cross: 'cross',
+  touch: 'touch', breakout: 'breakout', triggered: 'triggered', cross: 'cross', level: 'level', break: 'break',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
@@ -266,19 +275,29 @@ const STAGES: Record<string, TvStage> = {
 // v21: a CROSS past the day's TV_SETUP.vb_cap crosses on its ticker.
 export function pastCap(sig: TvSetupSignal): boolean {
   if (sig.stage === 'cross') return sig.cross_n != null && sig.cross_n > TV_SETUP.vb_cap;
+  if (sig.stage === 'break') return sig.break_n != null && sig.break_n > TV_SETUP.vb_cap;
   return sig.stage === 'pullback' && sig.fails != null && sig.fails >= TV_SETUP.pb_cap;
 }
 
-// v21 CROSS fields for the alert's setup info and its tier_events row; none on other stages.
-export function crossFields(sig: TvSetupSignal): {
+// The VWAP + BB cross's fields (CROSS v21; LEVEL / BREAK v25) for the alert's setup info and
+// its tier_events row; none on other stages.
+export function vbFields(sig: TvSetupSignal): {
   upper?: number | null; upper_pct?: number | null; candle_tf?: string | null; bb_tf?: string | null;
-  candle_open?: number | null; cross_n?: number | null;
+  candle_open?: number | null; cross_n?: number | null; level?: number | null; stop?: number | null; break_n?: number | null;
 } {
-  if (sig.stage !== 'cross') return {};
-  return {
-    upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null, candle_tf: sig.candle_tf ?? null,
-    bb_tf: sig.bb_tf ?? null, candle_open: sig.candle_open ?? null, cross_n: sig.cross_n ?? null,
-  };
+  if (sig.stage === 'cross') {
+    return {
+      upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null, candle_tf: sig.candle_tf ?? null,
+      bb_tf: sig.bb_tf ?? null, candle_open: sig.candle_open ?? null, cross_n: sig.cross_n ?? null,
+    };
+  }
+  if (sig.stage === 'level' || sig.stage === 'break') {
+    return {
+      level: sig.level ?? null, stop: sig.stop ?? null, candle_tf: sig.candle_tf ?? null, bb_tf: sig.bb_tf ?? null,
+      break_n: sig.break_n ?? null,
+    };
+  }
+  return {};
 }
 
 const GRADE_LADDER = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'];
@@ -290,7 +309,7 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['ready', 'go', 'pullback', 'cross', 'forming', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['ready', 'go', 'pullback', 'cross', 'break', 'forming', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
@@ -358,6 +377,8 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     bb_tf: toTf(o.bb_tf ?? o.bb),
     candle_open: toNum(o.candle_open ?? o.open),
     cross_n: toNum(o.cross_n ?? o.cross),
+    level: toNum(o.level),
+    break_n: toNum(o.break_n),
   };
 }
 
@@ -389,6 +410,8 @@ function toPath(v: unknown): TvPath | null {
 //   BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | … | early +10% | slope +2.0% | off high -1.3% | tf 30S   (v20)
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S   (v21)
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | … | tf 30S   (v22)
+//   LEVEL TANH 12.48 | level 12.59 | stop 11.8 | sVWAP 12.1 (+3.1%) | … | line month | candle 10 | bb 2 | tf 30S   (v25)
+//   BREAK TANH 12.6 | level 12.59 | stop 11.8 | … | line month | candle 10 | bb 2 | break 1 | day high +60% | tf 30S   (v25)
 // its alertcondition() fallback:   READY AIXI 1.48 | tf 1
 // or a JSON object with the TvSetupSignal field names. Express hands us the
 // raw text for text/plain bodies and an already-parsed object for JSON ones.
@@ -404,7 +427,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
       return null;
     }
   }
-  const head = /^(FORMING|READY|GO|PULLBACK|BROKEN|HELD|TOUCH|BREAKOUT|TRIGGERED|CROSS)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(FORMING|READY|GO|PULLBACK|BROKEN|HELD|TOUCH|BREAKOUT|TRIGGERED|CROSS|LEVEL|BREAK)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
@@ -436,6 +459,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const bbTf = /\|\s*bb\s+([0-9]+[A-Za-z]?)\b/i.exec(text);
   const open = /\|\s*open\s+\$?(\d*\.?\d+)/i.exec(text);
   const crossN = /\|\s*cross\s+(\d+)\b/i.exec(text);
+  const level = /\|\s*level\s+\$?(\d*\.?\d+)/i.exec(text);     // v25
+  const breakN = /\|\s*break\s+(\d+)\b/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -471,6 +496,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     bb_tf: toTf(bbTf?.[1]),
     candle_open: toNum(open?.[1]),
     cross_n: toNum(crossN?.[1]),
+    level: toNum(level?.[1]),
+    break_n: toNum(breakN?.[1]),
   };
 }
 
@@ -521,18 +548,19 @@ export class TvSetupGate {
     const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}`;
     const prev = this.lastExact.get(exact);
     const breakout = BREAKOUT_STAGES.has(sig.stage);
-    const cross = sig.stage === 'cross';
-    const dupSec = breakout ? TV_SETUP.bo_dup_sec : cross ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
+    const vb = VB_STAGES.has(sig.stage);
+    const dupSec = breakout ? TV_SETUP.bo_dup_sec : vb ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
-    // The BB breakout is stored and graded, never announced (a trial, 2026-10-18).
-    if (breakout) return 'quiet';
-    // v21 CROSS: one per candle from the 30s alert alone — no copy to merge, and
-    // no 5-min spacing (the next candle's cross is a new event); the cap and the
-    // Momentum-only rule limit it.
-    if (cross) {
+    // The BB breakout is stored and graded, never announced (a trial, 2026-10-18);
+    // so is a v25 LEVEL (shown on its CROSS row in the sidebar).
+    if (breakout || sig.stage === 'level') return 'quiet';
+    // v21 CROSS and v25 BREAK: one per candle / level from the 30s alert alone — no
+    // copy to merge, and no 5-min spacing (the next one is a new event); the cap and
+    // the Momentum-only rule limit them.
+    if (vb) {
       const fresh = sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
-      const quiet = !this.announced.has('cross') || (pastCap(sig) && !capExempt) || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
+      const quiet = !this.announced.has(sig.stage) || (pastCap(sig) && !capExempt) || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
       return quiet ? 'quiet' : 'notify';
     }
 
@@ -594,11 +622,11 @@ export class TvSetupGate {
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
   forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD',
-  touch: 'TOUCH', breakout: 'BREAKOUT', triggered: 'TRIGGERED', cross: 'CROSS',
+  touch: 'TOUCH', breakout: 'BREAKOUT', triggered: 'TRIGGERED', cross: 'CROSS', level: 'LEVEL', break: 'BREAK',
 };
 const STAGE_ICON: Record<TvStage, string> = {
   forming: '🟡', ready: '🟠', go: '🟢', pullback: '↩️', broken: '✖️', held: '✅', touch: '⚪', breakout: '⚡', triggered: '🚀',
-  cross: '⏫',
+  cross: '⏫', level: '📏', break: '🔼',
 };
 const STAGE_HINT: Record<TvStage, string> = {
   forming: 'setup forming — open the chart',
@@ -611,6 +639,8 @@ const STAGE_HINT: Record<TvStage, string> = {
   breakout: '1m close above the 30s BB upper band — buy stop over its high',
   triggered: 'the next candle took the breakout high',
   cross: 'the candle crossed over the session VWAP and the BB upper band',
+  level: 'the VB candle closed: its high is the trigger, its low the stop',
+  break: "price took the VB candle's high",
 };
 // A TradingView interval, short: "5" → "5m", "60" → "1h", "30S" → "30s".
 export function fmtTf(tf: string | null | undefined): string {
@@ -654,6 +684,7 @@ export function formatTvSetupAlert(
   strength: TvStrength | null = null,
 ): string {
   if (sig.stage === 'cross') return formatCross(sig, tvSym, row);
+  if (sig.stage === 'break' || sig.stage === 'level') return formatBreak(sig, tvSym, row);
   const pb = PULLBACK_STAGES.has(sig.stage);
   const tokens = lineTokens(sig.stage, sig.line);
   const yearish = !pb && tokens.includes('year');
@@ -724,6 +755,40 @@ function formatCross(
   if (lvl.length > 0) lines.push(lvl.join(' · '));
   lines.push(momentumLine(row));
   const ctx = contextParts(sig, sig.vol_x != null ? [`volume ${sig.vol_x.toFixed(1)}× its last 20 candles`] : []);
+  if (ctx.length > 0) lines.push(ctx.join(' · '));
+  lines.push(linksLine(sig, tvSym));
+  return lines.join('\n');
+}
+
+// v25 BREAK: "over the 10m VB candle's high $12.59 · stop $11.80 (its low, −6.3%)".
+function formatBreak(
+  sig: TvSetupSignal,
+  tvSym: string,
+  row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
+): string {
+  const tokens = lineTokens(sig.stage, sig.line);
+  const lines = [
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `<i>${sig.stage === 'break' ? 'over' : 'trigger:'} the ${fmtTf(sig.candle_tf)} VB candle's high ${fmtPx(sig.level ?? null)} (${tokens.join(' + ')} VWAP + ${fmtTf(sig.bb_tf)} BB cross)</i>`,
+  ];
+  const what: string[] = [];
+  if (sig.stop != null) {
+    const risk = sig.level != null && sig.level > 0 ? ` (its low, ${fmtSigned((sig.stop / sig.level - 1) * 100)})` : ' (its low)';
+    what.push(`stop ${fmtPx(sig.stop)}${risk}`);
+  }
+  if (sig.break_n != null) {
+    what.push(`break ${sig.break_n} today${sig.break_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
+  }
+  if (what.length > 0) lines.push(what.join(' · '));
+  const lvlOf: Record<TvLineName, string | null> = {
+    session: sig.svwap != null ? `sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})` : null,
+    month: sig.mvwap != null ? `mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})` : null,
+    year: sig.yvwap != null ? `yVWAP ${fmtPx(sig.yvwap)} (${fmtSigned(sig.ypx_pct ?? null)})` : null,
+  };
+  const lvl = [...tokens, ...LINE_ORDER.filter((t) => !tokens.includes(t))].map((t) => lvlOf[t]).filter((x): x is string => x != null);
+  if (lvl.length > 0) lines.push(lvl.join(' · '));
+  lines.push(momentumLine(row));
+  const ctx = contextParts(sig);
   if (ctx.length > 0) lines.push(ctx.join(' · '));
   lines.push(linksLine(sig, tvSym));
   return lines.join('\n');

@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v24 (2026-10-21).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v25 (2026-10-22).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Four setups in one script, so the same two watchlist alerts carry all of them
@@ -41,6 +41,8 @@
 // Band of another timeframe you pick (2m, 30m, 45m, …). Each line runs its own setup.
 //   CROSS      the candle opened under both lines (or sitting on the lower one) and a
 //              30s close inside it is above both → the alert, while the candle is open
+//   LEVEL      (v25) the VB candle closed: its high is the trigger, its low the stop → place a buy stop
+//   BREAK      (v25) price reaches that high (when the buy stop fills) → the alert
 // Built from the 30s alert's bars, like the breakout; drawn on the candle's own chart.
 // Run it as TradingView watchlist alerts — one on 1m and one on 30s (Premium allows 2):
 // Symbols = the runners list (dashboard → 📐 sidebar ⋯ → Copy list), session Extended,
@@ -87,10 +89,10 @@ pbMax      = input.int(0,       "Script cap: stop a line after N failed pullback
 pbCapMark  = input.int(2,       "Chart: pullbacks after N failed ones are drawn gray (the dashboard's cap)", minval = 1, group = "Pullback to VWAP (v10)")
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
 boOn       = input.bool(true,         "Breakout setup on", group = "BB breakout (v17)")
-boBandTf   = input.timeframe("30S",   "BB timeframe (the band; the chart's own, or read from a 1m chart — v18)", group = "BB breakout (v17)")
-boTf       = input.timeframe("30S",   "Alerts from: the alert on this chart timeframe (30S = soonest; 1 = at the 1m close)", group = "BB breakout (v17)")
-boLen      = input.int(20,            "BB length", minval = 2, group = "BB breakout (v17)")
-boMult     = input.float(2.0,         "BB StdDev", minval = 0.1, group = "BB breakout (v17)")
+boBandTf   = input.timeframe("30S",   "BO: BB timeframe (the band; the chart's own, or read from a 1m chart — v18)", group = "BB breakout (v17)")
+boTf       = input.timeframe("30S",   "BO: alerts from the alert on this chart timeframe (30S = soonest; 1 = at the 1m close)", group = "BB breakout (v17)")
+boLen      = input.int(20,            "BO: BB length", minval = 2, group = "BB breakout (v17)")
+boMult     = input.float(2.0,         "BO: BB StdDev", minval = 0.1, group = "BB breakout (v17)")
 boMinGain  = input.float(20.0,        "Today's gainers: day high at least % (-100 = filter off)", group = "BB breakout (v17)")
 boTouchOn  = input.bool(true,         "TOUCH: the forming 1m candle reaches the band", group = "BB breakout (v17)")
 boShow     = input.bool(true,         "Draw the band and markers (on the band's own chart, or a 1m chart — v18)", group = "BB breakout (v17)")
@@ -103,18 +105,20 @@ boEarlyVol = input.float(2.0,         "Early BO: candle volume at least N× its 
 // so an input inserted higher up would hand its slot's old value to the wrong input.
 rcOn       = input.bool(true,         "Reclaim setup on (FORMING / READY / GO; v21)", group = "Setup")
 vbOn       = input.bool(true,         "VWAP + BB cross setup on (v21)", group = "VWAP + BB cross (v21)")
-vbCandleTf = input.timeframe("5",     "Candle timeframe: the chart you trade (its candles and session VWAP)", group = "VWAP + BB cross (v21)")
-vbBbTf     = input.timeframe("2",     "BB timeframe (the band)", group = "VWAP + BB cross (v21)")
-vbLen      = input.int(20,            "BB length", minval = 2, group = "VWAP + BB cross (v21)")
-vbMult     = input.float(2.0,         "BB StdDev", minval = 0.1, group = "VWAP + BB cross (v21)")
-vbTol      = input.float(2.0,         "The candle may open up to % above the lower line (price sitting on VWAP; 0 = under both)", minval = 0, group = "VWAP + BB cross (v21)")
-vbGainOn   = input.bool(true,         "Gainers only (the gainer filter at the top)", group = "VWAP + BB cross (v21)")
-vbTf       = input.timeframe("30S",   "Alerts from: the alert on this chart timeframe (30S = soonest)", group = "VWAP + BB cross (v21)")
-vbShow     = input.bool(true,         "Draw the band and markers (on the candle timeframe's chart)", group = "VWAP + BB cross (v21)")
-vbSession  = input.bool(true,         "Lines: session VWAP", inline = "vbl", group = "VWAP + BB cross (v21)")
+vbCandleTf = input.timeframe("5",     "VB: candle timeframe — the chart you trade (its candles and session VWAP)", group = "VWAP + BB cross (v21)")
+vbBbTf     = input.timeframe("2",     "VB: BB timeframe (the band)", group = "VWAP + BB cross (v21)")
+vbLen      = input.int(20,            "VB: BB length", minval = 2, group = "VWAP + BB cross (v21)")
+vbMult     = input.float(2.0,         "VB: BB StdDev", minval = 0.1, group = "VWAP + BB cross (v21)")
+vbTol      = input.float(2.0,         "VB: the candle may open up to % above the lower line (price sitting on VWAP; 0 = under both)", minval = 0, group = "VWAP + BB cross (v21)")
+vbGainOn   = input.bool(true,         "VB: gainers only (the gainer filter at the top)", group = "VWAP + BB cross (v21)")
+vbTf       = input.timeframe("30S",   "VB: alerts from the alert on this chart timeframe (30S = soonest)", group = "VWAP + BB cross (v21)")
+vbShow     = input.bool(true,         "VB: draw the band and markers (on the candle timeframe's chart)", group = "VWAP + BB cross (v21)")
+vbSession  = input.bool(true,         "VB lines: session VWAP", inline = "vbl", group = "VWAP + BB cross (v21)")
 vbMonth    = input.bool(true,         "month VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
 vbYear     = input.bool(true,         "year VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
 pbLowMY    = input.bool(true,         "Month / year lines: a candle's low reaching the band counts, its close holding above the line (v24 trial)", group = "Pullback to VWAP (v10)")
+vbBreakOn  = input.bool(true,         "VB break (v25): the latest VB candle's high is the trigger — LEVEL when it closes, BREAK when price reaches it", group = "VWAP + BB cross (v21)")
+vbBrkCancel = input.bool(true,        "VB break: a close back under the VWAP line the candle crossed cancels the level", group = "VWAP + BB cross (v21)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -886,7 +890,30 @@ vbStep() =>
     var int   vMCount  = 0
     var int   vYCount  = 0
     var vVols = array.new<float>()   // the last 20 finished candles' volumes
+    // v25: the latest VB candle's high (the trigger) and low (the stop), and the lines it crossed.
+    var float vLvHigh   = na
+    var float vLvLow    = na
+    var bool  vLvS      = false
+    var bool  vLvM      = false
+    var bool  vLvY      = false
+    var bool  vLvOn     = false
+    var int   vBrkCount = 0
+    bool vSet = false
+    bool vBrk = false
     if gNewDay or vNewCndl or na(vOpen)
+        // The candle that just closed (its values are still here): a VB candle sets the level,
+        // replacing the last one. A new day clears it.
+        if gNewDay
+            vLvOn     := false
+            vBrkCount := 0
+        else if vbBreakOn and not na(vOpen) and (vSFired or vMFired or vYFired)
+            vLvHigh := vHigh
+            vLvLow  := vLow
+            vLvS    := vSFired
+            vLvM    := vMFired
+            vLvY    := vYFired
+            vLvOn   := true
+            vSet    := true
         if not na(vOpen)
             array.push(vVols, vVol)
             if array.size(vVols) > 20
@@ -932,21 +959,38 @@ vbStep() =>
     if vFireY
         vYFired := true
         vYCount := vYCount + 1
-    [vFireS, vFireM, vFireY, vVw, vMw, vYw, vBand, vOpen, gDay, gAh, vVolX, vSCount, vMCount, vYCount]
+    // v25 BREAK: a bar reaching one tick over the level (when a buy stop there fills), from the
+    // bar the level was set on; else a close under the lowest line the VB candle crossed cancels it.
+    float vLvLine = na
+    if vLvS and not na(vVw)
+        vLvLine := vVw
+    if vLvM and not na(vMw)
+        vLvLine := na(vLvLine) ? vMw : math.min(vLvLine, vMw)
+    if vLvY and not na(vYw)
+        vLvLine := na(vLvLine) ? vYw : math.min(vLvLine, vYw)
+    if vLvOn and vInWin
+        if high >= vLvHigh + syminfo.mintick
+            vLvOn     := false
+            vBrk      := true
+            vBrkCount := vBrkCount + 1
+        else if vbBrkCancel and not na(vLvLine) and close < vLvLine
+            vLvOn := false
+    [vFireS, vFireM, vFireY, vVw, vMw, vYw, vBand, vOpen, gDay, gAh, vVolX, vSCount, vMCount, vYCount, vSet, vBrk, vLvHigh, vLvLow, vLvS, vLvM, vLvY, vBrkCount]
 
 // On the alert's own chart (30s): the alert, and its markers there.
-[vbFireS, vbFireM, vbFireY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbNS, vbNM, vbNY] = vbStep()
+[vbFireS, vbFireM, vbFireY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbNS, vbNM, vbNY, vbSet, vbBrk, vbLvHigh, vbLvLow, vbLvS, vbLvM, vbLvY, vbBrkN] = vbStep()
 // On the candle timeframe's chart: the same 30s bars inside each candle.
 vbView() =>
-    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY] = vbStep()
-    [vwS, vwM, vwY, vwBand]
+    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY, vwSet, vwBrk, vwLvH, vwLvL, vwLvS, vwLvM, vwLvY, vwBrkN] = vbStep()
+    [vwS, vwM, vwY, vwBand, vwBrk]
 vbBaseSec  = timeframe.in_seconds(vbTf)
 vbChartSec = timeframe.in_seconds(timeframe.period)
 vbLower    = vbOk and vbShow and timeframe.period == vbCandleTf and vbChartSec > vbBaseSec
-[vbInS, vbInM, vbInY, vbInUp] = request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())
+[vbInS, vbInM, vbInY, vbInUp, vbInBrk] = request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())
 bool  vbMarkS = false
 bool  vbMarkM = false
 bool  vbMarkY = false
+bool  vbMarkB = false
 float vbUp    = na
 if vbLower
     int vbIn = array.size(vbInS)
@@ -959,10 +1003,13 @@ if vbLower
                 vbMarkM := true
             if array.get(vbInY, k)
                 vbMarkY := true
+            if array.get(vbInBrk, k)
+                vbMarkB := true
 else if vbOk and vbShow and vbChartSec == vbBaseSec
     vbMarkS := vbFireS
     vbMarkM := vbFireM
     vbMarkY := vbFireY
+    vbMarkB := vbBrk
     vbUp    := vbBand
 
 // The message — a contract with services/tv-setups.ts parseTvMessage. The VWAPs are
@@ -1002,9 +1049,51 @@ vbMsg() =>
 
 if vbSend and (vbFireS or vbFireM or vbFireY)
     alert(vbMsg(), alert.freq_once_per_bar_close)
+
+// v25 (operator, 10-22, TANH and SHFS on 10m charts: "the latest VB candle's high should become a
+// resistance line and I want to be notified when price crosses over that resistance line (or a
+// little bit earlier)"). Measured first (research/vwap-bb-cross, 06-12 → 10-20, session line): a
+// buy stop over the VB candle's high beat buying the CROSS by 0.6–0.7 points a trade (still about
+// −1% on average, a heads-up), and buying a close above it was ~0.7 points worse than the buy stop;
+// the break came a median 3–4 min after the candle closed. So LEVEL goes out when the VB candle
+// closes (the "earlier": place the buy stop), and BREAK when a bar reaches one tick over the high.
+// A newer VB candle replaces the level; a close under the line the candle crossed cancels it
+// (a third fewer, same result), and so does the day's end. No line on the chart (operator).
+//   LEVEL TANH 12.48 | level 12.59 | stop 11.8 | sVWAP 12.1 (+3.1%) | … | line month | candle 10 | bb 2 | tf 30S
+//   BREAK TANH 12.6 | level 12.59 | stop 11.8 | … | line month | candle 10 | bb 2 | break 1 | day high +60% | tf 30S
+vbLvMsg(string head) =>
+    string names = ""
+    if vbLvS
+        names := pbJoin(names, "session")
+    if vbLvM
+        names := pbJoin(names, "month")
+    if vbLvY
+        names := pbJoin(names, "year")
+    string msg = head + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
+    msg += " | level " + str.tostring(vbLvHigh, format.mintick) + " | stop " + str.tostring(vbLvLow, format.mintick)
+    if not na(vbVw)
+        msg += " | sVWAP " + str.tostring(vbVw, format.mintick) + " (" + pctVs(vbVw) + "%)"
+    if not na(vbMw)
+        msg += " | mVWAP " + str.tostring(vbMw, format.mintick) + " (" + pctVs(vbMw) + "%)"
+    if not na(vbYw)
+        msg += " | yVWAP " + str.tostring(vbYw, format.mintick) + " (" + pctVs(vbYw) + "%)"
+    msg += " | line " + names + " | candle " + vbCandleTf + " | bb " + vbBbTf
+    if head == "BREAK"
+        msg += " | break " + str.tostring(vbBrkN)
+    if not na(vbDayG)
+        msg += " | day high " + (vbDayG >= 0 ? "+" : "") + str.tostring(vbDayG, "#") + "%"
+    if not na(vbAhG)
+        msg += " | ah " + (vbAhG >= 0 ? "+" : "") + str.tostring(vbAhG, "#") + "%"
+    msg + " | tf " + timeframe.period
+
+if vbSend and vbSet
+    alert(vbLvMsg("LEVEL"), alert.freq_once_per_bar_close)
+if vbSend and vbBrk
+    alert(vbLvMsg("BREAK"), alert.freq_once_per_bar_close)
 plot(vbShow and (vbLower or (vbOk and vbChartSec == vbBaseSec)) ? vbUp : na, "BB upper (VWAP + BB cross)", color.new(color.orange, 20))
 // v22: the marker says which line crossed (the year's, then the month's, first): teal
 // for the session line, yellow "VB M" for the month line, blue "VB Y" for the year line.
 plotshape(vbMarkS and not vbMarkM and not vbMarkY, "VWAP + BB cross (session)", shape.labelup, location.belowbar, color.teal, text = "VB", textcolor = color.white, size = size.small)
 plotshape(vbMarkM and not vbMarkY, "VWAP + BB cross (month, v22)", shape.labelup, location.belowbar, color.yellow, text = "VB M", textcolor = color.black, size = size.small)
 plotshape(vbMarkY, "VWAP + BB cross (year, v22)", shape.labelup, location.belowbar, color.blue, text = "VB Y", textcolor = color.white, size = size.small)
+plotshape(vbMarkB, "VB break (v25)", shape.labeldown, location.abovebar, color.teal, text = "BRK", textcolor = color.white, size = size.small)

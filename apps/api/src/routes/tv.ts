@@ -105,7 +105,7 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     }
     const why = verdict !== 'quiet' ? undefined
       : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped'
-        : (sig.stage === 'go' || sig.stage === 'cross') && !onMomentum ? 'offlist' : 'repeat';   // a quiet off-list CROSS is under vb_fresh_gain
+        : (sig.stage === 'go' || sig.stage === 'cross' || sig.stage === 'break') && !onMomentum ? 'offlist' : 'repeat';   // a quiet off-list CROSS / BREAK is under vb_fresh_gain
     const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
   } catch (err) {

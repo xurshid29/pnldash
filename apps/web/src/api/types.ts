@@ -333,7 +333,9 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // price back near the session or month VWAP after a run, then its outcome.
 // CROSS is the VWAP + BB cross (script v21, 2026-10-20): a candle of the chosen
 // timeframe crossed over its session VWAP and another timeframe's BB upper band.
-export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'cross';
+// LEVEL / BREAK (script v25): the VB candle's high as a trigger — LEVEL when it closes (stored, shown on
+// the CROSS row), BREAK when price reaches it.
+export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'cross' | 'level' | 'break';
 // PULLBACK setup: session / month / year (v14); reclaim setup: month / year
 // (v11). Lines firing the same stage on one bar are named together in script
 // order ("session+month"); the legacy 'both' (v10–v13) meant session + month
@@ -382,6 +384,10 @@ export interface TvSetupInfo {
   bb_tf?: string | null;      // "2", "30", …
   candle_open?: number | null;
   cross_n?: number | null;    // the day's crosses on the ticker, this one included
+  // VB break (script v25)
+  level?: number | null;      // LEVEL / BREAK: the VB candle's high (the buy stop)
+  stop?: number | null;       // its low
+  break_n?: number | null;    // BREAK: the day's breaks on the ticker
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

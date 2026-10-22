@@ -275,11 +275,12 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'ready', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, basis: 1.95, basis_pct: -7, day_gain: 25, ah_gain: null,
     tf: '1', path: 'base', go_via: null, vol_x: null, run_pct: null, line: 'month', ...over,
   });
-  check('default switches: READY, GO, PULLBACK, CROSS on', JSON.stringify(DEFAULT_ANNOUNCED) === '["ready","go","pullback","cross"]');
+  check('default switches: READY, GO, PULLBACK, CROSS, BREAK on', JSON.stringify(DEFAULT_ANNOUNCED) === '["ready","go","pullback","cross","break"]');
   check('parseStageList keeps known stages in menu order, drops the rest',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 7])) === '["go","pullback","held"]'
       && parseStageList('go') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists all seven stages (v21 adds CROSS)', TV_STAGE_ORDER.length === 7 && new Set(TV_STAGE_ORDER).size === 7);
+  check('menu order lists all eight stages (v21 CROSS, v25 BREAK; LEVEL is never announced)', TV_STAGE_ORDER.length === 8 && new Set(TV_STAGE_ORDER).size === 8
+    && !TV_STAGE_ORDER.includes('level' as never));
   const g = new TvSetupGate();
   g.setAnnounced(['go', 'pullback']);
   check('READY switched off → quiet, even the first of the day', g.admit(sig(), T0) === 'quiet' && !g.announces('ready'));
@@ -492,6 +493,36 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   check('Telegram: two lines', formatTvSetupAlert(both!, 'NASDAQ:AIXI', null).includes('crossed over the session + month VWAP'));
 }
 
+console.log('VB break (v25, 2026-10-22)');
+{
+  const lvl = parseTvMessage('LEVEL TANH 12.48 | level 12.59 | stop 11.8 | sVWAP 12.1 (+3.1%) | mVWAP 11.5 (+8.5%) | line month | candle 10 | bb 2 | day high +45% | tf 30S');
+  check('LEVEL parses', lvl?.stage === 'level' && lvl.ticker === 'TANH' && lvl.price === 12.48 && lvl.level === 12.59 && lvl.stop === 11.8
+    && lvl.line === 'month' && lvl.candle_tf === '10' && lvl.bb_tf === '2' && lvl.break_n === null, JSON.stringify(lvl));
+  const brk = parseTvMessage('BREAK TANH 12.6 | level 12.59 | stop 11.8 | sVWAP 12.2 (+3.3%) | mVWAP 11.6 (+8.6%) | line month | candle 10 | bb 2 | break 1 | day high +60% | vol 2.0x | tf 30S');
+  check('BREAK parses', brk?.stage === 'break' && brk.price === 12.6 && brk.level === 12.59 && brk.stop === 11.8 && brk.break_n === 1
+    && brk.day_gain === 60 && brk.tf === '30S' && JSON.stringify(lineTokens('break', brk.line)) === '["month"]', JSON.stringify(brk));
+  check('…BREAKOUT still parses as the BB breakout', parseTvMessage('BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | tf 30S')?.stage === 'breakout');
+  check('…a CROSS has no level, a BREAK no cross count', parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S')?.level === null && brk?.cross_n === null);
+  check('…without a line it is the session line', JSON.stringify(lineTokens('level', null)) === '["session"]');
+  const T0 = 1_792_166_400;
+  check('LEVEL is stored quietly, never announced', new TvSetupGate().admit(lvl!, T0, false, true) === 'quiet');
+  const g = new TvSetupGate();
+  check('BREAK on Momentum announces', g.admit(brk!, T0, false, true) === 'notify');
+  check('…a re-delivery within 20 s drops', g.admit(brk!, T0 + 5, false, true) === 'drop');
+  check('…off Momentum: quiet under +30%, announced at +60% (fresh runner)',
+    new TvSetupGate().admit({ ...brk!, day_gain: 20 }, T0, false, false) === 'quiet' && new TvSetupGate().admit(brk!, T0, false, false) === 'notify');
+  check(`…past the cap (break ${TV_SETUP.vb_cap + 1}) quiet`, pastCap({ ...brk!, break_n: TV_SETUP.vb_cap + 1 })
+    && new TvSetupGate().admit({ ...brk!, break_n: TV_SETUP.vb_cap + 1 }, T0, false, true) === 'quiet');
+  const off = new TvSetupGate();
+  off.setAnnounced(['pullback', 'cross']);
+  check('…its own ⚙ switch (prod\'s saved list before v25 → quiet)', off.admit(brk!, T0, false, true) === 'quiet');
+  const html = formatTvSetupAlert(brk!, 'NASDAQ:TANH', { change_pct: 55, grade: 'A', float_m: 2.1 });
+  check('Telegram: BREAK headline and trigger', html.includes('🔼 <b>BREAK</b>') && html.includes('<b>TANH</b>') && html.includes('$12.60')
+    && html.includes("over the 10m VB candle's high $12.59 (month VWAP + 2m BB cross)"), html);
+  check('Telegram: stop, count, levels, Momentum', html.includes('stop $11.80 (its low, -6.3%)') && html.includes('break 1 today (first)')
+    && html.includes('mVWAP $11.60 (+8.6%)') && html.includes('⭐ <b>on Momentum</b>') && !html.includes('null'), html);
+}
+
 console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -533,6 +564,9 @@ console.log('Contract — the Pine script still emits what the parser reads');
     // v24: the month and year lines' PULLBACK may touch on the bar's low (a trial); the session line keeps the close
     'pbLowMY', 'float reach = useLow ? low : close', 'pbS.step(svwap, gainer, false)', 'pbM.step(mvwap, gainer, pbLowMY)',
     'pbY.step(yvwap, gainer, pbLowMY)',
+    // v25: the VB candle's high as a trigger — LEVEL at its close, BREAK one tick over it, cancelled under its line
+    'vbLvMsg("LEVEL")', 'vbLvMsg("BREAK")', '" | level "', '" | break "', 'high >= vLvHigh + syminfo.mintick',
+    'vbBrkCancel and not na(vLvLine) and close < vLvLine', 'text = "BRK"', '"VB: BB timeframe (the band)"', '"BO: BB timeframe',
     'if rcOn and rcLines != "Year"', 'if rcOn and rcLines != "Month"', 'if pbOn and inWindow', 'boValid    = boOn and']) {
     check(`script emits ${part}`, pine.includes(part));
   }

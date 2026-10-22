@@ -38,11 +38,11 @@ interface SetupEvent {
   outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
-type StageFilter = 'on' | 'all' | 'go' | 'pullback' | 'cross' | 'bo';
+type StageFilter = 'on' | 'all' | 'go' | 'pullback' | 'cross' | 'break' | 'bo';
 
 function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const sorted = alerts
-    .filter((a) => a.kinds.includes('tv_setup') && a.setup)
+    .filter((a) => a.kinds.includes('tv_setup') && a.setup && a.setup.stage !== 'level')   // v25 LEVELs annotate, they're not setups
     .map((a) => ({ a, at: Date.parse(a.at) }))
     .sort((x, y) => x.at - y.at);
   const events: SetupEvent[] = [];
@@ -50,7 +50,7 @@ function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   for (const { a, at } of sorted) {
     const s = a.setup!;
     // A v21 CROSS comes from one alert: only a copy of the same cross merges, not the next candle's.
-    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : ''}`;
+    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : s.stage === 'break' ? `|${s.break_n ?? ''}` : ''}`;
     const prev = last.get(k);
     if (prev && at - prev.at <= MERGE_MS) {
       if (s.tf && !prev.tfs.includes(s.tf)) prev.tfs.push(s.tf);
@@ -107,6 +107,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       if (stageFilter === 'go' && st !== 'go') return false;
       if (stageFilter === 'pullback' && st !== 'pullback') return false;
       if (stageFilter === 'cross' && st !== 'cross') return false;
+      if (stageFilter === 'break' && st !== 'break') return false;
       return !momentumOnly || e.setup.on_screen;
     });
   }, [events, settings, stageFilter, momentumOnly]);
@@ -116,6 +117,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const broke = pullbacks.filter((e) => e.outcome?.stage === 'broken').length;
   const gos = visible.filter((e) => e.setup.stage === 'go').length;
   const crosses = visible.filter((e) => e.setup.stage === 'cross').length;
+  const breaks = visible.filter((e) => e.setup.stage === 'break').length;
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -141,7 +143,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       render: (_v, e) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <TvStageTag stage={e.setup.stage} dim={!e.notified} path={e.setup.path} line={e.setup.line}
-            touch={e.setup.stage === 'cross' ? e.setup.cross_n : e.setup.touch} tfs={crossTfText(e.setup)} />
+            touch={e.setup.stage === 'cross' ? e.setup.cross_n : e.setup.stage === 'break' ? e.setup.break_n : e.setup.touch} tfs={crossTfText(e.setup)} />
           {e.setup.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
         </span>
       ),
@@ -188,6 +190,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             { label: 'GO', value: 'go' },
             { label: 'PULLBACK', value: 'pullback' },
             { label: 'CROSS', value: 'cross' },
+            { label: 'BREAK', value: 'break' },
             { label: '⚡ Breakouts', value: 'bo' },
           ]}
         />
@@ -200,6 +203,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
               {visible.length} setup{visible.length === 1 ? '' : 's'} · {gos} GO · {pullbacks.length} PULLBACK
               {pullbacks.length > 0 && <> (<span style={{ color: '#52c41a' }}>{held} held</span> / <span style={{ color: '#ff4d4f' }}>{broke} broke</span>)</>}
               {crosses > 0 && <> · {crosses} CROSS</>}
+              {breaks > 0 && <> · {breaks} BREAK</>}
             </>
           )}
         </Text>}
