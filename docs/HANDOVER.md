@@ -366,6 +366,14 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-22 (15:45–16:20 ET) — "VB BREAK" (the VB candle's high as a trigger) MEASURED BEFORE BUILDING.** The
+operator asked for an alert when price crosses the latest VB candle's high (TANH / SHFS 10m). `research/vwap-bb-cross/
+vb_break_study.py` (06-12 → 10-20, session line, 1m bars): a buy stop over the VB candle's high beats buying the
+CROSS by 0.6–0.7 points a trade (5m −1.00% vs −1.61%, 10m −0.98% vs −1.69%; win 24–26% vs 16–18%), still about −1%
+on average; buying the first close above it is ~0.7 points worse than the buy stop; the break comes a median 3–4 min
+after the VB candle closes. Cancelling the level on a close under the VWAP costs nothing (a third fewer). Not built
+yet — the operator decides. **Breakouts: still zero on 10-21 and 10-22** (the 30s alert's breakout inputs).
+
 **2026-10-21 (05:00–05:05 ET) — SCRIPT v24: THE PULLBACK LOW-TOUCH TRIAL ON THE MONTH AND YEAR LINES (deployed 05:04 ET, `ce14eee`).** RBNE 04:10 ET:
 under the session line (a failed touch) and 7–8% over the month line (~1.17), only the low (~1.20) in its 5% band;
 no PULLBACK, then 1.92. The operator: "ok, do the trial for month and year lines". `pbLowMY` (on): a month / year
