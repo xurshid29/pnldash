@@ -372,6 +372,12 @@ decisions: several ideas were measured and rejected (see `docs/vwap-setup.md`
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-10-22 (16:30 ET) — v25 ALERTS RECREATED; WHICH VB TIMEFRAME.** The operator recreated both alerts; PULLBACK
+/ BROKEN / HELD / CROSS arrive (no LEVEL / BREAK / breakouts yet in the after-hours minutes — check the next
+pre-market, especially breakouts). "What chart timeframe is best?" `vb_break_study.py --rr 2 --hcandles 6 --cancel`:
+buy-stop breaks at −0.15R (3m) … −0.09R (10m) … −0.02R (30m), all slightly negative, the CROSS −0.24 to −0.37R; band
+timeframe barely matters. Advice: 10m–15m with the 2m band (30m best in R but rare, 10% stops).
+
 **2026-10-22 (16:00–16:10 ET) — SCRIPT v25: THE VB BREAK (deployed 16:10 ET, `f081873`).** Built after the measurement below: LEVEL at a VB
 candle's close (stored; the CROSS row shows "break > $X · stop $Y"), BREAK when price reaches one tick over the
 high (announced like CROSS: own ⚙ switch, Momentum or +30%, cap on `break N`); a newer VB candle replaces the

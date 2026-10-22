@@ -56,3 +56,29 @@ ticker leaving our screen. The data covers 06-12 → 10-20: 21,816 ticker-days.
 Limits: 1m bars from 20s snapshots instead of the alert's 30s bars; the session
 line only; a name's first ~40 minutes on our screen have no band yet; fills are
 ideal (a buy stop at the level, or the bar's open if it gapped over).
+
+## Which candle timeframe (2026-10-22)
+
+The operator: "what chart timeframe is best for it?" Bigger candles have wider
+stops, so here the exits scale with the trade: a target of 2× the risk (entry
+minus the VB candle's low), a horizon of 6 candles, and a level cancelled on a
+close under the session VWAP. The results are in R, the risk unit
+(`--rr 2 --hcandles 6 --cancel`). Buy stop over the VB candle's high:
+
+| candles | band 1m | band 2m | band 5m | signals (2m band, 06-12 → 10-20) | median stop distance |
+|---|---:|---:|---:|---:|---:|
+| 3m | −0.12R | −0.15R | −0.12R | 3,078 | 4.6% |
+| 5m | −0.12R | −0.10R | −0.11R | 2,841 | 5.8% |
+| 10m | −0.09R | −0.09R | −0.09R | 2,461 | 7.6% |
+| 15m | −0.09R | −0.07R | −0.05R | 2,160 | 8.4% |
+| 30m | −0.04R | −0.02R | −0.03R | 1,751 | 10.1% |
+| buying the CROSS instead (any) | | −0.24R to −0.37R | | | |
+
+- **No timeframe makes it an edge.** Every one is slightly negative, and the
+  break beats buying the CROSS by about 0.2–0.25R everywhere.
+- **Bigger candles get closer to break-even, but fire less and need wider
+  stops.** 30m is about 60% of 5m's signals, with a 10% stop and a 3-hour
+  horizon. 3m is the weakest, which fits the operator's sense that the fastest
+  charts are noise.
+- **The band's timeframe barely matters** (1m, 2m and 5m are within ~0.03R). A
+  5m band halves the number of signals.

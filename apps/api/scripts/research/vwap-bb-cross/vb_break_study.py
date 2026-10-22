@@ -38,6 +38,8 @@ ap.add_argument('--tol', type=float, default=2.0, help='the candle may open up t
 ap.add_argument('--target', type=float, default=10.0, help='win target, %%')
 ap.add_argument('--horizon', type=int, default=60, help='minutes before a trade is closed at the market')
 ap.add_argument('--cancel', action='store_true', help='also cancel a level on a close under the session VWAP')
+ap.add_argument('--rr', type=float, help='target as a multiple of the risk (entry − stop) instead of --target %%')
+ap.add_argument('--hcandles', type=int, help='horizon in candles of the timeframe being run instead of --horizon minutes')
 args = ap.parse_args()
 LEN, MULT, MAX_GAP = 20, 2.0, 3
 
@@ -72,15 +74,18 @@ def tick(p):
     return 0.0001 if p < 1 else 0.01
 
 
+HORIZON = args.horizon   # minutes; set per timeframe with --hcandles
+
+
 def trade(bars, k, entry, stop):
     """Bars after index k (the entry bar) → (outcome, P&L)."""
-    tgt = entry * (1 + args.target / 100)
+    tgt = entry + args.rr * (entry - stop) if args.rr else entry * (1 + args.target / 100)
     t0, last_t, last_c = bars[k][0], bars[k][0], bars[k][4]
     for j in range(k + 1, len(bars)):
         t, o, h, l, c = bars[j][:5]
         if t - last_t > MAX_GAP:
             return 'lost', last_c / entry - 1
-        if t - t0 > args.horizon:
+        if t - t0 > HORIZON:
             return 'time', last_c / entry - 1
         if l <= stop:
             return 'stop', min(stop, o) / entry - 1
@@ -157,11 +162,13 @@ def stats(res):
     stop = sum(r[0] == 'stop' for r in res) / n
     pnl = [r[1] * 100 for r in res]
     risk = statistics.median(r[3] * 100 for r in res)
+    rr = [r[1] / r[3] for r in res if r[3] > 0]
     return (f"{n:>6,}  win {win:5.1%}  stop {stop:5.1%}  avg {statistics.mean(pnl):+6.2f}%  median {statistics.median(pnl):+6.2f}%"
-            f"  made money {sum(p > 0 for p in pnl) / n:5.1%}  median risk {risk:4.1f}%")
+            f"  made money {sum(p > 0 for p in pnl) / n:5.1%}  median risk {risk:4.1f}%  avg {statistics.mean(rr):+5.2f}R")
 
 
 for cmin in args.candle:
+    HORIZON = args.hcandles * cmin if args.hcandles else args.horizon
     out = {'cross': [], 'levels': []}
     cur = con.execute("select ticker, day, tmin, o, h, l, c, vw, chg, grade from bars order by ticker, day, tmin")
     key, day_bars = None, []
