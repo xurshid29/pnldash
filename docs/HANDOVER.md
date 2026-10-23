@@ -15,8 +15,8 @@ are pushed with `[skip ci]` so they don't redeploy.
 
 **The desk the operator uses.**
 - The Momentum table (Finviz, every 20s), sorted by the **A+…D grade**.
-- The **📐 setups sidebar** in the left rail: a ⚡ BB-breakout list on top (empty
-  since 10-20, see open item 1), then the VWAP-setup rows, which include
+- The **📐 setups sidebar** in the left rail: a ⚡ BB-breakout list on top (empty:
+  the operator keeps breakouts off), then the VWAP-setup rows, which include
   CROSS / BREAK.
 - The History tab (its **📐 Setups** view has PULLBACK / CROSS / BREAK filters and
   ⚡ Breakouts), Watchlist, Quote Details, and 0–4 TradingView charts.
@@ -33,7 +33,8 @@ one Pine script (**v25**) running as two watchlist alerts (1m + 30s):
   VWAP line and another timeframe's BB upper band.
 - **VB break (v25):** that candle's high as a buy-stop trigger.
 - **RECLAIM** (month / year VWAP) and the **BB breakout** (1m candle vs the 30s
-  band) still exist, but **neither is reaching the server** (open item 1).
+  band) are in the script but **switched off on the operator's alerts by choice**
+  ("lets keep breakouts and RECLAIM disabled for now", 10-23).
 - A separate **RVol indicator** (`rvol.pine`, v2).
 
 All of these were graded or measured as heads-ups, not mechanical edges.
@@ -68,7 +69,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
      switch and the ⚡ breakout alarm level; Alerts ON/OFF mutes the device.
    - **Dashboard ⚡ BB breakout alarm** (`BreakoutAlerts.tsx`): rings at a BREAKOUT,
      per-device level (default "all on Momentum"). Early BOs ring at every level
-     but Off. **Silent since 10-20: no breakouts arrive** (open item 1).
+     but Off. **Idle: the operator keeps breakouts off on the alerts (10-23).**
    - **Phone (Telegram):** the opportunity engine (🅰️ first A+, ⚡ +10%/60s, 📰
      fresh headline, catalyst ≥40) plus the announced 📐 stages. Never breakouts.
      Tickers hidden on the dashboard today are skipped (`TELEGRAM_USER_ID` = admin).
@@ -105,8 +106,9 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    breakout §14, RVol §15, VB §16).
    - **On the operator's alerts now** (recreated 10-22 ~16:10 ET with v25): PULLBACK,
      CROSS, LEVEL and BREAK arrive. Overnight to 10-23 06:00 ET: 47 PULLBACK, 74
-     CROSS, 68 LEVEL, 17 BREAK. **No RECLAIM (FORMING / READY / GO) and no BB
-     breakout** (open item 1).
+     CROSS, 68 LEVEL, 17 BREAK. **No RECLAIM and no BB breakout: off on the alerts by
+     the operator's choice** (breakouts since 10-20 08:17 ET, RECLAIM since 10-22;
+     confirmed 10-23). Don't treat it as a fault.
    - **Alerts:** two watchlist alerts, **1m + 30s**, "Any alert() function call",
      session Extended, webhook `https://pnldash.uz/api/tv/webhook?key=…`. Premium
      allows only 2, so every new setup rides these. The breakout and VB (CROSS /
@@ -150,7 +152,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    - **RECLAIM** (month / year): FORMING → READY → GO; GO announced only on Momentum
      names. **BB breakout** (v17–v20): TOUCH → BREAKOUT → TRIGGERED on +20% gainers,
      strong / weak (v19), early BO (v20), stored as `tier_events` `tv_breakout`,
-     never announced. Both are off on the alerts now.
+     never announced. Both are off on the alerts by the operator's choice (10-23).
    - **Announcing** (`TvSetupGate`, `services/tv-setups.ts`):
      - the ⚙ stage switches; READY once per ticker+line per day; GO Momentum-only;
      - **CROSS and BREAK:** Momentum names, or a day high ≥ **+30%** (`vb_fresh_gain`:
@@ -200,69 +202,48 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **No BB breakouts since 10-20 08:17 ET, and no RECLAIM since the 10-22 alert
-   recreation.**
-   - The breakout code is unchanged since v20 (diffed). PULLBACK / CROSS / LEVEL /
-     BREAK come from the same 30s alert.
-   - Most likely: the operator switched "Breakout setup on" (and "Reclaim setup on")
-     off on the chart they create the alerts from, or set the breakout's BB timeframe
-     for VB (before v25's "BO:" labels). An alert copies those switches.
-   - **Ask whether that's intended.** For breakouts back: on that chart tick "Breakout
-     setup on", "BO: BB timeframe" = 30 seconds, "BO: alerts from" = 30 seconds, then
-     recreate the 30s alert. For RECLAIM: "Reclaim setup on", recreate both. Quick
-     test: a 30s chart of a +20% gainer should show BO / TOUCH markers.
-   - The dashboard's breakout alarm and the early BO depend on this.
-2. **The operator's "+30%" question, unanswered** (10-22): "can we configure +30%
-   requirement for VB break?" They thought it lives in the Pine script; it's the
-   server's `vb_fresh_gain` (off-list CROSS / BREAK ping when the day high is ≥ +30%).
-   Two options were put to them, and nothing is built:
-   - a VB-only minimum gain in the script, so VB / BREAK fire only on bigger movers
-     (v26, a paste);
-   - a ⚙ setting for the off-list ping bar (separate CROSS / BREAK values, server, no
-     paste). `routes/tv.ts` settings + `useTvAlertStages` +
-     `AlertKindsMenu` are where it would go.
-3. **Watch v25 live.**
+1. **Watch v25 live.**
    - LEVEL / BREAK flow (above). Check the BREAK volume and noise, and that CROSS rows
      show "break > $X".
    - The operator may untick CROSS in ⚙.
    - LEVEL rows (~70 overnight) are `tv_setup` rows and count toward `/alerts`' daily
      3,000-row cap; watch a busy day.
-4. **The ~11-01 grading** (`grade_live.py` for `tv_setup`; breakouts need a
-   `tv_breakout` export + the `study.py` measures; §9.1 / §13.6 / §14.6 / §16.6):
+2. **The ~11-01 grading** (`grade_live.py` for `tv_setup`; §9.1 / §13.6 / §16.6):
    - PULLBACK by line and touch, the B+ cap exemption, **the v24 month / year
      low-touch trial** (`px_pct` / `ypx_pct` > 5 vs the rest);
    - **CROSS and BREAK** (~2 weeks of rows): trigger rate, BREAK vs CROSS, by line /
-     timeframe / Momentum, then the caps, `vbTol`, the +30% exemption;
-   - breakouts, if they're flowing again by then.
-5. **GAUZ sent no breakouts on 10-19 / 10-20** while other +20% names did (parked by
-   the operator, "lets fix it later"); it may be moot after item 1.
-6. **Overdue:** re-grade the A+…D grade (`research/momentum-grade/`, never hand-edit
+     timeframe / Momentum, then the caps, `vbTol`, the +30% exemption.
+   - Breakouts and RECLAIM aren't in it while they're off. The rows to 10-20 are
+     still in `tier_events` if the operator turns them back on.
+3. **Overdue:** re-grade the A+…D grade (`research/momentum-grade/`, never hand-edit
    POINTS/CUTS); grade the opportunity alerts (`alert_study.py`; ask whether they
    still want 🅰️/⚡/📰 on the phone); the IBKR .tlg the operator promised (10-06).
-7. **Offered, not built (ask first):**
+4. **Offered, not built (ask first):**
    - a pullback-to-BB-basis setup for names far above VWAP (WFF 10-12);
    - a MACD-at-PULLBACK study;
    - a float from SEC / Yahoo for names Finviz has no size for;
    - `random_page_cost` 1.1 database-wide (test plans first);
    - a passive "vs VWAP" column on Momentum;
-   - an orange "second wave" breakout tier;
-   - TradingView's exchange real-time data (full volume);
-   - a "gap-and-go at the open" VB variant (superseded by v23's rule).
-8. **Measured and rejected — don't re-propose without new data:**
+   - TradingView's exchange real-time data (full volume).
+5. **Dropped by the operator — don't bring back unless they ask:**
+   - making the +30% off-list ping bar (`vb_fresh_gain`) or a VB minimum gain
+     configurable ("no need to answer to +30% question", 10-23);
+   - the GAUZ missing-breakouts question (breakouts are off);
+   - re-enabling breakouts / RECLAIM on the alerts.
+6. **Measured and rejected — don't re-propose without new data:**
    - a tight base before a breakout, a −0.5% slope cut, price level as a spread proxy;
    - an earlier breakout trigger at +5% or in pre-market;
    - RVol 5m as a breakout confirmation;
    - a PULLBACK touch on the bar's low on the session line;
    - buying a VB break on a close above the high instead of a buy stop.
-9. Long-open: journal attribution (trades ↔ grade/rows at entry); Ross's 1m-MACD
+7. Long-open: journal attribution (trades ↔ grade/rows at entry); Ross's 1m-MACD
    exit tell as a live feature; one RVol v2 reading checked against the dashboard.
 
 **Gotchas before touching things:**
 - **📐 alerts snapshot the script AND the chart's inputs when created.** Pasting a
-  new version changes nothing until both alerts are recreated. Switching a setup off
-  on the chart before creating an alert switches it off in the alert (the likely
-  breakout / RECLAIM cause). Advise: set the switches, create the alerts, then
-  declutter the chart.
+  new version changes nothing until both alerts are recreated. A setup switched off
+  on the chart is off in an alert made from it; that's how the operator keeps
+  breakouts and RECLAIM off (10-23).
 - **📐 new inputs go last** (TradingView keeps saved values by position). Titles can
   change freely (v25 relabelled "VB:" / "BO:").
 - **📐 the Pine can't be compiled here; the operator's paste is the compile.**
@@ -276,7 +257,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - **📐 hiding a chart marker doesn't stop its alert.** Announcing is ours (⚙).
 - **📐 "why no signal here?"** Check in order:
   1. the watchlist (RBNE 10-21);
-  2. the alert's switches (open item 1);
+  2. the alert's switches (breakouts and RECLAIM are off by choice);
   3. the rule as written (v23 compares the open and close with the lines as they
      stand at the 30s close; a straight-through close under a PULLBACK line is a
      failed touch; the day's first candle counts for VB);
@@ -321,6 +302,10 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-23 (06:20 ET) — THE OPERATOR'S CALLS.** "lets keep breakouts and RECLAIM disabled for now. And, no need
+to answer to +30% question." Breakouts and RECLAIM stay off on the alerts (intended, not a fault); the +30%
+configurability question is dropped. START HERE updated (open items 1–7).
 
 **2026-10-23 (06:05 ET) — HANDOVER REFRESH.** START HERE rewritten for v25 (it had collected v21–v24 rollout
 notes). Overnight since the 10-22 16:10 ET alert recreation: 47 PULLBACK, 74 CROSS, 68 LEVEL, 17 BREAK; no
