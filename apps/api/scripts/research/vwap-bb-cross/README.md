@@ -82,3 +82,27 @@ close under the session VWAP. The results are in R, the risk unit
   charts are noise.
 - **The band's timeframe barely matters** (1m, 2m and 5m are within ~0.03R). A
   5m band halves the number of signals.
+
+## The cancel on a candle's close (2026-10-23, script v26)
+
+The operator, on XXII 10-23 (10m): the VB candle's high "acts like a resistance", and
+the break of it one candle later gave no alert. v25 had cancelled the level on a 30s
+close under the session VWAP, a wick on the 10m chart. `--cancel-candle` cancels only
+when a candle of the timeframe (the VB candle included) closes under the session VWAP:
+
+```bash
+python vb_break_study.py rows.csv.gz --candle 5 10 15 --rr 2 --hcandles 6                   # never cancel
+python vb_break_study.py rows.csv.gz --candle 5 10 15 --rr 2 --hcandles 6 --cancel          # any 1m close (≈ v25)
+python vb_break_study.py rows.csv.gz --candle 5 10 15 --rr 2 --hcandles 6 --cancel-candle   # a candle's close (v26)
+```
+
+| Cancel when… | 5m | 10m | 15m |
+|---|---|---|---|
+| any 1m close is under the VWAP (≈ v25) | 2,841 · −0.10R | 2,461 · −0.09R | 2,160 · −0.07R |
+| **a candle closes under it, the VB candle included (v26)** | 3,098 · −0.11R | **2,755 · −0.08R** | 2,490 · −0.06R |
+| a later candle closes under it (not the VB candle) | 3,319 · −0.11R | 3,099 · −0.10R | 2,878 · −0.07R |
+| never | 4,265 · −0.13R | 3,876 · −0.11R | 3,551 · −0.08R |
+
+The cancel rule changes how many breaks there are, not what one is worth. Breaks that
+come after the next candle (the XXII kind) were −0.02R on 10m under v26, against
+−0.08R with the 1m-close cancel. Built as script v26 (`docs/vwap-setup.md` §16.8).

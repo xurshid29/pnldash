@@ -647,7 +647,8 @@ VB = dict(candle_min=5,       # vbCandleTf: the candle's timeframe, minutes (the
           window=(240, 1200),  # alertWin in ET minutes [04:00, 20:00); None = always
           lines=('session', 'month', 'year'),   # v22: vbSession / vbMonth / vbYear
           brk=True,           # v25 vbBreakOn: the VB candle's high is a trigger (LEVEL / BREAK)
-          brk_cancel=True)    # v25 vbBrkCancel: a close under the line the VB candle crossed cancels it
+          brk_cancel=True)    # vbBrkCancel: a close under the line the VB candle crossed cancels it — since v26 a
+                              # candle's close on the VB timeframe (the VB candle's own included), v25 any bar's close
 
 
 def _bucket(t, minutes):
@@ -675,7 +676,9 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     v25: `levels` (a list) collects (t, 'LEVEL'|'BREAK', level, stop, names, break n): LEVEL on the
     first bar after a VB candle closes (its high and low; a newer VB candle replaces it), BREAK on
     the first bar from then whose high reaches one tick over the level; a close under the lowest
-    line the candle crossed cancels it (p['brk_cancel']), and so does a new day."""
+    line the candle crossed cancels it (p['brk_cancel']), and so does a new day. v26: that close is
+    a candle's close (the VB candle's own included; a level that dies at its own close isn't
+    recorded), checked when the next candle starts; v25 (p['brk_cancel'] == 'bar') took any bar's."""
     p = dict(VB, **(params or {}))
     n_len = p['length']
     lines = ('session', 'month', 'year')
@@ -688,6 +691,7 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     count = dict.fromkeys(lines, 0)
     vols = []
     lv, lv_on, brk_n = None, False, 0
+    prev_vw = {}    # v26: the last bar's lines (where they stood at the candle's close)
     for b in bars:
         x = b['t'].astimezone(ET)
         new_day = x.date() != day
@@ -707,8 +711,14 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
                 lv_on, brk_n = False, 0
             elif p['brk'] and c_open is not None and any(fired.values()):   # the VB candle closed
                 lv, lv_on = dict(high=c_high, low=c_low, lines=[ln for ln in lines if fired[ln]]), True
-                if levels is not None:
-                    levels.append((b['t'], 'LEVEL', c_high, c_low, '+'.join(lv['lines']), None))
+                lv['new'] = True
+            # v26: that candle (the VB candle or a later one) closed under the level's lowest line
+            if p['brk_cancel'] is True and lv_on and c_open is not None:
+                at_close = [prev_vw[ln] for ln in lv['lines'] if prev_vw.get(ln) is not None]
+                if at_close and c_close < min(at_close):
+                    lv_on = False
+            if lv is not None and lv.pop('new', False) and lv_on and levels is not None:
+                levels.append((b['t'], 'LEVEL', lv['high'], lv['low'], '+'.join(lv['lines']), None))
             if c_open is not None:
                 vols = (vols + [c_vol])[-20:]
             if new_day:
@@ -751,8 +761,9 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
                 lv_on, brk_n = False, brk_n + 1
                 if levels is not None:
                     levels.append((b['t'], 'BREAK', lv['high'], lv['low'], '+'.join(lv['lines']), brk_n))
-            elif p['brk_cancel'] and under and b['c'] < min(under):
+            elif p['brk_cancel'] == 'bar' and under and b['c'] < min(under):   # v25
                 lv_on = False
+        prev_vw = dict(vw)
         if trace is not None:
             trace.append((b['t'], dict(vw), upper))
     return out
@@ -789,20 +800,46 @@ def selftest_vb():
     got = [(e[0].strftime('%H:%M:%S'), e[7]) for e in simulate_vb_cross(day1)]
     ok1 = len(got) == 2 and got[0] == ('04:51:30', 1) and got[1][1] == 2 and '04:55:00' <= got[1][0] < '05:00:00'
     print('v21 VWAP + BB cross, day 1:', got, '→', 'OK' if ok1 else 'UNEXPECTED (want 04:51:30 #1, then #2 in the 04:55 candle)')
-    # v25: the 04:50 VB candle (high 1.18, low 1.00) sets a LEVEL at 04:55:00, but that bar closes
-    # at 1.00, under the VWAP (~1.14) → cancelled. The 04:55 VB candle (high 1.40) sets the next at
-    # 05:00:00; 05:00:30's high 1.45 is over 1.41 → BREAK #1. Without the cancel rule the first
-    # level breaks at 04:56:00 (a 1.20 high over 1.19) instead.
+    # v25: the 04:50 VB candle (high 1.18, low 1.00) closes at 1.00, under the VWAP (~1.14). v26: its
+    # own close cancels it, so no LEVEL; v25 ('bar') sent the LEVEL at 04:55:00 and cancelled it on
+    # that bar's 1.00 close. The 04:55 VB candle (high 1.40) sets the next at 05:00:00; 05:00:30's
+    # high 1.45 is over 1.41 → BREAK #1. Without the cancel rule the first level breaks at 04:56:00
+    # (a 1.20 high over 1.19) instead.
     lvs = []
     simulate_vb_cross(day1, levels=lvs)
     got_lv = [(e[0].strftime('%H:%M:%S'), e[1], e[2], e[5]) for e in lvs]
+    v25 = []
+    simulate_vb_cross(day1, params=dict(brk_cancel='bar'), levels=v25)
+    got_v25 = [(e[0].strftime('%H:%M:%S'), e[1], e[2], e[5]) for e in v25]
     keep = []
     simulate_vb_cross(day1, params=dict(brk_cancel=False), levels=keep)
     got_keep = [(e[0].strftime('%H:%M:%S'), e[1], e[2]) for e in keep]
-    ok_lv = (got_lv == [('04:55:00', 'LEVEL', 1.18, None), ('05:00:00', 'LEVEL', 1.4, None), ('05:00:30', 'BREAK', 1.4, 1)]
+    ok_lv = (got_lv == [('05:00:00', 'LEVEL', 1.4, None), ('05:00:30', 'BREAK', 1.4, 1)]
+             and got_v25 == [('04:55:00', 'LEVEL', 1.18, None), ('05:00:00', 'LEVEL', 1.4, None), ('05:00:30', 'BREAK', 1.4, 1)]
              and got_keep == [('04:55:00', 'LEVEL', 1.18), ('04:56:00', 'BREAK', 1.18), ('05:00:00', 'LEVEL', 1.4),
                               ('05:00:30', 'BREAK', 1.4)])
-    print('v25 VB break:', got_lv, '| without the cancel:', got_keep, '→', 'OK' if ok_lv else 'UNEXPECTED')
+    print('v26 VB break:', got_lv, '| v25 (any bar\'s close cancels):', got_v25, '| without the cancel:', got_keep, '→',
+          'OK' if ok_lv else 'UNEXPECTED')
+    # v26, the XXII case (10-23): the 04:40 VB candle closes 1.10 (high 1.12) over the VWAP (~1.01);
+    # the 04:45 candle dips to a 30s close of 1.00, under the VWAP, but closes 1.10 over it (a wick
+    # on the candle's chart); the 04:50 candle trades 1.14 → BREAK at 04:50:30. v25 cancelled the
+    # level on the 1.00 close at 04:45:30, so no BREAK.
+    d4 = d1 + dt.timedelta(days=3)
+    wick = ([1.000 if k % 2 else 1.001 for k in range(80)]                      # 04:00–04:40 base
+            + [1.00, 1.04, 1.08, 1.10, 1.12, 1.11, 1.10, 1.10, 1.10, 1.10]       # 04:40 VB candle
+            + [1.08, 1.00, 1.05, 1.08, 1.09, 1.10, 1.10, 1.10, 1.10, 1.10]       # 04:45: a 30s close under
+            + [1.10, 1.14, 1.15, 1.15, 1.15, 1.15, 1.15, 1.15, 1.15, 1.15])      # 04:50: the break
+    day4 = bars_of(d4, wick)
+    w26, w25 = [], []
+    simulate_vb_cross(day4, levels=w26)
+    simulate_vb_cross(day4, params=dict(brk_cancel='bar'), levels=w25)
+    got_w26 = [(e[0].strftime('%H:%M:%S'), e[1], e[2]) for e in w26]
+    got_w25 = [(e[0].strftime('%H:%M:%S'), e[1], e[2]) for e in w25]
+    ok_wick = (got_w26 == [('04:45:00', 'LEVEL', 1.12), ('04:50:30', 'BREAK', 1.12)]
+               and got_w25 == [('04:45:00', 'LEVEL', 1.12)])
+    print('v26 a 30s wick under the VWAP keeps the level (XXII):', got_w26, '| v25:', got_w25, '→',
+          'OK' if ok_wick else 'UNEXPECTED')
+    ok_lv = ok_lv and ok_wick
 
     # Day 2: 2m closes alternating 0.97 / 1.01 → VWAP ≈ 0.99, band ≈ 1.03. A candle opening at
     # 1.00 (1% over the VWAP, under the band) and running to 1.10.

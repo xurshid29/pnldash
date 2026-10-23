@@ -1103,6 +1103,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-21 | v23 + server | `004a28c` | Operator, on WHLR's 04:00 ET gap-and-go: "this one definitely should be considered as a VB, because what I described was something like, if 1 candle crosses both vwap and bb upper row". The CROSS test now reads the line and the band as they stand at the 30s close, which is what the chart draws for the candle, instead of as they stood at the candle's open; the day's first candle counts (§16.3). A 04:00 gap drags its own VWAP and band over its open, so the body crosses both; v22 was silent on WHLR and RBNE. Server: an off-list CROSS still announces when its day high is ≥ +30% (`vb_fresh_gain`), since a 04:00 runner reaches our 20-s screen after the 30s bar that crossed (RBNE 04:00:34, WHLR 04:01:14); on 10-20 that adds 18 crosses on 11 tickers. Replica: live lines + a WHLR-like self-test. Regression: 309 checks. |
 | 2026-10-21 | v24 | `ce14eee` | Operator, on RBNE 04:10 ET (its low tagged the month line's band, ~1.20 over ~1.17, but every close stayed 7–8% above, then +60%): "ok, do the trial for month and year lines". A PULLBACK on the month or year line may now touch on the bar's low, the close holding at or above the line (`pbLowMY`, on, the last input); the session line keeps the close rule, since `--touch low` lost 0.3–0.9 points a trade there over four months (§13.5). The message is unchanged: a trial alert shows its close more than 5% above its line. Replica: `simulate_pullback(low_lines=('month','year'))` + a self-test. Regression: 314 checks. |
 | 2026-10-22 | v25 | `f081873` | Operator (TANH, SHFS on 10m charts): "the latest VB candle's high should become a resistance line and I want to be notified when price crosses over that resistance line (or a little bit earlier)". Measured first (`research/vwap-bb-cross`, §16.8): a buy stop over the VB candle's high beat buying the CROSS by 0.6–0.7 points a trade, and a close above it was ~0.7 points worse than the buy stop. So: **LEVEL** when a VB candle closes (its high = the buy stop, its low = the stop; stored, shown on the CROSS row as "break > $X · stop $Y") and **BREAK** when a bar reaches one tick over the high (announced like CROSS, its own ⚙ switch, cap on `break N`). A newer VB candle replaces the level; a close under the line the candle crossed cancels it (`vbBrkCancel`); the day's end clears it. A teal BRK marker, no line. Inputs `vbBreakOn`, `vbBrkCancel` (last); the VB inputs now start with "VB:" and the breakout's with "BO:" (the operator had set the breakout's BB timeframe for VB: no breakouts since 10-20 08:17). Replica + self-test; regression 336 checks. |
+| 2026-10-23 | v26 | `COMMIT` | Operator (XXII 10-23, 10m, a horizontal line at the 13:20 Tashkent VB candle's high 0.41): "it acts like a resistance … I think our VB-break should work the same way". v25 kept the level until it broke, but cancelled it on **any 30s close** under the line: XXII's level 0.4099 died on a 30s close at 0.3374 inside the next candle (a wick on the 10m chart, the candle closed ~0.40), and the break of 0.41 one candle later went unalerted; the only BREAK came on the month line at 0.4549, 11% higher. v26 cancels only on a **candle's close** on the VB timeframe under the lowest line the VB candle crossed, the VB candle's own close included (a level that dies there isn't sent). Measured first (§16.8): on 10m with the 2m band, 2R target, 6 candles: 2,755 breaks at −0.08R vs 2,461 at −0.09R (v25-style) and 3,876 at −0.11R (no cancel). Message unchanged, `vbBrkCancel` keeps its place (title only). Replica: `brk_cancel` True = v26, 'bar' = v25, plus an XXII-like self-test. Regression: 341 checks. **Paste the script and recreate the 30s alert.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1778,6 +1779,8 @@ line, 1m bars from our snapshots):
   counts the day's breaks.
 - **The level ends** when it breaks, when a newer VB candle replaces it, on a close
   under the lowest line the candle crossed (`vbBrkCancel`, on), or at the day's end.
+  Since v26 that close is a **candle's close on the VB timeframe** (the VB candle's own
+  included), not a 30s close (below).
 - Inputs (last in the list): `vbBreakOn` and `vbBrkCancel`, both on.
 
 **Messages:**
@@ -1802,3 +1805,23 @@ so saved values keep their places.
 
 **Grade with the rest:** BREAKs against CROSSes on the same days (trigger rate,
 the +10% race with the stop at the level's low), and by line.
+
+**v26 (2026-10-23): the cancel waits for the candle's close.** XXII 10-23 on 10m
+(Tashkent times): the 13:20 VB candle closed with its high, 0.4099, as the level. At
+13:35:35 one 30s bar closed at 0.3374, under the session VWAP, which cancelled it in
+v25; the 10m candle itself closed ~0.40, well above the line, so on the chart it was a
+wick. The 13:40 candle broke 0.41 and the run went to ~0.78, with no BREAK; the only
+one came on the month line at 0.4549. The operator: "it acts like a resistance". On
+our data (`vb_break_study.py --rr 2 --hcandles 6`, 06-12 → 10-20, session line):
+
+| Cancel the level when… | 5m | 10m | 15m |
+|---|---|---|---|
+| any 1m close is under the VWAP (≈ v25's 30s rule) | 2,841 · −0.10R | 2,461 · −0.09R | 2,160 · −0.07R |
+| **a candle (the VB candle included) closes under it (v26)** | 3,098 · −0.11R | **2,755 · −0.08R** | 2,490 · −0.06R |
+| a later candle closes under it (not the VB candle) | 3,319 · −0.11R | 3,099 · −0.10R | 2,878 · −0.07R |
+| never | 4,265 · −0.13R | 3,876 · −0.11R | 3,551 · −0.08R |
+
+The rule doesn't change what a break is worth, only how many there are: v26 keeps
+~9–15% more breaks at about the same R (10m and 15m 0.01R better, 5m 0.01R worse), and
+matches what the chart shows. The VB candle's own close is included because v25 effectively dropped those
+too (the next 30s close was under the line), so a failed cross still gives no LEVEL.

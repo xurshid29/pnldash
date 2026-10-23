@@ -14,7 +14,8 @@ VB       the script's v23 rule on 1m bars (the alert uses 30s bars): candles of 
          The band needs 19 finished --bb buckets on our screen, so a name's first ~40 min on the
          screen can't cross (TradingView has the history).
 Level    the VB candle's high, set when the candle closes; its low is the stop. A newer VB candle
-         replaces it; it ends at the day's end (or, with --cancel, on a close under the session VWAP).
+         replaces it; it ends at the day's end (or, with --cancel, on a close under the session VWAP;
+         with --cancel-candle, on a candle's close under it, the VB candle's own included: script v26).
 Entries  CROSS     the VB bar's close (stop: the candle's low so far)
          BUY STOP  a buy stop one tick over the level: filled at max(level + tick, bar open) on the
                    first later bar whose high reaches it
@@ -24,7 +25,7 @@ Exits    +--target % (win), the stop (filled at the stop, or the bar's open if i
          (> 3 min without a bar) / the day's end at the last close.
 
 Run (rows.csv.gz from ../vwap-pullback/export-rows.sql, outside 07:00–11:00 ET):
-  python vb_break_study.py rows.csv.gz [--candle 5 10] [--bb 2] [--tol 2] [--target 10] [--horizon 60] [--cancel]
+  python vb_break_study.py rows.csv.gz [--candle 5 10] [--bb 2] [--tol 2] [--target 10] [--horizon 60] [--cancel | --cancel-candle]
 """
 import argparse, duckdb, statistics, sys
 from collections import Counter, defaultdict
@@ -38,6 +39,8 @@ ap.add_argument('--tol', type=float, default=2.0, help='the candle may open up t
 ap.add_argument('--target', type=float, default=10.0, help='win target, %%')
 ap.add_argument('--horizon', type=int, default=60, help='minutes before a trade is closed at the market')
 ap.add_argument('--cancel', action='store_true', help='also cancel a level on a close under the session VWAP')
+ap.add_argument('--cancel-candle', action='store_true',
+                help='cancel a level only when a candle of the timeframe closes under the session VWAP (not a 1m close)')
 ap.add_argument('--rr', type=float, help='target as a multiple of the risk (entry − stop) instead of --target %%')
 ap.add_argument('--hcandles', type=int, help='horizon in candles of the timeframe being run instead of --horizon minutes')
 args = ap.parse_args()
@@ -67,7 +70,8 @@ PRIOR = {(r[0], r[1]): r[2] for r in con.execute("select ticker, day, prior_max 
 n_bars, n_days = con.execute("select count(*), count(distinct (ticker, day)) from bars").fetchone()
 span = con.execute("select min(day), max(day) from bars").fetchone()
 print(f"{n_bars:,} 1m bars, {n_days:,} ticker-days, {span[0]} → {span[1]} | band {args.bb}m ({LEN}, {MULT}) | tol {args.tol}% "
-      f"| target +{args.target}% | horizon {args.horizon}m{' | cancel under VWAP' if args.cancel else ''}")
+      f"| target +{args.target}% | horizon {args.horizon}m{' | cancel under VWAP' if args.cancel else ''}"
+      f"{' | cancel on a candle close under VWAP' if args.cancel_candle else ''}")
 
 
 def tick(p):
@@ -102,6 +106,7 @@ def run_day(key, bars, cmin, out):
     fired, vb_low_so_far, vb_bar = False, None, None
     level = None            # dict: high, low, set_k, set_t, vb_t, broke flags
     day_max = -1e9
+    prev_c = prev_vw = None  # the last bar's close and session VWAP (a closing candle's close)
     for k, (t, o, h, l, c, vw, chg, grade) in enumerate(bars):
         day_max = max(day_max, chg if chg is not None else -1e9)
         # the band: the last LEN-1 finished bb-bucket closes + the current close
@@ -123,6 +128,12 @@ def run_day(key, bars, cmin, out):
                 level = dict(ticker=key[0], day=key[1], high=c_high, low=c_low, set_k=k, set_t=t, vb_t=vb_bar,
                              done=None, stop_k=None, close_k=None, cancelled=False)
                 out['levels'].append(level)
+            # --cancel-candle (script v26): the candle that just closed — the VB candle itself or a
+            # later one — closed under the session VWAP
+            if (args.cancel_candle and level and not level['done'] and level['stop_k'] is None
+                    and prev_vw and prev_c < prev_vw):
+                level['cancelled'] = True
+                level['done'] = 'cancelled'
             ckey, c_open, c_high, c_low, fired = key_c, o, h, l, False
         else:
             c_high, c_low = max(c_high, h), min(c_low, l)
@@ -150,6 +161,7 @@ def run_day(key, bars, cmin, out):
                 and c_open <= min(vw, band) * (1 + args.tol / 100) and c > vw and c > band):
             fired, vb_bar = True, t
             out['cross'].append(trade(bars, k, c, c_low) + (c, (c - c_low) / c, t, grade))
+        prev_c, prev_vw = c, vw
     if level and not level['done']:
         level['done'] = 'eod'
 

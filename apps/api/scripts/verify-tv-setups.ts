@@ -566,10 +566,14 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'pbY.step(yvwap, gainer, pbLowMY)',
     // v25: the VB candle's high as a trigger — LEVEL at its close, BREAK one tick over it, cancelled under its line
     'vbLvMsg("LEVEL")', 'vbLvMsg("BREAK")', '" | level "', '" | break "', 'high >= vLvHigh + syminfo.mintick',
-    'vbBrkCancel and not na(vLvLine) and close < vLvLine', 'text = "BRK"', '"VB: BB timeframe (the band)"', '"BO: BB timeframe',
+    'text = "BRK"', '"VB: BB timeframe (the band)"', '"BO: BB timeframe',
+    // v26: the level is cancelled by a candle's close under its line (the VB candle's own included), not a 30s close
+    'if vbBrkCancel and vLvOn and not na(vOpen)', 'vbLowest(vLvS, vLvM, vLvY, vPrevVw, vPrevMw, vPrevYw)',
+    'if not na(vLnC) and vClose < vLnC', 'vPrevVw := vVw', 'Script version: v26',
     'if rcOn and rcLines != "Year"', 'if rcOn and rcLines != "Month"', 'if pbOn and inWindow', 'boValid    = boOn and']) {
     check(`script emits ${part}`, pine.includes(part));
   }
+  check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
   check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));
 }
 

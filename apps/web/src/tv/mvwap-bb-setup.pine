@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v25 (2026-10-22).
+// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v26 (2026-10-23).
 // Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
 // steps for shipping a new version (bump the version above, recreate the alert).
 // Four setups in one script, so the same two watchlist alerts carry all of them
@@ -43,6 +43,7 @@
 //              30s close inside it is above both → the alert, while the candle is open
 //   LEVEL      (v25) the VB candle closed: its high is the trigger, its low the stop → place a buy stop
 //   BREAK      (v25) price reaches that high (when the buy stop fills) → the alert
+//              (v26: the level lasts until a candle closes back under the line it crossed)
 // Built from the 30s alert's bars, like the breakout; drawn on the candle's own chart.
 // Run it as TradingView watchlist alerts — one on 1m and one on 30s (Premium allows 2):
 // Symbols = the runners list (dashboard → 📐 sidebar ⋯ → Copy list), session Extended,
@@ -118,7 +119,7 @@ vbMonth    = input.bool(true,         "month VWAP (v22)", inline = "vbl", group 
 vbYear     = input.bool(true,         "year VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
 pbLowMY    = input.bool(true,         "Month / year lines: a candle's low reaching the band counts, its close holding above the line (v24 trial)", group = "Pullback to VWAP (v10)")
 vbBreakOn  = input.bool(true,         "VB break (v25): the latest VB candle's high is the trigger — LEVEL when it closes, BREAK when price reaches it", group = "VWAP + BB cross (v21)")
-vbBrkCancel = input.bool(true,        "VB break: a close back under the VWAP line the candle crossed cancels the level", group = "VWAP + BB cross (v21)")
+vbBrkCancel = input.bool(true,        "VB break: a candle closing back under the VWAP line the VB candle crossed cancels the level (v26: the candle's close, not a 30s close)", group = "VWAP + BB cross (v21)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -819,6 +820,17 @@ vbAnchors() =>
 vbCan(float ln, float up, float cOpen, bool fired) =>
     not fired and not na(ln) and not na(up) and cOpen <= math.max(ln, up) and cOpen <= math.min(ln, up) * (1 + vbTol / 100) and close > ln and close > up
 
+// v26: the lowest of the VWAP lines a VB candle crossed (session / month / year), na if none is known.
+vbLowest(bool onS, bool onM, bool onY, float lnS, float lnM, float lnY) =>
+    float lowLn = na
+    if onS and not na(lnS)
+        lowLn := lnS
+    if onM and not na(lnM)
+        lowLn := na(lowLn) ? lnM : math.min(lowLn, lnM)
+    if onY and not na(lnY)
+        lowLn := na(lowLn) ? lnY : math.min(lowLn, lnY)
+    lowLn
+
 vbStep() =>
     // Called on every bar: and/or are lazy in v6, so the timeframe tests and the
     // request come first.
@@ -898,6 +910,9 @@ vbStep() =>
     var bool  vLvY      = false
     var bool  vLvOn     = false
     var int   vBrkCount = 0
+    var float vPrevVw   = na     // v26: the last bar's lines (where they stood at the candle's close)
+    var float vPrevMw   = na
+    var float vPrevYw   = na
     bool vSet = false
     bool vBrk = false
     if gNewDay or vNewCndl or na(vOpen)
@@ -914,6 +929,13 @@ vbStep() =>
             vLvY    := vYFired
             vLvOn   := true
             vSet    := true
+        // v26: that candle — the VB candle itself or a later one — closed under the lowest line the
+        // VB candle crossed: the level is cancelled (and a level that dies here isn't sent).
+        if vbBrkCancel and vLvOn and not na(vOpen)
+            float vLnC = vbLowest(vLvS, vLvM, vLvY, vPrevVw, vPrevMw, vPrevYw)
+            if not na(vLnC) and vClose < vLnC
+                vLvOn := false
+                vSet  := false
         if not na(vOpen)
             array.push(vVols, vVol)
             if array.size(vVols) > 20
@@ -960,21 +982,18 @@ vbStep() =>
         vYFired := true
         vYCount := vYCount + 1
     // v25 BREAK: a bar reaching one tick over the level (when a buy stop there fills), from the
-    // bar the level was set on; else a close under the lowest line the VB candle crossed cancels it.
-    float vLvLine = na
-    if vLvS and not na(vVw)
-        vLvLine := vVw
-    if vLvM and not na(vMw)
-        vLvLine := na(vLvLine) ? vMw : math.min(vLvLine, vMw)
-    if vLvY and not na(vYw)
-        vLvLine := na(vLvLine) ? vYw : math.min(vLvLine, vYw)
+    // bar the level was set on. v25 also cancelled it on any 30s close under the line, which on
+    // the candle's chart is only a wick (XXII 10-23, 10m: the level 0.4099 died on a 30s close at
+    // 0.3374, the 10m candle closed ~0.40; the break came in the next candle, no alert). Since v26
+    // the cancel waits for the candle's close (above).
     if vLvOn and vInWin
         if high >= vLvHigh + syminfo.mintick
             vLvOn     := false
             vBrk      := true
             vBrkCount := vBrkCount + 1
-        else if vbBrkCancel and not na(vLvLine) and close < vLvLine
-            vLvOn := false
+    vPrevVw := vVw
+    vPrevMw := vMw
+    vPrevYw := vYw
     [vFireS, vFireM, vFireY, vVw, vMw, vYw, vBand, vOpen, gDay, gAh, vVolX, vSCount, vMCount, vYCount, vSet, vBrk, vLvHigh, vLvLow, vLvS, vLvM, vLvY, vBrkCount]
 
 // On the alert's own chart (30s): the alert, and its markers there.
@@ -1059,6 +1078,9 @@ if vbSend and (vbFireS or vbFireM or vbFireY)
 // closes (the "earlier": place the buy stop), and BREAK when a bar reaches one tick over the high.
 // A newer VB candle replaces the level; a close under the line the candle crossed cancels it
 // (a third fewer, same result), and so does the day's end. No line on the chart (operator).
+// v26 (operator, XXII 10-23: "it acts like a resistance"): the close that cancels is a candle's
+// close on the VB timeframe, the VB candle's own included, not a 30s close. Measured (10m, 2m band,
+// 2R target, 6 candles): 2,755 breaks at −0.08R vs 2,461 at −0.09R with the 30s-style cancel.
 //   LEVEL TANH 12.48 | level 12.59 | stop 11.8 | sVWAP 12.1 (+3.1%) | … | line month | candle 10 | bb 2 | tf 30S
 //   BREAK TANH 12.6 | level 12.59 | stop 11.8 | … | line month | candle 10 | bb 2 | break 1 | day high +60% | tf 30S
 vbLvMsg(string head) =>
