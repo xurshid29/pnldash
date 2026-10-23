@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-23 (Fri, 06:05 ET), last code commit `f081873` (script v25, deployed 10-22 16:10 ET)
+## START HERE — state at 2026-10-23 (Fri, 06:55 ET), last code commit `e38c06b` (script v26, deployed 10-23 06:50 ET)
 
 Later commits are docs and research only. Research-only commits under `apps/**`
 are pushed with `[skip ci]` so they don't redeploy.
@@ -26,12 +26,14 @@ are pushed with `[skip ci]` so they don't redeploy.
   the dashboard is that clock**. Date pickers stay on the ET trading day.
 
 **Their edge is setups that TradingView detects**, delivered by our webhook from
-one Pine script (**v25**) running as two watchlist alerts (1m + 30s):
+one Pine script (**v26**; the alerts still run v25 until the operator pastes it) running as two
+watchlist alerts (1m + 30s):
 - **PULLBACK:** back to the session / month / year VWAP after a run. The operator
   rates it highly. v24 runs a trial on the month and year lines.
 - **VWAP + BB cross (VB, v21–v23):** a candle of a chosen timeframe crosses its
   VWAP line and another timeframe's BB upper band.
-- **VB break (v25):** that candle's high as a buy-stop trigger.
+- **VB break (v25):** that candle's high as a buy-stop trigger. **v26** (10-23): only a
+  candle's close under its line cancels the level, not a 30s close (XXII).
 - **RECLAIM** (month / year VWAP) and the **BB breakout** (1m candle vs the 30s
   band) are in the script but **switched off on the operator's alerts by choice**
   ("lets keep breakouts and RECLAIM disabled for now", 10-23).
@@ -91,7 +93,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
        - a CROSS row shows **"break > $high · stop $low"** once its VB candle has
          closed (from the LEVEL), until it breaks;
        - Live / Earlier today sections; rows that rang in the last 20 s are lit amber.
-     - ⋯ menu: Copy list, Download .txt, **Copy Pine script** (the v25 source
+     - ⋯ menu: Copy list, Download .txt, **Copy Pine script** (the v26 source
        embedded in the web bundle, so a script change needs a web deploy), Copy
        RVol script, How to.
    - **History** (ET date picker): Momentum, and 📐 Setups with filters (stages on /
@@ -101,9 +103,11 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    outstanding are kept with `float_m` null (10-14). Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v25** (`apps/web/src/tv/mvwap-bb-setup.pine`; full
+5. **📐 TradingView script — v26** (`apps/web/src/tv/mvwap-bb-setup.pine`; full
    reference `docs/vwap-setup.md`: changelog §12, gate table §7.2, PULLBACK §13,
    breakout §14, RVol §15, VB §16).
+   - **v26 deployed 10-23 06:50 ET (`e38c06b`); the operator pastes it and recreates the
+     30s alert** (VB sends from it only; the 1m alert can stay).
    - **On the operator's alerts now** (recreated 10-22 ~16:10 ET with v25): PULLBACK,
      CROSS, LEVEL and BREAK arrive. Overnight to 10-23 06:00 ET: 47 PULLBACK, 74
      CROSS, 68 LEVEL, 17 BREAK. **No RECLAIM and no BB breakout: off on the alerts by
@@ -147,8 +151,11 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
        Stored, never announced; shown on the CROSS row.
      - **BREAK** when a bar reaches one tick over the high (when a buy stop fills).
        Marker BRK, a daily `break N`.
-     - A newer VB candle replaces the level; a close under the crossed line cancels
-       it (`vbBrkCancel`); the day's end clears it.
+     - A newer VB candle replaces the level; the day's end clears it. **v26:** a candle's
+       close on the VB timeframe (the VB candle's own included) under the lowest crossed
+       line cancels it (`vbBrkCancel`). v25 cancelled on any 30s close, a wick on the
+       candle's chart (XXII 10-23: level 0.4099 lost, the break one candle later unalerted).
+       Measured: 10m 2,755 breaks at −0.08R vs 2,461 at −0.09R (§16.8).
    - **RECLAIM** (month / year): FORMING → READY → GO; GO announced only on Momentum
      names. **BB breakout** (v17–v20): TOUCH → BREAKOUT → TRIGGERED on +20% gainers,
      strong / weak (v19), early BO (v20), stored as `tier_events` `tv_breakout`,
@@ -161,7 +168,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
      - LEVEL is always quiet. Quiet rows are stored (`quiet: true`) and graded.
      - Telegram slugs `tv_cross`, `tv_break`.
    - **Contract and replica:** `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts`
-     (**336 checks**); `research/vwap-setup/pinesim.py` mirrors every setup (`python3
+     (**341 checks**); `research/vwap-setup/pinesim.py` mirrors every setup (`python3
      pinesim.py` self-tests). **Change procedure:** version bump, mirror in pinesim,
      extend the checks, changelog row, deploy (the server must parse new messages
      before the paste), then the operator pastes and recreates both alerts.
@@ -202,7 +209,10 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **Watch v25 live.**
+1. **Watch v25 → v26 live.**
+   - After the operator's paste: BREAKs that come after the next candle should appear
+     (a wick under the line no longer kills the level); no LEVEL when the VB candle
+     itself closes under its line.
    - LEVEL / BREAK flow (above). Check the BREAK volume and noise, and that CROSS rows
      show "break > $X".
    - The operator may untick CROSS in ⚙.
@@ -302,6 +312,16 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-23 (06:30–06:55 ET) — SCRIPT v26: THE VB LEVEL SURVIVES A WICK (deployed 06:50 ET, `e38c06b`).** The operator
+(XXII 10m, a line at the 13:20 Tashkent VB candle's high): "it acts like a resistance … our VB-break should work the
+same way". v25 kept the level until broken, but cancelled it on any 30s close under the line: at 13:35:35 a 30s close at
+0.3374 (the BROKEN row) killed the 0.4099 level while the 10m candle closed ~0.40; 0.41 broke in the 13:40 candle with no
+alert, and the only BREAK came on the month line at 0.4549. Measured (`vb_break_study.py --cancel-candle`, 2R / 6 candles):
+the cancel rule changes the count, not the value (10m: v25-style 2,461 at −0.09R, v26 2,755 at −0.08R, never 3,876 at
+−0.11R). v26 cancels on a candle's close under the lowest crossed line, the VB candle's own included (that LEVEL isn't
+sent). Message unchanged, no server change. The operator said "build and deploy it now" (mid-session). **They paste v26
+and recreate the 30s alert.**
 
 **2026-10-23 (06:20 ET) — THE OPERATOR'S CALLS.** "lets keep breakouts and RECLAIM disabled for now. And, no need
 to answer to +30% question." Breakouts and RECLAIM stay off on the alerts (intended, not a fault); the +30%
