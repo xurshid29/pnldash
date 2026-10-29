@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-10-23
+# Session Handover — updated 2026-10-28
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -8,35 +8,36 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-23 (Fri, 06:55 ET), last code commit `e38c06b` (script v26, deployed 10-23 06:50 ET)
+## START HERE — state at 2026-10-28 (Wed, 23:05 ET), last code commit `c49c419` (script v27, deployed 10-28 ~22:55 ET)
 
 Later commits are docs and research only. Research-only commits under `apps/**`
 are pushed with `[skip ci]` so they don't redeploy.
 
 **The desk the operator uses.**
 - The Momentum table (Finviz, every 20s), sorted by the **A+…D grade**.
-- The **📐 setups sidebar** in the left rail: a ⚡ BB-breakout list on top (empty:
-  the operator keeps breakouts off), then the VWAP-setup rows, which include
-  CROSS / BREAK.
-- The History tab (its **📐 Setups** view has PULLBACK / CROSS / BREAK filters and
-  ⚡ Breakouts), Watchlist, Quote Details, and 0–4 TradingView charts.
+- The **📐 setups sidebar** in the left rail: PULLBACK and CROSS / BREAK rows (the
+  ⚡ breakout list went with v27).
+- The History tab (its **📐 Setups** view has PULLBACK / CROSS / BREAK filters),
+  Watchlist, Quote Details, and 0–4 TradingView charts.
 - They trade manually, Ross-Cameron style (catalyst first, low float), mostly
   04:00–11:00 ET. Since 10-20 the market is "colder", so they also trade **10m
   charts** for the VWAP + BB cross. They live in **Tashkent (UTC+5): every time on
   the dashboard is that clock**. Date pickers stay on the ET trading day.
 
 **Their edge is setups that TradingView detects**, delivered by our webhook from
-one Pine script (**v26**; the alerts still run v25 until the operator pastes it) running as two
-watchlist alerts (1m + 30s):
+one Pine script (**v27**: the alerts run v26 until the operator pastes it, resets the
+settings and recreates both alerts) running as two watchlist alerts (1m + 30s). **Since
+v27 it has two setups, the ones the operator kept after trying all four (10-28):**
 - **PULLBACK:** back to the session / month / year VWAP after a run. The operator
   rates it highly. v24 runs a trial on the month and year lines.
 - **VWAP + BB cross (VB, v21–v23):** a candle of a chosen timeframe crosses its
   VWAP line and another timeframe's BB upper band.
 - **VB break (v25):** that candle's high as a buy-stop trigger. **v26** (10-23): only a
   candle's close under its line cancels the level, not a 30s close (XXII).
-- **RECLAIM** (month / year VWAP) and the **BB breakout** (1m candle vs the 30s
-  band) are in the script but **switched off on the operator's alerts by choice**
-  ("lets keep breakouts and RECLAIM disabled for now", 10-23).
+- **Removed in v27** (script, server and dashboard): **RECLAIM** (FORMING / READY / GO,
+  v1–v26) and the **BB breakout** (TOUCH / BREAKOUT / TRIGGERED, v17–v26). Their code
+  is in git at v26 (`e38c06b`), their rows stay in `tier_events`, and a message of
+  theirs now gets 400 "Unrecognised alert message".
 - A separate **RVol indicator** (`rvol.pine`, v2).
 
 All of these were graded or measured as heads-ups, not mechanical edges.
@@ -67,13 +68,11 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    - **Dashboard 📐** (`DASHBOARD_KINDS` = tv_setup): toast, sound and browser
      notification for the stages ticked in ⚙ **📐 Stages that alert**. These are
      global and server-side (`app_settings` `tv_alert_stages`), **now `["pullback",
-     "cross","break"]`** (GO off since 10-20). Header ⚙ also holds the device's 📐
-     switch and the ⚡ breakout alarm level; Alerts ON/OFF mutes the device.
-   - **Dashboard ⚡ BB breakout alarm** (`BreakoutAlerts.tsx`): rings at a BREAKOUT,
-     per-device level (default "all on Momentum"). Early BOs ring at every level
-     but Off. **Idle: the operator keeps breakouts off on the alerts (10-23).**
+     "cross"]`** (the operator unticked BREAK by 10-28). The menu lists PULLBACK /
+     CROSS / BREAK / BROKEN / HELD since v27. Header ⚙ also holds the device's 📐
+     switch; Alerts ON/OFF mutes the device.
    - **Phone (Telegram):** the opportunity engine (🅰️ first A+, ⚡ +10%/60s, 📰
-     fresh headline, catalyst ≥40) plus the announced 📐 stages. Never breakouts.
+     fresh headline, catalyst ≥40) plus the announced 📐 stages.
      Tickers hidden on the dashboard today are skipped (`TELEGRAM_USER_ID` = admin).
      Off-list names arrive silent.
 3. **UI.**
@@ -83,8 +82,6 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    - **Tabs** use `destroyOnHidden`.
    - **Hidden tickers** (per user per ET day) are hidden everywhere.
    - **📐 sidebar** (`TvSetupsSidebar.tsx`):
-     - **⚡ BB BREAKOUTS** (`BreakoutList.tsx`): newest first, rows under 20 s lit
-       amber, tags weak / 🔥 / early.
      - **Setup rows:** one per ticker, its current state:
        - the stage pill; the line S / M / Y; for CROSS / BREAK also `5m/2m`
          (candle / band timeframes) and the day's number;
@@ -93,38 +90,43 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
        - a CROSS row shows **"break > $high · stop $low"** once its VB candle has
          closed (from the LEVEL), until it breaks;
        - Live / Earlier today sections; rows that rang in the last 20 s are lit amber.
-     - ⋯ menu: Copy list, Download .txt, **Copy Pine script** (the v26 source
+     - ⋯ menu: Copy list, Download .txt, **Copy Pine script** (the v27 source
        embedded in the web bundle, so a script change needs a web deploy), Copy
        RVol script, How to.
    - **History** (ET date picker): Momentum, and 📐 Setups with filters (stages on /
-     all / GO / PULLBACK / CROSS / BREAK / ⚡ Breakouts). LEVELs are left out.
+     all / PULLBACK / CROSS / BREAK). LEVELs are left out; old days' FORMING / READY /
+     GO rows aren't listed (`/api/screener/alerts` skips them since v27).
    - Embedded TradingView charts use the Asia/Tashkent timezone.
 4. **Screener fetch** (`services/finviz.ts`): rows with no float and no shares
    outstanding are kept with `float_m` null (10-14). Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v26** (`apps/web/src/tv/mvwap-bb-setup.pine`; full
-   reference `docs/vwap-setup.md`: changelog §12, gate table §7.2, PULLBACK §13,
-   breakout §14, RVol §15, VB §16).
-   - **v26 deployed 10-23 06:50 ET (`e38c06b`); the operator pastes it and recreates the
-     30s alert** (VB sends from it only; the 1m alert can stay).
-   - **On the operator's alerts now** (recreated 10-22 ~16:10 ET with v25): PULLBACK,
-     CROSS, LEVEL and BREAK arrive. Overnight to 10-23 06:00 ET: 47 PULLBACK, 74
-     CROSS, 68 LEVEL, 17 BREAK. **No RECLAIM and no BB breakout: off on the alerts by
-     the operator's choice** (breakouts since 10-20 08:17 ET, RECLAIM since 10-22;
-     confirmed 10-23). Don't treat it as a fault.
+5. **📐 TradingView script — v27** (`apps/web/src/tv/mvwap-bb-setup.pine`, 713 lines; full
+   reference `docs/vwap-setup.md`: changelog §12, gate table §7.2, PULLBACK §13, RVol
+   §15, VB §16; §1–§11 and §14 are the removed setups' record).
+   - **v27 deployed 10-28 ~22:55 ET (`c49c419`). The operator pastes it, opens the
+     indicator's Settings → Defaults → Reset settings once (v27 reordered the inputs;
+     the defaults are their settings: gainer filter 10%, VB candle 5m, band 45S),
+     checks the switches, then recreates both alerts.** From here on, new inputs go
+     last again.
+   - **Before v27 the alerts ran mixed VB timeframes:** 10-23 and 10-26 candle 10 / band
+     2; 10-27 mostly 5 / 45S (some 2 / 45S, 5 / 1); **10-28 all day 1 / 30S**. The
+     operator said on 10-28 their settings are 5m / 45s, so the 10-28 alert was likely
+     made from a 1m / 30s chart. Grade VB by `candle_tf` / `bb_tf`, not as one series.
+   - **45S band on 30s bars:** 45 isn't a multiple of 30, so the alert's 45s band is
+     built from 30s closes landing in each 45s bucket (alternately 2 and 1 bars): close
+     to, but not exactly, a native 45s chart's band. The 5m chart's replay uses the
+     same bars, so markers and alerts agree.
    - **Alerts:** two watchlist alerts, **1m + 30s**, "Any alert() function call",
      session Extended, webhook `https://pnldash.uz/api/tv/webhook?key=…`. Premium
-     allows only 2, so every new setup rides these. The breakout and VB (CROSS /
-     LEVEL / BREAK) send from the 30s alert only. **An alert copies the chart's
+     allows only 2, so every new setup rides these. VB (CROSS / LEVEL / BREAK) sends
+     from the 30s alert only. **An alert copies the chart's
      inputs, including the setup switches, when it's created.**
    - **Watchlist** (⋯ → Copy list): today's screen + every name ≥+30% on our screen
      in 90 days + ≥+20% in the last 3 sessions (~850–960 symbols, cap 1,000). Names
      not on the list never alert (RBNE 10-21 wasn't: no prior +30% day).
-   - **Setup switches** (v21): "Reclaim setup on" (`rcOn`), "Pullback setup on",
-     "Breakout setup on", "VWAP + BB cross setup on". Off = no markers and no alerts.
-     A VWAP line no setup uses isn't drawn. v25 labels: VB inputs start "VB:", the
-     breakout's "BO:".
+   - **Setup switches:** "Pullback setup on", "VWAP + BB cross setup on". Off = no
+     markers and no alerts. A VWAP line no setup uses isn't drawn. VB inputs start "VB:".
    - **PULLBACK** (session / month / year, each its own state):
      - armed by a high ≥15% above the line; fires on a later close within 5% above;
        BROKEN = a close under the line; HELD = +10%;
@@ -136,10 +138,10 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
        Momentum (`pb_cap` / `pb_cap_exempt`); per-line 5-min ping limit.
    - **VWAP + BB cross** (VB; stage `cross`):
      - `vbStep()` builds, from the 30s bars:
-       - the candle (`vbCandleTf`, default 5; the operator uses 10);
+       - the candle (`vbCandleTf`, default 5 since v27, the operator's);
        - its session VWAP (= the chart's VWAP on that timeframe);
        - the month / year VWAPs (hourly sums up to today, `vbAnchors()`, plus today);
-       - the band of `vbBbTf` (default 2, the forming close live).
+       - the band of `vbBbTf` (default 45S since v27, the operator's; the forming close live).
      - **v23 rule:** at a 30s close, the candle's open ≤ the higher of line and band
        and ≤ 2% over the lower one, and the close above both, **as they stand at that
        close** (what the chart draws). The day's first candle counts.
@@ -156,20 +158,17 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
        line cancels it (`vbBrkCancel`). v25 cancelled on any 30s close, a wick on the
        candle's chart (XXII 10-23: level 0.4099 lost, the break one candle later unalerted).
        Measured: 10m 2,755 breaks at −0.08R vs 2,461 at −0.09R (§16.8).
-   - **RECLAIM** (month / year): FORMING → READY → GO; GO announced only on Momentum
-     names. **BB breakout** (v17–v20): TOUCH → BREAKOUT → TRIGGERED on +20% gainers,
-     strong / weak (v19), early BO (v20), stored as `tier_events` `tv_breakout`,
-     never announced. Both are off on the alerts by the operator's choice (10-23).
    - **Announcing** (`TvSetupGate`, `services/tv-setups.ts`):
-     - the ⚙ stage switches; READY once per ticker+line per day; GO Momentum-only;
+     - the ⚙ stage switches; PULLBACK: the cap and a per-line 5-min limit;
      - **CROSS and BREAK:** Momentum names, or a day high ≥ **+30%** (`vb_fresh_gain`:
        04:00 runners reach our 20-s screen after the crossing bar); `vb_cap` 3 per
        line per day on `cross N` / `break N`; 20 s re-delivery window, no merge;
      - LEVEL is always quiet. Quiet rows are stored (`quiet: true`) and graded.
      - Telegram slugs `tv_cross`, `tv_break`.
    - **Contract and replica:** `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts`
-     (**341 checks**); `research/vwap-setup/pinesim.py` mirrors every setup (`python3
-     pinesim.py` self-tests). **Change procedure:** version bump, mirror in pinesim,
+     (**240 checks** since v27, incl. rejecting the removed messages);
+     `research/vwap-setup/pinesim.py` mirrors PULLBACK and VB (`python3 pinesim.py`
+     self-tests) and keeps the removed setups' simulators (v26 logic) for research. **Change procedure:** version bump, mirror in pinesim,
      extend the checks, changelog row, deploy (the server must parse new messages
      before the paste), then the operator pastes and recreates both alerts.
 6. **RVol indicator** (`apps/web/src/tv/rvol.pine`, v2, §15).
@@ -209,22 +208,25 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **Watch v25 → v26 live.**
-   - After the operator's paste: BREAKs that come after the next candle should appear
-     (a wick under the line no longer kills the level); no LEVEL when the VB candle
-     itself closes under its line.
+1. **Watch the v27 paste.** After it: CROSS rows say `5m/45s`, PULLBACKs keep coming,
+   and nothing gets 400 (a stale v26 alert with RECLAIM / breakouts switched off sends
+   nothing removed either). If the paste fails to compile, the error message is the
+   lead: v27 only deleted code, and the kept sections are byte-identical to v26.
+   - From v26: BREAKs that come after the next candle should appear (a wick under the
+     line no longer kills the level); no LEVEL when the VB candle itself closes under
+     its line.
    - LEVEL / BREAK flow (above). Check the BREAK volume and noise, and that CROSS rows
      show "break > $X".
    - The operator may untick CROSS in ⚙.
-   - LEVEL rows (~70 overnight) are `tv_setup` rows and count toward `/alerts`' daily
-     3,000-row cap; watch a busy day.
+   - LEVEL rows are `tv_setup` rows and count toward `/alerts`' daily 3,000-row cap:
+     10-28 (1m candles) had ~2,300 📐 rows. 5m candles make far fewer.
 2. **The ~11-01 grading** (`grade_live.py` for `tv_setup`; §9.1 / §13.6 / §16.6):
    - PULLBACK by line and touch, the B+ cap exemption, **the v24 month / year
      low-touch trial** (`px_pct` / `ypx_pct` > 5 vs the rest);
    - **CROSS and BREAK** (~2 weeks of rows): trigger rate, BREAK vs CROSS, by line /
      timeframe / Momentum, then the caps, `vbTol`, the +30% exemption.
-   - Breakouts and RECLAIM aren't in it while they're off. The rows to 10-20 are
-     still in `tier_events` if the operator turns them back on.
+   - RECLAIM and the breakout are removed (v27); their rows to 10-22 are still in
+     `tier_events` for any study.
 3. **Overdue:** re-grade the A+…D grade (`research/momentum-grade/`, never hand-edit
    POINTS/CUTS); grade the opportunity alerts (`alert_study.py`; ask whether they
    still want 🅰️/⚡/📰 on the phone); the IBKR .tlg the operator promised (10-06).
@@ -238,8 +240,8 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 5. **Dropped by the operator — don't bring back unless they ask:**
    - making the +30% off-list ping bar (`vb_fresh_gain`) or a VB minimum gain
      configurable ("no need to answer to +30% question", 10-23);
-   - the GAUZ missing-breakouts question (breakouts are off);
-   - re-enabling breakouts / RECLAIM on the alerts.
+   - the GAUZ missing-breakouts question;
+   - RECLAIM and the BB breakout (removed in v27 at the operator's request, 10-28).
 6. **Measured and rejected — don't re-propose without new data:**
    - a tight base before a breakout, a −0.5% slope cut, price level as a spread proxy;
    - an earlier breakout trigger at +5% or in pre-market;
@@ -252,10 +254,9 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 **Gotchas before touching things:**
 - **📐 alerts snapshot the script AND the chart's inputs when created.** Pasting a
   new version changes nothing until both alerts are recreated. A setup switched off
-  on the chart is off in an alert made from it; that's how the operator keeps
-  breakouts and RECLAIM off (10-23).
+  on the chart is off in an alert made from it.
 - **📐 new inputs go last** (TradingView keeps saved values by position). Titles can
-  change freely (v25 relabelled "VB:" / "BO:").
+  change freely. v27 reordered them once, with a Reset settings step for the operator.
 - **📐 the Pine can't be compiled here; the operator's paste is the compile.**
   Conservative syntax: explicit `x := x + 1` for UDT fields, methods end with a value,
   compute `ta.*` / `timeframe.change()` every bar (v6 and/or are lazy), guard loops
@@ -267,7 +268,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - **📐 hiding a chart marker doesn't stop its alert.** Announcing is ours (⚙).
 - **📐 "why no signal here?"** Check in order:
   1. the watchlist (RBNE 10-21);
-  2. the alert's switches (breakouts and RECLAIM are off by choice);
+  2. the alert's switches and VB timeframes (the alert copies the chart's inputs);
   3. the rule as written (v23 compares the open and close with the lines as they
      stand at the 30s close; a straight-through close under a PULLBACK line is a
      failed touch; the day's first candle counts for VB);
@@ -312,6 +313,19 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-28 (22:25–23:05 ET) — SCRIPT v27: TWO SETUPS (deployed ~22:55 ET, `c49c419`).** The operator: "I tested all
+the vwap strategies which we built, and I liked the most VWAP+BB Cross and Pullback to VWAP types, and currently I'm
+using only those ones. I think we can remove/disable others from backend and pine script, maybe?" → chose "remove
+everywhere"; their settings "filter 10%, vb candle 5min, band 45s" became the defaults. Since 10-23 no RECLAIM or
+breakout row had arrived (10-23 → 10-28: 2,345 CROSS, 2,081 LEVEL, 1,318 BREAK, 523 PULLBACK, 308 BROKEN, 126 HELD).
+Removed from the Pine script (1,121 → 713 lines, 62 → 31 inputs, reordered), the server (parser, gate rules, breakout
+delivery and route, SSE event, Telegram mutes) and the dashboard (⚡ list, breakout alarm, ⚙ level, History filters,
+GO strength, text). Found on the way: `/api/screener/alerts` never carried the VB fields, so a reload lost CROSS rows'
+`5m/2m` and "break > $X" — fixed. Verified on prod: PULLBACK / CROSS dry-runs 200, GO / BREAKOUT 400, ⚙ list five
+stages with the saved `["pullback","cross"]`, 10-15's History shows no GO, `/breakouts` 404, poller current. This
+deploy also restarted postgres and certbot (earlier deploys didn't); both came back healthy. **The operator pastes v27,
+resets settings, recreates both alerts.**
 
 **2026-10-23 (06:30–06:55 ET) — SCRIPT v26: THE VB LEVEL SURVIVES A WICK (deployed 06:50 ET, `e38c06b`).** The operator
 (XXII 10m, a line at the 13:20 Tashkent VB candle's high): "it acts like a resistance … our VB-break should work the
