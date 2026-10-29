@@ -580,30 +580,35 @@ repeats these steps).
    Check that its yellow line sits on the built-in "VWAP Month".
 2. **Download .txt** → watchlist menu → Import list (or paste **Copy list**).
    Refresh it each morning; it changes as new runners appear.
-3. **Create two alerts** → Symbols: that watchlist → Condition: *mVWAP-BB* →
+3. **Set the indicator's inputs on the chart first**: an alert copies them when
+   it's created. VB: candle timeframe (the operator's: 5m), BB timeframe (45S), and
+   "VB: alerts from the alert on this chart timeframe" left at **30S**. The chart's
+   own timeframe doesn't matter to the alerts; a chart on the VB candle timeframe
+   (5m) is the one that draws the VB band and markers.
+4. **Create two alerts** → Symbols: that watchlist → Condition: *mVWAP-BB* →
    "Any alert() function call" → session Extended → once per bar close. Make
-   one with interval **1 minute** and one with **2 minutes**; that uses both of
-   Premium's watchlist-alert slots.
-4. **Notifications** → tick Webhook URL → `https://pnldash.uz/api/tv/webhook?key=<TV_WEBHOOK_SECRET>`.
+   one with interval **30 seconds** and one with **1 minute** (1m + 2m until
+   2026-10-05); that uses both of Premium's watchlist-alert slots. The 30s alert
+   carries PULLBACK and every VB message (CROSS / LEVEL / BREAK, because VB sends
+   only on the `vbTf` interval); the 1m alert adds PULLBACKs on 1m closes, and a
+   copy of the same event from both is announced once (§7.2).
+5. **Notifications** → tick Webhook URL → `https://pnldash.uz/api/tv/webhook?key=<TV_WEBHOOK_SECRET>`.
    The key is in the prod `.env`; the full URL was given to the operator on
    2026-10-03. TradingView may ask for two-factor authentication on the account
    before it allows webhooks. App push and pop-up are optional, since Telegram
    and the dashboard already notify.
 
-If "Any alert() function call" isn't offered for watchlists, use the READY
-condition instead (one per timeframe). A stage that fires on both timeframes
-within 5 min is announced once; the second copy is logged only (§7.2).
 **After every script update, delete and recreate both alerts.**
 
-**Setup switches (v21).** Each setup has an on/off switch in the script's
-Inputs: "Reclaim setup on" (in Setup), "Pullback setup on", "Breakout setup on"
-and "VWAP + BB cross setup on". Off means no markers and no alerts from that
-setup, and a VWAP line no setup uses isn't drawn. A chart can show only the
-setups you want there. An alert copies the switches (and every other input)
-when it's created, so set them on the chart before creating an alert, and leave
-all four on for the two watchlist alerts unless you mean to silence a setup.
-The new inputs come last in the list, so values saved before v21 keep their
-places.
+**Setup switches.** Each setup has an on/off switch in the script's Inputs:
+"Pullback setup on" and "VWAP + BB cross setup on" (v21–v26 also had "Reclaim
+setup on" and "Breakout setup on"; v27 removed those setups). Off means no
+markers and no alerts from that setup, and a VWAP line no setup uses isn't
+drawn. A chart can show only the setups you want there. An alert copies the
+switches (and every other input) when it's created, so set them on the chart
+before creating an alert, and leave both on for the two watchlist alerts unless
+you mean to silence a setup. New inputs go last in the list (v27 reordered them
+once: Reset settings after its paste).
 
 ## 7. Our side — how a signal travels
 
