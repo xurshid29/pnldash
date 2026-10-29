@@ -123,6 +123,22 @@ def run_day(key, bars, cmin, out, listing=False):
             band = m + MULT * (sum((x - m) ** 2 for x in win) / LEN) ** 0.5
         key_c = (t - 240) // cmin
         if key_c != ckey:
+            # RETEST at the candle's close (operator, CLPT 10-29: "RT should not be fired if its
+            # candle's close is under the vwap"): the first candle after the VB candle whose low came
+            # within 1% of the line closes above it → bought at that close; 'green' also needs close > open.
+            if setup and setup['live'] and setup.get('c_touch') and prev_vw and prev_c > prev_vw and k > setup['set_k']:
+                if (t - setup['set_t'] - cmin) // cmin < 6:
+                    for kind in ('close', 'green'):
+                        if setup.get(f'cc_{kind}') or (kind == 'green' and not prev_c > c_open):
+                            continue
+                        setup[f'cc_{kind}'] = True
+                        stop = setup['pull_low'] - tick(setup['pull_low'])
+                        if stop < prev_c:
+                            res = trade(bars, k - 1, prev_c, stop, horizon)
+                            out[f'cc_{kind}'].append(res + ((t - setup['set_t']), t, grade))
+                            if listing:
+                                print(f"    RETEST at the candle close ({kind}) {et_hm(t)} ET ({tash_hm(t)}) buy {prev_c:.4g} · "
+                                      f"VWAP {prev_vw:.4g} · stop {stop:.4g} → {res[0]} {res[1] * 100:+.1f}%")
             if fired:   # the VB candle just closed: a new setup, replacing the last one
                 setup = dict(high=c_high, low=c_low, set_k=k, set_t=t, vb_t=vb_t, live=True, stop_done=False,
                              pull_low=None, rt={}, cancelled_at=None)
@@ -141,6 +157,8 @@ def run_day(key, bars, cmin, out, listing=False):
             c_high, c_low = max(c_high, h), min(c_low, l)
         if setup and setup['live'] and k >= setup['set_k'] and vw:
             setup['pull_low'] = l if setup['pull_low'] is None else min(setup['pull_low'], l)
+            if l <= vw * 1.01:
+                setup['c_touch'] = True
             # BUY STOP over the VB candle's high (the v25 BREAK)
             trig = setup['high'] + tick(setup['high'])
             if not setup['stop_done'] and h >= trig:
@@ -191,8 +209,12 @@ def stats(res):
     pnl = [r[1] * 100 for r in res]
     risk = statistics.median(r[2] * 100 for r in res)
     rr = [r[1] / r[2] for r in res if r[2] > 0]
+    # a stop a hair under the entry turns one gap through it into dozens of R: the R average
+    # also excludes stops under 0.5% away (2026-10-30, the candle-close retest)
+    rr5 = [r[1] / r[2] for r in res if r[2] >= 0.005]
     return (f"{n:>6,}  {args.rr:g}R first {win:5.1%}  stop {stop:5.1%}  avg {statistics.mean(pnl):+6.2f}%  "
-            f"made money {sum(p > 0 for p in pnl) / n:5.1%}  median risk {risk:4.1f}%  avg {statistics.mean(rr):+5.2f}R")
+            f"made money {sum(p > 0 for p in pnl) / n:5.1%}  median risk {risk:4.1f}%  avg {statistics.mean(rr):+5.2f}R"
+            f"  (stops ≥0.5%: {statistics.mean(rr5) if rr5 else 0:+5.2f}R, n {len(rr5):,})")
 
 
 def rows_of(cmin, ticker=None, day=None):
@@ -224,17 +246,19 @@ if args.list:
     tk, day = args.list
     for cmin in args.candle:
         print(f"\n=== {tk} {day}, {cmin}m candles, {args.bb}m band ===")
-        out = {'cross': [], 'setups': [], 'buystop': [], 'retest': defaultdict(list)}
+        out = {'cross': [], 'setups': [], 'buystop': [], 'retest': defaultdict(list), 'cc_close': [], 'cc_green': []}
         each_day(rows_of(cmin, tk, day), lambda key, b: run_day(key, b, cmin, out, listing=True))
     sys.exit(0)
 
 for cmin in args.candle:
-    out = {'cross': [], 'setups': [], 'buystop': [], 'retest': defaultdict(list)}
+    out = {'cross': [], 'setups': [], 'buystop': [], 'retest': defaultdict(list), 'cc_close': [], 'cc_green': []}
     each_day(rows_of(cmin), lambda key, b: run_day(key, b, cmin, out))
     ns = len(out['setups'])
     print(f"\n=== {cmin}m candles, {args.bb}m band: {len(out['cross']):,} VB crosses, {ns:,} VB candles ===")
     print(f"  CROSS (buy the VB bar, stop the candle's low so far)        {stats(out['cross'])}")
     print(f"  BUY STOP over the VB candle's high (stop its low)            {stats(out['buystop'])}")
+    print(f"  RETEST at the candle's close (touched within 1%, closed above) {stats(out['cc_close'])}")
+    print(f"  RETEST at the candle's close, a green candle                  {stats(out['cc_green'])}")
     for wait in WAITS:
         for tch in TOUCHES:
             for sv in STOPS:

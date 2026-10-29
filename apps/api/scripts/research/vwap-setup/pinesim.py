@@ -657,7 +657,9 @@ VB = dict(candle_min=5,       # vbCandleTf: the candle's timeframe, minutes (the
           rt=True,            # v28 vbRtOn: the retest after the VB candle
           rt_cancel=True,     # vbRtCancel: a candle closing under the lowest crossed line cancels it (v26 rule)
           rt_near=1.0,        # vbRtNear: price back within % above the line (0 = to it or under it)
-          rt_wait=6)          # vbRtWait: within N candles of the VB candle's close (0 = until cancelled)
+          rt_wait=6,          # vbRtWait: within N candles of the VB candle's close (0 = until cancelled)
+          rt_when='close',    # v30 vbRtWhen: 'close' = at the close of the candle that came back, if above the line; 'bounce' = v28
+          bar_sec=30)         # the bars' length: a bar ending at or after the candle's end closes it (time_close == time_close(tf))
 
 
 def _bucket(t, minutes):
@@ -691,7 +693,9 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     rule, the VB candle's own close included), so do p['rt_wait'] candles and a new day — except (v29)
     with candles of 4h or longer (p['candle_min'] >= 240), where a retest of the month / year lines
     carries over the day's end (a VB candle closing at 20:00 arms it on the next day's first bar).
-    v29's lanes are separate calls with their own candle_min / bb_min / lines."""
+    v29's lanes are separate calls with their own candle_min / bb_min / lines.
+    v30 (p['rt_when'] 'close', the default): no bounce test; at the close of a candle after the touch
+    (judged on its last bar), a close above the line fires the RETEST at that bar, price = that close."""
     p = dict(VB, **(params or {}))
     n_len = p['length']
     lines = ('session', 'month', 'year')
@@ -707,6 +711,8 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     carry = p['candle_min'] >= 240   # v29
     pv30 = v30 = 0.0   # v28: today's Σ hlc3 × volume and Σ volume over the bars
     prev_vw = {}    # v26: the last bar's lines (where they stood at the candle's close)
+    prev_t = prev_in_win = None   # v30: the last bar's time and window (a candle's closing bar)
+    end_seen = False              # v30: the forming candle's closing bar has been judged
     for b in bars:
         x = b['t'].astimezone(ET)
         new_day = x.date() != day
@@ -722,6 +728,14 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
             upper = m + p['mult'] * (sum((y - m) ** 2 for y in win) / n_len) ** 0.5
         key = _bucket(b['t'], p['candle_min'])
         if new_day or key != c_key or c_open is None:
+            # v30: a candle whose closing bar was missing, judged on its last bar (30 s late, like the script)
+            if p['rt_when'] == 'close' and rt and rt['armed'] and rt['touched'] and not end_seen and c_open is not None:
+                lns = [prev_vw[ln] for ln in rt['lines'] if prev_vw.get(ln) is not None]
+                if lns and c_close > max(lns) and prev_in_win:
+                    rt['armed'], rt_n = False, rt_n + 1
+                    if retests is not None:
+                        retests.append((b['t'], c_close, rt['low'] - _tick(rt['low']), '+'.join(rt['lines']), rt_n))
+            end_seen = False
             if new_day:
                 rt_n = 0
                 if rt and rt['armed'] and ('session' in rt['lines'] or not carry):
@@ -787,11 +801,19 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
             rt['low'] = b['l'] if rt['low'] is None else min(rt['low'], b['l'])
             if not rt['touched'] and line is not None and b['l'] <= line * (1 + p['rt_near'] / 100):
                 rt['touched'] = True
-            if rt['touched'] and in_win and line is not None and b['c'] > line and b['c'] > b['o']:
+            c_end = min(key + datetime.timedelta(minutes=p['candle_min']), x.replace(hour=20, minute=0, second=0, microsecond=0))
+            ends_now = b['t'].astimezone(ET) + datetime.timedelta(seconds=p['bar_sec']) >= c_end
+            go = (ends_now and b['c'] > line) if p['rt_when'] == 'close' and line is not None else (
+                line is not None and b['c'] > line and b['c'] > b['o'])
+            if rt['touched'] and in_win and line is not None and go:
                 rt['armed'], rt_n = False, rt_n + 1
                 if retests is not None:
                     retests.append((b['t'], b['c'], rt['low'] - _tick(rt['low']), '+'.join(rt['lines']), rt_n))
+        c_end_b = min(key + datetime.timedelta(minutes=p['candle_min']), x.replace(hour=20, minute=0, second=0, microsecond=0))
+        if b['t'].astimezone(ET) + datetime.timedelta(seconds=p['bar_sec']) >= c_end_b:
+            end_seen = True
         prev_vw = dict(vw)
+        prev_t, prev_in_win = b['t'], in_win
         if trace is not None:
             trace.append((b['t'], dict(vw), upper))
     return out
@@ -843,8 +865,8 @@ def selftest_vb():
     pull = [(1.10, 1.10, 1.06, 1.06), (1.06, 1.06, 1.00, 1.005), (1.005, 1.04, 1.005, 1.035)] + [(1.035, 1.04, 1.03, 1.04)] * 7
     day4 = bars_of(d4, base4 + vb4) + bars_of(d4 + dt.timedelta(minutes=45), pull)
     r30, rch = [], []
-    simulate_vb_cross(day4, retests=r30)
-    simulate_vb_cross(day4, params=dict(vwap='chart'), retests=rch)
+    simulate_vb_cross(day4, params=dict(rt_when='bounce'), retests=r30)
+    simulate_vb_cross(day4, params=dict(vwap='chart', rt_when='bounce'), retests=rch)
     got30 = [(e[0].strftime('%H:%M:%S'), e[1], round(e[2], 4), e[3], e[4]) for e in r30]
     ok_rt = (rts == [] and got30 == [('04:46:00', 1.035, 0.99, 'session', 1)]
              and [(e[0].strftime('%H:%M:%S'), e[4]) for e in rch] == [('04:46:00', 1)])
@@ -853,12 +875,12 @@ def selftest_vb():
     # that closes under the line (1.00) cancels it before a bounce in the next candle.
     late = bars_of(d4, base4 + vb4 + [1.10] * 10) + bars_of(d4 + dt.timedelta(minutes=50), pull)
     w1, w0 = [], []
-    simulate_vb_cross(late, params=dict(rt_wait=1), retests=w1)
-    simulate_vb_cross(late, params=dict(rt_wait=0), retests=w0)
+    simulate_vb_cross(late, params=dict(rt_wait=1, rt_when='bounce'), retests=w1)
+    simulate_vb_cross(late, params=dict(rt_wait=0, rt_when='bounce'), retests=w0)
     under = bars_of(d4, base4 + vb4 + [1.06, 1.03, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00]) \
         + bars_of(d4 + dt.timedelta(minutes=50), [(1.00, 1.04, 1.00, 1.035)] * 3)
     cx = []
-    simulate_vb_cross(under, retests=cx)
+    simulate_vb_cross(under, params=dict(rt_when='bounce'), retests=cx)
     ok_rt2 = w1 == [] and [e[0].strftime('%H:%M:%S') for e in w0] == ['04:51:00'] and cx == []
     print('v28 RETEST wait / cancel:', '| wait 1:', w1, '| no limit:', [e[0].strftime('%H:%M:%S') for e in w0],
           '| a candle closing under the line:', cx, '→', 'OK' if ok_rt2 else 'UNEXPECTED')
@@ -891,14 +913,29 @@ def selftest_vb():
     dayB = bars_of(dA.replace(day=28, hour=4), [(1.08, 1.08, 1.08, 1.08), (1.06, 1.06, 1.025, 1.03),
                                                  (1.03, 1.05, 1.03, 1.045)] + [(1.045, 1.05, 1.04, 1.05)] * 7)
     month = {'month': (1.02 * 1_000_000, 1_000_000.0)}
-    H4 = dict(candle_min=240, bb_min=10, lines=('month',))
+    H4 = dict(candle_min=240, bb_min=10, lines=('month',), rt_when='bounce')
     cr4, rt4, rtS = [], [], []
     cr4 = [(e[0].strftime('%m-%d %H:%M:%S'), e[6]) for e in simulate_vb_cross(dayA + dayB, params=H4, before_of=lambda b: month, retests=rt4)]
     simulate_vb_cross(dayA + dayB, params=dict(H4, lines=('session',)), retests=rtS)
     got4 = [(e[0].strftime('%m-%d %H:%M:%S'), round(e[2], 4), e[3]) for e in rt4]
     ok_4h = cr4 == [('10-27 16:00:30', 'month')] and got4 == [('10-28 04:01:00', 1.015, 'month')] and rtS == []
     print('v29 4h month-line retest carries overnight:', cr4, got4, '| session line:', rtS, '→', 'OK' if ok_4h else 'UNEXPECTED')
-    ok_lv = ok_rt and ok_rt2 and ok_30 and ok_4h
+    # v30, at the candle's close: day4's 04:45 candle came back (the 1.00 dip) and closes 1.04 above
+    # the line → RETEST at its closing bar 04:49:30, price 1.04, the same stop. CLPT 10-29: a 30s bounce
+    # mid-candle (bounce mode fires there), then the candle closes 1.00 under the line → no RETEST.
+    c30 = []
+    simulate_vb_cross(day4, retests=c30)
+    got_c = [(e[0].strftime('%H:%M:%S'), e[1], round(e[2], 4)) for e in c30]
+    clpt = bars_of(d4, base4 + vb4) + bars_of(d4 + dt.timedelta(minutes=45),
+                                               [(1.10, 1.10, 1.00, 1.005), (1.005, 1.04, 1.005, 1.035)] + [(1.035, 1.035, 0.99, 1.00)] * 8)
+    cl_close, cl_bounce = [], []
+    simulate_vb_cross(clpt, retests=cl_close)
+    simulate_vb_cross(clpt, params=dict(rt_when='bounce'), retests=cl_bounce)
+    ok_c = (got_c == [('04:49:30', 1.04, 0.99)] and cl_close == []
+            and [e[0].strftime('%H:%M:%S') for e in cl_bounce] == ['04:45:30'])
+    print('v30 RETEST at the candle close:', got_c, '| CLPT-like (bounce, then a close under):', cl_close,
+          '| bounce mode fired at', [e[0].strftime('%H:%M:%S') for e in cl_bounce], '→', 'OK' if ok_c else 'UNEXPECTED')
+    ok_lv = ok_rt and ok_rt2 and ok_30 and ok_4h and ok_c
 
     # Day 2: 2m closes alternating 0.97 / 1.01 → VWAP ≈ 0.99, band ≈ 1.03. A candle opening at
     # 1.00 (1% over the VWAP, under the band) and running to 1.10.

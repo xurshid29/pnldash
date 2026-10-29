@@ -443,8 +443,12 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v29', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v30', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
+    // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
+    'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
+    'if rtAtClose and vRtArmed and vRtTouch and not vEndSeen and not na(vOpen)', 'options = ["Candle close", "30s bounce"]',
+    'str.tostring(na(lPx) ? close : lPx, format.mintick)', 'vb4Bb, v4RtPx), alert.freq_once_per_bar_close)',
     'vbHighest(vRtS, vRtM, vRtY, vVw, vMw, vYw)', 'vbRtWait > 0 and vRtAge >= vbRtWait', 'text = "RT"',
     '" | vwap " + (use30 ? "30s" : "chart")', 'options = ["30s bars", "Chart bars"]',
     'request.security_lower_tf(syminfo.tickerid, lower30 ? "30S" : timeframe.period, [hlc3 * volume, volume])',
