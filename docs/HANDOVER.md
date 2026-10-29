@@ -234,7 +234,8 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **Watch v29 live** after the operator's paste: lane rows (`1h/10m`, `4h/30m`, `1D/1h`, M / Y)
+1. **Watch v29 live.** Pasted and alerts recreated by the operator on 10-30 ("everything is working as
+   expected" — it compiled). Then: lane rows (`1h/10m`, `4h/30m`, `1D/1h`, M / Y)
    announce off Momentum; check one 1h lane CROSS against a 1h chart, and that the 30s alert
    doesn't hit TradingView's calculation limit with four lanes.
    **Before that, v28:** The operator pasted it, reset the settings and recreated the alerts on 10-29
