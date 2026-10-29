@@ -226,7 +226,9 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **Watch the v28 paste.** The operator uses `vbTol` 0 (10-29, AIOK), now the default.
+1. **Watch v28 live.** The operator pasted it, reset the settings and recreated the alerts on 10-29
+   (~02:30 ET): "Everything is working as expected" — it compiled. The first RETEST rows can only
+   come from 04:00 ET. The operator uses `vbTol` 0 (10-29, AIOK), now the default.
    After the paste: rows say `vwap 30s`, CROSS / RETEST say `5m/45s`, RETESTs arrive
    (check one against the 30s chart: back at the line, a green close above it, the
    stop under the pullback low), and LEVEL / BREAK 400s stop (a v27 alert still sends
