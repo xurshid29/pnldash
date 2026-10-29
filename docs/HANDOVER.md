@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-29 (Thu, 16:40 ET), last code commit `850fcdc` (script v31, deployed 10-29 ~16:35 ET)
+## START HERE — state at 2026-10-29 (Thu, 16:40 ET), last code commit `850fcdc` (script v30, deployed 10-29 ~16:30 ET)
 
 Later commits are docs and research only. Research-only commits under `apps/**`
 are pushed with `[skip ci]` so they don't redeploy.
@@ -25,7 +25,7 @@ are pushed with `[skip ci]` so they don't redeploy.
   the dashboard is that clock**. Date pickers stay on the ET trading day.
 
 **Their edge is setups that TradingView detects**, delivered by our webhook from
-one Pine script (**v31**; the operator is on v29 until they paste v31 — it carries v30 — and recreate both alerts) running as two watchlist alerts (1m +
+one Pine script (**v30**, pasted by the operator 10-29 16:31 ET = their TradingView save 30; **our version numbers now follow TradingView's save counter**, so the next one is v31) running as two watchlist alerts (1m +
 30s). **Since v27 it has two setups, the ones the operator kept after trying all four
 (10-28).** Their trading layout (10-29): a 5m chart for the VB and a 30s chart for the
 entry, side by side.
@@ -106,16 +106,16 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    outstanding are kept with `float_m` null (10-14). Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v31** (`apps/web/src/tv/mvwap-bb-setup.pine`, ~850 lines; full
+5. **📐 TradingView script — v30** (`apps/web/src/tv/mvwap-bb-setup.pine`, ~850 lines; full
    reference `docs/vwap-setup.md`: changelog §12, gate table §7.2, PULLBACK §13, RVol
    §15, VB §16, RETEST and the VWAP source §16.9; §1–§11 and §14 are the removed
    setups' record).
-   - **v31 deployed 10-29 ~16:35 ET (`850fcdc`): fix — a lane's chart draws that lane.** The chart's lane
+   - **v30's second commit, 10-29 ~16:30 ET (`850fcdc`; briefly called v31): fix — a lane's chart draws that lane.** The chart's lane
      choice read `timeframe.period`, which is 30S inside the replay request, so 1h / 4h / 1D charts drew
      the main 5m VB's session crosses and retests (CLPT 1h, 10-29). Now `timeframe.main_period`.
      Alerts were never affected. Gotcha for any future replay code: never read `timeframe.period` in
      an expression that runs inside `request.*`.
-   - **v30 deployed 10-29 ~16:20 ET (`1c46d01`): RETEST at the candle's close.** The operator (CLPT
+   - **v30's first commit, 10-29 ~16:20 ET (`1c46d01`): RETEST at the candle's close.** The operator (CLPT
      10-29): "RT should not be fired if its candle's close is under the vwap". Default "VB retest
      fires: Candle close" — the candle that came back must close above the line; fired on its closing
      30s bar; price = the candle close; "30s bounce" = v28. Measured: −0.84% vs −0.92% a trade (5m),
@@ -356,11 +356,13 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 
 These are the detailed notes behind START HERE, kept verbatim.
 
-**2026-10-29 (16:25–16:40 ET) — SCRIPT v31: THE LANE CHART FIX (deployed ~16:35 ET, `850fcdc`).** The operator (CLPT on a
+**2026-10-29 (16:25–16:45 ET) — SCRIPT v30, PART 2: THE LANE CHART FIX (deployed ~16:30 ET, `850fcdc`).** The operator (CLPT on a
 1h chart, lane 2 month + year only, still on v29): "Setting the chart tf to 1h, is displaying session vb and rt in that
 candle. Is it OK?" No: `vlN` (which lane the chart replays) compared `timeframe.period`, which inside
 `request.security_lower_tf` is the requested 30S → always the main 5m lane. Fixed with `timeframe.main_period`; a check
-now forbids `timeframe.period` in the lane choice. The operator skips v30 and pastes v31.
+now forbids `timeframe.period` in the lane choice. Shipped as "v31"; the operator pasted it from v29 at 16:31 ET (their
+TradingView save 30) and asked to call it v30 — so v30 = `1c46d01` + `850fcdc`, and our numbers follow TradingView's counter
+from here (next: v31).
 
 **2026-10-29 (16:00–16:25 ET) — SCRIPT v30: RETEST AT THE CANDLE'S CLOSE (deployed ~16:20 ET, `1c46d01`).** The operator
 (CLPT 10-29 screenshot, 5m): an RT on the 18:40 Tashkent candle that closed under the VWAP — "RT should not be fired if its

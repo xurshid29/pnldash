@@ -1,5 +1,6 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v31 (2026-10-29).
+// mVWAP-BB — the operator's VWAP setups. Script version: v30 (2026-10-29). Since v30 the number
+// follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
 // Two setups in one script, so the same two watchlist alerts carry both (the VWAP +
@@ -728,8 +729,8 @@ vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool 
 [v4FireS, v4FireM, v4FireY, v4Vw, v4Mw, v4Yw, v4Band, v4Open, v4DayG, v4AhG, v4VolX, v4NS, v4NM, v4NY, v4Rt, v4RtStop, v4RtS, v4RtM, v4RtY, v4RtN, v4RtPx] = vbStep(vb4Cndl, vb4Bb, vb4S, vb4M, vb4Y, vb4Ok)
 // On a candle timeframe's chart: the same 30s bars inside each candle, for the lane whose candle
 // timeframe the chart is (the main VB first) — one replay, whichever chart it is.
-// v31: the choice reads timeframe.main_period, the chart's timeframe even inside the replay's request.
-// v29–v30 read timeframe.period, which inside request.security_lower_tf is the requested 30S, so a
+// v30: the choice reads timeframe.main_period, the chart's timeframe even inside the replay's request.
+// v29 read timeframe.period, which inside request.security_lower_tf is the requested 30S, so a
 // lane's chart (CLPT 1h, 10-29) replayed the main 5m VB — its session crosses and retests — instead.
 vlN    = timeframe.main_period == vbCandleTf ? 1 : vb2On and timeframe.main_period == vb2Cndl ? 2 : vb3On and timeframe.main_period == vb3Cndl ? 3 : vb4On and timeframe.main_period == vb4Cndl ? 4 : 1
 vlCndl = vlN == 2 ? vb2Cndl : vlN == 3 ? vb3Cndl : vlN == 4 ? vb4Cndl : vbCandleTf
