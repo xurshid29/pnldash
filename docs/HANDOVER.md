@@ -208,7 +208,10 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **Watch the v27 paste.** After it: CROSS rows say `5m/45s`, PULLBACKs keep coming,
+1. **Watch the v27 paste.** The operator sets **`vbTol` = 0** (10-29, AIOK: "I'll use it
+   with 0 value" — a 5m candle opening ~0.9% over the session VWAP counted under 2%);
+   **make 0 the default in the next script version** so a Reset settings keeps it.
+   After the paste: CROSS rows say `5m/45s`, PULLBACKs keep coming,
    and nothing gets 400 (a stale v26 alert with RECLAIM / breakouts switched off sends
    nothing removed either). If the paste fails to compile, the error message is the
    lead: v27 only deleted code, and the kept sections are byte-identical to v26.
@@ -224,7 +227,10 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    - PULLBACK by line and touch, the B+ cap exemption, **the v24 month / year
      low-touch trial** (`px_pct` / `ypx_pct` > 5 vs the rest);
    - **CROSS and BREAK** (~2 weeks of rows): trigger rate, BREAK vs CROSS, by line /
-     timeframe / Momentum, then the caps, `vbTol`, the +30% exemption.
+     timeframe / Momentum, then the caps, `vbTol`, the +30% exemption. Split by the
+     alert's settings: candle / band timeframes changed by day (see 5. above), and
+     `vbTol` was 2 until the v27 alerts, 0 after. A CROSS row's `open` vs its line and
+     `upper` shows which crosses only the 2% tolerance let in.
    - RECLAIM and the breakout are removed (v27); their rows to 10-22 are still in
      `tier_events` for any study.
 3. **Overdue:** re-grade the A+…D grade (`research/momentum-grade/`, never hand-edit
@@ -313,6 +319,12 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-28 (23:15–23:25 ET) — AIOK 5m: TWO "ODD" VBs, BOTH BY THE RULE; `vbTol` → 0 ON THE OPERATOR'S CHART.** 23:00
+Tashkent candle: opened ~$17.18, ~0.9% over the session VWAP $17.02 (from the 1m alert rows), under the 45S band → a VB
+under `vbTol` 2 ("price sitting on VWAP"). 22:40 candle: crossed both at a 30s close, then the 45S band rose above its
+close (the plotted band is the one at the candle's last 30s close). The operator set `vbTol` 0 and keeps it. Not
+measured (the 10-22 research export was cleaned up with its scratchpad; re-export ~5 min outside 07:00–11:00 ET).
 
 **2026-10-28 (22:25–23:05 ET) — SCRIPT v27: TWO SETUPS (deployed ~22:55 ET, `c49c419`).** The operator: "I tested all
 the vwap strategies which we built, and I liked the most VWAP+BB Cross and Pullback to VWAP types, and currently I'm
