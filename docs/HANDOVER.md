@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-10-30
+# Session Handover — updated 2026-10-29
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-30 (Thu, 16:25 ET), last code commit `1c46d01` (script v30, deployed 10-30 ~16:20 ET)
+## START HERE — state at 2026-10-29 (Thu, 16:40 ET), last code commit `850fcdc` (script v31, deployed 10-29 ~16:35 ET)
 
 Later commits are docs and research only. Research-only commits under `apps/**`
 are pushed with `[skip ci]` so they don't redeploy.
@@ -25,8 +25,7 @@ are pushed with `[skip ci]` so they don't redeploy.
   the dashboard is that clock**. Date pickers stay on the ET trading day.
 
 **Their edge is setups that TradingView detects**, delivered by our webhook from
-one Pine script (**v30**: the alerts run what the operator last pasted until they paste
-v30 and recreate both alerts) running as two watchlist alerts (1m +
+one Pine script (**v31**; the operator is on v29 until they paste v31 — it carries v30 — and recreate both alerts) running as two watchlist alerts (1m +
 30s). **Since v27 it has two setups, the ones the operator kept after trying all four
 (10-28).** Their trading layout (10-29): a 5m chart for the VB and a 30s chart for the
 entry, side by side.
@@ -107,16 +106,21 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    outstanding are kept with `float_m` null (10-14). Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v30** (`apps/web/src/tv/mvwap-bb-setup.pine`, ~850 lines; full
+5. **📐 TradingView script — v31** (`apps/web/src/tv/mvwap-bb-setup.pine`, ~850 lines; full
    reference `docs/vwap-setup.md`: changelog §12, gate table §7.2, PULLBACK §13, RVol
    §15, VB §16, RETEST and the VWAP source §16.9; §1–§11 and §14 are the removed
    setups' record).
-   - **v30 deployed 10-30 ~16:20 ET (`1c46d01`): RETEST at the candle's close.** The operator (CLPT
+   - **v31 deployed 10-29 ~16:35 ET (`850fcdc`): fix — a lane's chart draws that lane.** The chart's lane
+     choice read `timeframe.period`, which is 30S inside the replay request, so 1h / 4h / 1D charts drew
+     the main 5m VB's session crosses and retests (CLPT 1h, 10-29). Now `timeframe.main_period`.
+     Alerts were never affected. Gotcha for any future replay code: never read `timeframe.period` in
+     an expression that runs inside `request.*`.
+   - **v30 deployed 10-29 ~16:20 ET (`1c46d01`): RETEST at the candle's close.** The operator (CLPT
      10-29): "RT should not be fired if its candle's close is under the vwap". Default "VB retest
      fires: Candle close" — the candle that came back must close above the line; fired on its closing
      30s bar; price = the candle close; "30s bounce" = v28. Measured: −0.84% vs −0.92% a trade (5m),
      −0.26R vs −0.31R. Paste + recreate both alerts, no Reset.
-   - **v29 deployed 10-30 ~15:52 ET (`642ec88`): VB lanes (§16.10).** The operator: "for
+   - **v29 deployed 10-29 ~15:52 ET (`642ec88`): VB lanes (§16.10).** The operator: "for
      longer terms (1h, 4h, 1D), I'd like to use VB only with monthly vwap (plus, yearly)". Lanes
      2–4 ride the same 30s alert, each its own candle / band / lines (defaults 1h/10m, 4h/30m,
      1D/1h, month + year only); a VB on 60m+ candles announces off Momentum (`vb_long_min`, the
@@ -239,7 +243,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **Watch v29 live.** Pasted and alerts recreated by the operator on 10-30 ("everything is working as
+1. **Watch v29 live.** Pasted and alerts recreated by the operator on 10-29 ("everything is working as
    expected" — it compiled). Then: lane rows (`1h/10m`, `4h/30m`, `1D/1h`, M / Y)
    announce off Momentum; check one 1h lane CROSS against a 1h chart, and that the 30s alert
    doesn't hit TradingView's calculation limit with four lanes.
@@ -352,14 +356,20 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 
 These are the detailed notes behind START HERE, kept verbatim.
 
-**2026-10-30 (16:00–16:25 ET) — SCRIPT v30: RETEST AT THE CANDLE'S CLOSE (deployed ~16:20 ET, `1c46d01`).** The operator
+**2026-10-29 (16:25–16:40 ET) — SCRIPT v31: THE LANE CHART FIX (deployed ~16:35 ET, `850fcdc`).** The operator (CLPT on a
+1h chart, lane 2 month + year only, still on v29): "Setting the chart tf to 1h, is displaying session vb and rt in that
+candle. Is it OK?" No: `vlN` (which lane the chart replays) compared `timeframe.period`, which inside
+`request.security_lower_tf` is the requested 30S → always the main 5m lane. Fixed with `timeframe.main_period`; a check
+now forbids `timeframe.period` in the lane choice. The operator skips v30 and pastes v31.
+
+**2026-10-29 (16:00–16:25 ET) — SCRIPT v30: RETEST AT THE CANDLE'S CLOSE (deployed ~16:20 ET, `1c46d01`).** The operator
 (CLPT 10-29 screenshot, 5m): an RT on the 18:40 Tashkent candle that closed under the VWAP — "RT should not be fired if its
 candle's close is under the vwap". CLPT itself sent no VB / RT (it reached our screen at 09:49 ET, after the 09:30 VB; the
 markers were the chart's replay). Measured first: the candle-close entry beats the 30s bounce a little (table in
 `docs/vwap-setup.md` §16.9); a green-candle requirement is worse. Built as the default with the v28 rule as an option.
 **The operator pastes v30 and recreates both alerts.**
 
-**2026-10-30 (15:30–15:55 ET) — SCRIPT v29: VB LANES (deployed ~15:52 ET, `642ec88`).** The operator asked whether the
+**2026-10-29 (15:30–15:55 ET) — SCRIPT v29: VB LANES (deployed ~15:52 ET, `642ec88`).** The operator asked whether the
 VB works on 1h / 4h ("chart timeframe 1h, indicator vb candle 1h and band 5min or 10min, and alert tfs 30s and 1min") —
 yes mechanically, but one alert = one VB timeframe, the Momentum-only rule silences off-screen names, and the daily reset
 kills 4h / 1D retests; the 1h / 4h numbers from our data are day-only (`vb_retest_study.py --candle 60 240`). Then: "for
