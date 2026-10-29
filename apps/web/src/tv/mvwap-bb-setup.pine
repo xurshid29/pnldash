@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v30 (2026-10-30).
+// mVWAP-BB — the operator's VWAP setups. Script version: v31 (2026-10-29).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
 // Two setups in one script, so the same two watchlist alerts carry both (the VWAP +
@@ -84,7 +84,7 @@ vwSrc      = input.string("30s bars", "VWAP lines from (v28): 30s bars — the s
 vbRtNear   = input.float(1.0,         "VB retest: price back within % above the line (0 = to the line or under it)", minval = 0, group = "VWAP + BB cross (v21)")
 vbRtWait   = input.int(6,             "VB retest: within N candles of the VB candle's close (0 = until cancelled)", minval = 0, group = "VWAP + BB cross (v21)")
 // v29 inputs go last: three more VB timeframes ("lanes") inside the same alert, for longer trades on
-// the month and year lines (operator, 10-30: "for longer terms (1h, 4h, 1D), I'd like to use VB only
+// the month and year lines (operator, 10-29: "for longer terms (1h, 4h, 1D), I'd like to use VB only
 // with monthly vwap (plus, yearly)"). Each lane has its own candle, band and lines; the rest (BB
 // length and StdDev, tolerance, gainers, the retest, the alert timeframe) is shared with the main VB.
 vb2On      = input.bool(true,         "Lane 2", inline = "vb2", group = "VB lanes (v29)")
@@ -728,7 +728,10 @@ vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool 
 [v4FireS, v4FireM, v4FireY, v4Vw, v4Mw, v4Yw, v4Band, v4Open, v4DayG, v4AhG, v4VolX, v4NS, v4NM, v4NY, v4Rt, v4RtStop, v4RtS, v4RtM, v4RtY, v4RtN, v4RtPx] = vbStep(vb4Cndl, vb4Bb, vb4S, vb4M, vb4Y, vb4Ok)
 // On a candle timeframe's chart: the same 30s bars inside each candle, for the lane whose candle
 // timeframe the chart is (the main VB first) — one replay, whichever chart it is.
-vlN    = timeframe.period == vbCandleTf ? 1 : vb2On and timeframe.period == vb2Cndl ? 2 : vb3On and timeframe.period == vb3Cndl ? 3 : vb4On and timeframe.period == vb4Cndl ? 4 : 1
+// v31: the choice reads timeframe.main_period, the chart's timeframe even inside the replay's request.
+// v29–v30 read timeframe.period, which inside request.security_lower_tf is the requested 30S, so a
+// lane's chart (CLPT 1h, 10-29) replayed the main 5m VB — its session crosses and retests — instead.
+vlN    = timeframe.main_period == vbCandleTf ? 1 : vb2On and timeframe.main_period == vb2Cndl ? 2 : vb3On and timeframe.main_period == vb3Cndl ? 3 : vb4On and timeframe.main_period == vb4Cndl ? 4 : 1
 vlCndl = vlN == 2 ? vb2Cndl : vlN == 3 ? vb3Cndl : vlN == 4 ? vb4Cndl : vbCandleTf
 vlBb   = vlN == 2 ? vb2Bb : vlN == 3 ? vb3Bb : vlN == 4 ? vb4Bb : vbBbTf
 vlS    = vlN == 2 ? vb2S : vlN == 3 ? vb3S : vlN == 4 ? vb4S : vbSession
