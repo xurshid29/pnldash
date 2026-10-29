@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-30 (Thu, 15:55 ET), last code commit `642ec88` (script v29, deployed 10-30 ~15:52 ET)
+## START HERE — state at 2026-10-30 (Thu, 16:25 ET), last code commit `1c46d01` (script v30, deployed 10-30 ~16:20 ET)
 
 Later commits are docs and research only. Research-only commits under `apps/**`
 are pushed with `[skip ci]` so they don't redeploy.
@@ -25,8 +25,8 @@ are pushed with `[skip ci]` so they don't redeploy.
   the dashboard is that clock**. Date pickers stay on the ET trading day.
 
 **Their edge is setups that TradingView detects**, delivered by our webhook from
-one Pine script (**v29**: the alerts run what the operator last pasted until they paste
-v29 and recreate both alerts) running as two watchlist alerts (1m +
+one Pine script (**v30**: the alerts run what the operator last pasted until they paste
+v30 and recreate both alerts) running as two watchlist alerts (1m +
 30s). **Since v27 it has two setups, the ones the operator kept after trying all four
 (10-28).** Their trading layout (10-29): a 5m chart for the VB and a 30s chart for the
 entry, side by side.
@@ -107,10 +107,15 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    outstanding are kept with `float_m` null (10-14). Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v29** (`apps/web/src/tv/mvwap-bb-setup.pine`, 832 lines; full
+5. **📐 TradingView script — v30** (`apps/web/src/tv/mvwap-bb-setup.pine`, ~850 lines; full
    reference `docs/vwap-setup.md`: changelog §12, gate table §7.2, PULLBACK §13, RVol
    §15, VB §16, RETEST and the VWAP source §16.9; §1–§11 and §14 are the removed
    setups' record).
+   - **v30 deployed 10-30 ~16:20 ET (`1c46d01`): RETEST at the candle's close.** The operator (CLPT
+     10-29): "RT should not be fired if its candle's close is under the vwap". Default "VB retest
+     fires: Candle close" — the candle that came back must close above the line; fired on its closing
+     30s bar; price = the candle close; "30s bounce" = v28. Measured: −0.84% vs −0.92% a trade (5m),
+     −0.26R vs −0.31R. Paste + recreate both alerts, no Reset.
    - **v29 deployed 10-30 ~15:52 ET (`642ec88`): VB lanes (§16.10).** The operator: "for
      longer terms (1h, 4h, 1D), I'd like to use VB only with monthly vwap (plus, yearly)". Lanes
      2–4 ride the same 30s alert, each its own candle / band / lines (defaults 1h/10m, 4h/30m,
@@ -192,7 +197,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
      - Quiet rows are stored (`quiet: true`) and graded. LEVEL / BREAK get 400 since v28.
      - Telegram slugs `tv_cross`, `tv_retest`.
    - **Contract and replica:** `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts`
-     (**281 checks** since v29, incl. rejecting the removed messages);
+     (**287 checks** since v30, incl. rejecting the removed messages);
      `research/vwap-setup/pinesim.py` mirrors PULLBACK and VB (`python3 pinesim.py`
      self-tests) and keeps the removed setups' simulators (v26 logic) for research. **Change procedure:** version bump, mirror in pinesim,
      extend the checks, changelog row, deploy (the server must parse new messages
@@ -346,6 +351,13 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-30 (16:00–16:25 ET) — SCRIPT v30: RETEST AT THE CANDLE'S CLOSE (deployed ~16:20 ET, `1c46d01`).** The operator
+(CLPT 10-29 screenshot, 5m): an RT on the 18:40 Tashkent candle that closed under the VWAP — "RT should not be fired if its
+candle's close is under the vwap". CLPT itself sent no VB / RT (it reached our screen at 09:49 ET, after the 09:30 VB; the
+markers were the chart's replay). Measured first: the candle-close entry beats the 30s bounce a little (table in
+`docs/vwap-setup.md` §16.9); a green-candle requirement is worse. Built as the default with the v28 rule as an option.
+**The operator pastes v30 and recreates both alerts.**
 
 **2026-10-30 (15:30–15:55 ET) — SCRIPT v29: VB LANES (deployed ~15:52 ET, `642ec88`).** The operator asked whether the
 VB works on 1h / 4h ("chart timeframe 1h, indicator vb candle 1h and band 5min or 10min, and alert tfs 30s and 1min") —

@@ -150,3 +150,17 @@ python vb_retest_study.py rows.csv.gz --candle 5 --list AIOK 2026-10-28
 Limits: 1m bars from 20s snapshots (quick wicks to the line can be missed, and the alert uses 30s bars);
 our VWAP starts when a name reaches our screen (AIOK 10-28: ~$17.20 against TradingView's $17.02, which
 shifted its VB candles by one and cancelled the 22:40 one); the session line only; ideal fills.
+
+### At the candle's close (2026-10-30, script v30)
+
+The operator (CLPT 10-29): "RT should not be fired if its candle's close is under the vwap".
+`vb_retest_study.py` now also enters at the close of the first candle after the VB candle that came
+within 1% of the line and closed above it (`cc_close`; `cc_green` also needs a green candle). The R
+average also excludes stops under 0.5% away: a candle closing just above its low leaves a stop a
+hair under the entry, and one gap through it counts as dozens of R.
+
+| | 5m: trades | avg | R (stops ≥ 0.5%) | stopped | 10m: avg | R |
+|---|---:|---:|---:|---:|---:|---:|
+| first green 1m close above the line (v28) | 2,718 | −0.92% | −0.31R | 63% | −0.91% | −0.25R |
+| **at the candle's close, closed above (v30)** | 2,297 | **−0.84%** | **−0.26R** | 57% | **−0.83%** | **−0.18R** |
+| at the candle's close, green | 1,522 | −1.44% | −0.26R | 53% | −1.21% | −0.18R |
