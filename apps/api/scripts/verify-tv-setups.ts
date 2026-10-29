@@ -2,13 +2,16 @@
 // Run:  npx tsx scripts/verify-tv-setups.ts
 // Pins the message contract with the Pine script (apps/web/src/tv/
 // mvwap-bb-setup.pine) and the duplicate gate that keeps the phone usable.
+// Since script v27 (2026-10-28) the script has two setups, PULLBACK and the VWAP +
+// BB cross; RECLAIM (FORMING / READY / GO) and the BB breakout (TOUCH / BREAKOUT /
+// TRIGGERED) were removed, and their messages are rejected.
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
-  parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, goStrength, lineTokens,
-  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, BREAKOUT_STAGES, boStrong, type TvSetupSignal,
+  parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, lineTokens,
+  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -17,80 +20,55 @@ function check(name: string, cond: boolean, detail = ''): void {
   else { failures++; console.error(`  ✗ ${name}${detail ? ` — ${detail}` : ''}`); }
 }
 
-console.log('Parse — the Pine alert() message');
+console.log('Parse — common fields');
 {
-  const s = parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1');
+  const s = parseTvMessage('PULLBACK AIXI 1.48 | sVWAP 1.45 (+2.1%) | mVWAP 1.57 (-5.7%) | line session | touch 1 | day high +41% | tf 1');
   check('parses', s != null);
-  check('stage/ticker/price', s?.stage === 'ready' && s.ticker === 'AIXI' && s.price === 1.48, JSON.stringify(s));
-  check('levels', s?.mvwap === 1.57 && s.px_pct === -5.7 && s.basis === 1.49 && s.basis_pct === -5.1, JSON.stringify(s));
+  check('stage/ticker/price', s?.stage === 'pullback' && s.ticker === 'AIXI' && s.price === 1.48, JSON.stringify(s));
+  check('levels', s?.svwap === 1.45 && s.spx_pct === 2.1 && s.mvwap === 1.57 && s.px_pct === -5.7, JSON.stringify(s));
   check('day gain + timeframe', s?.day_gain === 41 && s.tf === '1', JSON.stringify(s));
-  const sub = parseTvMessage('FORMING NIVF 0.1650 | mVWAP 0.1880 (-12.2%) | basis 0.1690 (-10.1%) | day high +38% | tf 2');
-  check('sub-dollar prices keep their decimals', sub?.price === 0.165 && sub.mvwap === 0.188 && sub.basis_pct === -10.1, JSON.stringify(sub));
-  const go = parseTvMessage('GO VEEA 3.34 | mVWAP 3.21 (4.0%) | basis 3.22 (0.3%) | day high +43% | tf 30S');
-  check('GO with price above the line', go?.stage === 'go' && go.px_pct === 4 && go.basis_pct === 0.3 && go.tf === '30S', JSON.stringify(go));
-  const minus = parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (−5.7%) | basis 1.49 (−5.1%) | day high +41% | tf 1');
-  check('unicode minus reads as negative', minus?.px_pct === -5.7 && minus.basis_pct === -5.1, JSON.stringify(minus));
-  check('a v1 message has no path', s?.path === null, JSON.stringify(s));
-  const fast = parseTvMessage('READY MEDS 4.73 | mVWAP 4.94 (-4.3%) | basis 4.37 (-11.5%) | day high +0% | tf 1 | path fast');
-  check('v2 fast path', fast?.path === 'fast' && fast.basis_pct === -11.5 && fast.day_gain === 0 && fast.tf === '1', JSON.stringify(fast));
-  const base = parseTvMessage('FORMING VEEA 2.94 | mVWAP 3.06 (-4.0%) | basis 2.89 (-5.7%) | day high +101% | tf 2 | path base');
-  check('v2 base path', base?.path === 'base' && base.stage === 'forming', JSON.stringify(base));
-  const ah = parseTvMessage('READY AMOD 1.38 | mVWAP 1.42 (-2.5%) | basis 1.35 (-4.6%) | day high +20% | ah +34% | tf 1 | path base');
-  check('v3 after-hours gain', ah?.ah_gain === 34 && ah.day_gain === 20 && ah.path === 'base' && ah.tf === '1', JSON.stringify(ah));
-  check('no after-hours gain outside after hours', fast?.ah_gain === null, JSON.stringify(fast));
-  const neg = parseTvMessage('FORMING MEDS 4.47 | mVWAP 4.94 (-9.5%) | basis 4.31 (-12.8%) | day high -2% | tf 1 | path fast');
-  check('v3 negative day high', neg?.day_gain === -2, JSON.stringify(neg));
-  const legacyNeg = parseTvMessage('FORMING MEDS 4.47 | mVWAP 4.94 (-9.5%) | basis 4.31 (-12.8%) | day high +-2% | tf 1 | path fast');
-  check('v1/v2 "+-2%" reads as -2', legacyNeg?.day_gain === -2, JSON.stringify(legacyNeg));
-  const goR = parseTvMessage('GO NIVF 0.1961 | mVWAP 0.188 (4.3%) | basis 0.169 (-10.1%) | day high +38% | tf 1 | via reclaim');
-  check('v5 GO via reclaim', goR?.stage === 'go' && goR.go_via === 'reclaim' && goR.path === null, JSON.stringify(goR));
-  const goC = parseTvMessage('GO AIXI 1.78 | mVWAP 1.565 (13.7%) | basis 1.565 (0.0%) | day high +48% | tf 1 | via cross');
-  check('v5 GO via cross', goC?.go_via === 'cross', JSON.stringify(goC));
-  check('READY has no GO trigger', ah?.go_via === null, JSON.stringify(ah));
+  const sub = parseTvMessage('PULLBACK NIVF 0.1650 | sVWAP 0.1601 (+3.1%) | mVWAP 0.1880 (-12.2%) | line session | touch 1 | day high +38% | tf 2');
+  check('sub-dollar prices keep their decimals', sub?.price === 0.165 && sub.mvwap === 0.188 && sub.svwap === 0.1601, JSON.stringify(sub));
+  const minus = parseTvMessage('BROKEN AIXI 1.40 | sVWAP 1.45 (−3.4%) | mVWAP 1.57 (−10.8%) | line session | touch 1 | tf 1');
+  check('unicode minus reads as negative', minus?.spx_pct === -3.4 && minus.px_pct === -10.8, JSON.stringify(minus));
+  const ah = parseTvMessage('PULLBACK AMOD 1.38 | sVWAP 1.35 (+2.2%) | line session | touch 1 | day high +20% | ah +34% | tf 1');
+  check('v3 after-hours gain', ah?.ah_gain === 34 && ah.day_gain === 20, JSON.stringify(ah));
+  check('no after-hours gain outside after hours', s?.ah_gain === null, JSON.stringify(s));
+  const neg = parseTvMessage('BROKEN MEDS 4.47 | sVWAP 4.6 (-2.8%) | line session | touch 2 | day high -2% | tf 1');
+  check('negative day high', neg?.day_gain === -2, JSON.stringify(neg));
+  const legacyNeg = parseTvMessage('BROKEN MEDS 4.47 | sVWAP 4.6 (-2.8%) | line session | touch 2 | day high +-2% | tf 1');
+  check('the old "+-2%" spelling reads as -2', legacyNeg?.day_gain === -2, JSON.stringify(legacyNeg));
 }
 
-console.log('Parse — fallbacks and JSON');
+console.log('Parse — JSON and prefixes');
 {
-  const f = parseTvMessage('READY AIXI 1.48 | tf 1');
-  check('alertcondition() fallback', f?.stage === 'ready' && f.ticker === 'AIXI' && f.price === 1.48 && f.tf === '1' && f.mvwap == null, JSON.stringify(f));
-  const bare = parseTvMessage('go nxl');
-  check('lower-case stage, no price', bare?.stage === 'go' && bare.ticker === 'NXL' && bare.price == null, JSON.stringify(bare));
-  const pre = parseTvMessage('READY NASDAQ:AIXI 1.48');
+  const bare = parseTvMessage('held nxl');
+  check('lower-case stage, no price', bare?.stage === 'held' && bare.ticker === 'NXL' && bare.price == null, JSON.stringify(bare));
+  const pre = parseTvMessage('PULLBACK NASDAQ:AIXI 1.48');
   check('exchange prefix stripped', pre?.ticker === 'AIXI', JSON.stringify(pre));
-  const js = parseTvMessage('{"stage":"READY","ticker":"amex:soar","price":0.31,"mvwap":0.336,"basis_pct":-4.2,"tf":2,"path":"FAST"}');
-  check('JSON text body', js?.stage === 'ready' && js.ticker === 'SOAR' && js.price === 0.31 && js.basis_pct === -4.2 && js.tf === '2' && js.path === 'fast', JSON.stringify(js));
-  const obj = parseTvMessage({ stage: 'forming', ticker: 'MEDS', price: '4.41' });
-  check('pre-parsed JSON object', obj?.stage === 'forming' && obj.ticker === 'MEDS' && obj.price === 4.41, JSON.stringify(obj));
+  const js = parseTvMessage('{"stage":"PULLBACK","ticker":"amex:soar","price":0.31,"svwap":0.30,"line":"session","tf":2}');
+  check('JSON text body', js?.stage === 'pullback' && js.ticker === 'SOAR' && js.price === 0.31 && js.svwap === 0.3 && js.tf === '2', JSON.stringify(js));
+  const obj = parseTvMessage({ stage: 'cross', ticker: 'MEDS', price: '4.41' });
+  check('pre-parsed JSON object', obj?.stage === 'cross' && obj.ticker === 'MEDS' && obj.price === 4.41, JSON.stringify(obj));
 }
 
 console.log('Parse — rejects');
 {
   check('unknown stage', parseTvMessage('BUY AIXI 1.48') == null);
   check('empty body', parseTvMessage('') == null && parseTvMessage(undefined) == null && parseTvMessage({}) == null);
-  check('malformed JSON', parseTvMessage('{"stage":"READY",') == null);
-  check('implausible ticker', parseTvMessage('READY 123ABC 1.0') == null && normTicker('TOO-LONG-TICKER') == null);
-  check('array body', parseTvMessage(['READY', 'AIXI']) == null);
-}
-
-console.log('GO strength (v9)');
-{
-  const go = parseTvMessage('GO NIVF 0.1961 | mVWAP 0.188 (4.3%) | basis 0.169 (-10.1%) | day high +38% | vol 3.2x | run +8.1% | tf 2 | via reclaim');
-  check('parses volume and run-up', go?.vol_x === 3.2 && go.run_pct === 8.1 && go.go_via === 'reclaim', JSON.stringify(go));
-  const neg = parseTvMessage('GO X 1.00 | vol 0.4x | run -2.5% | tf 1 | via cross');
-  check('negative run-up', neg?.run_pct === -2.5 && neg.vol_x === 0.4, JSON.stringify(neg));
-  const morning = new Date('2026-10-02T13:30:00Z');   // 09:30 ET
-  const evening = new Date('2026-10-02T21:00:00Z');   // 17:00 ET
-  const st = goStrength(go!, morning, true);
-  check('all four checks pass', st?.score === 4 && st.max === 4 && st.morning && st.run_up === true && st.volume === true && st.on_momentum, JSON.stringify(st));
-  const weak = goStrength(neg!, evening, false);
-  check('weak GO scores 0/4', weak?.score === 0 && weak.max === 4 && !weak.morning, JSON.stringify(weak));
-  const old = goStrength(parseTvMessage('GO X 1.00 | tf 1 | via cross')!, morning, false);
-  check('v8 message: volume/run-up skipped (max 2)', old?.max === 2 && old.score === 1 && old.volume === null && old.run_up === null, JSON.stringify(old));
-  check('no strength for READY', goStrength(parseTvMessage('READY X 1.00 | vol 3x | run +9%')!, morning, true) === null);
-  const window = goStrength(go!, new Date('2026-10-02T14:31:00Z'), true);   // 10:31 ET — just past the window
-  check('10:31 ET is outside the morning window', window?.morning === false && window.score === 3, JSON.stringify(window));
-  const html = formatTvSetupAlert(go!, 'NASDAQ:NIVF', { change_pct: 30, grade: 'A+', float_m: 2 }, st);
-  check('Telegram strength line', html.includes('GO strength 4/4') && html.includes('run-up +8.1% ✓') && html.includes('volume 3.2× ✓') && html.includes('on Momentum ✓'), html);
+  check('malformed JSON', parseTvMessage('{"stage":"PULLBACK",') == null);
+  check('implausible ticker', parseTvMessage('PULLBACK 123ABC 1.0') == null && normTicker('TOO-LONG-TICKER') == null);
+  check('array body', parseTvMessage(['PULLBACK', 'AIXI']) == null);
+  // v27 removed RECLAIM and the BB breakout: a stale alert's message is unrecognised (400).
+  for (const m of ['FORMING NIVF 0.165 | mVWAP 0.188 (-12.2%) | basis 0.169 (-10.1%) | tf 2',
+    'READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base',
+    'GO NIVF 0.1961 | mVWAP 0.188 (4.3%) | basis 0.169 (-10.1%) | tf 1 | via reclaim', 'READY AIXI 1.48 | tf 1',
+    'TOUCH NWGL 0.1302 | upper 0.1305 (-0.2%) | tf 30S',
+    'BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | tf 30S',
+    'TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | tf 30S']) {
+    check(`v27: rejects ${m.split(' ')[0]}`, parseTvMessage(m) == null);
+  }
+  check('v27: rejects their JSON too', parseTvMessage({ stage: 'go', ticker: 'NXL' }) == null && parseTvMessage({ stage: 'breakout', ticker: 'X' }) == null);
 }
 
 console.log('PULLBACK setup (v10)');
@@ -99,7 +77,7 @@ console.log('PULLBACK setup (v10)');
   check('parses', pb?.stage === 'pullback' && pb.ticker === 'SAIQ' && pb.price === 6.2, JSON.stringify(pb));
   check('both lines', pb?.svwap === 6.16 && pb.spx_pct === 0.7 && pb.mvwap === 4.1 && pb.px_pct === 51.2, JSON.stringify(pb));
   check('line, touch, peak', pb?.line === 'session' && pb.touch === 2 && pb.peak_pct === 17, JSON.stringify(pb));
-  check('context', pb?.day_gain === 336 && pb.vol_x === 0.6 && pb.run_pct === -9.6 && pb.tf === '1' && pb.basis === null && pb.path === null, JSON.stringify(pb));
+  check('context', pb?.day_gain === 336 && pb.vol_x === 0.6 && pb.run_pct === -9.6 && pb.tf === '1', JSON.stringify(pb));
   const br = parseTvMessage('BROKEN SAIQ 5.98 | sVWAP 6.15 (-2.8%) | mVWAP 4.1 (+45.9%) | line session | touch 2 | day high +336% | tf 1');
   check('BROKEN under the line', br?.stage === 'broken' && br.spx_pct === -2.8 && br.touch === 2 && br.peak_pct === null, JSON.stringify(br));
   const held = parseTvMessage('HELD VEEA 3.75 | sVWAP 3.9 (-3.8%) | mVWAP 3.41 (+10.0%) | line month | touch 1 | day high +98% | tf 2');
@@ -108,10 +86,8 @@ console.log('PULLBACK setup (v10)');
   check('line both', both?.line === 'both' && both.touch === 1, JSON.stringify(both));
   const nan = parseTvMessage('PULLBACK X 1.00 | sVWAP 0.97 (+3.1%) | mVWAP NaN (NaN%) | line session | touch 1 | peak +22% | day high NaN% | tf 1');
   check('a NaN month line reads as null', nan?.mvwap === null && nan.px_pct === null && nan.svwap === 0.97 && nan.day_gain === null, JSON.stringify(nan));
-  check('reclaim messages carry no pullback fields', parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | tf 1')?.line === null);
   const js = parseTvMessage({ stage: 'pullback', ticker: 'SDEV', price: 6.31, svwap: 6.035, line: 'SESSION', touch: '1' });
   check('JSON body', js?.stage === 'pullback' && js.line === 'session' && js.touch === 1 && js.svwap === 6.035, JSON.stringify(js));
-  check('no GO strength on a PULLBACK', goStrength(pb!, new Date('2026-10-05T08:08:00Z'), true) === null);
 
   const html = formatTvSetupAlert(pb!, 'NASDAQ:SAIQ', { change_pct: 340, grade: 'B+', float_m: 3.1 });
   check('Telegram: names the line', html.includes('<b>PULLBACK</b>') && html.includes('back near the session VWAP after the run — be ready'), html);
@@ -132,54 +108,22 @@ console.log('PULLBACK setup (v10)');
   check('BROKEN is its own stage → stored quietly (2026-10-05)', g.admit(br!, T0 + 70) === 'quiet');
 }
 
-console.log('Reclaim setup on the year line (v11)');
-{
-  const yr = parseTvMessage('READY SAIQ 6.5 | mVWAP 4.1 (+58.5%) | yVWAP 7.0 (-7.1%) | basis 6.3 (-10.0%) | line year | day high +336% | vol 1.2x | run +4.0% | tf 1 | path base');
-  check('parses', yr?.stage === 'ready' && yr.ticker === 'SAIQ' && yr.line === 'year' && yr.path === 'base', JSON.stringify(yr));
-  check('year line + month line', yr?.yvwap === 7 && yr.ypx_pct === -7.1 && yr.mvwap === 4.1 && yr.px_pct === 58.5, JSON.stringify(yr));
-  check('basis vs the setup line', yr?.basis === 6.3 && yr.basis_pct === -10, JSON.stringify(yr));
-  const both = parseTvMessage('GO NXL 7.2 | mVWAP 7.0 (+2.9%) | yVWAP 7.05 (+2.1%) | basis 6.9 (-1.4%) | line both | day high +60% | tf 2 | via reclaim');
-  check('GO on both lines', both?.stage === 'go' && both.line === 'both' && both.go_via === 'reclaim' && both.yvwap === 7.05, JSON.stringify(both));
-  const month = parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | yVWAP 2.9 (-49.0%) | basis 1.49 (-5.1%) | line month | day high +41% | tf 1 | path base');
-  check('month line with the year level along', month?.line === 'month' && month.ypx_pct === -49 && month.basis_pct === -5.1, JSON.stringify(month));
-  const old = parseTvMessage('READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | basis 1.49 (-5.1%) | day high +41% | tf 1 | path base');
-  check('a v10 message has no line and no year level', old?.line === null && old.yvwap === null, JSON.stringify(old));
-
-  const html = formatTvSetupAlert(yr!, 'NASDAQ:SAIQ', { change_pct: 140, grade: 'A', float_m: 3.1 });
-  check('Telegram: names the year line', html.includes('entry zone · year VWAP'), html);
-  check('Telegram: year level first', html.indexOf('yVWAP $7.00 (-7.1%)') >= 0 && html.indexOf('yVWAP $7.00') < html.indexOf('mVWAP $4.10'), html);
-  const goY = formatTvSetupAlert({ ...yr!, stage: 'go', path: null, go_via: 'reclaim' }, 'NASDAQ:SAIQ', null);
-  check('Telegram: GO reclaimed yVWAP', goY.includes('price reclaimed yVWAP'), goY);
-  const goBoth = formatTvSetupAlert(both!, 'NASDAQ:NXL', null);
-  check('Telegram: GO on both lines', goBoth.includes('price reclaimed mVWAP + yVWAP'), goBoth);
-  const mHtml = formatTvSetupAlert(month!, 'NASDAQ:AIXI', null);
-  check('Telegram: month line unchanged, year level after it', mHtml.includes('<i>entry zone</i>') && mHtml.indexOf('mVWAP $1.57') < mHtml.indexOf('yVWAP $2.90'), mHtml);
-
-  const T0 = 1_790_100_000;
-  const g = new TvSetupGate();
-  check('month READY notifies', g.admit(month!, T0) === 'notify');
-  check('year READY a minute later is logged, not dropped', g.admit({ ...month!, line: 'year' }, T0 + 60) === 'log');
-}
-
 console.log('Line combos (v14)');
 {
   const pb3 = parseTvMessage('PULLBACK MI 5.31 | sVWAP 4.67 (+13.7%) | mVWAP 4.65 (+14.2%) | yVWAP 5.2 (+2.1%) | line year | touch 1 | peak +27% | day high +600% | tf 1');
   check('PULLBACK on the year line', pb3?.stage === 'pullback' && pb3.line === 'year' && pb3.yvwap === 5.2 && pb3.ypx_pct === 2.1 && pb3.peak_pct === 27, JSON.stringify(pb3));
   const all3 = parseTvMessage('BROKEN X 1.00 | sVWAP 1.01 (-1.0%) | mVWAP 1.02 (-2.0%) | yVWAP 1.01 (-1.0%) | line session+month+year | touch 1 | tf 30S');
   check('three lines at once', all3?.line === 'session+month+year' && all3.tf === '30S', JSON.stringify(all3));
-  const my = parseTvMessage('GO NXL 7.2 | mVWAP 7.0 (+2.9%) | yVWAP 7.05 (+2.1%) | basis 6.9 (-1.4%) | line month+year | day high +60% | tf 1 | via reclaim');
-  check('reclaim month+year (v14 spelling of "both")', my?.line === 'month+year' && my.go_via === 'reclaim', JSON.stringify(my));
   const js = parseTvMessage({ stage: 'pullback', ticker: 'MI', line: 'YEAR+session' });
   check('JSON line normalised to script order', js?.line === 'session+year', JSON.stringify(js));
   check('an unknown line part is rejected', parseTvMessage({ stage: 'pullback', ticker: 'MI', line: 'session+week' })?.line === null);
-  check('lineTokens: legacy both, combos, a v10 reclaim message',
-    JSON.stringify(lineTokens('pullback', 'both')) === '["session","month"]' && JSON.stringify(lineTokens('go', 'both')) === '["month","year"]'
-      && JSON.stringify(lineTokens('broken', 'session+month+year')) === '["session","month","year"]' && JSON.stringify(lineTokens('ready', null)) === '["month"]');
+  check('lineTokens: legacy both, combos, no line',
+    JSON.stringify(lineTokens('pullback', 'both')) === '["session","month"]'
+      && JSON.stringify(lineTokens('broken', 'session+month+year')) === '["session","month","year"]'
+      && JSON.stringify(lineTokens('pullback', null)) === '[]' && JSON.stringify(lineTokens('cross', null)) === '["session"]');
   const yHtml = formatTvSetupAlert(pb3!, 'AMEX:MI', null);
   check('Telegram: year-line PULLBACK names the line, year level first',
     yHtml.includes('back near the year VWAP after the run') && yHtml.indexOf('yVWAP $5.20') < yHtml.indexOf('sVWAP $4.67'), yHtml);
-  const myHtml = formatTvSetupAlert(my!, 'NASDAQ:NXL', null);
-  check('Telegram: month+year GO', myHtml.includes('price reclaimed mVWAP + yVWAP'), myHtml);
   const allHtml = formatTvSetupAlert(all3!, 'X', null);
   check('Telegram: three-line BROKEN', allHtml.includes('closed under the session + month + year VWAP'), allHtml);
 }
@@ -188,16 +132,16 @@ console.log('Gate — duplicates, other timeframes, flood');
 {
   const T0 = 1_790_000_000;
   const sig = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
-    stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, ah_gain: null, tf: '1', path: 'base', go_via: null, ...over,
+    stage: 'pullback', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, day_gain: 41, ah_gain: null, tf: '1',
+    vol_x: null, run_pct: null, svwap: 1.45, spx_pct: 2.1, line: 'session', touch: 1, fails: 0, ...over,
   });
   const g = new TvSetupGate();
-  check('first READY notifies', g.admit(sig(), T0) === 'notify');
-  check('same READY + tf within 2 min is a duplicate', g.admit(sig(), T0 + 30) === 'drop');
-  check('same READY on 2m within 5 min is logged only', g.admit(sig({ tf: '2' }), T0 + 60) === 'log');
-  check('GO is a new stage → notifies', g.admit(sig({ stage: 'go' }), T0 + 90) === 'notify');
+  check('first PULLBACK notifies', g.admit(sig(), T0) === 'notify');
+  check('same PULLBACK + tf within 2 min is a duplicate', g.admit(sig(), T0 + 30) === 'drop');
+  check('same PULLBACK on 30s within 5 min is logged only', g.admit(sig({ tf: '30S' }), T0 + 60) === 'log');
   check('another ticker is independent', g.admit(sig({ ticker: 'NXL' }), T0 + 95) === 'notify');
-  check('READY again after the dup window (1m) is logged, not re-announced', g.admit(sig(), T0 + TV_SETUP.dup_sec + 10) === 'log');
-  check('READY after the merge window is a repeat on that line → quiet', g.admit(sig(), T0 + TV_SETUP.notify_merge_sec + 140) === 'quiet');
+  check('PULLBACK again after the dup window (1m) is logged, not re-announced', g.admit(sig(), T0 + TV_SETUP.dup_sec + 10) === 'log');
+  check('PULLBACK after the merge window announces again', g.admit(sig(), T0 + TV_SETUP.notify_merge_sec + 140) === 'notify');
   const flood = new TvSetupGate();
   let verdicts: string[] = [];
   for (let i = 0; i < TV_SETUP.max_per_min + 5; i++) verdicts.push(flood.admit(sig({ ticker: `T${i}` }), T0));
@@ -206,47 +150,27 @@ console.log('Gate — duplicates, other timeframes, flood');
   check('…and recovers a minute later', verdicts[0] === 'notify');
 }
 
-console.log('Gate — quiet stages, READY once per line per day (2026-10-05)');
+console.log('Gate — quiet stages (2026-10-05)');
 {
-  const T0 = 1_791_200_000;   // 2026-10-05 07:33 ET; T0 + 10,700 s is still that day
+  const T0 = 1_791_200_000;
   const sig = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
-    stage: 'ready', ticker: 'RETO', price: 1.95, mvwap: 2.05, px_pct: -4.9, basis: 1.94, basis_pct: -5.4, day_gain: 30, ah_gain: null,
-    tf: '1', path: 'base', go_via: null, vol_x: null, run_pct: null, line: 'month', ...over,
+    stage: 'broken', ticker: 'RETO', price: 1.95, mvwap: 2.05, px_pct: -4.9, day_gain: 30, ah_gain: null,
+    tf: '1', vol_x: null, run_pct: null, svwap: 2.0, spx_pct: -2.5, line: 'session', touch: 1, ...over,
   });
-  check('quiet stages are FORMING / BROKEN / HELD', JSON.stringify(TV_SETUP.quiet_stages) === '["forming","broken","held"]');
+  check('quiet stages are BROKEN / HELD', JSON.stringify(TV_SETUP.quiet_stages) === '["broken","held"]');
   const g = new TvSetupGate();
-  check('FORMING is quiet', g.admit(sig({ stage: 'forming' }), T0) === 'quiet');
-  check('…its 30s copy is logged as a copy', g.admit(sig({ stage: 'forming', tf: '30S' }), T0 + 40) === 'log');
-  check('the first month READY of the day notifies', g.admit(sig(), T0 + 600) === 'notify');
-  check('…its 30s copy is logged', g.admit(sig({ tf: '30S' }), T0 + 630) === 'log');
-  check('a month READY an hour later is quiet', g.admit(sig(), T0 + 4200) === 'quiet');
-  check('…and its 30s copy is logged, not quiet', g.admit(sig({ tf: '30S' }), T0 + 4230) === 'log');
-  check('the first year READY a minute after a quiet month READY notifies', g.admit(sig({ line: 'year' }), T0 + 4290) === 'notify');
-  check('a month+year READY after both lines were announced is quiet', g.admit(sig({ line: 'month+year' }), T0 + 9000) === 'quiet');
-  check('legacy "both" reads as month + year → quiet', g.admit(sig({ line: 'both' }), T0 + 9600) === 'quiet');
-  check('a READY without a line (before v11) is the month line → quiet', g.admit(sig({ line: null }), T0 + 10200) === 'quiet');
-  check('GO still announces', g.admit(sig({ stage: 'go' }), T0 + 10300) === 'notify');
-  check('PULLBACK still announces', g.admit(sig({ stage: 'pullback', line: 'session' }), T0 + 10400) === 'notify');
-  check('BROKEN and HELD are quiet', g.admit(sig({ stage: 'broken', line: 'session' }), T0 + 10500) === 'quiet'
-    && g.admit(sig({ stage: 'held', line: 'month' }), T0 + 10600) === 'quiet');
-  check("another ticker's first READY notifies", g.admit(sig({ ticker: 'QNME' }), T0 + 10700) === 'notify');
-  check('the next ET day starts fresh', g.admit(sig(), T0 + 86_400) === 'notify');
-
-  const seeded = new TvSetupGate();
-  check('seeding reads stored lines (null = month, legacy both = month + year)',
-    seeded.seedReady([{ ticker: 'RETO', line: 'month' }, { ticker: 'APUS', line: null }, { ticker: 'JAGX', line: 'both' }], T0) === 4);
-  check('after a deploy, a READY announced earlier today stays quiet',
-    seeded.admit(sig(), T0 + 60) === 'quiet' && seeded.admit(sig({ ticker: 'APUS' }), T0 + 70) === 'quiet'
-      && seeded.admit(sig({ ticker: 'JAGX', line: 'year' }), T0 + 80) === 'quiet');
-  check('…while a line not announced yet still notifies', seeded.admit(sig({ line: 'year' }), T0 + 400) === 'notify');
+  check('BROKEN is quiet', g.admit(sig(), T0) === 'quiet');
+  check('…its 30s copy is logged as a copy', g.admit(sig({ tf: '30S' }), T0 + 40) === 'log');
+  check('HELD is quiet', g.admit(sig({ stage: 'held', line: 'month' }), T0 + 100) === 'quiet');
+  check('PULLBACK still announces', g.admit(sig({ stage: 'pullback' }), T0 + 200) === 'notify');
 }
 
 console.log('Gate — the 5-min PULLBACK limit counts per line (2026-10-05)');
 {
   const T0 = 1_791_227_851;   // 2026-10-05 15:17:31 ET, MI's year-line PULLBACK
   const pb = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
-    stage: 'pullback', ticker: 'MI', price: 5.86, mvwap: null, px_pct: null, basis: null, basis_pct: null, day_gain: null, ah_gain: null,
-    tf: '30S', path: null, go_via: null, vol_x: null, run_pct: null, line: 'year', touch: 6, ...over,
+    stage: 'pullback', ticker: 'MI', price: 5.86, mvwap: null, px_pct: null, day_gain: null, ah_gain: null,
+    tf: '30S', vol_x: null, run_pct: null, line: 'year', touch: 6, ...over,
   });
   const g = new TvSetupGate();
   check('MI 15:17 year-line PULLBACK notifies', g.admit(pb(), T0) === 'notify');
@@ -263,37 +187,31 @@ console.log('Gate — the 5-min PULLBACK limit counts per line (2026-10-05)');
   check('…a month-line PULLBACK 4 min later is still that level → logged', a.admit(apus({ line: 'month', tf: '2' }), T0 + 240) === 'log');
   check('…the year line within those 5 min is a new level → notifies', a.admit(apus({ line: 'year', tf: '2' }), T0 + 250) === 'notify');
   check('…the month line again after the window notifies', a.admit(apus({ line: 'month', tf: '2' }), T0 + 600) === 'notify');
-  check('READY keeps one announcement per ticker per 5 min across lines',
-    a.admit(apus({ stage: 'ready', line: 'month', tf: '1' }), T0 + 700) === 'notify'
-      && a.admit(apus({ stage: 'ready', line: 'year', tf: '1' }), T0 + 760) === 'log');
 }
 
 console.log('Gate — the ⚙ stage switches (2026-10-06)');
 {
   const T0 = 1_791_276_000;   // 2026-10-06 04:40 ET
   const sig = (over: Partial<TvSetupSignal> = {}): TvSetupSignal => ({
-    stage: 'ready', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, basis: 1.95, basis_pct: -7, day_gain: 25, ah_gain: null,
-    tf: '1', path: 'base', go_via: null, vol_x: null, run_pct: null, line: 'month', ...over,
+    stage: 'pullback', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, day_gain: 25, ah_gain: null,
+    tf: '1', vol_x: null, run_pct: null, svwap: 1.95, spx_pct: 2.6, line: 'session', touch: 1, fails: 0, ...over,
   });
-  check('default switches: READY, GO, PULLBACK, CROSS, BREAK on', JSON.stringify(DEFAULT_ANNOUNCED) === '["ready","go","pullback","cross","break"]');
-  check('parseStageList keeps known stages in menu order, drops the rest',
-    JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 7])) === '["go","pullback","held"]'
-      && parseStageList('go') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists all eight stages (v21 CROSS, v25 BREAK; LEVEL is never announced)', TV_STAGE_ORDER.length === 8 && new Set(TV_STAGE_ORDER).size === 8
-    && !TV_STAGE_ORDER.includes('level' as never));
+  check('default switches: PULLBACK, CROSS, BREAK on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","break"]');
+  check('parseStageList keeps known stages in menu order, drops the rest (v27: a saved go / ready / forming too)',
+    JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 'ready', 7])) === '["pullback","held"]'
+      && parseStageList('pullback') === null && JSON.stringify(parseStageList([])) === '[]');
+  check('menu order lists the five stages (LEVEL is never announced)',
+    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","break","broken","held"]');
   const g = new TvSetupGate();
-  g.setAnnounced(['go', 'pullback']);
-  check('READY switched off → quiet, even the first of the day', g.admit(sig(), T0) === 'quiet' && !g.announces('ready'));
-  check('GO still announces', g.admit(sig({ stage: 'go' }), T0 + 60) === 'notify');
-  g.setAnnounced(['ready', 'go', 'pullback']);
-  check('READY back on: the line was never announced, so the next READY notifies', g.admit(sig(), T0 + 900) === 'notify');
-  check('…and a repeat after that is quiet again', g.admit(sig(), T0 + 2000) === 'quiet');
-  g.setAnnounced(['ready', 'go', 'pullback', 'held']);
-  check('HELD switched on → announces', g.admit(sig({ stage: 'held', line: 'session' }), T0 + 2100) === 'notify');
-  check('FORMING still off → quiet', g.admit(sig({ stage: 'forming' }), T0 + 2200) === 'quiet');
-  check('announcedStages() reports menu order', JSON.stringify(g.announcedStages()) === '["ready","go","pullback","held"]');
+  g.setAnnounced(['cross']);
+  check('PULLBACK switched off → quiet', g.admit(sig(), T0) === 'quiet' && !g.announces('pullback'));
+  g.setAnnounced(['pullback', 'held']);
+  check('PULLBACK back on → the next one (another line) notifies', g.admit(sig({ line: 'month' }), T0 + 60) === 'notify');
+  check('HELD switched on → announces', g.admit(sig({ stage: 'held' }), T0 + 2100) === 'notify');
+  check('BROKEN still off → quiet', g.admit(sig({ stage: 'broken' }), T0 + 2200) === 'quiet');
+  check('announcedStages() reports menu order', JSON.stringify(g.announcedStages()) === '["pullback","held"]');
   g.setAnnounced([]);
-  check('everything off → every first copy is quiet', g.admit(sig({ stage: 'pullback', line: 'year' }), T0 + 2300) === 'quiet');
+  check('everything off → every first copy is quiet', g.admit(sig({ line: 'year' }), T0 + 2300) === 'quiet');
 }
 
 console.log('PULLBACK cap moved to the server (v16, 2026-10-10)');
@@ -329,87 +247,23 @@ console.log('PULLBACK cap moved to the server (v16, 2026-10-10)');
   check('Telegram: no failures, no mention', !zero.includes('failed before'), zero);
 }
 
-console.log('GO only for Momentum names (2026-10-18)');
-{
-  const go = parseTvMessage('GO SAFX 0.2717 | mVWAP 0.2555 (+6.3%) | basis 0.2564 (0.4%) | line month | day high +61% | tf 30S | via cross');
-  const T0 = 1_792_195_121;   // 2026-10-16 19:58 ET
-  check('the rule is on', TV_SETUP.go_momentum_only === true);
-  const g = new TvSetupGate();
-  check('GO off Momentum → quiet (stored, no ping)', g.admit(go!, T0, false, false) === 'quiet');
-  check('…its 1m copy is logged', g.admit({ ...go!, tf: '1' }, T0 + 36, false, false) === 'log');
-  check('a quiet off-list GO leaves the slot free: on Momentum 6 min later → announces', g.admit(go!, T0 + 360, false, true) === 'notify');
-  check('GO on Momentum → announces', new TvSetupGate().admit(go!, T0, false, true) === 'notify');
-  check('the default (no Momentum info) keeps the old behaviour', new TvSetupGate().admit(go!, T0) === 'notify');
-  const pb = parseTvMessage('PULLBACK SAFX 0.26 | sVWAP 0.25 (+4.0%) | mVWAP 0.2555 (+1.8%) | line month | touch 1 | fails 0 | peak +30% | tf 1');
-  check('a PULLBACK off Momentum still announces', new TvSetupGate().admit(pb!, T0, false, false) === 'notify');
-  const rd = parseTvMessage('READY SAFX 0.25 | mVWAP 0.2555 (-2.2%) | basis 0.24 (-6.1%) | line month | day high +61% | tf 1 | path base');
-  check('a READY off Momentum is unaffected', new TvSetupGate().admit(rd!, T0, false, false) === 'notify');
-}
-
 console.log('Telegram format');
 {
   const html = formatTvSetupAlert(
-    { stage: 'ready', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, basis: 1.49, basis_pct: -5.1, day_gain: 41, ah_gain: 34, tf: '1', path: 'fast', go_via: null },
+    { stage: 'pullback', ticker: 'AIXI', price: 1.48, mvwap: 1.57, px_pct: -5.7, day_gain: 41, ah_gain: 34, tf: '1',
+      vol_x: null, run_pct: null, svwap: 1.45, spx_pct: 2.1, line: 'session', touch: 1, fails: 0 },
     'NASDAQ:AIXI',
     { change_pct: 21.8, grade: 'B+', float_m: 3.2 },
   );
-  check('headline', html.includes('<b>READY</b>') && html.includes('<b>AIXI</b>') && html.includes('$1.48'), html);
-  check('levels line', html.includes('mVWAP $1.57 (-5.7%)') && html.includes('basis $1.49 (-5.1%)'), html);
+  check('headline', html.includes('<b>PULLBACK</b>') && html.includes('<b>AIXI</b>') && html.includes('$1.48'), html);
+  check('levels line', html.includes('sVWAP $1.45 (+2.1%)') && html.includes('mVWAP $1.57 (-5.7%)'), html);
   check('context line', html.includes('day high +41%') && html.includes('now +21.8%') && html.includes('grade B+') && html.includes('tf 1'), html);
   check('on Momentum → ⭐ priority line', html.startsWith('⭐ ') && html.includes('⭐ <b>on Momentum</b> · grade B+'), html);
   check('chart link is exchange-qualified', html.includes('symbol=NASDAQ%3AAIXI'), html);
-  check('fast path is named in the hint', html.includes('fast approach'), html);
   check('after-hours gain shown', html.includes('after hours +34%'), html);
-  const bare = formatTvSetupAlert({ stage: 'go', ticker: 'NXL', price: null, mvwap: null, px_pct: null, basis: null, basis_pct: null, day_gain: null, ah_gain: null, tf: null, path: null, go_via: null }, 'NXL', null);
-  const goHtml = formatTvSetupAlert({ stage: 'go', ticker: 'NIVF', price: 0.1961, mvwap: 0.188, px_pct: 4.3, basis: 0.169, basis_pct: -10.1, day_gain: 38, ah_gain: null, tf: '1', path: null, go_via: 'reclaim' }, 'NASDAQ:NIVF', null);
-  check('GO via reclaim says so', goHtml.includes('price reclaimed mVWAP') && !goHtml.includes('basis crossed'), goHtml);
+  const bare = formatTvSetupAlert({ stage: 'held', ticker: 'NXL', price: null, mvwap: null, px_pct: null, day_gain: null, ah_gain: null, tf: null, vol_x: null, run_pct: null }, 'NXL', null);
   check('off Momentum → no star, says so', !bare.includes('⭐') && bare.includes('not on our Momentum list'), bare);
-  check('fallback message renders without levels', bare.includes('<b>GO</b>') && !bare.includes('mVWAP $') && !bare.includes('undefined') && !bare.includes('null'), bare);
-}
-
-console.log('BB breakout (v17, 2026-10-18)');
-{
-  const bo = parseTvMessage('BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | tf 30S');
-  check('BREAKOUT parses', bo?.stage === 'breakout' && bo.ticker === 'XLAB' && bo.price === 2.38, JSON.stringify(bo));
-  check('…band, trigger, stop', bo?.upper === 2.33 && bo.upper_pct === 2.1 && bo.trigger === 2.41 && bo.stop === 2.25, JSON.stringify(bo));
-  check('…sVWAP, day high, volume, run30, timeframe', bo?.svwap === 2.01 && bo.spx_pct === 18.4 && bo.day_gain === 90
-    && bo.vol_x === 3.2 && bo.run30 === 17 && bo.tf === '30S' && bo.run_pct === null, JSON.stringify(bo));
-  check('…no line, no month/year VWAP', bo?.line === null && bo.mvwap === null && lineTokens('breakout', null).length === 0, JSON.stringify(bo));
-  const touch = parseTvMessage('TOUCH NWGL 0.1302 | upper 0.1305 (-0.2%) | sVWAP 0.1101 (+18.3%) | day high +45% | run30 +31% | tf 30S');
-  check('TOUCH parses (price under the band: negative %)', touch?.stage === 'touch' && touch.upper === 0.1305 && touch.upper_pct === -0.2
-    && touch.trigger === null && touch.stop === null && touch.run30 === 31, JSON.stringify(touch));
-  const trig = parseTvMessage('TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02 (+19.8%) | day high +92% | ah +12% | run30 +19% | tf 30S');
-  check('TRIGGERED parses', trig?.stage === 'triggered' && trig.trigger === 2.41 && trig.stop === 2.25 && trig.ah_gain === 12, JSON.stringify(trig));
-  check('JSON breakout', parseTvMessage({ stage: 'breakout', ticker: 'SGRX', price: 1.02, upper: 1.0, trigger: 1.03, stop: 0.97 })?.trigger === 1.03);
-  check('the three stages are the breakout set, not in the ⚙ menu',
-    ['touch', 'breakout', 'triggered'].every((x) => BREAKOUT_STAGES.has(x as never) && !TV_STAGE_ORDER.includes(x as never)));
-  check('old messages are not breakouts', parseTvMessage('GO VEEA 3.34 | mVWAP 3.21 (4.0%) | tf 1')?.upper === null);
-  // v19: the band's slope over 5 candles and the close vs the day's high → strong / weak
-  const v19 = parseTvMessage('BREAKOUT XLAB 3.15 | upper 3.12 (+1.0%) | trigger 3.2 | stop 2.95 | sVWAP 2.4 (+31.3%) | day high +180% | vol 1.4x | run30 +6% | slope -4.2% | off high -12.5% | tf 30S');
-  check('v19 parses slope and off high', v19?.band_slope === -4.2 && v19.off_high === -12.5 && v19.day_gain === 180 && v19.run30 === 6, JSON.stringify(v19));
-  check('…"off high" is not read as the day high', parseTvMessage('TOUCH X 1.0 | upper 1.0 (0.0%) | off high -3.0% | tf 30S')?.day_gain === null);
-  check('a v17/v18 message has no context', bo?.band_slope === null && bo.off_high === null && boStrong(bo.band_slope, bo.off_high) === null);
-  check('strong: band not falling and within 10% of the high (XLAB 19:30-type is weak)',
-    boStrong(4.1, -1.2) === true && boStrong(0, -10) === true && boStrong(-0.1, -1) === false && boStrong(3, -10.1) === false
-    && boStrong(v19!.band_slope, v19!.off_high) === false && TV_SETUP.bo_strong_slope === 0 && TV_SETUP.bo_strong_off === 10);
-  check('JSON context', parseTvMessage({ stage: 'breakout', ticker: 'X', band_slope: 2, off_high: -3 })?.band_slope === 2);
-  // v20: the early BO (the first +10% candle in regular hours, on 2× volume)
-  const early = parseTvMessage('BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | sVWAP 1.41 (+6.4%) | day high +10% | vol 6.1x | run30 +9% | early +10% | slope +2.0% | off high -1.3% | tf 30S');
-  check('v20 early BO parses', early?.early === 10 && early.day_gain === 10 && early.vol_x === 6.1 && early.trigger === 1.53
-    && early.band_slope === 2 && early.off_high === -1.3, JSON.stringify(early));
-  check('…a regular BO has no early', v19?.early === null && bo?.early === null);
-  check('…its TRIGGERED carries it too', parseTvMessage('TRIGGERED WORX 1.54 | upper 1.46 (+5.5%) | trigger 1.53 | stop 1.39 | early +10% | tf 30S')?.early === 10);
-  check('…and it is stored quietly like every breakout', new TvSetupGate().admit(early!, 1_792_166_400) === 'quiet');
-
-  const T0 = 1_792_166_400;   // 2026-10-16 11:20 ET
-  const g = new TvSetupGate();
-  check('BREAKOUT is stored quietly, never announced', g.admit(bo!, T0) === 'quiet');
-  check('…a re-delivery within 20 s is dropped', g.admit(bo!, T0 + 5) === 'drop');
-  check('…a new BREAKOUT 90 s later is a real event (not the 2-min duplicate rule)', g.admit(bo!, T0 + 90) === 'quiet');
-  check('TOUCH and TRIGGERED are quiet too', g.admit(touch!, T0 + 100) === 'quiet' && g.admit(trig!, T0 + 110) === 'quiet');
-  check('quiet even on a Momentum name', new TvSetupGate().admit(bo!, T0, true, true) === 'quiet');
-  check('a breakout leaves the VWAP setups alone: a GO right after still announces',
-    g.admit(parseTvMessage('GO XLAB 2.40 | mVWAP 2.3 (+4.3%) | basis 2.31 (0.4%) | line month | tf 30S | via reclaim')!, T0 + 120, false, true) === 'notify');
+  check('a bare message renders without levels', bare.includes('<b>HELD</b>') && !bare.includes('VWAP $') && !bare.includes('undefined') && !bare.includes('null'), bare);
 }
 
 console.log('VWAP + BB cross (v21, 2026-10-20)');
@@ -420,7 +274,7 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   check('…session VWAP and the band', x?.svwap === 2.47 && x.spx_pct === 5.7 && x.upper === 2.58 && x.upper_pct === 1.2, JSON.stringify(x));
   check('…candle open, timeframes, count', x?.candle_open === 2.5 && x.candle_tf === '5' && x.bb_tf === '2' && x.cross_n === 1, JSON.stringify(x));
   check('…day high, volume, alert timeframe', x?.day_gain === 25 && x.vol_x === 1.8 && x.tf === '30S', JSON.stringify(x));
-  check('…a v21 message: no line (= the session line), no month VWAP, no breakout fields', x?.line === null && x.mvwap === null && x.trigger === null
+  check('…a v21 message: no line (= the session line), no month VWAP', x?.line === null && x.mvwap === null
     && JSON.stringify(lineTokens('cross', null)) === '["session"]', JSON.stringify(x));
   const hour = parseTvMessage('CROSS WORX 3.9 | sVWAP 3.7 (+5.4%) | upper 3.85 (+1.3%) | open 3.62 | candle 60 | bb 45 | cross 2 | day high +6% | ah +3% | tf 30S');
   check('1h candles on a 45m band', hour?.candle_tf === '60' && hour.bb_tf === '45' && hour.cross_n === 2 && hour.ah_gain === 3, JSON.stringify(hour));
@@ -430,18 +284,15 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   check('ticker BB is not the band timeframe', bb?.ticker === 'BB' && bb.bb_tf === '2' && bb.price === 4.52, JSON.stringify(bb));
   const op = parseTvMessage('CROSS OPEN 2.31 | sVWAP 2.2 (+5.0%) | upper 2.3 (+0.4%) | open 2.18 | candle 5 | bb 2 | cross 3 | tf 30S');
   check('ticker OPEN is not the candle open', op?.ticker === 'OPEN' && op.candle_open === 2.18 && op.cross_n === 3, JSON.stringify(op));
-  check('a GO "via cross" has no cross count', parseTvMessage('GO AIXI 1.78 | mVWAP 1.565 (13.7%) | tf 1 | via cross')?.cross_n === null);
   check('JSON cross', parseTvMessage({ stage: 'cross', ticker: 'NWGL', price: 0.15, candle_tf: '5', bb_tf: 2, cross_n: 1 })?.bb_tf === '2');
-  check('CROSS is in the ⚙ menu, on by default, not a breakout',
-    TV_STAGE_ORDER.includes('cross') && DEFAULT_ANNOUNCED.includes('cross') && !BREAKOUT_STAGES.has('cross')
-      && JSON.stringify(parseStageList(['cross', 'go'])) === '["go","cross"]');
+  check('CROSS is in the ⚙ menu and on by default', TV_STAGE_ORDER.includes('cross') && DEFAULT_ANNOUNCED.includes('cross'));
 
   const T0 = 1_792_166_400;   // 2026-10-16 11:20 ET
   const g = new TvSetupGate();
   check('CROSS announces', g.admit(x!, T0) === 'notify');
   check('…a re-delivery within 20 s is dropped', g.admit(x!, T0 + 10) === 'drop');
   // The 30s alert alone sends it: the next candle's cross a minute later is a new event,
-  // not a copy to merge (READY/GO/PULLBACK merge for 5 min).
+  // not a copy to merge (PULLBACK merges for 5 min).
   const second = parseTvMessage(msg.replace('cross 1', 'cross 2'))!;
   check('…the next candle\'s cross 60 s later announces too', g.admit(second, T0 + 60) === 'notify');
   check(`past the cap (cross ${TV_SETUP.vb_cap + 1}) → quiet`,
@@ -450,9 +301,9 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   check(`…cross ${TV_SETUP.vb_cap} still announces`, g.admit(parseTvMessage(msg.replace('cross 1', `cross ${TV_SETUP.vb_cap}`))!, T0 + 800) === 'notify');
   check('…a CROSS without a count (JSON) is never capped', !pastCap({ ...x!, cross_n: null }));
   const off = new TvSetupGate();
-  off.setAnnounced(['go', 'pullback']);
+  off.setAnnounced(['pullback']);
   check('switched off in ⚙ → quiet', off.admit(x!, T0) === 'quiet');
-  check('…GO and PULLBACK unaffected', off.admit(parseTvMessage('GO AIXI 2.61 | mVWAP 2.4 (+8.8%) | tf 1 | via reclaim')!, T0 + 30, false, true) === 'notify');
+  check('…PULLBACK unaffected', off.admit(parseTvMessage('PULLBACK AIXI 2.5 | sVWAP 2.47 (+1.2%) | line session | touch 1 | fails 0 | tf 1')!, T0 + 30, false, true) === 'notify');
   check('off Momentum → quiet (vb_momentum_only, 2026-10-20)', TV_SETUP.vb_momentum_only && new TvSetupGate().admit(x!, T0, false, false) === 'quiet');
   check('…on Momentum → announces', new TvSetupGate().admit(x!, T0, false, true) === 'notify');
   check(`…off Momentum but day high ≥ +${TV_SETUP.vb_fresh_gain}% → announces (a runner the screen hasn't caught yet, 2026-10-21)`,
@@ -501,7 +352,7 @@ console.log('VB break (v25, 2026-10-22)');
   const brk = parseTvMessage('BREAK TANH 12.6 | level 12.59 | stop 11.8 | sVWAP 12.2 (+3.3%) | mVWAP 11.6 (+8.6%) | line month | candle 10 | bb 2 | break 1 | day high +60% | vol 2.0x | tf 30S');
   check('BREAK parses', brk?.stage === 'break' && brk.price === 12.6 && brk.level === 12.59 && brk.stop === 11.8 && brk.break_n === 1
     && brk.day_gain === 60 && brk.tf === '30S' && JSON.stringify(lineTokens('break', brk.line)) === '["month"]', JSON.stringify(brk));
-  check('…BREAKOUT still parses as the BB breakout', parseTvMessage('BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | tf 30S')?.stage === 'breakout');
+  check('…a BREAKOUT (the BB breakout, removed in v27) is not read as a BREAK', parseTvMessage('BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | tf 30S') == null);
   check('…a CROSS has no level, a BREAK no cross count', parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S')?.level === null && brk?.cross_n === null);
   check('…without a line it is the session line', JSON.stringify(lineTokens('level', null)) === '["session"]');
   const T0 = 1_792_166_400;
@@ -527,31 +378,18 @@ console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
   const pine = readFileSync(resolve(here, '../../web/src/tv/mvwap-bb-setup.pine'), 'utf8');
-  for (const part of ['" | mVWAP "', '" | basis "', '" | day high "', '" | ah "', '" | tf "', '" | path "', '"base"', '"fast"',
-    '" | via "', '"reclaim"', '"cross"', '" | vol "', '" | run "', '"FORMING"', '"READY"', '"GO"',
-    '"PULLBACK"', '"BROKEN"', '"HELD"', '" | sVWAP "', '" | line "', '" | touch "', '" | peak +"', '"session"', '"month"', '"both"',
+  for (const part of ['" | mVWAP "', '" | day high "', '" | ah "', '" | tf "', '" | vol "', '" | run "',
+    '"PULLBACK"', '"BROKEN"', '"HELD"', '" | sVWAP "', '" | line "', '" | touch "', '" | peak +"', '"session"', '"month"',
     '" | yVWAP "', '"year"', 'timeframe.change("M") or firstBar', 'firstBar = na(hlc3[1])',
     // v14: the year line from this year's hourly bars + today's chart bars; merged lines are named together
     'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", yearBefore()', 'timeframe.change("12M")',
-    '"month+year"', 'pbJoin(names, "year")',
+    'pbJoin(names, "year")',
     // v15: the day's PULLBACK cap counts failed pullbacks, not every touch
     's.fails < pbMax', 's.fails := s.fails + 1',
     // v16: no cap in the script by default; each PULLBACK says how many failed before it
     'pbMax == 0 or s.fails < pbMax', '" | fails "', 'fails := math.min(fails, pbY.fails)', 'pbCapMark',
-    // v17: the BB breakout, on 1m candles built from the 30s alert's bars
-    '"TOUCH"', '"BREAKOUT"', '"TRIGGERED"', '" | upper "', '" | trigger "', '" | stop "', '" | run30 +"',
-    'boSend     = boValid and timeframe.period == boTf', 'time_close % 60000 == 0', 'boPrevC <= boPrevU', 'high >= boTrig',
-    'boCHigh + syminfo.mintick',
-    // v18: drawn on a 1m chart from the 30s bars inside each candle
-    'request.security_lower_tf(syminfo.tickerid, boUse1m ? boBandTf : timeframe.period, boBand())', 'boInTouch := true',
-    'boNative ? not boEnds and boCHigh >= boUp : boInTouch',
-    // v19: strong / weak context in the message and the marker colours
-    '" | slope "', '" | off high "', 'boSlope >= boStrSlope', 'boOff >= -boStrOff', 'boStrong ? color.fuchsia : color.gray',
-    'array.push(boUps, boLastU)',
-    // v20: the early BO
-    '" | early +"', 'dayHighGain >= boEarlyGain', 'boVolX >= boEarlyVol', 'session.ismarket and not na(boUp)', 'boTrigEv := boArmEarly ?',
     // v21: the VWAP + BB cross from the 30s alert, drawn on the candle's chart; the setup switches
-    '"CROSS "', '" | sVWAP "', '" | open "', '" | candle "', '" | bb "', '" | cross "',
+    '"CROSS "', '" | upper "', '" | open "', '" | candle "', '" | bb "', '" | cross "',
     'vbSend = vbOk and timeframe.period == vbTf', 'timeframe.change(vbCandleTf)', 'timeframe.change(vbBbTf)',
     // v23: the lines as they stand at the 30s close (what the chart draws), the day's first candle counts
     'cOpen <= math.max(ln, up) and cOpen <= math.min(ln, up) * (1 + vbTol / 100) and close > ln and close > up',
@@ -565,16 +403,22 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'pbLowMY', 'float reach = useLow ? low : close', 'pbS.step(svwap, gainer, false)', 'pbM.step(mvwap, gainer, pbLowMY)',
     'pbY.step(yvwap, gainer, pbLowMY)',
     // v25: the VB candle's high as a trigger — LEVEL at its close, BREAK one tick over it, cancelled under its line
-    'vbLvMsg("LEVEL")', 'vbLvMsg("BREAK")', '" | level "', '" | break "', 'high >= vLvHigh + syminfo.mintick',
-    'text = "BRK"', '"VB: BB timeframe (the band)"', '"BO: BB timeframe',
+    'vbLvMsg("LEVEL")', 'vbLvMsg("BREAK")', '" | level "', '" | stop "', '" | break "', 'high >= vLvHigh + syminfo.mintick',
+    'text = "BRK"', '"VB: BB timeframe (the band)"',
     // v26: the level is cancelled by a candle's close under its line (the VB candle's own included), not a 30s close
     'if vbBrkCancel and vLvOn and not na(vOpen)', 'vbLowest(vLvS, vLvM, vLvY, vPrevVw, vPrevMw, vPrevYw)',
-    'if not na(vLnC) and vClose < vLnC', 'vPrevVw := vVw', 'Script version: v26',
-    'if rcOn and rcLines != "Year"', 'if rcOn and rcLines != "Month"', 'if pbOn and inWindow', 'boValid    = boOn and']) {
+    'if not na(vLnC) and vClose < vLnC', 'vPrevVw := vVw',
+    // v27: two setups; the operator's settings are the defaults (gainer 10%, VB 5m candle, 45s band)
+    'Script version: v27', 'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
+    'input.timeframe("45S",   "VB: BB timeframe (the band)"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
-  check('alertcondition fallbacks carry ticker + close', pine.includes('READY {{ticker}} {{close}}') && pine.includes('GO {{ticker}} {{close}}'));
+  // v27 removed RECLAIM and the BB breakout: none of their messages or inputs are left.
+  for (const gone of ['"FORMING"', '"READY"', '"GO"', '"TOUCH"', '"BREAKOUT"', '"TRIGGERED"', '" | basis "', '" | path "', '" | via "',
+    '" | trigger "', '" | run30 +"', '" | early +"', 'rcOn', 'boOn', 'reclaimConds', 'alertcondition(']) {
+    check(`v27: script no longer has ${gone}`, !pine.includes(gone));
+  }
 }
 
 if (failures > 0) {

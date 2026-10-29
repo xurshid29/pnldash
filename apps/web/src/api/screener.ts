@@ -11,20 +11,15 @@ import type {
   OutcomesScreen,
   OpportunityAlert,
   ScreenerFilterSnapshot,
-  TvBreakout,
 } from './types';
+import { isTvStage } from './types';
 
 export const screenerApi = {
-  // The day's opportunity-alert log (default today, ET), newest first.
+  // The day's opportunity-alert log (default today, ET), newest first. 📐 rows of
+  // the setups removed in script v27 (RECLAIM's FORMING / READY / GO) are skipped.
   async alerts(day?: string): Promise<OpportunityAlert[]> {
     const res = await apiClient.get<OpportunityAlert[]>(`/api/screener/alerts${day ? `?day=${encodeURIComponent(day)}` : ''}`);
-    return res.data;
-  },
-
-  // The day's 📐 BB breakout signals (script v17; default today, ET), newest first.
-  async breakouts(day?: string): Promise<TvBreakout[]> {
-    const res = await apiClient.get<TvBreakout[]>(`/api/screener/breakouts${day ? `?day=${encodeURIComponent(day)}` : ''}`);
-    return res.data;
+    return res.data.filter((a) => !a.kinds.includes('tv_setup') || isTvStage(a.setup?.stage));
   },
 
   async latest(): Promise<CyclePayload> {

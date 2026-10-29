@@ -99,8 +99,9 @@ router.get('/ema-debug', authMiddleware, (req, res) => {
 // rows sharing meta.id (one merged alert) fold back into one entry. Rows
 // written before meta.id existed (2026-10-01) fold by ticker within 3s — one
 // cycle's inserts land milliseconds apart. 📐 tv_setup rows (TradingView VWAP
-// setup, 2026-10-03; the PULLBACK setup since script v10) carry their own id
-// and the stage + levels in `setup`.
+// setups: PULLBACK since script v10, the VWAP + BB cross since v21) carry their
+// own id and the stage + levels in `setup`. Rows of the setups script v27 removed
+// (RECLAIM's FORMING / READY / GO) stay in the table but aren't listed.
 router.get('/alerts', authMiddleware, async (req, res) => {
   const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
   if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
@@ -113,7 +114,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     .selectFrom('tier_events')
     .select(['event', 'ticker', 'at', 'meta'])
     .where('tier', '=', 'alert')
-    .where('event', '!=', 'tv_breakout')   // v17 BB breakouts: GET /breakouts (thousands a day)
+    .where('event', '!=', 'tv_breakout')   // v17–v26 BB breakouts (removed in v27; thousands a day)
+    .where(sql<boolean>`NOT (event = 'tv_setup' AND meta->>'stage' IN ('forming', 'ready', 'go'))`)
     .where(dayExpr)
     .orderBy('ticker').orderBy('at')
     .limit(3000)
@@ -124,12 +126,14 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     new_on_screen: boolean; move_pct: number | null; rel_vol_1min: number | null; float_m: number | null;
     news: { source: string; title: string; url: string; published_at: string | null; score: number; direction: string; type: string } | null;
     setup: {
-      stage: string; mvwap: number | null; px_pct: number | null; basis: number | null; basis_pct: number | null;
-      day_gain: number | null; ah_gain: number | null; tf: string | null; path: string | null; go_via: string | null;
-      vol_x: number | null; run_pct: number | null; strength: Record<string, unknown> | null;
+      stage: string; mvwap: number | null; px_pct: number | null;
+      day_gain: number | null; ah_gain: number | null; tf: string | null;
+      vol_x: number | null; run_pct: number | null;
       svwap: number | null; spx_pct: number | null; line: string | null; touch: number | null; peak_pct: number | null;
       yvwap: number | null; ypx_pct: number | null;
       fails: number | null; capped: boolean;
+      upper: number | null; upper_pct: number | null; candle_tf: string | null; bb_tf: string | null;
+      candle_open: number | null; cross_n: number | null; level: number | null; stop: number | null; break_n: number | null;
       on_screen: boolean; notified: boolean;
     } | null;
   };
@@ -158,16 +162,18 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     if (!a.kinds.includes(r.event)) a.kinds.push(r.event);
     if (r.event === 'tv_setup' && str(m.stage)) {
       a.setup = {
-        stage: str(m.stage)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct), basis: num(m.basis), basis_pct: num(m.basis_pct),
-        day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf), path: str(m.path), go_via: str(m.go_via),
+        stage: str(m.stage)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct),
+        day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf),
         vol_x: num(m.vol_x), run_pct: num(m.run_pct),
-        strength: m.strength && typeof m.strength === 'object' ? (m.strength as Record<string, unknown>) : null,
         // PULLBACK setup (script v10)
         svwap: num(m.svwap), spx_pct: num(m.spx_pct), line: str(m.line), touch: num(m.touch), peak_pct: num(m.peak_pct),
-        // reclaim setup on the year line (script v11)
+        // the year line (script v11 / v14)
         yvwap: num(m.yvwap), ypx_pct: num(m.ypx_pct),
         // script v16 PULLBACK cap fields
         fails: num(m.fails), capped: m.capped === true,
+        // VWAP + BB cross (v21) and its break (v25), as the live alert carries them (tv-setups.ts vbFields)
+        upper: num(m.upper), upper_pct: num(m.upper_pct), candle_tf: str(m.candle_tf), bb_tf: str(m.bb_tf),
+        candle_open: num(m.candle_open), cross_n: num(m.cross_n), level: num(m.level), stop: num(m.stop), break_n: num(m.break_n),
         on_screen: m.on_screen === true, notified: m.notified !== false,
       };
     }
@@ -184,45 +190,6 @@ router.get('/alerts', authMiddleware, async (req, res) => {
   for (const a of out) a.kinds.sort((x, y) => ORDER.indexOf(x) - ORDER.indexOf(y));
   out.sort((x, y) => y.at.localeCompare(x.at));
   res.json({ data: out });
-});
-
-// GET /api/screener/breakouts[?day=YYYY-MM-DD] — the 📐 BB breakout signals
-// (script v17: TOUCH / BREAKOUT / TRIGGERED from the 30s alert) for an ET day,
-// newest first. Stored and graded only, never announced; the 📐 sidebar lists
-// the live ones (fed between polls by the SSE 'breakout' event) and the History
-// tab the day's.
-router.get('/breakouts', authMiddleware, async (req, res) => {
-  const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
-  if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
-  const day = dayParam ? sql`${dayParam}::date` : sql`(now() AT TIME ZONE 'America/New_York')::date`;
-  const rows = await getDb()
-    .selectFrom('tier_events')
-    .select(['ticker', 'at', 'meta'])
-    .where('tier', '=', 'alert')
-    .where('event', '=', 'tv_breakout')
-    .where(sql<boolean>`at >= (${day})::timestamp AT TIME ZONE 'America/New_York'
-      AND at < ((${day}) + 1)::timestamp AT TIME ZONE 'America/New_York'`)
-    .orderBy('at', 'desc')
-    .limit(10000)
-    .execute();
-  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-  const str = (v: unknown) => (typeof v === 'string' ? v : null);
-  res.json({
-    data: rows.map((r) => {
-      const m = (r.meta ?? {}) as Record<string, unknown>;
-      return {
-        id: str(m.id) ?? `${r.ticker}:${new Date(r.at).getTime()}`, ticker: r.ticker,
-        at: str(m.at) ?? new Date(r.at).toISOString(), stage: str(m.stage) ?? '',
-        price: num(m.price), upper: num(m.upper), upper_pct: num(m.upper_pct), trigger: num(m.trigger), stop: num(m.stop),
-        svwap: num(m.svwap), spx_pct: num(m.spx_pct), day_gain: num(m.day_gain), ah_gain: num(m.ah_gain),
-        vol_x: num(m.vol_x), run30: num(m.run30),
-        band_slope: num(m.band_slope), off_high: num(m.off_high), strong: typeof m.strong === 'boolean' ? m.strong : null,
-        early: num(m.early),
-        tf: str(m.tf),
-        chg: num(m.chg), grade: str(m.grade), float_m: num(m.float_m), rv1: num(m.rv1), on_screen: m.on_screen === true,
-      };
-    }),
-  });
 });
 
 // GET /api/screener/vwap-debug[?ticker=X] — live ↑ VWAP reclaim tracker

@@ -7,6 +7,13 @@ Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
 Keep it in step with the .pine file (docs/vwap-setup.md §10).
 
+Script v27 (2026-10-28) removed the reclaim setup and the BB breakout from the live
+script; PULLBACK and the VWAP + BB cross are what it runs now. simulate() /
+simulate_lines() and simulate_breakout*() stay here for research (the studies and
+the old rows in tier_events), mirroring the script as it was at v26 (e38c06b).
+The VB defaults below are the research ones (5m candle, 2m band); the live script's
+default band is 45s since v27, which the 1m-bar studies can't build.
+
 What it can't do: build the month-anchored VWAP. Yahoo's pre/post-market bars
 carry zero volume, so the caller supplies mVWAP per bar (read off TradingView —
 the line is flat mid-month, and a short window around a setup is enough).

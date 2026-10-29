@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v25** (history in §12). Since v10 it carries two setups: the reclaim setup (§1–§12) and the PULLBACK setup (§13). Since v17 a third, the BB breakout (§14), which sends only from the 30s alert and is stored, never announced. Since v21 a fourth, the **VWAP + BB cross** (§16): a candle of a timeframe you pick crosses over a VWAP line (session; month and year since v22) and another timeframe's BB upper band, from the 30s alert. Since v21 every setup has an on/off switch for the chart and the alerts. Since v11 the reclaim setup runs on the month **and the year** VWAP (§5.2) |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v27** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its break (§16.8). Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -18,6 +18,12 @@ here; `docs/HANDOVER.md` carries the live status.
 | Status | **Graded live on 10 sessions (§9.1).** PULLBACK: 26% held, about break-even with a stop under the line, the same as the four-month session-line study (§13.5). The month line is no better than the session line, and later touches beat the first. GO: −1.1% a trade, and 💪 predicts the size of the move, not its direction. The B+ cap exemption works as intended |
 
 ---
+
+> **§1–§11 and §14 describe setups removed in script v27 (2026-10-28):** the
+> reclaim setup (FORMING / READY / GO) and the BB breakout (TOUCH / BREAKOUT /
+> TRIGGERED). The operator tried all four and kept PULLBACK (§13) and the VWAP + BB
+> cross (§16). Parts of §5 (the lines, the gainer filter), §7 (the webhook, the
+> gate, the ⚙ switches) and §10 (the change procedure) still apply to both.
 
 ## 1. The setup (the operator's definition)
 
@@ -1104,6 +1110,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-21 | v24 | `ce14eee` | Operator, on RBNE 04:10 ET (its low tagged the month line's band, ~1.20 over ~1.17, but every close stayed 7–8% above, then +60%): "ok, do the trial for month and year lines". A PULLBACK on the month or year line may now touch on the bar's low, the close holding at or above the line (`pbLowMY`, on, the last input); the session line keeps the close rule, since `--touch low` lost 0.3–0.9 points a trade there over four months (§13.5). The message is unchanged: a trial alert shows its close more than 5% above its line. Replica: `simulate_pullback(low_lines=('month','year'))` + a self-test. Regression: 314 checks. |
 | 2026-10-22 | v25 | `f081873` | Operator (TANH, SHFS on 10m charts): "the latest VB candle's high should become a resistance line and I want to be notified when price crosses over that resistance line (or a little bit earlier)". Measured first (`research/vwap-bb-cross`, §16.8): a buy stop over the VB candle's high beat buying the CROSS by 0.6–0.7 points a trade, and a close above it was ~0.7 points worse than the buy stop. So: **LEVEL** when a VB candle closes (its high = the buy stop, its low = the stop; stored, shown on the CROSS row as "break > $X · stop $Y") and **BREAK** when a bar reaches one tick over the high (announced like CROSS, its own ⚙ switch, cap on `break N`). A newer VB candle replaces the level; a close under the line the candle crossed cancels it (`vbBrkCancel`); the day's end clears it. A teal BRK marker, no line. Inputs `vbBreakOn`, `vbBrkCancel` (last); the VB inputs now start with "VB:" and the breakout's with "BO:" (the operator had set the breakout's BB timeframe for VB: no breakouts since 10-20 08:17). Replica + self-test; regression 336 checks. |
 | 2026-10-23 | v26 | `e38c06b` | Operator (XXII 10-23, 10m, a horizontal line at the 13:20 Tashkent VB candle's high 0.41): "it acts like a resistance … I think our VB-break should work the same way". v25 kept the level until it broke, but cancelled it on **any 30s close** under the line: XXII's level 0.4099 died on a 30s close at 0.3374 inside the next candle (a wick on the 10m chart, the candle closed ~0.40), and the break of 0.41 one candle later went unalerted; the only BREAK came on the month line at 0.4549, 11% higher. v26 cancels only on a **candle's close** on the VB timeframe under the lowest line the VB candle crossed, the VB candle's own close included (a level that dies there isn't sent). Measured first (§16.8): on 10m with the 2m band, 2R target, 6 candles: 2,755 breaks at −0.08R vs 2,461 at −0.09R (v25-style) and 3,876 at −0.11R (no cancel). Message unchanged, `vbBrkCancel` keeps its place (title only). Replica: `brk_cancel` True = v26, 'bar' = v25, plus an XXII-like self-test. Regression: 341 checks. **Paste the script and recreate the 30s alert.** |
+| 2026-10-28 | v27 | `COMMIT` | Operator, after testing all four setups: "I liked the most VWAP+BB Cross and Pullback to VWAP types, and currently I'm using only those ones … we can remove/disable others from backend and pine script" → remove everywhere. **The script carries two setups**: RECLAIM (FORMING / READY / GO, v1–v26) and the BB breakout (TOUCH / BREAKOUT / TRIGGERED, v17–v26) are gone with their 31 inputs, the breakout's 30s `request.security_lower_tf` and the BB-basis line (1,121 → 713 lines). PULLBACK and VB logic and messages are unchanged. **The inputs are reordered** (gainer filter, alert window, PULLBACK, VB), so saved values shift: after the paste, Settings → Defaults → Reset settings. The defaults are the operator's settings (gainer filter 10%, VB candle 5m, band 45S). **Server:** the parser rejects the removed stages (400 "Unrecognised alert message"); the gate loses READY-once, GO-Momentum-only and the breakout path; ⚙ stages are PULLBACK / CROSS / BREAK / BROKEN / HELD (a saved go / ready / forming is dropped); `GET /api/screener/breakouts`, the SSE `breakout` event and the `tv_forming` / `tv_ready` / `tv_go` mutes are gone; `GET /api/screener/alerts` leaves out the old FORMING / READY / GO rows and now carries the VB fields (candle / band timeframes, `cross N`, LEVEL's level and stop, `break N`), which it never did, so a page reload lost CROSS rows' `5m/2m` and "break > $X". **Dashboard:** the ⚡ breakouts list, the breakout alarm and its ⚙ level, the GO / ⚡ Breakouts History filters, GO strength and the RECLAIM text. Rows stay in `tier_events`. Replica: the reclaim and breakout simulators stay for research (v26 logic). Regression: 240 checks. **Paste, Reset settings, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1340,6 +1347,9 @@ is far away. A limit just over the line after the alert, filled about a
 quarter of the time, did better in both versions (`research/vwap-pullback/README.md`).
 
 ## 14. The BB breakout (script v17, 2026-10-18)
+
+> **Removed in script v27 (2026-10-28)**, with its dashboard list, alarm and
+> `GET /api/screener/breakouts`. Its rows (`tier_events` event `tv_breakout`) stay.
 
 ### 14.1 The operator's definition
 

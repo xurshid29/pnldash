@@ -146,23 +146,11 @@ function crossConfirmPing() {
 }
 
 function setupReadyPing() {
-  // 📐 READY — the VWAP setup's entry zone: three quick rising tones, between
-  // the soft FORMING heads-up (watchPing) and the bright GO pair.
+  // 📐 PULLBACK — back near VWAP, be ready: three quick rising tones, between the
+  // soft off-list heads-up (watchPing) and the bright CROSS / BREAK pair.
   beep(784, 130, 0, 0.45);     // G5
   beep(988, 130, 0.14, 0.45);  // B5
   beep(1175, 190, 0.28, 0.45); // D6
-}
-
-// ⚡ BB BREAKOUT (2026-10-19): a quick high double tap and a rise — unlike every
-// 📐 VWAP sound, so a breakout is recognisable without looking. Gated like all
-// sounds by Alerts ON/OFF (beep), and the notification by notify.
-export function breakoutAlarm(title: string, body: string) {
-  try {
-    beep(1568, 90, 0, 0.5);      // G6
-    beep(1568, 90, 0.12, 0.5);   // G6
-    beep(2093, 200, 0.24, 0.5);  // C7
-  } catch { /* audio context not unlocked */ }
-  notify(title, body);
 }
 
 export function edgeAlertPing(kind: 'armed' | 'entry' | 'bailout') {
@@ -208,8 +196,7 @@ function fmtAlertPrice(p: number | null): string {
 }
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
-  forming: 'FORMING', ready: 'READY', go: 'GO', pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS',
-  level: 'LEVEL', break: 'BREAK',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', level: 'LEVEL', break: 'BREAK',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -235,23 +222,14 @@ export function opportunityTitle(a: OpportunityAlert): string {
       const trig = s.level != null ? fmtAlertPrice(s.level) : '?';
       return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — over the ${shortTf(s.candle_tf)} VB high ${trig}${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}`;
     }
-    if (s.stage === 'pullback' || s.stage === 'broken' || s.stage === 'held') {
-      const tokens = lineTokens(s.stage, s.line);
-      const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
-      const first = tokens[0] ?? 'session';
-      const pct = first === 'session' ? s.spx_pct : first === 'month' ? s.px_pct : s.ypx_pct;
-      const what = s.stage === 'pullback' ? `${fmtSignedPct(pct ?? null)} vs ${lineName}${s.touch != null ? ` · touch ${s.touch}` : ''}`
-        : s.stage === 'broken' ? `closed under the ${lineName}` : '+10% from the pullback';
-      return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — ${what}`;
-    }
-    // v11: the reclaim setup also runs on the year VWAP
-    const rcTokens = lineTokens(s.stage, s.line);
-    const ln = rcTokens.map((t) => SHORT_LINE[t]).join(' + ');
-    const pct = rcTokens[0] === 'year' ? s.ypx_pct ?? null : s.px_pct;
-    const where = s.stage === 'go'
-      ? (s.go_via === 'reclaim' ? `price reclaimed ${ln}` : `basis crossed above ${ln}`)
-      : `${fmtSignedPct(pct)} vs ${SHORT_LINE[rcTokens[0] ?? 'month']} · basis ${fmtSignedPct(s.basis_pct)}`;
-    return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]}${s.path === 'fast' ? ' (fast)' : ''} ${a.ticker} — ${where}`;
+    // PULLBACK / BROKEN / HELD (the reclaim setup's stages went with script v27)
+    const tokens = lineTokens(s.stage, s.line);
+    const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
+    const first = tokens[0] ?? 'session';
+    const pct = first === 'session' ? s.spx_pct : first === 'month' ? s.px_pct : s.ypx_pct;
+    const what = s.stage === 'pullback' ? `${fmtSignedPct(pct ?? null)} vs ${lineName}${s.touch != null ? ` · touch ${s.touch}` : ''}`
+      : s.stage === 'broken' ? `closed under the ${lineName}` : '+10% from the pullback';
+    return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — ${what}`;
   }
   if (a.kinds.includes('grade_aplus')) return `🅰️ ${a.ticker} — ${a.new_on_screen ? 'new A+' : `A+ (was ${a.prev_grade ?? '—'})`}`;
   if (a.kinds.includes('fast_move')) return `⚡ ${a.ticker} +${a.move_pct}% in 60s`;
@@ -267,11 +245,9 @@ export function opportunityBody(a: OpportunityAlert): string {
     if (s.mvwap != null) bits.push(`mVWAP ${fmtAlertPrice(s.mvwap)}`);
     if (s.yvwap != null) bits.push(`yVWAP ${fmtAlertPrice(s.yvwap)}`);
     if (s.stage === 'pullback' && s.peak_pct != null) bits.push(`ran +${Math.round(s.peak_pct)}% above the line`);
-    if (s.basis != null) bits.push(`basis ${fmtAlertPrice(s.basis)}`);
     if (s.day_gain != null) bits.push(`day high ${s.day_gain >= 0 ? '+' : ''}${Math.round(s.day_gain)}%`);
     if (s.ah_gain != null) bits.push(`after hours +${Math.round(s.ah_gain)}%`);
     if (a.grade) bits.push(`grade ${a.grade}`);
-    if (s.strength) bits.push(`strength ${s.strength.score}/${s.strength.max}`);
     if (s.tf) bits.push(`tf ${s.tf}`);
     return bits.filter(Boolean).join(' · ');
   }
@@ -355,17 +331,17 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k]) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
-      // Loudest wins: A+ / 📐 GO / 📐 CROSS (v21) bright pair > fast-move radar > 📐 READY or
-      // PULLBACK triple > news chime > soft single tone (every 📐 stage on a
-      // ticker that is NOT on our Momentum list — lower priority). 📐 FORMING,
-      // BROKEN / HELD and READY repeats never arrive here: the server stores
-      // them quietly (2026-10-05, TV_SETUP.quiet_stages in tv-setups.ts).
+      // Loudest wins: A+ / 📐 CROSS (v21) / BREAK (v25) bright pair > fast-move radar >
+      // 📐 PULLBACK triple > news chime > soft single tone (every 📐 stage on a
+      // ticker that is NOT on our Momentum list — lower priority). 📐 BROKEN / HELD
+      // and LEVEL never arrive here: the server stores them quietly
+      // (TV_SETUP.quiet_stages in tv-setups.ts).
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('go') || tvStage('cross') || tvStage('break')) crossConfirmPing();
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('break')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
-        else if (tvStage('ready') || tvStage('pullback')) setupReadyPing();
+        else if (tvStage('pullback')) setupReadyPing();
         else if (audible.some((a) => a.kinds.includes('news'))) chime();
         else watchPing();
       } catch { /* audio context not unlocked */ }

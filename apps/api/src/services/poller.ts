@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { boStrong, formatTvSetupAlert, goStrength, gradeAtLeast, lineTokens, pastCap, PULLBACK_STAGES, TV_SETUP, TV_STAGE_LABEL, type TvBreakoutEvent, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
+import { formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3935,7 +3935,7 @@ class PollerService {
     return row != null && gradeAtLeast(row.grade, TV_SETUP.pb_cap_exempt);
   }
 
-  // The ticker is in the latest cycle's Momentum rows (TV_SETUP.go_momentum_only).
+  // The ticker is in the latest cycle's Momentum rows (TV_SETUP.vb_momentum_only).
   tvOnMomentum(ticker: string): boolean {
     return this.lastPayload?.rows.some((r) => r.ticker === ticker) ?? false;
   }
@@ -3945,30 +3945,26 @@ class PollerService {
   // tier_events row for grading, the engine's recent list (payload.alerts →
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
-  // (ALERTS_DISABLED tv_setup, or per stage tv_forming / tv_ready / tv_go /
-  // tv_pullback / tv_broken / tv_held, and tv_year for the reclaim setup on
-  // the year line). BROKEN and HELD — a pullback's outcome — are quiet by
-  // default; switched on in the ⚙ menu they go out as silent messages.
+  // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
+  // tv_cross / tv_break, and tv_year for a message about the year line alone).
+  // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
+  // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
   // had this stage announced in the last 5 min): recorded for grading, not
   // re-announced. mode 'quiet' (2026-10-05) = a stage switched off in the ⚙
-  // menu (`why` 'muted'; default FORMING / BROKEN / HELD), or a READY on a
-  // line already announced today (`why` 'repeat', ready_once_per_day):
-  // recorded and shown in the 📐 sidebar (it reads tier_events), never
-  // announced. Rows carry `quiet: true`.
+  // menu (`why` 'muted'; default BROKEN / HELD; a LEVEL always): recorded and
+  // shown in the 📐 sidebar (it reads tier_events), never announced. Rows
+  // carry `quiet: true`.
   // v16: why 'capped' = a PULLBACK past TV_SETUP.pb_cap failures on a ticker that
   // isn't B+ or better on Momentum; `capExempt` = past the cap but announced anyway.
   // Rows carry `fails`, `capped`, `cap_exempt` for the grading.
-  // why 'offlist' (2026-10-18) = a GO on a ticker not on our Momentum list.
-  // v21 CROSS (tv_cross): why 'capped' = past TV_SETUP.vb_cap crosses on the line today;
-  // why 'offlist' = not on our Momentum list (vb_momentum_only, 2026-10-20).
-  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'repeat' | 'capped' | 'offlist', capExempt = false): OpportunityAlert {
+  // v21 CROSS (tv_cross) / v25 BREAK (tv_break): why 'capped' = past TV_SETUP.vb_cap on
+  // the line today; why 'offlist' = not on our Momentum list (vb_momentum_only, 2026-10-20).
+  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
     const at = new Date(nowSec * 1000).toISOString();
     const row = this.lastPayload?.rows.find((r) => r.ticker === sig.ticker) ?? null;
-    // GO only: morning window, run-up, GO-bar volume, on Momentum (tv-setups.ts goStrength)
-    const strength = goStrength(sig, new Date(nowSec * 1000), row != null);
     const alert: OpportunityAlert = {
       id: `${sig.ticker}:${nowSec}:tv_setup:${sig.stage}${sig.line ? `:${sig.line}` : ''}${sig.tf ? `:${sig.tf}` : ''}`,
       ticker: sig.ticker,
@@ -3984,9 +3980,9 @@ class PollerService {
       float_m: row?.float_m ?? null,
       news: null,
       setup: {
-        stage: sig.stage, mvwap: sig.mvwap, px_pct: sig.px_pct, basis: sig.basis, basis_pct: sig.basis_pct,
-        day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf, path: sig.path, go_via: sig.go_via,
-        vol_x: sig.vol_x, run_pct: sig.run_pct, strength,
+        stage: sig.stage, mvwap: sig.mvwap, px_pct: sig.px_pct,
+        day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf,
+        vol_x: sig.vol_x, run_pct: sig.run_pct,
         svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, line: sig.line ?? null,
         touch: sig.touch ?? null, peak_pct: sig.peak_pct ?? null,
         yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
@@ -3997,8 +3993,8 @@ class PollerService {
     };
     recordTierEvent('alert', 'tv_setup', sig.ticker, {
       id: alert.id, at, stage: sig.stage, price: alert.price, mvwap: sig.mvwap, px_pct: sig.px_pct,
-      basis: sig.basis, basis_pct: sig.basis_pct, day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf, path: sig.path, go_via: sig.go_via,
-      vol_x: sig.vol_x, run_pct: sig.run_pct, strength,
+      day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf,
+      vol_x: sig.vol_x, run_pct: sig.run_pct,
       svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, line: sig.line ?? null,
       touch: sig.touch ?? null, peak_pct: sig.peak_pct ?? null,
       yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
@@ -4007,7 +4003,6 @@ class PollerService {
       fails: sig.fails ?? null, capped: pastCap(sig), cap_exempt: capExempt,
       ...vbFields(sig),
     });
-    const pb = PULLBACK_STAGES.has(sig.stage);
     if (VB_STAGES.has(sig.stage)) {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
@@ -4020,35 +4015,30 @@ class PollerService {
           : why === 'offlist' ? ' · quiet (off our Momentum list)' : sig.stage === 'level' ? ' · stored (a LEVEL is never announced)' : ' · quiet (stage switched off)') : ''));
     } else console.log(
       `[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'}` +
-      (pb ? ` · ${sig.line ?? '?'} line · touch ${sig.touch ?? '?'}` + (sig.peak_pct != null ? ` · peak +${sig.peak_pct}%` : '') +
-        ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` : '') +
-      (!pb && sig.line ? ` · ${sig.line} line` : '') +
+      ` · ${sig.line ?? '?'} line · touch ${sig.touch ?? '?'}` + (sig.peak_pct != null ? ` · peak +${sig.peak_pct}%` : '') +
+      ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
       ` · mVWAP ${sig.mvwap ?? '?'} (${sig.px_pct ?? '?'}%)` +
       (sig.yvwap != null ? ` · yVWAP ${sig.yvwap} (${sig.ypx_pct ?? '?'}%)` : '') +
-      (pb ? '' : ` · basis ${sig.basis ?? '?'} (${sig.basis_pct ?? '?'}%)`) + ` · day ${sig.day_gain ?? '?'}%` +
+      ` · day ${sig.day_gain ?? '?'}%` +
       (sig.ah_gain != null ? ` · AH ${sig.ah_gain}%` : '') + ` · tf ${sig.tf ?? '?'}` +
-      (sig.path ? ` · ${sig.path}` : '') + (sig.go_via ? ` · via ${sig.go_via}` : '') +
       (sig.vol_x != null ? ` · vol ${sig.vol_x}x` : '') + (sig.run_pct != null ? ` · run ${sig.run_pct}%` : '') +
-      (strength ? ` · strength ${strength.score}/${strength.max}` : '') +
       `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
       (mode === 'log' ? ' · repeat (logged only)'
-        : mode === 'quiet' ? (why === 'repeat' ? ' · quiet (READY already announced on this line today)'
-          : why === 'capped' ? ` · quiet (past the cap: ${sig.fails} failed on this line)`
-            : why === 'offlist' ? ' · quiet (GO off our Momentum list)' : ' · quiet (stage switched off)')
+        : mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: ${sig.fails} failed on this line)` : ' · quiet (stage switched off)')
         : capExempt ? ` · past the cap (${sig.fails} failed), announced for grade ${row?.grade ?? '?'}` : ''),
     );
     if (mode === 'notify') {
       this.opportunity.pushExternal(alert);
       broadcast('alert', alert);
       const stageSlug = `tv_${sig.stage}` as AlertComponent;
-      // tv_year mutes messages about the year line alone (reclaim v11, PULLBACK v14).
+      // tv_year mutes messages about the year line alone (PULLBACK v14, VB v22).
       const yearOnly = lineTokens(sig.stage, sig.line).join('+') === 'year';
       const yearMuted = yearOnly && alertDisabled('tv_year');
       if (telegramEnabled() && !this.alertsMuted && !alertDisabled('tv_setup') && !alertDisabled(stageSlug) && !yearMuted) {
         // Priority: on our Momentum list → normal push; off the list → silent message.
         // A pullback's outcome (BROKEN / HELD) is never a buzzing push.
         const outcome = sig.stage === 'broken' || sig.stage === 'held';
-        const text = formatTvSetupAlert(sig, tvSymbol(sig.ticker), row, strength);
+        const text = formatTvSetupAlert(sig, tvSymbol(sig.ticker), row);
         const silent = outcome || (row == null && TV_SETUP.offscreen_silent);
         // A ticker hidden on the dashboard today is skipped on the phone too (2026-10-07).
         void telegramHiddenTickers().then((hidden) => {
@@ -4061,38 +4051,6 @@ class PollerService {
       }
     }
     return alert;
-  }
-
-  // 📐 BB breakout (script v17): TOUCH / BREAKOUT / TRIGGERED from the 30s alert.
-  // Store and grade only (operator, 2026-10-18): a tier_events row (event
-  // 'tv_breakout', read by GET /api/screener/breakouts) and an SSE 'breakout'
-  // event for the 📐 sidebar's breakout list. No Telegram, toast or sound, and
-  // no payload.alerts entry (thousands a day would crowd out the VWAP setups).
-  deliverTvBreakout(sig: TvSetupSignal): TvBreakoutEvent {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const row = this.lastPayload?.rows.find((r) => r.ticker === sig.ticker) ?? null;
-    const ev: TvBreakoutEvent = {
-      id: `${sig.ticker}:${nowSec}:tv_breakout:${sig.stage}${sig.tf ? `:${sig.tf}` : ''}`,
-      ticker: sig.ticker, at: new Date(nowSec * 1000).toISOString(), stage: sig.stage,
-      price: sig.price, upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null,
-      trigger: sig.trigger ?? null, stop: sig.stop ?? null,
-      svwap: sig.svwap ?? null, spx_pct: sig.spx_pct ?? null, day_gain: sig.day_gain, ah_gain: sig.ah_gain,
-      vol_x: sig.vol_x, run30: sig.run30 ?? null,
-      band_slope: sig.band_slope ?? null, off_high: sig.off_high ?? null, strong: boStrong(sig.band_slope, sig.off_high),
-      early: sig.early ?? null,
-      tf: sig.tf,
-      chg: row?.change_pct ?? null, grade: row?.grade ?? null, float_m: row?.float_m ?? null, rv1: row?.rel_vol_1min ?? null,
-      on_screen: row != null,
-    };
-    recordTierEvent('alert', 'tv_breakout', sig.ticker, { ...ev });
-    console.log(`[tv-breakout] ${TV_STAGE_LABEL[sig.stage]}${sig.early != null ? ` (early +${sig.early}%)` : ''} ${sig.ticker} $${sig.price ?? '?'} · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%)` +
-      (sig.trigger != null ? ` · trigger ${sig.trigger} · stop ${sig.stop ?? '?'}` : '') +
-      ` · sVWAP ${sig.spx_pct ?? '?'}% · run30 ${sig.run30 ?? '?'}%` +
-      (ev.strong != null ? ` · ${ev.strong ? 'strong' : 'weak'} (band ${sig.band_slope}%, ${sig.off_high}% off high)` : '') +
-      ` · tf ${sig.tf ?? '?'}` +
-      (row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'));
-    broadcast('breakout', ev);
-    return ev;
   }
 
   // Phone delivery for opportunity alerts. Per-kind mutes via ALERTS_DISABLED

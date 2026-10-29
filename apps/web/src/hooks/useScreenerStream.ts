@@ -1,7 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
-import type { CyclePayload, OpportunityAlert, TvBreakout } from '../api/types';
-import { BREAKOUTS_KEY, prependBreakout } from './useBreakouts';
+import type { CyclePayload, OpportunityAlert } from '../api/types';
 
 // Empty → EventSource uses the page's origin. Dev: vite proxy. Prod: nginx.
 const API_URL = import.meta.env.VITE_API_URL || '';
@@ -11,7 +9,6 @@ const API_URL = import.meta.env.VITE_API_URL || '';
 export function useScreenerStream(): { payload: CyclePayload | null; connected: boolean } {
   const [payload, setPayload] = useState<CyclePayload | null>(null);
   const [connected, setConnected] = useState(false);
-  const qc = useQueryClient();
 
   // Seed the board from /latest on mount (2026-07-28). The stream replays the
   // last cycle on connect, but that cache is empty for up to one poll (~20s)
@@ -66,22 +63,11 @@ export function useScreenerStream(): { payload: CyclePayload | null; connected: 
       }
     });
 
-    // 📐 BB breakouts (script v17) are never announced: each one goes straight
-    // into the breakout list's cache for the sidebar, no toast or sound.
-    es.addEventListener('breakout', (ev) => {
-      try {
-        const b = JSON.parse((ev as MessageEvent).data) as TvBreakout;
-        qc.setQueryData<TvBreakout[]>(BREAKOUTS_KEY, (cur) => prependBreakout(cur, b));
-      } catch {
-        // ignore malformed events
-      }
-    });
-
     return () => {
       es.close();
       setConnected(false);
     };
-  }, [qc]);
+  }, []);
 
   return { payload, connected };
 }

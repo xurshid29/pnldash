@@ -1,25 +1,14 @@
 //@version=6
-// mVWAP × BB basis setup — the operator's VWAP edge. Script version: v26 (2026-10-23).
-// Docs: docs/vwap-setup.md — the walkthrough, tuning table, changelog, and the
-// steps for shipping a new version (bump the version above, recreate the alert).
-// Four setups in one script, so the same two watchlist alerts carry all of them
-// (3, the BB breakout, and 4, the VWAP + BB cross, only send from the 30s alert).
-// Each setup has its own "… setup on" switch (v21: the reclaim one in "Setup"): off
+// mVWAP-BB — the operator's VWAP setups. Script version: v27 (2026-10-28).
+// Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
+// a new version (bump the version above, recreate the alerts).
+// Two setups in one script, so the same two watchlist alerts carry both (the VWAP +
+// BB cross only sends from the 30s alert). Each has its own "… setup on" switch: off
 // = no markers and no alerts from it, and a VWAP line no setup uses isn't drawn.
-// 1) RECLAIM: a top gainer pulls back under its month-anchored VWAP while the
-// Bollinger basis (SMA 20) curls up beneath it; the trade is the reclaim. Since
-// v11 the same rules also run on the year-anchored VWAP, each line with its own
-// stages (the operator's SAIQ 2026-10-05: the spike stopped at the year VWAP,
-// based under it, reclaimed it and ran). Messages say which line.
-//   FORMING  basis 6–10% under mVWAP, rising, gap closing — or, on a fast approach,
-//            price ≤10% under mVWAP and ≥3% above a rising basis → open the chart
-//   READY    basis ≤6% under mVWAP — or, on a fast approach, price ≤5% under → entry zone
-//   GO       price reclaims mVWAP decisively (close ≥2% above it, under it within 5 bars)
-//            or the basis crosses above it (rising) — whichever first, within 60 bars of a
-//            FORMING/READY, and never on a bar that closes lower than the bar before
-// Price must close at or above the BB basis: a setup under the basis is no
-// setup, and a close 2% under it ends the setup — the next reclaim is a fresh READY.
-// 2) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
+// v27 removed the RECLAIM setup (FORMING / READY / GO, v1–v26) and the BB breakout
+// (TOUCH / BREAKOUT / TRIGGERED, v17–v26): the operator tested all four and kept these
+// two (10-28 ET). Both are in git history (v26, e38c06b) and docs/vwap-setup.md.
+// 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
 //             (v24 trial, month and year lines: the bar's low within 5% is enough, its close
@@ -29,22 +18,15 @@
 // Each line runs its own setup, and every message carries its touch number (the
 // operator rates the first pullback after the first big move highest; our own
 // data found the second as good — docs/vwap-setup.md §13.5).
-// 3) BB BREAKOUT (v17): on a 1m candle against a 30s Bollinger Band (20, 2).
-//   TOUCH      the forming 1m candle reaches the upper band by its half-minute → get ready
-//   BREAKOUT   the 1m candle closes above the band (the close before it didn't) → buy stop over its high
-//   TRIGGERED  the next 1m candle trades over that high
-// It sends from the 30s alert only: the 30s chart has the 30s band natively, and the
-// 1m candles are built from its bars. v18 also draws it on a 1m chart, from the
-// 30s bars inside each candle.
-// 4) VWAP + BB CROSS (v21): one candle of a timeframe you pick (5m, 1h, …) crosses
+// 2) VWAP + BB CROSS (v21): one candle of a timeframe you pick (5m, 1h, …) crosses
 // over both a VWAP line — session, and (v22) month or year — and the upper Bollinger
-// Band of another timeframe you pick (2m, 30m, 45m, …). Each line runs its own setup.
+// Band of another timeframe you pick (45s, 2m, 30m, …). Each line runs its own setup.
 //   CROSS      the candle opened under both lines (or sitting on the lower one) and a
 //              30s close inside it is above both → the alert, while the candle is open
 //   LEVEL      (v25) the VB candle closed: its high is the trigger, its low the stop → place a buy stop
 //   BREAK      (v25) price reaches that high (when the buy stop fills) → the alert
 //              (v26: the level lasts until a candle closes back under the line it crossed)
-// Built from the 30s alert's bars, like the breakout; drawn on the candle's own chart.
+// Built from the 30s alert's bars; drawn on the candle's own chart.
 // Run it as TradingView watchlist alerts — one on 1m and one on 30s (Premium allows 2):
 // Symbols = the runners list (dashboard → 📐 sidebar ⋯ → Copy list), session Extended,
 // condition = this script → "Any alert() function call", once per bar close,
@@ -54,29 +36,15 @@
 // mirrors this logic; update it with the script.
 indicator("mVWAP x BB basis setup", shorttitle = "mVWAP-BB", overlay = true)
 
+// v27 put the inputs in a new order (TradingView keeps saved values by position, so
+// after the paste: Settings → Defaults → Reset settings). The defaults are the
+// operator's own settings on 10-28: gainer filter 10%, VB candle 5m, band 45s.
+// From here on, new inputs go last again.
 // Gainer filter: computed per ticker from its own bars — no screener, no ranking.
 // A ticker that doesn't pass stays silent; -100 switches the filter off.
-minDayGain = input.float(20.0, "Up at least % (day high vs prior close; -100 = filter off)", group = "Gainer filter (this ticker's own move)")
+minDayGain = input.float(10.0, "Up at least % (day high vs prior close; -100 = filter off)", group = "Gainer filter (this ticker's own move)")
 runnerDays = input.int(3,      "…today, or on any of the last N sessions (0 = today only)", minval = 0, maxval = 5, group = "Gainer filter (this ticker's own move)")
 useAhGain  = input.bool(true,  "After hours, also count the move since today's close", group = "Gainer filter (this ticker's own move)")
-rcLines    = input.string("Month + Year", "Lines: month VWAP, year VWAP or both (v11)", options = ["Month + Year", "Month", "Year"], group = "Setup")
-maxPxBelow = input.float(15.0, "Price at most % under mVWAP", group = "Setup")
-formBasis  = input.float(10.0, "FORMING: basis at most % under mVWAP", group = "Setup")
-readyBasis = input.float(6.0,  "READY: basis at most % under mVWAP", group = "Setup")
-holdTol    = input.float(0.0,  "Price may sit up to % under the basis (0 = must close above it)", group = "Setup")
-failPct    = input.float(2.0,  "Setup breaks: close % under the basis", group = "Setup")
-slopeBars  = input.int(3,      "Basis rising over N bars", minval = 1, group = "Setup")
-useFast    = input.bool(true,  "Fast approach: price leads, the basis lags", group = "Fast approach")
-fastAbove  = input.float(3.0,  "Price at least % above the basis", group = "Fast approach")
-formPx     = input.float(10.0, "FORMING: price at most % under mVWAP", group = "Fast approach")
-readyPx    = input.float(5.0,  "READY: price at most % under mVWAP", group = "Fast approach")
-maxBasis   = input.float(15.0, "Basis at most % under mVWAP", group = "Fast approach")
-fromBelow  = input.int(10,     "Price under mVWAP for the previous N bars (0 = off)", minval = 0, group = "Fast approach")
-maxCycles  = input.int(6,      "Max setups per ticker per day", minval = 1, group = "Alerts")
-goMemory   = input.int(60,     "GO up to N bars after the last FORMING/READY (0 = only while armed)", minval = 0, group = "Alerts")
-goOn       = input.string("Either", "GO when", options = ["Either", "Price reclaim", "Basis cross"], group = "GO")
-goAbovePct = input.float(2.0,  "Price reclaim: close at least % above mVWAP", group = "GO")
-goWithin   = input.int(5,      "…having been at/under it within the previous N bars", minval = 1, group = "GO")
 alertWin   = input.session("0400-2000", "Alert window (New York time)", group = "Alerts")
 pbOn       = input.bool(true,   "Pullback setup on", group = "Pullback to VWAP (v10)")
 pbSession  = input.bool(true,   "Lines: session VWAP", inline = "pbl", group = "Pullback to VWAP (v10)")
@@ -84,44 +52,28 @@ pbMonth    = input.bool(true,   "month VWAP", inline = "pbl", group = "Pullback 
 pbYear     = input.bool(true,   "year VWAP (v14)", inline = "pbl", group = "Pullback to VWAP (v10)")
 pbArm      = input.float(15.0,  "Armed: a bar high at least % above the line (the big move)", group = "Pullback to VWAP (v10)")
 pbNear     = input.float(5.0,   "PULLBACK: a close back within % above the line", group = "Pullback to VWAP (v10)")
+pbLowMY    = input.bool(true,   "Month / year lines: a candle's low reaching the band counts, its close holding above the line (v24 trial)", group = "Pullback to VWAP (v10)")
 pbBreak    = input.float(0.0,   "BROKEN: a close at least % under the line (0 = any close under it)", group = "Pullback to VWAP (v10)")
 pbWin      = input.float(10.0,  "HELD: price runs % above the PULLBACK close", group = "Pullback to VWAP (v10)")
 pbMax      = input.int(0,       "Script cap: stop a line after N failed pullbacks a day (0 = none; the dashboard applies the cap since v16)", minval = 0, group = "Pullback to VWAP (v10)")
 pbCapMark  = input.int(2,       "Chart: pullbacks after N failed ones are drawn gray (the dashboard's cap)", minval = 1, group = "Pullback to VWAP (v10)")
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
-boOn       = input.bool(true,         "Breakout setup on", group = "BB breakout (v17)")
-boBandTf   = input.timeframe("30S",   "BO: BB timeframe (the band; the chart's own, or read from a 1m chart — v18)", group = "BB breakout (v17)")
-boTf       = input.timeframe("30S",   "BO: alerts from the alert on this chart timeframe (30S = soonest; 1 = at the 1m close)", group = "BB breakout (v17)")
-boLen      = input.int(20,            "BO: BB length", minval = 2, group = "BB breakout (v17)")
-boMult     = input.float(2.0,         "BO: BB StdDev", minval = 0.1, group = "BB breakout (v17)")
-boMinGain  = input.float(20.0,        "Today's gainers: day high at least % (-100 = filter off)", group = "BB breakout (v17)")
-boTouchOn  = input.bool(true,         "TOUCH: the forming 1m candle reaches the band", group = "BB breakout (v17)")
-boShow     = input.bool(true,         "Draw the band and markers (on the band's own chart, or a 1m chart — v18)", group = "BB breakout (v17)")
-boStrSlope = input.float(0.0,         "Strong: the band up at least % over the last 5 candles (v19; weak = gray)", group = "BB breakout (v17)")
-boStrOff   = input.float(10.0,        "Strong: the close at most % under the day's high (v19)", group = "BB breakout (v17)")
-boEarlyOn  = input.bool(true,         "Early BO (v20): the first candle to reach +N% today, regular hours, closing above the band", group = "BB breakout (v17)")
-boEarlyGain = input.float(10.0,       "Early BO: +N% (day high vs the prior close)", group = "BB breakout (v17)")
-boEarlyVol = input.float(2.0,         "Early BO: candle volume at least N× its last 20 candles", minval = 0, group = "BB breakout (v17)")
-// v21 inputs go last: TradingView keeps a script's saved input values by position,
-// so an input inserted higher up would hand its slot's old value to the wrong input.
-rcOn       = input.bool(true,         "Reclaim setup on (FORMING / READY / GO; v21)", group = "Setup")
 vbOn       = input.bool(true,         "VWAP + BB cross setup on (v21)", group = "VWAP + BB cross (v21)")
 vbCandleTf = input.timeframe("5",     "VB: candle timeframe — the chart you trade (its candles and session VWAP)", group = "VWAP + BB cross (v21)")
-vbBbTf     = input.timeframe("2",     "VB: BB timeframe (the band)", group = "VWAP + BB cross (v21)")
+vbBbTf     = input.timeframe("45S",   "VB: BB timeframe (the band)", group = "VWAP + BB cross (v21)")
 vbLen      = input.int(20,            "VB: BB length", minval = 2, group = "VWAP + BB cross (v21)")
 vbMult     = input.float(2.0,         "VB: BB StdDev", minval = 0.1, group = "VWAP + BB cross (v21)")
 vbTol      = input.float(2.0,         "VB: the candle may open up to % above the lower line (price sitting on VWAP; 0 = under both)", minval = 0, group = "VWAP + BB cross (v21)")
 vbGainOn   = input.bool(true,         "VB: gainers only (the gainer filter at the top)", group = "VWAP + BB cross (v21)")
-vbTf       = input.timeframe("30S",   "VB: alerts from the alert on this chart timeframe (30S = soonest)", group = "VWAP + BB cross (v21)")
-vbShow     = input.bool(true,         "VB: draw the band and markers (on the candle timeframe's chart)", group = "VWAP + BB cross (v21)")
 vbSession  = input.bool(true,         "VB lines: session VWAP", inline = "vbl", group = "VWAP + BB cross (v21)")
 vbMonth    = input.bool(true,         "month VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
 vbYear     = input.bool(true,         "year VWAP (v22)", inline = "vbl", group = "VWAP + BB cross (v21)")
-pbLowMY    = input.bool(true,         "Month / year lines: a candle's low reaching the band counts, its close holding above the line (v24 trial)", group = "Pullback to VWAP (v10)")
 vbBreakOn  = input.bool(true,         "VB break (v25): the latest VB candle's high is the trigger — LEVEL when it closes, BREAK when price reaches it", group = "VWAP + BB cross (v21)")
 vbBrkCancel = input.bool(true,        "VB break: a candle closing back under the VWAP line the VB candle crossed cancels the level (v26: the candle's close, not a 30s close)", group = "VWAP + BB cross (v21)")
+vbTf       = input.timeframe("30S",   "VB: alerts from the alert on this chart timeframe (30S = soonest)", group = "VWAP + BB cross (v21)")
+vbShow     = input.bool(true,         "VB: draw the band and markers (on the candle timeframe's chart)", group = "VWAP + BB cross (v21)")
 
-// Same lines as the chart: VWAP anchor Month on hlc3, BB basis = SMA 20 of close,
+// Same lines as the chart: VWAP anchor Month on hlc3,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
 // the 04:00 ET pre-market open on an Extended chart. Each restarts on the first
 // loaded bar too, exactly like TradingView's built-in VWAP
@@ -165,18 +117,16 @@ if timeframe.change("D")
 yDayPV := yDayPV + hlc3 * volume
 yDayV  := yDayV + volume
 yvwap = na(yPrevV) or yPrevV + yDayV <= 0 ? na : (yPrevPV + yDayPV) / (yPrevV + yDayV)
-basis  = ta.sma(close, 20)
 // Strength inputs sent with every signal (v9): the signal bar's volume vs the
 // average of the previous 20 bars, and the run-up over the previous 10 bars.
-// The server scores GOs with them (services/tv-setups.ts goStrength).
+// PULLBACK messages carry them; the server stores them for grading.
 volAvg20 = ta.sma(volume, 20)[1]
 volX     = volAvg20 > 0 ? volume / volAvg20 : na
 runUp10  = (close / close[10] - 1) * 100
 // v21: a line is drawn while a setup that uses it is on.
-plot(rcOn or (pbOn and pbMonth) or (vbOn and vbMonth) ? mvwap : na, "mVWAP", color.yellow)
-plot(rcOn ? basis : na, "BB basis", color.green)
+plot((pbOn and pbMonth) or (vbOn and vbMonth) ? mvwap : na, "mVWAP", color.yellow)
 plot((pbOn and pbSession) or (vbOn and vbSession) ? svwap : na, "sVWAP", color.purple)
-plot(rcOn or (pbOn and pbYear) or (vbOn and vbYear) ? yvwap : na, "yVWAP", color.blue)
+plot((pbOn and pbYear) or (vbOn and vbYear) ? yvwap : na, "yVWAP", color.blue)
 
 // Top gainer: today's high vs the prior regular-session close (like Finviz
 // Change), or the same in any of the last `runnerDays` sessions — a second- or
@@ -214,135 +164,11 @@ if lookback > 0
 gainer = (not na(dayHighGain) and dayHighGain >= minDayGain) or recentGain >= minDayGain or
      (useAhGain and not na(ahGain) and ahGain >= minDayGain)
 
-// Line-independent parts of the reclaim setup.
-basisUp  = basis > basis[slopeBars]
-holding  = close >= basis * (1 - holdTol / 100)
 inWindow = not na(time(timeframe.period, alertWin, "America/New_York"))
 
-// The reclaim conditions on one line. v11 runs the same rules on the month VWAP
-// and the year VWAP. The function is called for each line on every bar, so the
-// history inside it (gap closing, the recent-close counts, the cross) stays intact:
-// v6 evaluates and/or lazily, and a skipped math.sum would corrupt its history.
-// Distances are positive under the line.
-// Two shapes. BASE: price consolidates under the line until the basis converges
-// (AIXI, VEEA). FAST: price runs at the line while the 20-bar basis lags far
-// behind (MEDS 09-18, NIVF 09-30), reached by price distance instead. FAST only
-// counts when approaching from below: a spike that falls back to the line (AMOD
-// 2026-09-01) is not an approach.
-// GO: the basis cross alone fires late on fast moves, because the 20-bar basis
-// lags; it crossed near the top on NIVF 2026-09-30 (+40% after the break). The
-// decisive price reclaim marks the breakout itself. A cross only counts with the
-// basis RISING, and no GO prints on a falling bar: early in a month the line is
-// built on thin volume, and one heavy red bar can drag it under a flat basis — a
-// "cross" with price below both (AIXI 2026-10-01 09:38).
-reclaimConds(float ln) =>
-    float pxB    = (ln - close) / ln * 100
-    float bB     = (ln - basis) / ln * 100
-    bool  gapC   = bB < bB[slopeBars]
-    float aboveR = math.sum(close >= ln ? 1.0 : 0.0, math.max(fromBelow, 1))[1]   // closes at/above it, previous `fromBelow` bars
-    float underR = math.sum(close <= ln ? 1.0 : 0.0, goWithin)[1]
-    bool  crossUp = ta.crossover(basis, ln)
-    bool  okLine = gainer and not na(ln) and not na(basis)
-    bool  inZ    = okLine and pxB > 0 and pxB <= maxPxBelow and basisUp and holding
-    bool  fromOk = fromBelow == 0 or aboveR == 0
-    bool  fastA  = useFast and fromOk and close >= basis * (1 + fastAbove / 100) and bB <= maxBasis
-    bool  bForm  = bB > readyBasis and bB <= formBasis
-    bool  bReady = bB > 0 and bB <= readyBasis
-    bool  frm    = inZ and gapC and (bForm or (fastA and pxB <= formPx))
-    bool  rdy    = inZ and (bReady or (fastA and pxB <= readyPx))
-    bool  recl   = basisUp and underR > 0 and close > ln * (1 + goAbovePct / 100)
-    bool  crOk   = crossUp and basisUp
-    bool  trig   = goOn == "Basis cross" ? crOk : goOn == "Price reclaim" ? recl : (crOk or recl)
-    bool  g      = okLine and trig and close >= close[1]
-    [frm, rdy, g, bForm, bReady, recl, bB]
-
-[mForm, mReady, mGo, mBaseForm, mBaseReady, mRecl, mBasisBelow] = reclaimConds(mvwap)
-[yForm, yReady, yGo, yBaseForm, yBaseReady, yRecl, yBasisBelow] = reclaimConds(yvwap)
-
-// Stages, per line: 0 idle, 1 forming, 2 ready, 3 go; each fires once per setup.
-// A setup that breaks (close under the line and failPct under the basis) re-arms.
-// GO also fires within `goMemory` bars of the last FORMING/READY when a break
-// came in between (AIXI 2026-10-02: READY, dip under the basis, then one bar
-// back over both lines). Outside the alert window nothing fires and no stage advances.
-type RcLine
-    int stage        = 0
-    int cycles       = 0
-    int lastSetupBar = na
-
-// One bar of one line's stage machine; returns the stage that fires (0 = none).
-method advance(RcLine s, float ln, bool frm, bool rdy, bool g) =>
-    if s.stage > 0 and close < ln and close < basis * (1 - failPct / 100)
-        s.stage := 0
-    bool recentSetup = goMemory > 0 and not na(s.lastSetupBar) and bar_index - s.lastSetupBar <= goMemory
-    int target = 0
-    if g and s.stage < 3 and (s.stage >= 1 or recentSetup)
-        target := 3
-    else if rdy
-        target := 2
-    else if frm
-        target := 1
-    bool fire = inWindow and target > s.stage and (s.stage > 0 or target == 3 or s.cycles < maxCycles)
-    if fire
-        if s.stage == 0 and target < 3
-            s.cycles := s.cycles + 1
-        if target < 3
-            s.lastSetupBar := bar_index
-        s.stage := target
-    fire ? target : 0
-
-var RcLine rcM = RcLine.new()
-var RcLine rcY = RcLine.new()
-if newDay
-    rcM.stage        := 0
-    rcM.cycles       := 0
-    rcM.lastSetupBar := na
-    rcY.stage        := 0
-    rcY.cycles       := 0
-    rcY.lastSetupBar := na
-int fireM = 0
-int fireY = 0
-if rcOn and rcLines != "Year"
-    fireM := rcM.advance(mvwap, mForm, mReady, mGo)
-if rcOn and rcLines != "Month"
-    fireY := rcY.advance(yvwap, yForm, yReady, yGo)
-
 pctVs(float ln) => (close >= ln ? "+" : "") + str.tostring((close / ln - 1) * 100, "#.0")
-// The message is a contract with services/tv-setups.ts parseTvMessage. `basis %`
-// is measured against the setup's own line:
-//   READY AIXI 1.48 | mVWAP 1.57 (-5.7%) | yVWAP 2.9 (-49.0%) | basis 1.49 (-5.1%) | line month | day high +41% | vol 1.2x | run +3.0% | tf 1 | path base
-rcMsg(int target, string lineName, float bBelow, bool bForm, bool bReady, bool recl) =>
-    string msg = (target == 3 ? "GO" : target == 2 ? "READY" : "FORMING") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
-    msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + pctVs(mvwap) + "%)"
-    if not na(yvwap)
-        msg += " | yVWAP " + str.tostring(yvwap, format.mintick) + " (" + pctVs(yvwap) + "%)"
-    msg += " | basis " + str.tostring(basis, format.mintick) + " (" + str.tostring(-bBelow, "#.0") + "%)"
-    msg += " | line " + lineName
-    msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
-    if not na(ahGain)
-        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
-    if not na(volX)
-        msg += " | vol " + str.tostring(volX, "#.#") + "x"
-    if not na(runUp10)
-        msg += " | run " + (runUp10 >= 0 ? "+" : "") + str.tostring(runUp10, "#.#") + "%"
-    msg += " | tf " + timeframe.period
-    if target < 3
-        msg += " | path " + ((target == 2 ? bReady : bForm) ? "base" : "fast")
-    else
-        msg += " | via " + (recl and goOn != "Basis cross" ? "reclaim" : "cross")
-    msg
 
-// Both lines firing the same stage on one bar (they can sit close together) is
-// one "line month+year" message (v11–v13 said "both"), with the month line's
-// basis distance.
-if fireM > 0 and fireM == fireY
-    alert(rcMsg(fireM, "month+year", mBasisBelow, mBaseForm, mBaseReady, mRecl), alert.freq_once_per_bar_close)
-else
-    if fireM > 0
-        alert(rcMsg(fireM, "month", mBasisBelow, mBaseForm, mBaseReady, mRecl), alert.freq_once_per_bar_close)
-    if fireY > 0
-        alert(rcMsg(fireY, "year", yBasisBelow, yBaseForm, yBaseReady, yRecl), alert.freq_once_per_bar_close)
-
-// ── 2) PULLBACK (v10) ─────────────────────────────────────────────────────────
+// ── 1) PULLBACK (v10) ─────────────────────────────────────────────────────────
 // A fast run stretches price well above a VWAP line and it comes back down to it
 // (operator, 2026-10-05: SAIQ and SDEV on the session line, VEEA 2026-09-15 on
 // the month line, MI 2026-10-05 12:40 ET on the year line). Each line keeps its
@@ -444,7 +270,7 @@ if pbOn and inWindow
     if pbYear
         evY := pbY.step(yvwap, gainer, pbLowMY)
 
-// The message — a contract with services/tv-setups.ts parseTvMessage, like the RECLAIM one:
+// The message — a contract with services/tv-setups.ts parseTvMessage:
 //   PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | fails 0 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1
 // v16: `fails` = failed pullbacks on the line before this one (the lowest of the lines named).
 pbMsg(int ev, string lineName, int touch, float peak, int fails) =>
@@ -510,242 +336,8 @@ plotshape(pbN1 != "" and not pbCapped, "Pullback", shape.diamond, location.below
 plotshape(pbCapped, "Pullback (past the cap)", shape.diamond, location.belowbar, color.gray, size = size.tiny)
 plotshape(evS == 2 or evM == 2 or evY == 2, "Broken", shape.xcross, location.abovebar, color.red, size = size.tiny)
 plotshape(evS == 3 or evM == 3 or evY == 3, "Held", shape.flag, location.abovebar, color.lime, size = size.tiny)
-// Reclaim markers: the month line orange / yellow / green as before, the year line
-// (v13) the same shapes in blue like its line. A stage that fires on both lines on
-// one bar shows the month marker.
-plotshape(fireM == 1, "Forming (month)", shape.circle, location.belowbar, color.orange, size = size.tiny)
-plotshape(fireM == 2, "Ready (month)", shape.triangleup, location.belowbar, color.yellow, size = size.small)
-plotshape(fireM == 3, "Go (month)", shape.labelup, location.belowbar, color.lime, text = "GO", textcolor = color.black, size = size.small)
-plotshape(fireY == 1 and fireM != 1, "Forming (year)", shape.circle, location.belowbar, color.blue, size = size.tiny)
-plotshape(fireY == 2 and fireM != 2, "Ready (year)", shape.triangleup, location.belowbar, color.blue, size = size.small)
-plotshape(fireY == 3 and fireM != 3, "Go (year)", shape.labelup, location.belowbar, color.blue, text = "GO", textcolor = color.white, size = size.small)
-alertcondition(fireM == 2 or fireY == 2, "READY", "READY {{ticker}} {{close}} | tf {{interval}}")
-alertcondition(fireM == 3 or fireY == 3, "GO", "GO {{ticker}} {{close}} | tf {{interval}}")
 
-// ── 3) BB BREAKOUT (v17; v18 draws it on a 1m chart too) ──────────────────────
-// The operator's third setup (2026-10-18; NWGL, HODO, XLAB, SGRX, XXII on 10-15/16):
-// a 1m chart with the Bollinger Band computed on 30s bars ("the 1m upper band
-// crosses the 1m chart too often"). A 1m candle closes above the upper band and
-// the next candle takes out its high. Measured on 20 sessions of +20% names
-// (research/bb-breakout): about break-even on its own, so the dashboard stores
-// and grades every signal and pings none (a trial).
-//   TOUCH      the forming candle's high reaches the band before the minute closes
-//              (on 30s bars: at the half-minute), the last 1m close was under it
-//   BREAKOUT   the 1m candle closes above the band, the close before it didn't;
-//              the trade is a buy stop one tick over its high, the stop its low
-//   TRIGGERED  a bar of the next 1m candle trades at or over that trigger
-//              (seen at the 30s bar's close); the candle passing without it ends it
-// Candles are clock minutes; a minute with no trades has no candle. Two ways to
-// see the band (`boBandTf`, 30S):
-//   on its own chart (30s): the chart's BB, 1m candles built from its bars;
-//   on a 1m chart (v18): the 30s bars inside each candle (request.security_lower_tf),
-//   so TOUCH is any 30s bar before the last reaching the band, and a TOUCH and a
-//   BREAKOUT can land on one 1m bar (the chart then shows the BREAKOUT).
-// Same rules either way. Alerts go out only from the chart timeframe `boTf` (the
-// 30s alert: a TOUCH comes 30 s before the candle closes; from the 1m alert it
-// would arrive with the BREAKOUT). Other chart timeframes draw nothing.
-// v19 (operator: "some BOs are not very accurate maybe? 18:14, 18:44, 19:30" on
-// XLAB 10-16): each signal says how the band moved over the last 5 candles
-// (`slope`) and how far the close is under the day's high (`off high`). Strong =
-// the band not falling and the close within 10% of the high; weak ones are drawn
-// gray and the dashboard dims them. On 20 sessions (research/bb-breakout) strong
-// breakouts did +0.41% a trade and weak ones -0.17%, the same in both halves;
-// a bounce into a band still falling from the top (XLAB 19:30) is the weak kind.
-// v20 (operator, 10-19, after WORX ran 1.40 → 2.54 with no BO — its first break came
-// at +9%, and by +20% it was riding the band, never a fresh cross): an EARLY BO on
-// the first candle of the day to reach +10% (day high vs the prior close), in regular
-// hours, closing above the band, on at least 2× its last 20 candles' volume — no
-// +20% filter, no fresh-cross test. Measured on every night-before watchlist name
-// (research/bb-breakout/early_study.py): +0.29% a trade, ~8 a day, both halves;
-// the same rule before or after regular hours lost (-2.7% / -3.2%), and without the
-// volume test it was +0.14%. A trial: the message says `early +10%`, the chart
-// draws an orange "E", and its TRIGGERED doesn't need the +20% filter either.
-boChartSec = timeframe.in_seconds(timeframe.period)
-boBandSec  = timeframe.in_seconds(boBandTf)
-boNative   = boChartSec == boBandSec and boChartSec <= 60
-boFrom1m   = boChartSec == 60 and boBandSec < 60
-boValid    = boOn and (boNative or boFrom1m)
-boSend     = boValid and timeframe.period == boTf
-boBasis    = ta.sma(close, boLen)
-boUpper    = boBasis + boMult * ta.stdev(close, boLen)
-// The band on the 30s bars inside a 1m bar, and their highs. Requested on every
-// chart (a request can't be conditional); off a 1m chart, or on one that neither
-// draws nor sends the breakout (the 1m watchlist alert created with "Draw" off),
-// it asks for the chart's own timeframe, which is one cheap value per bar.
-boUse1m = boFrom1m and (boShow or boSend)
-boBand() =>
-    float b = ta.sma(close, boLen)
-    [b + boMult * ta.stdev(close, boLen), high]
-[boInUp, boInHigh] = request.security_lower_tf(syminfo.tickerid, boUse1m ? boBandTf : timeframe.period, boBand())
-int   boInN = array.size(boInUp)
-float boUp  = boNative ? boUpper : boUse1m and boInN > 0 ? array.get(boInUp, boInN - 1) : na   // the band at this bar's close
-boGainer = boMinGain <= -100 or (not na(dayHighGain) and dayHighGain >= boMinGain) or
-     (useAhGain and not na(ahGain) and ahGain >= boMinGain)
-
-var int   boMin     = na      // the clock minute (ms) the forming 1m candle started
-var float boCHigh   = na
-var float boCLow    = na
-var float boCVol    = 0.0
-var bool  boTouched = false
-var float boPrevC   = na      // the last finished 1m candle's close…
-var float boPrevU   = na      // …and the band at that close
-var int   boArmMin  = na      // an armed BREAKOUT: the minute its trigger candle starts
-var float boTrig    = na
-var float boStop    = na
-var float boVolX    = na
-var boVols = array.new<float>()   // the last 20 finished candles' volumes
-var boLows = array.new<float>()   // the last 30 finished candles' lows
-var bool  boDone    = true    // the forming candle has closed
-var float boLastC   = na      // the forming candle's latest close and band, to close it
-var float boLastU   = na      // if its closing 30s bar has no trades (and so no bar)
-var boUps = array.new<float>()    // the band at the close of the last 5 finished candles (v19)
-var float boArmSlope  = na        // the armed BREAKOUT's context, repeated on its TRIGGERED
-var float boArmOff    = na
-var bool  boArmStrong = false
-var bool  boEarlyDone = false     // v20: today's first +boEarlyGain% candle has passed
-var bool  boArmEarly  = false     // the armed BREAKOUT is an early one
-if newDay
-    boEarlyDone := false
-
-int boMinNow = time - time % 60000
-if na(boMin) or boMinNow != boMin
-    if not boDone and not na(boLastC)
-        // The last candle's closing 30s bar had no trades: close it on its last bar
-        // (no BREAKOUT for it, but the next candle's "fresh" test stays right).
-        boPrevC := boLastC
-        boPrevU := boLastU
-        array.push(boVols, boCVol)
-        if array.size(boVols) > 20
-            array.shift(boVols)
-        array.push(boLows, boCLow)
-        if array.size(boLows) > 30
-            array.shift(boLows)
-        array.push(boUps, boLastU)
-        if array.size(boUps) > 5
-            array.shift(boUps)
-    if not na(boArmMin) and boMinNow > boArmMin
-        boArmMin := na                         // the trigger candle passed (or had no trades)
-    boDone    := false
-    boMin     := boMinNow
-    boCHigh   := high
-    boCLow    := low
-    boCVol    := volume
-    boTouched := false
-else
-    boCHigh := math.max(boCHigh, high)
-    boCLow  := math.min(boCLow, low)
-    boCVol  := boCVol + volume
-bool boEnds  = time_close % 60000 == 0           // this bar closes the 1m candle (every bar of a 1m chart)
-bool boFresh = not na(boPrevC) and not na(boPrevU) and boPrevC <= boPrevU
-float boLow30 = array.size(boLows) > 0 ? math.min(array.min(boLows), boCLow) : boCLow
-float boRun30 = (close / boLow30 - 1) * 100      // the run over the last 30 minutes
-
-// TOUCH on a 1m chart: a 30s bar before the candle's last whose candle high so far reaches its band.
-bool boInTouch = false
-if boUse1m and boInN > 1
-    float runHi = na
-    for k = 0 to boInN - 2
-        runHi := na(runHi) ? array.get(boInHigh, k) : math.max(runHi, array.get(boInHigh, k))
-        float uk = array.get(boInUp, k)
-        if not boInTouch and not na(uk) and runHi >= uk
-            boInTouch := true
-
-boLastC := close
-boLastU := boUp
-// v19 context: the band now vs at the close 5 candles ago, and the close vs the day's high so far.
-float boSlope  = array.size(boUps) >= 5 and array.get(boUps, 0) > 0 ? (boUp / array.get(boUps, 0) - 1) * 100 : na
-float boOff    = not na(dayHigh) and dayHigh > 0 ? (close / dayHigh - 1) * 100 : na
-bool  boStrong = not na(boSlope) and boSlope >= boStrSlope and not na(boOff) and boOff >= -boStrOff
-bool boCalc    = boValid and inWindow and boGainer and not na(boUp)
-bool boTrigEv  = false
-bool boTouchEv = false
-bool boBreakEv = false
-bool boEarlyEv = false
-if not na(boArmMin) and boMin == boArmMin and high >= boTrig
-    boArmMin := na
-    boTrigEv := boArmEarly ? boValid and inWindow and not na(boUp) : boCalc
-if boCalc and boTouchOn and not boTouched and boFresh and (boNative ? not boEnds and boCHigh >= boUp : boInTouch)
-    boTouched := true
-    boTouchEv := true
-if boEnds
-    boVolX := array.size(boVols) > 0 and array.avg(boVols) > 0 ? boCVol / array.avg(boVols) : na
-    // v20 early: the first candle of the day whose day high reaches +boEarlyGain%.
-    bool firstCross = not boEarlyDone and not na(dayHighGain) and dayHighGain >= boEarlyGain
-    if firstCross
-        boEarlyDone := true
-    bool early   = boEarlyOn and firstCross and boValid and inWindow and session.ismarket and not na(boUp) and
-         close > boUp and not na(boVolX) and boVolX >= boEarlyVol
-    bool regular = boCalc and boFresh and close > boUp
-    if early or regular
-        boArmMin  := boMin + 60000
-        boTrig    := boCHigh + syminfo.mintick
-        boStop    := boCLow
-        boArmSlope  := boSlope
-        boArmOff    := boOff
-        boArmStrong := boStrong
-        boArmEarly  := early
-        boEarlyEv := early
-        boBreakEv := true
-    boPrevC := close
-    boPrevU := boUp
-    array.push(boVols, boCVol)
-    if array.size(boVols) > 20
-        array.shift(boVols)
-    array.push(boLows, boCLow)
-    if array.size(boLows) > 30
-        array.shift(boLows)
-    array.push(boUps, boUp)
-    if array.size(boUps) > 5
-        array.shift(boUps)
-    boDone := true
-
-// The message — a contract with services/tv-setups.ts parseTvMessage:
-//   TOUCH XLAB 2.29 | upper 2.3 (-0.4%) | sVWAP 2.01 (+13.9%) | day high +80% | run30 +12% | tf 30S
-//   BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | sVWAP 2.01 (+18.4%) | day high +90% | vol 3.2x | run30 +17% | slope +4.1% | off high -1.2% | tf 30S
-// v19: `slope` (the band over the last 5 candles) and `off high` (the close vs the day's high);
-// a TRIGGERED repeats its BREAKOUT's.
-//   TRIGGERED XLAB 2.42 | upper 2.35 (+3.0%) | trigger 2.41 | stop 2.25 | sVWAP 2.02 (+19.8%) | day high +92% | run30 +19% | tf 30S
-// v20: an early BO (and its TRIGGERED) adds `early +10%`:
-//   BREAKOUT WORX 1.5 | upper 1.44 (+4.2%) | trigger 1.53 | stop 1.39 | sVWAP 1.41 (+6.4%) | day high +10% | vol 6.1x | run30 +9% | early +10% | slope +2.0% | off high -1.3% | tf 30S
-boMsg(int ev) =>
-    string msg = (ev == 1 ? "TOUCH" : ev == 2 ? "BREAKOUT" : "TRIGGERED") + " " + syminfo.ticker + " " + str.tostring(close, format.mintick)
-    msg += " | upper " + str.tostring(boUp, format.mintick) + " (" + pctVs(boUp) + "%)"
-    if ev >= 2
-        msg += " | trigger " + str.tostring(boTrig, format.mintick) + " | stop " + str.tostring(boStop, format.mintick)
-    if not na(svwap)
-        msg += " | sVWAP " + str.tostring(svwap, format.mintick) + " (" + pctVs(svwap) + "%)"
-    if not na(dayHighGain)
-        msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
-    if not na(ahGain)
-        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
-    if ev == 2 and not na(boVolX)
-        msg += " | vol " + str.tostring(boVolX, "#.#") + "x"
-    if not na(boRun30)
-        msg += " | run30 +" + str.tostring(math.max(boRun30, 0), "#") + "%"
-    if (ev == 2 and boEarlyEv) or (ev == 3 and boArmEarly)
-        msg += " | early +" + str.tostring(boEarlyGain, "#") + "%"
-    float sl  = ev == 3 ? boArmSlope : boSlope
-    float offH = ev == 3 ? boArmOff : boOff
-    if not na(sl)
-        msg += " | slope " + (sl >= 0 ? "+" : "") + str.tostring(sl, "#.0") + "%"
-    if not na(offH)
-        msg += " | off high " + str.tostring(offH, "#.0") + "%"
-    msg + " | tf " + timeframe.period
-
-if boSend and boTrigEv
-    alert(boMsg(3), alert.freq_once_per_bar_close)
-if boSend and boTouchEv
-    alert(boMsg(1), alert.freq_once_per_bar_close)
-if boSend and boBreakEv
-    alert(boMsg(2), alert.freq_once_per_bar_close)
-plot(boShow and boValid ? boUp : na, "BB upper (breakout)", color.new(color.fuchsia, 40))
-// v19: strong signals fuchsia, weak ones (band falling, or >10% under the day's high) gray.
-plotshape(boShow and boTouchEv and not boBreakEv, "BB touch", shape.circle, location.abovebar, boStrong ? color.fuchsia : color.gray, size = size.tiny)
-plotshape(boShow and boBreakEv and not boEarlyEv, "Breakout", shape.labeldown, location.abovebar, boStrong ? color.fuchsia : color.gray, text = "BO", textcolor = color.white, size = size.small)
-plotshape(boShow and boEarlyEv, "Early breakout (v20)", shape.labeldown, location.abovebar, color.orange, text = "E", textcolor = color.white, size = size.small)
-plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar, boArmEarly ? color.orange : boArmStrong ? color.fuchsia : color.gray, size = size.small)
-
-// ── 4) VWAP + BB CROSS (v21; v22 adds the month and year lines) ───────────────
+// ── 2) VWAP + BB CROSS (v21; v22 adds the month and year lines) ───────────────
 // The operator's fourth setup (2026-10-20; AIXI, WORX and NWGL on 5m charts): "the
 // market is colder than before, and it's very hard to trade with 1min timeframe".
 // On a chart of their choice (5m, 1h, …) with its session VWAP and the upper
@@ -764,7 +356,7 @@ plotshape(boShow and boTrigEv, "Triggered", shape.triangleup, location.belowbar,
 //          drags its own VWAP and band above its open; v21/v22 saw an open above
 //          yesterday's lines and stayed silent.
 // Premium's two watchlist-alert slots are taken (1m + 30s), so it rides the 30s alert
-// like the breakout: vbStep() builds the candle, its VWAP lines and the band (SMA /
+// (like v17–v26's breakout): vbStep() builds the candle, its VWAP lines and the band (SMA /
 // StdDev of the BB timeframe's closes, the forming one live) from the 30s bars. The
 // session line is the candle timeframe's own (hlc3 × volume of its candles). A 30s
 // chart doesn't hold a month of history, so the month and year lines take the days

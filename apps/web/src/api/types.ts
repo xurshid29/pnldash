@@ -329,51 +329,40 @@ export interface TickCatch {
 // (2026-10-03) is the operator's VWAP setup reported by a TradingView
 // watchlist alert through POST /api/tv/webhook — it arrives between cycles.
 export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
-// PULLBACK / BROKEN / HELD belong to the PULLBACK setup (script v10, 2026-10-05):
-// price back near the session or month VWAP after a run, then its outcome.
-// CROSS is the VWAP + BB cross (script v21, 2026-10-20): a candle of the chosen
-// timeframe crossed over its session VWAP and another timeframe's BB upper band.
-// LEVEL / BREAK (script v25): the VB candle's high as a trigger — LEVEL when it closes (stored, shown on
-// the CROSS row), BREAK when price reaches it.
-export type TvStage = 'forming' | 'ready' | 'go' | 'pullback' | 'broken' | 'held' | 'cross' | 'level' | 'break';
-// PULLBACK setup: session / month / year (v14); reclaim setup: month / year
-// (v11). Lines firing the same stage on one bar are named together in script
-// order ("session+month"); the legacy 'both' (v10–v13) meant session + month
-// for PULLBACK and month + year for reclaim.
+// The two 📐 setups the script carries since v27 (2026-10-28; RECLAIM and the BB
+// breakout were removed). PULLBACK / BROKEN / HELD belong to the PULLBACK setup
+// (script v10, 2026-10-05): price back near the session, month or year VWAP after
+// a run, then its outcome. CROSS is the VWAP + BB cross (script v21, 2026-10-20): a
+// candle of the chosen timeframe crossed over a VWAP line and another timeframe's
+// BB upper band. LEVEL / BREAK (script v25): the VB candle's high as a trigger —
+// LEVEL when it closes (stored, shown on the CROSS row), BREAK when price reaches it.
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'level' | 'break';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'level', 'break'];
+// Old days in History still hold v1–v26 rows of the removed setups; they're skipped.
+export function isTvStage(s: unknown): s is TvStage {
+  return typeof s === 'string' && (TV_STAGES as readonly string[]).includes(s);
+}
+// Session / month / year (v14). Lines firing the same stage on one bar are named
+// together in script order ("session+month"); the legacy 'both' (v10–v13) meant
+// session + month.
 export type TvLineName = 'session' | 'month' | 'year';
 export type TvLine = TvLineName | 'both' | 'session+month' | 'session+year' | 'month+year' | 'session+month+year';
-// GO strength: morning window (04:00–10:30 ET), run-up ≥5% into the GO,
-// GO-bar volume ≥2× the previous 20 bars, ticker on our Momentum list.
-export interface TvStrength {
-  score: number;
-  max: number;
-  morning: boolean;
-  run_up: boolean | null;
-  volume: boolean | null;
-  on_momentum: boolean;
-}
 export interface TvSetupInfo {
   stage: TvStage;
   mvwap: number | null;
   px_pct: number | null;      // price vs month-anchored VWAP, %
-  basis: number | null;
-  basis_pct: number | null;   // BB basis (SMA 20) vs mVWAP, %
   day_gain: number | null;    // day high vs prior close, %
   ah_gain?: number | null;    // after hours: high since today's close, % (script v3+)
   tf: string | null;          // TradingView interval of the alert
-  path?: 'base' | 'fast' | null; // which shape reached FORMING/READY (script v2+)
-  go_via?: 'reclaim' | 'cross' | null; // what fired GO (script v5+)
   vol_x?: number | null;      // script v9+: signal-bar volume ÷ previous-20-bar average
   run_pct?: number | null;    // script v9+: run-up over the previous 10 bars, %
-  strength?: TvStrength | null; // GO only (server: tv-setups.ts goStrength)
   // PULLBACK setup (script v10)
   svwap?: number | null;      // session VWAP
   spx_pct?: number | null;    // price vs the session VWAP, %
   line?: TvLine | null;       // the line the pullback came back to (both = the two fired on one bar)
   touch?: number | null;      // pullbacks to that line today, this one included (1 = the first)
   peak_pct?: number | null;   // PULLBACK: how far above the line it ran first, %
-  // reclaim setup on the year VWAP (script v11); basis_pct is then vs the year line
-  yvwap?: number | null;
+  yvwap?: number | null;      // the year VWAP (v14)
   ypx_pct?: number | null;    // price vs the year VWAP, %
   fails?: number | null;      // script v16, PULLBACK: failed pullbacks on the line before it
   capped?: boolean;           // v16: past the cap — pings only for a B+-or-better Momentum ticker (v21 CROSS: past the day's cap, never pings)
@@ -390,37 +379,6 @@ export interface TvSetupInfo {
   break_n?: number | null;    // BREAK: the day's breaks on the ticker
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
-}
-// 📐 BB breakout (script v17, 2026-10-18): a 1m candle against the 30s BB upper
-// band, from the 30s alert. Stored and graded, never announced — GET
-// /api/screener/breakouts and the SSE 'breakout' event, not the alert log.
-export type BoStage = 'touch' | 'breakout' | 'triggered';
-export interface TvBreakout {
-  id: string;
-  ticker: string;
-  at: string;
-  stage: BoStage;
-  price: number | null;
-  upper: number | null;       // the 30s BB upper band at the signal
-  upper_pct: number | null;   // price vs the band, %
-  trigger: number | null;     // BREAKOUT / TRIGGERED: the buy stop (signal candle high + 1 tick)
-  stop: number | null;        // BREAKOUT / TRIGGERED: the signal candle's low
-  svwap: number | null;
-  spx_pct: number | null;     // price vs the session VWAP, %
-  day_gain: number | null;
-  ah_gain: number | null;
-  vol_x: number | null;       // BREAKOUT: the candle's volume vs the last 20 candles
-  run30: number | null;       // close vs the lowest low of the last 30 minutes, %
-  band_slope: number | null;  // v19: the band now vs at the close 5 candles ago, %
-  off_high: number | null;    // v19: the close vs the day's high so far, %
-  strong: boolean | null;     // v19: band not falling and within 10% of the high (null before v19)
-  early: number | null;       // v20: an early BO (the first +10% candle, regular hours, 2× volume) — its threshold
-  tf: string | null;
-  chg: number | null;         // our Momentum row at that moment (null off the list)
-  grade: string | null;
-  float_m: number | null;
-  rv1: number | null;
-  on_screen: boolean;
 }
 export interface OpportunityAlert {
   id: string;

@@ -18,7 +18,6 @@ import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
 import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
-import { BreakoutsHistoryTable } from './BreakoutsHistoryTable';
 import { fmtPct, fmtPrice } from '../../utils/format';
 
 const { Text } = Typography;
@@ -38,7 +37,7 @@ interface SetupEvent {
   outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
-type StageFilter = 'on' | 'all' | 'go' | 'pullback' | 'cross' | 'break' | 'bo';
+type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'break';
 
 function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const sorted = alerts
@@ -100,11 +99,10 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const events = useMemo(() => buildEvents(data ?? []), [data]);
 
   const visible = useMemo(() => {
-    const on = new Set<TvStage>(settings?.announced ?? ['ready', 'go', 'pullback']);
+    const on = new Set<TvStage>(settings?.announced ?? ['pullback', 'cross', 'break']);
     return events.filter((e) => {
       const st = e.setup.stage;
       if (stageFilter === 'on' && !on.has(st)) return false;
-      if (stageFilter === 'go' && st !== 'go') return false;
       if (stageFilter === 'pullback' && st !== 'pullback') return false;
       if (stageFilter === 'cross' && st !== 'cross') return false;
       if (stageFilter === 'break' && st !== 'break') return false;
@@ -115,7 +113,6 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const pullbacks = visible.filter((e) => e.setup.stage === 'pullback');
   const held = pullbacks.filter((e) => e.outcome?.stage === 'held').length;
   const broke = pullbacks.filter((e) => e.outcome?.stage === 'broken').length;
-  const gos = visible.filter((e) => e.setup.stage === 'go').length;
   const crosses = visible.filter((e) => e.setup.stage === 'cross').length;
   const breaks = visible.filter((e) => e.setup.stage === 'break').length;
 
@@ -142,7 +139,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       title: 'Setup', key: 'setup', width: 170,
       render: (_v, e) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-          <TvStageTag stage={e.setup.stage} dim={!e.notified} path={e.setup.path} line={e.setup.line}
+          <TvStageTag stage={e.setup.stage} dim={!e.notified} line={e.setup.line}
             touch={e.setup.stage === 'cross' ? e.setup.cross_n : e.setup.stage === 'break' ? e.setup.break_n : e.setup.touch} tfs={crossTfText(e.setup)} />
           {e.setup.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
         </span>
@@ -187,28 +184,26 @@ export function SetupsHistoryTable({ date }: { date: string }) {
           options={[
             { label: 'Stages switched on', value: 'on' },
             { label: 'All stages', value: 'all' },
-            { label: 'GO', value: 'go' },
             { label: 'PULLBACK', value: 'pullback' },
             { label: 'CROSS', value: 'cross' },
             { label: 'BREAK', value: 'break' },
-            { label: '⚡ Breakouts', value: 'bo' },
           ]}
         />
         <Checkbox checked={momentumOnly} onChange={(e) => setMomentumOnly(e.target.checked)}>
           <span style={{ fontSize: 12 }}>⭐ on Momentum only</span>
         </Checkbox>
-        {stageFilter !== 'bo' && <Text type="secondary" style={{ fontSize: 11 }}>
+        <Text type="secondary" style={{ fontSize: 11 }}>
           {isFetching ? <Spin size="small" /> : (
             <>
-              {visible.length} setup{visible.length === 1 ? '' : 's'} · {gos} GO · {pullbacks.length} PULLBACK
+              {visible.length} setup{visible.length === 1 ? '' : 's'} · {pullbacks.length} PULLBACK
               {pullbacks.length > 0 && <> (<span style={{ color: '#52c41a' }}>{held} held</span> / <span style={{ color: '#ff4d4f' }}>{broke} broke</span>)</>}
               {crosses > 0 && <> · {crosses} CROSS</>}
               {breaks > 0 && <> · {breaks} BREAK</>}
             </>
           )}
-        </Text>}
+        </Text>
       </div>
-      {stageFilter === 'bo' ? <BreakoutsHistoryTable date={date} momentumOnly={momentumOnly} /> : visible.length === 0 && !isFetching ? (
+      {visible.length === 0 && !isFetching ? (
         <div style={{ flex: '1 1 auto', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 40 }}>
           <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description={<Text type="secondary" style={{ fontSize: 12 }}>No 📐 setups for {date} with these filters.</Text>} />
         </div>

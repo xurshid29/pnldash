@@ -34,7 +34,7 @@
 
 import type { NewsSource } from '../db/types.js';
 import { classifyByRules } from './catalyst-rules.js';
-import type { TvGoVia, TvLine, TvPath, TvStage, TvStrength } from './tv-setups.js';
+import type { TvLine, TvStage } from './tv-setups.js';
 
 export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 
@@ -43,23 +43,18 @@ export interface TvSetupInfo {
   stage: TvStage;
   mvwap: number | null;
   px_pct: number | null;      // price vs mVWAP, %
-  basis: number | null;
-  basis_pct: number | null;   // BB basis vs mVWAP, %
   day_gain: number | null;    // day high vs prior close, %
   ah_gain: number | null;     // after hours: high since today's close, % (script v3+)
   tf: string | null;
-  path: TvPath | null;        // 'base' | 'fast' — which shape reached FORMING/READY (script v2+)
-  go_via: TvGoVia | null;     // 'reclaim' | 'cross' — what fired GO (script v5+)
   vol_x: number | null;       // script v9+: signal-bar volume ÷ previous-20-bar average
   run_pct: number | null;     // script v9+: run-up over the previous 10 bars, %
-  strength: TvStrength | null; // GO only: morning / run-up / volume / on Momentum checks
-  // PULLBACK setup (script v10) — null on the reclaim setup's stages
+  // PULLBACK setup (script v10); svwap / spx_pct are also the VB cross's session line
   svwap: number | null;       // session VWAP
   spx_pct: number | null;     // price vs the session VWAP, %
   line: TvLine | null;        // which line the pullback came back to: session / month / both
   touch: number | null;       // pullbacks to that line today, this one included (1 = the first)
   peak_pct: number | null;    // PULLBACK: highest bar high above the line before it, %
-  // Reclaim setup on the year VWAP (script v11)
+  // the year VWAP (script v11 / v14)
   yvwap: number | null;
   ypx_pct: number | null;     // price vs the year VWAP, %
   fails?: number | null;      // v16 PULLBACK: failed pullbacks on the line before it

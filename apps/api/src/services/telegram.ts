@@ -37,15 +37,12 @@ export type AlertComponent =
   | 'fast_move'     // ⚡ Momentum ticker +10% within ~60s on volume
   | 'news'          // 📰 fresh headline on a Momentum ticker (phone: catalyst ≥40)
   | 'tv_setup'      // 📐 TradingView VWAP setup, every stage (tv-setups.ts)
-  | 'tv_forming'    // 📐 … only the FORMING stage
-  | 'tv_ready'      // 📐 … only the READY stage
-  | 'tv_go'         // 📐 … only the GO stage
   | 'tv_pullback'   // 📐 PULLBACK setup (script v10): price back near VWAP after a run
   | 'tv_broken'     // 📐 … a pullback closed under its line (always a silent message)
   | 'tv_held'       // 📐 … a pullback ran +10% (always a silent message)
   | 'tv_cross'      // 📐 VWAP + BB cross (script v21): a candle crossed over the session VWAP and the BB upper band
   | 'tv_break'      // 📐 VB break (script v25): price took the latest VB candle's high
-  | 'tv_year';      // 📐 any setup message about the year VWAP alone (reclaim v11, PULLBACK v14)
+  | 'tv_year';      // 📐 any setup message about the year VWAP alone (PULLBACK v14, VB v22)
 let disabledAlerts: Set<string> | null = null;
 export function alertDisabled(component: AlertComponent): boolean {
   if (!disabledAlerts) {

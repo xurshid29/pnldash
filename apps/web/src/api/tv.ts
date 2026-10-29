@@ -1,5 +1,5 @@
 import { apiClient } from './client';
-import type { TvStage } from './types';
+import { isTvStage, type TvStage } from './types';
 
 export interface TvWatchlist {
   symbols: string[];   // TradingView symbols, Nasdaq names NASDAQ:-prefixed
@@ -20,6 +20,11 @@ export interface TvAlertSettings {
   defaults: TvStage[];
 }
 
+// Only the stages this build knows (script v27 removed RECLAIM's FORMING / READY / GO).
+function knownStages(s: TvAlertSettings): TvAlertSettings {
+  return { announced: s.announced.filter(isTvStage), stages: s.stages.filter(isTvStage), defaults: s.defaults.filter(isTvStage) };
+}
+
 // The 📐 VWAP setup's TradingView side (server: routes/tv.ts).
 export const tvApi = {
   async watchlist(): Promise<TvWatchlist> {
@@ -28,10 +33,10 @@ export const tvApi = {
   },
   async settings(): Promise<TvAlertSettings> {
     const res = await apiClient.get<TvAlertSettings>('/api/tv/settings');
-    return res.data;
+    return knownStages(res.data);
   },
   async saveSettings(announced: TvStage[]): Promise<TvAlertSettings> {
     const res = await apiClient.put<TvAlertSettings>('/api/tv/settings', { announced });
-    return res.data;
+    return knownStages(res.data);
   },
 };

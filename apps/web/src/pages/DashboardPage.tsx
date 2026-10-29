@@ -6,7 +6,6 @@ import { useTabTitleFlash } from '../hooks/useTabTitleFlash';
 import { useEdge } from '../hooks/useEdge';
 import { useEdgeAlerts } from '../hooks/useEdgeAlerts';
 import { AlertToasts } from '../components/dashboard/AlertToasts';
-import { BreakoutAlerts } from '../components/dashboard/BreakoutAlerts';
 import { ScreenerPanel } from '../components/screener/ScreenerPanel';
 import { SelectedStockPanel } from '../components/screener/SelectedStockPanel';
 import { NewsRoomPanel } from '../components/news/NewsRoomPanel';
@@ -42,7 +41,6 @@ export function DashboardPage() {
     <SelectionProvider>
       <AutoSelectFirstTicker payload={payload} />
       <AlertToasts payload={payload} />
-      <BreakoutAlerts />
       <div style={{ width: '100%', height: '100%', background: '#0a0a0a' }}>
         <PanelGroup direction="horizontal" autoSaveId="ms-outer">
           <Panel id="ms-pane-rail" order={0} defaultSize={18} minSize={12} maxSize={32}>

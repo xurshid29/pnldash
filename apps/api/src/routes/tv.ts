@@ -6,7 +6,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
-import { BREAKOUT_STAGES, DEFAULT_ANNOUNCED, parseStageList, parseTvMessage, pastCap, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
+import { DEFAULT_ANNOUNCED, parseStageList, parseTvMessage, pastCap, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
 
 // TradingView ↔ dashboard bridge for the 📐 VWAP setup (services/tv-setups.ts).
 const router = Router();
@@ -31,29 +31,6 @@ function loadSettings(): Promise<void> {
       console.error('[tv-setup] stage settings load failed (defaults in use):', err instanceof Error ? err.message : err);
     });
   return settingsLoad;
-}
-
-// A deploy restarts the gate empty. Before the first webhook, reload today's
-// announced READYs once, so a READY already announced today stays quiet.
-// Never rejects: on a DB error the gate just starts empty.
-let gateSeed: Promise<void> | null = null;
-function seedGate(): Promise<void> {
-  gateSeed ??= getDb()
-    .selectFrom('tier_events')
-    .select(['ticker', sql<string | null>`meta->>'line'`.as('line')])
-    .where('tier', '=', 'alert')
-    .where('event', '=', 'tv_setup')
-    .where(sql<boolean>`(at AT TIME ZONE 'America/New_York')::date = (now() AT TIME ZONE 'America/New_York')::date`)
-    .where(sql<boolean>`meta->>'stage' = 'ready' AND (meta->>'notified')::boolean`)
-    .execute()
-    .then((rows) => {
-      const lines = gate.seedReady(rows, Math.floor(Date.now() / 1000));
-      console.log(`[tv-setup] gate seeded — ${rows.length} READYs announced today, ${lines} ticker lines`);
-    })
-    .catch((err) => {
-      console.error('[tv-setup] gate seeding failed (a READY announced earlier today may be announced again):', err instanceof Error ? err.message : err);
-    });
-  return gateSeed;
 }
 
 function keyMatches(given: string, secret: string): boolean {
@@ -83,14 +60,14 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
   }
   if (req.query.dry === '1') return res.json({ data: { dry_run: true, signal: sig } });
 
-  await Promise.all([loadSettings(), seedGate()]);
+  await loadSettings();
   // Express 4 doesn't catch errors thrown after an await — answer them here.
   try {
     // v16: a PULLBACK past the cap still pings for a B+-or-better Momentum ticker
     // (a v21 CROSS past its cap doesn't).
     const capped = pastCap(sig);
     const capExempt = capped && sig.stage === 'pullback' && poller.tvCapExempt(sig.ticker);
-    // 2026-10-18: a GO pings only for a ticker on our Momentum list.
+    // A CROSS / BREAK pings only for a ticker on our Momentum list (or a fresh runner).
     const onMomentum = poller.tvOnMomentum(sig.ticker);
     const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt, onMomentum);
     if (verdict === 'flood') {
@@ -98,14 +75,9 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
       return res.status(429).json({ error: 'Too many alerts' });
     }
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
-    // v17 BB breakout: stored and shown, never announced (its own delivery path).
-    if (BREAKOUT_STAGES.has(sig.stage)) {
-      const ev = poller.deliverTvBreakout(sig);
-      return res.json({ data: { id: ev.id, notified: false } });
-    }
+    // A quiet CROSS / BREAK that isn't muted or capped is off our Momentum list (under vb_fresh_gain).
     const why = verdict !== 'quiet' ? undefined
-      : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped'
-        : (sig.stage === 'go' || sig.stage === 'cross' || sig.stage === 'break') && !onMomentum ? 'offlist' : 'repeat';   // a quiet off-list CROSS / BREAK is under vb_fresh_gain
+      : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped' : 'offlist';
     const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
   } catch (err) {
@@ -122,7 +94,7 @@ router.get('/settings', authMiddleware, async (_req, res) => {
   res.json({ data: { announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED } });
 });
 
-// PUT /api/tv/settings { announced: ["go", "pullback", …] } — global, like the
+// PUT /api/tv/settings { announced: ["pullback", "cross", …] } — global, like the
 // screener config. Takes effect on the next webhook; persisted for restarts.
 const settingsSchema = z.object({ announced: z.array(z.enum(TV_STAGE_ORDER as [string, ...string[]])) });
 router.put('/settings', authMiddleware, async (req, res) => {
