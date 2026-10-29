@@ -688,7 +688,10 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     the highest line the candle crossed (or under it), then the first bar from there that closes
     above that line and above its open; stop = a tick under the lowest low since the VB candle
     closed. A candle closing under the lowest crossed line cancels it (p['rt_cancel'], the v26
-    rule, the VB candle's own close included), so do p['rt_wait'] candles and a new day."""
+    rule, the VB candle's own close included), so do p['rt_wait'] candles and a new day — except (v29)
+    with candles of 4h or longer (p['candle_min'] >= 240), where a retest of the month / year lines
+    carries over the day's end (a VB candle closing at 20:00 arms it on the next day's first bar).
+    v29's lanes are separate calls with their own candle_min / bb_min / lines."""
     p = dict(VB, **(params or {}))
     n_len = p['length']
     lines = ('session', 'month', 'year')
@@ -701,6 +704,7 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     count = dict.fromkeys(lines, 0)
     vols = []
     rt, rt_n = None, 0
+    carry = p['candle_min'] >= 240   # v29
     pv30 = v30 = 0.0   # v28: today's Σ hlc3 × volume and Σ volume over the bars
     prev_vw = {}    # v26: the last bar's lines (where they stood at the candle's close)
     for b in bars:
@@ -719,8 +723,11 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
         key = _bucket(b['t'], p['candle_min'])
         if new_day or key != c_key or c_open is None:
             if new_day:
-                rt, rt_n = None, 0
-            elif p['rt'] and c_open is not None and any(fired.values()):   # the VB candle closed
+                rt_n = 0
+                if rt and rt['armed'] and ('session' in rt['lines'] or not carry):
+                    rt['armed'] = False
+            if (p['rt'] and c_open is not None and any(fired.values())
+                    and not (new_day and (fired['session'] or not carry))):   # the VB candle closed
                 rt = dict(lines=[ln for ln in lines if fired[ln]], armed=True, touched=False, low=None, age=0)
             elif rt and rt['armed'] and c_open is not None:
                 rt['age'] += 1
@@ -873,7 +880,25 @@ def selftest_vb():
         worst30 = max(worst30, abs(vws['session'] - cpv / cv))
     ok_30 = worst30 < 1e-9
     print(f'v28 30s-bar session VWAP vs the bars\' VWAP, worst {worst30:.1e} →', 'OK' if ok_30 else 'UNEXPECTED')
-    ok_lv = ok_rt and ok_rt2 and ok_30
+    # v29: 4h candles on the month line. Day A: a flat 1.00 from 12:00, then the 16:00 candle runs to
+    # 1.10 over a month line held at ~1.02 by earlier days → CROSS (month); it closes 1.10 at 20:00.
+    # Day B 04:00: a dip to 1.025 (within 1% of the line), then a green 30s close at 1.045 → RETEST
+    # at 04:01:00, carried over the night. The same day on the session line: no carry, no RETEST.
+    dA = dt.datetime(2026, 10, 27, 12, 0, tzinfo=ET)
+    flatA = [1.000 if k % 2 else 1.001 for k in range(480)]                     # 12:00–16:00
+    runA = [1.00, 1.05, 1.10] + [1.10] * 477                                     # 16:00–20:00
+    dayA = bars_of(dA, flatA + runA)
+    dayB = bars_of(dA.replace(day=28, hour=4), [(1.08, 1.08, 1.08, 1.08), (1.06, 1.06, 1.025, 1.03),
+                                                 (1.03, 1.05, 1.03, 1.045)] + [(1.045, 1.05, 1.04, 1.05)] * 7)
+    month = {'month': (1.02 * 1_000_000, 1_000_000.0)}
+    H4 = dict(candle_min=240, bb_min=10, lines=('month',))
+    cr4, rt4, rtS = [], [], []
+    cr4 = [(e[0].strftime('%m-%d %H:%M:%S'), e[6]) for e in simulate_vb_cross(dayA + dayB, params=H4, before_of=lambda b: month, retests=rt4)]
+    simulate_vb_cross(dayA + dayB, params=dict(H4, lines=('session',)), retests=rtS)
+    got4 = [(e[0].strftime('%m-%d %H:%M:%S'), round(e[2], 4), e[3]) for e in rt4]
+    ok_4h = cr4 == [('10-27 16:00:30', 'month')] and got4 == [('10-28 04:01:00', 1.015, 'month')] and rtS == []
+    print('v29 4h month-line retest carries overnight:', cr4, got4, '| session line:', rtS, '→', 'OK' if ok_4h else 'UNEXPECTED')
+    ok_lv = ok_rt and ok_rt2 and ok_30 and ok_4h
 
     # Day 2: 2m closes alternating 0.97 / 1.01 → VWAP ≈ 0.99, band ≈ 1.03. A candle opening at
     # 1.00 (1% over the VWAP, under the band) and running to 1.10.

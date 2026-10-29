@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v28 (2026-10-29).
+// mVWAP-BB — the operator's VWAP setups. Script version: v29 (2026-10-30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
 // Two setups in one script, so the same two watchlist alerts carry both (the VWAP +
@@ -27,6 +27,8 @@
 //              (within 1%) and a 30s candle closes green above it → the alert, with a stop under
 //              the pullback's low (the operator's entry; v25–v27 had LEVEL / BREAK here)
 // Built from the 30s alert's bars; drawn on the candle's own chart.
+// VB lanes (v29): up to three more candle timeframes in the same alert (1h / 4h / 1D on the
+// month and year lines by default), each with its own band and lines, for longer trades.
 // VWAP lines (v28): from 30s bars by default, so the session line is the same on every
 // chart (TradingView's built-in VWAP is built from the chart's own bars and differs by
 // timeframe), or from the chart's bars ("VWAP lines from" in Inputs).
@@ -80,6 +82,28 @@ vbShow     = input.bool(true,         "VB: draw the band and markers (on the can
 vwSrc      = input.string("30s bars", "VWAP lines from (v28): 30s bars — the same line on every chart — or the chart's bars (TradingView's built-in)", options = ["30s bars", "Chart bars"], group = "Alerts")
 vbRtNear   = input.float(1.0,         "VB retest: price back within % above the line (0 = to the line or under it)", minval = 0, group = "VWAP + BB cross (v21)")
 vbRtWait   = input.int(6,             "VB retest: within N candles of the VB candle's close (0 = until cancelled)", minval = 0, group = "VWAP + BB cross (v21)")
+// v29 inputs go last: three more VB timeframes ("lanes") inside the same alert, for longer trades on
+// the month and year lines (operator, 10-30: "for longer terms (1h, 4h, 1D), I'd like to use VB only
+// with monthly vwap (plus, yearly)"). Each lane has its own candle, band and lines; the rest (BB
+// length and StdDev, tolerance, gainers, the retest, the alert timeframe) is shared with the main VB.
+vb2On      = input.bool(true,         "Lane 2", inline = "vb2", group = "VB lanes (v29)")
+vb2Cndl    = input.timeframe("60",    "candle", inline = "vb2", group = "VB lanes (v29)")
+vb2Bb      = input.timeframe("10",    "band", inline = "vb2", group = "VB lanes (v29)")
+vb2S       = input.bool(false,        "Lane 2 lines: session", inline = "vb2l", group = "VB lanes (v29)")
+vb2M       = input.bool(true,         "month", inline = "vb2l", group = "VB lanes (v29)")
+vb2Y       = input.bool(true,         "year", inline = "vb2l", group = "VB lanes (v29)")
+vb3On      = input.bool(true,         "Lane 3", inline = "vb3", group = "VB lanes (v29)")
+vb3Cndl    = input.timeframe("240",   "candle", inline = "vb3", group = "VB lanes (v29)")
+vb3Bb      = input.timeframe("30",    "band", inline = "vb3", group = "VB lanes (v29)")
+vb3S       = input.bool(false,        "Lane 3 lines: session", inline = "vb3l", group = "VB lanes (v29)")
+vb3M       = input.bool(true,         "month", inline = "vb3l", group = "VB lanes (v29)")
+vb3Y       = input.bool(true,         "year", inline = "vb3l", group = "VB lanes (v29)")
+vb4On      = input.bool(true,         "Lane 4", inline = "vb4", group = "VB lanes (v29)")
+vb4Cndl    = input.timeframe("1D",    "candle", inline = "vb4", group = "VB lanes (v29)")
+vb4Bb      = input.timeframe("60",    "band", inline = "vb4", group = "VB lanes (v29)")
+vb4S       = input.bool(false,        "Lane 4 lines: session", inline = "vb4l", group = "VB lanes (v29)")
+vb4M       = input.bool(true,         "month", inline = "vb4l", group = "VB lanes (v29)")
+vb4Y       = input.bool(true,         "year", inline = "vb4l", group = "VB lanes (v29)")
 
 // Same lines as the chart: VWAP anchor Month on hlc3,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -406,7 +430,11 @@ plotshape(evS == 3 or evM == 3 or evY == 3, "Held", shape.flag, location.aboveba
 // one message (`line session+month`); `cross N` counts the day's crosses on each line
 // (the lowest of the lines named), and the server announces the first few
 // (TV_SETUP.vb_cap).
-vbOk = vbOn and timeframe.in_seconds(vbCandleTf) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vbBbTf) >= timeframe.in_seconds(vbTf)
+vbOk  = vbOn and timeframe.in_seconds(vbCandleTf) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vbBbTf) >= timeframe.in_seconds(vbTf)
+// v29: the lanes, on with the main switch.
+vb2Ok = vbOn and vb2On and timeframe.in_seconds(vb2Cndl) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vb2Bb) >= timeframe.in_seconds(vbTf)
+vb3Ok = vbOn and vb3On and timeframe.in_seconds(vb3Cndl) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vb3Bb) >= timeframe.in_seconds(vbTf)
+vb4Ok = vbOn and vb4On and timeframe.in_seconds(vb4Cndl) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vb4Bb) >= timeframe.in_seconds(vbTf)
 
 // The month's and the year's Σ hlc3 × volume and Σ volume up to the start of the
 // current day, on hourly bars (extended hours). They don't depend on the current
@@ -472,12 +500,15 @@ vbHighest(bool onS, bool onM, bool onY, float lnS, float lnM, float lnY) =>
         hiLn := na(hiLn) ? lnY : math.max(hiLn, lnY)
     hiLn
 
-vbStep() =>
+// v29: one call per lane (its own state): the candle and band timeframes, its lines, and whether
+// it is on (and valid against the alert timeframe).
+vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool laneOk) =>
     // Called on every bar: and/or are lazy in v6, so the timeframe tests and the
     // request come first.
     bool gNewDay   = timeframe.change("D")
-    bool vNewBb    = timeframe.change(vbBbTf)
-    bool vNewCndl  = timeframe.change(vbCandleTf)
+    bool vNewBb    = timeframe.change(bTf)
+    bool vNewCndl  = timeframe.change(cTf)
+    bool vCarry    = timeframe.in_seconds(cTf) >= 14400   // v29: 4h+ candles carry a month / year retest overnight
     bool vInWin    = not na(time(timeframe.period, alertWin, "America/New_York"))
     [vMBPV, vMBV, vYBPV, vYBV] = request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", vbAnchors(), lookahead = barmerge.lookahead_on)
     // The gainer filter, as at the top of the script.
@@ -562,11 +593,14 @@ vbStep() =>
     float vRtStop = na
     if gNewDay or vNewCndl or na(vOpen)
         // The candle that just closed (its values are still here): a VB candle arms a retest,
-        // replacing the last one. A new day clears it.
+        // replacing the last one. A new day clears it — except (v29) on a lane of 4h or longer
+        // candles, where a retest of the month / year lines carries over (a 4h candle closing at
+        // 20:00, a daily one); one involving the session line still ends with the session.
         if gNewDay
-            vRtArmed := false
             vRtCount := 0
-        else if vbRtOn and not na(vOpen) and (vSFired or vMFired or vYFired)
+            if vRtArmed and (vRtS or not vCarry)
+                vRtArmed := false
+        if vbRtOn and not na(vOpen) and (vSFired or vMFired or vYFired) and not (gNewDay and (vSFired or not vCarry))
             vRtS     := vSFired
             vRtM     := vMFired
             vRtY     := vYFired
@@ -623,10 +657,10 @@ vbStep() =>
     float vYw     = not na(vYBV) and vYBV + vTV > 0 ? (vYBPV + vTPV) / (vYBV + vTV) : na
     float vAvgVol = array.size(vVols) > 0 ? array.avg(vVols) : na
     float vVolX   = not na(vAvgVol) and vAvgVol > 0 ? vVol / vAvgVol : na
-    bool  vOkAll  = vbOk and vInWin and (not vbGainOn or gOk)
-    bool  vFireS  = vOkAll and vbSession and vbCan(vVw, vBand, vOpen, vSFired)
-    bool  vFireM  = vOkAll and vbMonth and vbCan(vMw, vBand, vOpen, vMFired)
-    bool  vFireY  = vOkAll and vbYear and vbCan(vYw, vBand, vOpen, vYFired)
+    bool  vOkAll  = laneOk and vInWin and (not vbGainOn or gOk)
+    bool  vFireS  = vOkAll and onS and vbCan(vVw, vBand, vOpen, vSFired)
+    bool  vFireM  = vOkAll and onM and vbCan(vMw, vBand, vOpen, vMFired)
+    bool  vFireY  = vOkAll and onY and vbCan(vYw, vBand, vOpen, vYFired)
     if vFireS
         vSFired := true
         vSCount := vSCount + 1
@@ -658,15 +692,27 @@ vbStep() =>
     vPrevYw := vYw
     [vFireS, vFireM, vFireY, vVw, vMw, vYw, vBand, vOpen, gDay, gAh, vVolX, vSCount, vMCount, vYCount, vRt, vRtStop, vRtS, vRtM, vRtY, vRtCount]
 
-// On the alert's own chart (30s): the alert, and its markers there.
-[vbFireS, vbFireM, vbFireY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbNS, vbNM, vbNY, vbRt, vbRtStop, vbRtS, vbRtM, vbRtY, vbRtN] = vbStep()
-// On the candle timeframe's chart: the same 30s bars inside each candle.
+// On the alert's own chart (30s): the alert, and its markers there (the main VB's).
+[vbFireS, vbFireM, vbFireY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbNS, vbNM, vbNY, vbRt, vbRtStop, vbRtS, vbRtM, vbRtY, vbRtN] = vbStep(vbCandleTf, vbBbTf, vbSession, vbMonth, vbYear, vbOk)
+// v29: the lanes, each its own state.
+[v2FireS, v2FireM, v2FireY, v2Vw, v2Mw, v2Yw, v2Band, v2Open, v2DayG, v2AhG, v2VolX, v2NS, v2NM, v2NY, v2Rt, v2RtStop, v2RtS, v2RtM, v2RtY, v2RtN] = vbStep(vb2Cndl, vb2Bb, vb2S, vb2M, vb2Y, vb2Ok)
+[v3FireS, v3FireM, v3FireY, v3Vw, v3Mw, v3Yw, v3Band, v3Open, v3DayG, v3AhG, v3VolX, v3NS, v3NM, v3NY, v3Rt, v3RtStop, v3RtS, v3RtM, v3RtY, v3RtN] = vbStep(vb3Cndl, vb3Bb, vb3S, vb3M, vb3Y, vb3Ok)
+[v4FireS, v4FireM, v4FireY, v4Vw, v4Mw, v4Yw, v4Band, v4Open, v4DayG, v4AhG, v4VolX, v4NS, v4NM, v4NY, v4Rt, v4RtStop, v4RtS, v4RtM, v4RtY, v4RtN] = vbStep(vb4Cndl, vb4Bb, vb4S, vb4M, vb4Y, vb4Ok)
+// On a candle timeframe's chart: the same 30s bars inside each candle, for the lane whose candle
+// timeframe the chart is (the main VB first) — one replay, whichever chart it is.
+vlN    = timeframe.period == vbCandleTf ? 1 : vb2On and timeframe.period == vb2Cndl ? 2 : vb3On and timeframe.period == vb3Cndl ? 3 : vb4On and timeframe.period == vb4Cndl ? 4 : 1
+vlCndl = vlN == 2 ? vb2Cndl : vlN == 3 ? vb3Cndl : vlN == 4 ? vb4Cndl : vbCandleTf
+vlBb   = vlN == 2 ? vb2Bb : vlN == 3 ? vb3Bb : vlN == 4 ? vb4Bb : vbBbTf
+vlS    = vlN == 2 ? vb2S : vlN == 3 ? vb3S : vlN == 4 ? vb4S : vbSession
+vlM    = vlN == 2 ? vb2M : vlN == 3 ? vb3M : vlN == 4 ? vb4M : vbMonth
+vlY    = vlN == 2 ? vb2Y : vlN == 3 ? vb3Y : vlN == 4 ? vb4Y : vbYear
+vlOk   = vlN == 2 ? vb2Ok : vlN == 3 ? vb3Ok : vlN == 4 ? vb4Ok : vbOk
 vbView() =>
-    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY, vwRt, vwRtStop, vwRtS, vwRtM, vwRtY, vwRtN] = vbStep()
+    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY, vwRt, vwRtStop, vwRtS, vwRtM, vwRtY, vwRtN] = vbStep(vlCndl, vlBb, vlS, vlM, vlY, vlOk)
     [vwS, vwM, vwY, vwBand, vwRt]
 vbBaseSec  = timeframe.in_seconds(vbTf)
 vbChartSec = timeframe.in_seconds(timeframe.period)
-vbLower    = vbOk and vbShow and timeframe.period == vbCandleTf and vbChartSec > vbBaseSec
+vbLower    = vlOk and vbShow and timeframe.period == vlCndl and vbChartSec > vbBaseSec
 [vbInS, vbInM, vbInY, vbInUp, vbInRt] = request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())
 bool  vbMarkS = false
 bool  vbMarkM = false
@@ -697,70 +743,86 @@ else if vbOk and vbShow and vbChartSec == vbBaseSec
 // the setup's lines (the candle timeframe's session VWAP, the hourly-anchored month
 // and year VWAPs), upper the BB timeframe's band, open the candle's:
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S
-vbSend = vbOk and timeframe.period == vbTf
-vbMsg() =>
+vbSend  = vbOk and timeframe.period == vbTf
+vb2Send = vb2Ok and timeframe.period == vbTf
+vb3Send = vb3Ok and timeframe.period == vbTf
+vb4Send = vb4Ok and timeframe.period == vbTf
+// v29: one message builder for every lane (the lane's own values passed in).
+vbMsg(bool lFS, bool lFM, bool lFY, int lNS, int lNM, int lNY, float lVw, float lMw, float lYw, float lBand, float lOpen, float lDayG, float lAhG, float lVolX, string lCTf, string lBTf) =>
     string names = ""
     int    n     = 999
-    if vbFireS
+    if lFS
         names := pbJoin(names, "session")
-        n     := math.min(n, vbNS)
-    if vbFireM
+        n     := math.min(n, lNS)
+    if lFM
         names := pbJoin(names, "month")
-        n     := math.min(n, vbNM)
-    if vbFireY
+        n     := math.min(n, lNM)
+    if lFY
         names := pbJoin(names, "year")
-        n     := math.min(n, vbNY)
+        n     := math.min(n, lNY)
     string msg = "CROSS " + syminfo.ticker + " " + str.tostring(close, format.mintick)
-    if not na(vbVw)
-        msg += " | sVWAP " + str.tostring(vbVw, format.mintick) + " (" + pctVs(vbVw) + "%)"
-    if not na(vbMw)
-        msg += " | mVWAP " + str.tostring(vbMw, format.mintick) + " (" + pctVs(vbMw) + "%)"
-    if not na(vbYw)
-        msg += " | yVWAP " + str.tostring(vbYw, format.mintick) + " (" + pctVs(vbYw) + "%)"
-    msg += " | upper " + str.tostring(vbBand, format.mintick) + " (" + pctVs(vbBand) + "%)"
-    msg += " | open " + str.tostring(vbOpen, format.mintick)
-    msg += " | line " + names + " | candle " + vbCandleTf + " | bb " + vbBbTf + " | cross " + str.tostring(n)
-    if not na(vbDayG)
-        msg += " | day high " + (vbDayG >= 0 ? "+" : "") + str.tostring(vbDayG, "#") + "%"
-    if not na(vbAhG)
-        msg += " | ah " + (vbAhG >= 0 ? "+" : "") + str.tostring(vbAhG, "#") + "%"
-    if not na(vbVolX)
-        msg += " | vol " + str.tostring(vbVolX, "#.#") + "x"
+    if not na(lVw)
+        msg += " | sVWAP " + str.tostring(lVw, format.mintick) + " (" + pctVs(lVw) + "%)"
+    if not na(lMw)
+        msg += " | mVWAP " + str.tostring(lMw, format.mintick) + " (" + pctVs(lMw) + "%)"
+    if not na(lYw)
+        msg += " | yVWAP " + str.tostring(lYw, format.mintick) + " (" + pctVs(lYw) + "%)"
+    msg += " | upper " + str.tostring(lBand, format.mintick) + " (" + pctVs(lBand) + "%)"
+    msg += " | open " + str.tostring(lOpen, format.mintick)
+    msg += " | line " + names + " | candle " + lCTf + " | bb " + lBTf + " | cross " + str.tostring(n)
+    if not na(lDayG)
+        msg += " | day high " + (lDayG >= 0 ? "+" : "") + str.tostring(lDayG, "#") + "%"
+    if not na(lAhG)
+        msg += " | ah " + (lAhG >= 0 ? "+" : "") + str.tostring(lAhG, "#") + "%"
+    if not na(lVolX)
+        msg += " | vol " + str.tostring(lVolX, "#.#") + "x"
     msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
 
 if vbSend and (vbFireS or vbFireM or vbFireY)
-    alert(vbMsg(), alert.freq_once_per_bar_close)
+    alert(vbMsg(vbFireS, vbFireM, vbFireY, vbNS, vbNM, vbNY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbCandleTf, vbBbTf), alert.freq_once_per_bar_close)
+if vb2Send and (v2FireS or v2FireM or v2FireY)
+    alert(vbMsg(v2FireS, v2FireM, v2FireY, v2NS, v2NM, v2NY, v2Vw, v2Mw, v2Yw, v2Band, v2Open, v2DayG, v2AhG, v2VolX, vb2Cndl, vb2Bb), alert.freq_once_per_bar_close)
+if vb3Send and (v3FireS or v3FireM or v3FireY)
+    alert(vbMsg(v3FireS, v3FireM, v3FireY, v3NS, v3NM, v3NY, v3Vw, v3Mw, v3Yw, v3Band, v3Open, v3DayG, v3AhG, v3VolX, vb3Cndl, vb3Bb), alert.freq_once_per_bar_close)
+if vb4Send and (v4FireS or v4FireM or v4FireY)
+    alert(vbMsg(v4FireS, v4FireM, v4FireY, v4NS, v4NM, v4NY, v4Vw, v4Mw, v4Yw, v4Band, v4Open, v4DayG, v4AhG, v4VolX, vb4Cndl, vb4Bb), alert.freq_once_per_bar_close)
 
 // v28 RETEST (operator, AIOK 10-28/29: "I'm not using BREAKs for enter (because they can be very
 // extended by the moment entering), but waiting 1st 5min candle closes with VB and pulls back to
 // vwap line and bounces, I'm entering right at that moment"). It replaces v25–v27's LEVEL / BREAK;
-// `retest N` counts the day's retests on the ticker, and the server caps them like crosses.
+// `retest N` counts the day's retests on the ticker (per lane since v29), and the server caps them.
 //   RETEST AIOK 17.28 | stop 17.09 | sVWAP 17.1 (+1.1%) | mVWAP 14.2 (+21.7%) | line session | candle 5 | bb 45S | retest 1 | day high +46% | vwap 30s | tf 30S
-vbRtMsg() =>
+vbRtMsg(bool lRS, bool lRM, bool lRY, float lStop, float lVw, float lMw, float lYw, int lRN, float lDayG, float lAhG, string lCTf, string lBTf) =>
     string names = ""
-    if vbRtS
+    if lRS
         names := pbJoin(names, "session")
-    if vbRtM
+    if lRM
         names := pbJoin(names, "month")
-    if vbRtY
+    if lRY
         names := pbJoin(names, "year")
     string msg = "RETEST " + syminfo.ticker + " " + str.tostring(close, format.mintick)
-    msg += " | stop " + str.tostring(vbRtStop, format.mintick)
-    if not na(vbVw)
-        msg += " | sVWAP " + str.tostring(vbVw, format.mintick) + " (" + pctVs(vbVw) + "%)"
-    if not na(vbMw)
-        msg += " | mVWAP " + str.tostring(vbMw, format.mintick) + " (" + pctVs(vbMw) + "%)"
-    if not na(vbYw)
-        msg += " | yVWAP " + str.tostring(vbYw, format.mintick) + " (" + pctVs(vbYw) + "%)"
-    msg += " | line " + names + " | candle " + vbCandleTf + " | bb " + vbBbTf + " | retest " + str.tostring(vbRtN)
-    if not na(vbDayG)
-        msg += " | day high " + (vbDayG >= 0 ? "+" : "") + str.tostring(vbDayG, "#") + "%"
-    if not na(vbAhG)
-        msg += " | ah " + (vbAhG >= 0 ? "+" : "") + str.tostring(vbAhG, "#") + "%"
+    msg += " | stop " + str.tostring(lStop, format.mintick)
+    if not na(lVw)
+        msg += " | sVWAP " + str.tostring(lVw, format.mintick) + " (" + pctVs(lVw) + "%)"
+    if not na(lMw)
+        msg += " | mVWAP " + str.tostring(lMw, format.mintick) + " (" + pctVs(lMw) + "%)"
+    if not na(lYw)
+        msg += " | yVWAP " + str.tostring(lYw, format.mintick) + " (" + pctVs(lYw) + "%)"
+    msg += " | line " + names + " | candle " + lCTf + " | bb " + lBTf + " | retest " + str.tostring(lRN)
+    if not na(lDayG)
+        msg += " | day high " + (lDayG >= 0 ? "+" : "") + str.tostring(lDayG, "#") + "%"
+    if not na(lAhG)
+        msg += " | ah " + (lAhG >= 0 ? "+" : "") + str.tostring(lAhG, "#") + "%"
     msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
 
 if vbSend and vbRt
-    alert(vbRtMsg(), alert.freq_once_per_bar_close)
+    alert(vbRtMsg(vbRtS, vbRtM, vbRtY, vbRtStop, vbVw, vbMw, vbYw, vbRtN, vbDayG, vbAhG, vbCandleTf, vbBbTf), alert.freq_once_per_bar_close)
+if vb2Send and v2Rt
+    alert(vbRtMsg(v2RtS, v2RtM, v2RtY, v2RtStop, v2Vw, v2Mw, v2Yw, v2RtN, v2DayG, v2AhG, vb2Cndl, vb2Bb), alert.freq_once_per_bar_close)
+if vb3Send and v3Rt
+    alert(vbRtMsg(v3RtS, v3RtM, v3RtY, v3RtStop, v3Vw, v3Mw, v3Yw, v3RtN, v3DayG, v3AhG, vb3Cndl, vb3Bb), alert.freq_once_per_bar_close)
+if vb4Send and v4Rt
+    alert(vbRtMsg(v4RtS, v4RtM, v4RtY, v4RtStop, v4Vw, v4Mw, v4Yw, v4RtN, v4DayG, v4AhG, vb4Cndl, vb4Bb), alert.freq_once_per_bar_close)
 plot(vbShow and (vbLower or (vbOk and vbChartSec == vbBaseSec)) ? vbUp : na, "BB upper (VWAP + BB cross)", color.new(color.orange, 20))
 // v22: the marker says which line crossed (the year's, then the month's, first): teal
 // for the session line, yellow "VB M" for the month line, blue "VB Y" for the year line.

@@ -133,6 +133,10 @@ export const TV_SETUP = {
   // that crossed): a message saying the day high is at least this % still announces.
   // On 10-20 that would have added 18 off-list crosses on 11 tickers.
   vb_fresh_gain: 30,
+  // …and (v29) a VB on candles of at least this many minutes — the lanes for longer trades
+  // (operator, 10-30: 1h / 4h / 1D on the month and year lines) — announces off Momentum too:
+  // a longer trade doesn't have to be on today's screen. The cap still applies.
+  vb_long_min: 60,
   // A v28 RETEST follows the same rules (its own ⚙ switch, Momentum or fresh, vb_cap on
   // its own `retest N`).
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
@@ -252,8 +256,18 @@ function toVwapSrc(v: unknown): TvVwapSrc | null {
 }
 
 function toTf(v: unknown): string | null {
-  const s = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim() : '';
-  return /^[0-9]+[A-Za-z]?$/.test(s) ? s.toUpperCase() : null;
+  const s = typeof v === 'number' ? String(v) : typeof v === 'string' ? v.trim().toUpperCase() : '';
+  if (/^[DWM]$/.test(s)) return `1${s}`;   // v29 lanes: a bare "D" is "1D"
+  return /^[0-9]+[A-Z]?$/.test(s) ? s : null;
+}
+
+// A TradingView interval in minutes: "5" → 5, "240" → 240, "1D" → 1440, "30S" → 0.5; null if unknown.
+export function tfMinutes(tf: string | null | undefined): number | null {
+  const m = /^(\d+)([SDWM]?)$/i.exec(tf ?? '');
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = m[2].toUpperCase();
+  return unit === 'S' ? n / 60 : unit === 'D' ? n * 1440 : unit === 'W' ? n * 10080 : unit === 'M' ? n * 43200 : n;
 }
 
 // The Pine script's alert() message:
@@ -299,8 +313,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const peak = /\bpeak\s+\+?(-?\d*\.?\d+)\s*%/i.exec(text);
   const stop = /\bstop\s+\$?(\d*\.?\d+)/i.exec(text);
   // v21 fields, read after a "|" so a ticker can't pass for one (BB, OPEN).
-  const candle = /\|\s*candle\s+([0-9]+[A-Za-z]?)\b/i.exec(text);
-  const bbTf = /\|\s*bb\s+([0-9]+[A-Za-z]?)\b/i.exec(text);
+  const candle = /\|\s*candle\s+([0-9]+[A-Za-z]?|[DWM])\b/i.exec(text);
+  const bbTf = /\|\s*bb\s+([0-9]+[A-Za-z]?|[DWM])\b/i.exec(text);
   const open = /\|\s*open\s+\$?(\d*\.?\d+)/i.exec(text);
   const crossN = /\|\s*cross\s+(\d+)\b/i.exec(text);
   const retestN = /\|\s*retest\s+(\d+)\b/i.exec(text);   // v28
@@ -378,9 +392,10 @@ export class TvSetupGate {
 
     // The line is part of the exact key: a PULLBACK on the month line two
     // minutes after one on the session line is a second event, not a re-delivery.
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}`;
-    const prev = this.lastExact.get(exact);
     const vb = VB_STAGES.has(sig.stage);
+    // v29: the VB lanes share the 30s alert, so the candle timeframe is part of a VB event's key.
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb ? `|${sig.candle_tf ?? ''}` : ''}`;
+    const prev = this.lastExact.get(exact);
     const dupSec = vb ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
@@ -389,7 +404,9 @@ export class TvSetupGate {
     // the Momentum-only rule limit them.
     if (vb) {
       const fresh = sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
-      const quiet = !this.announced.has(sig.stage) || (pastCap(sig) && !capExempt) || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
+      const long = (tfMinutes(sig.candle_tf) ?? 0) >= TV_SETUP.vb_long_min;
+      const quiet = !this.announced.has(sig.stage) || (pastCap(sig) && !capExempt)
+        || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh && !long);
       return quiet ? 'quiet' : 'notify';
     }
 

@@ -12,7 +12,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, lineTokens,
-  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, type TvSetupSignal,
+  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -382,6 +382,33 @@ console.log('VB retest (v28, 2026-10-29)');
     && html.includes('sVWAP $17.10 (+1.1%)') && html.includes('⭐ <b>on Momentum</b>') && !html.includes('null') && !html.includes('undefined'), html);
 }
 
+console.log('VB lanes (v29, 2026-10-30)');
+{
+  const h1 = parseTvMessage('CROSS AIOK 18.2 | mVWAP 17.6 (+3.4%) | yVWAP 15.1 (+20.5%) | upper 18.1 (+0.6%) | open 17.5 | line month+year | candle 60 | bb 10 | cross 1 | day high +46% | vwap 30s | tf 30S');
+  check('a 1h lane CROSS parses', h1?.stage === 'cross' && h1.candle_tf === '60' && h1.bb_tf === '10' && h1.line === 'month+year', JSON.stringify(h1));
+  const d1 = parseTvMessage('CROSS AIOK 18.2 | mVWAP 17.6 (+3.4%) | upper 18.0 (+1.1%) | open 17.4 | line month | candle 1D | bb 60 | cross 1 | vwap 30s | tf 30S');
+  check('…a daily lane ("1D"), and a bare "D" reads as "1D"', d1?.candle_tf === '1D' && d1.bb_tf === '60'
+    && parseTvMessage('CROSS X 1.0 | candle D | bb 60 | cross 1 | tf 30S')?.candle_tf === '1D'
+    && parseTvMessage({ stage: 'cross', ticker: 'X', candle_tf: 'd' })?.candle_tf === '1D', JSON.stringify(d1));
+  check('tfMinutes', tfMinutes('5') === 5 && tfMinutes('240') === 240 && tfMinutes('1D') === 1440 && tfMinutes('30S') === 0.5
+    && tfMinutes('1W') === 10080 && tfMinutes(null) === null && tfMinutes('x') === null);
+  const T0 = 1_792_166_400;
+  check(`off Momentum: a lane of ${TV_SETUP.vb_long_min}m+ candles announces, a 5m one stays quiet (under +30%)`,
+    new TvSetupGate().admit({ ...h1!, day_gain: 8 }, T0, false, false) === 'notify'
+      && new TvSetupGate().admit({ ...d1!, day_gain: 3 }, T0, false, false) === 'notify'
+      && new TvSetupGate().admit({ ...h1!, candle_tf: '5', bb_tf: '45S', day_gain: 8 }, T0, false, false) === 'quiet'
+      && new TvSetupGate().admit({ ...h1!, candle_tf: '30', day_gain: 8 }, T0, false, false) === 'quiet');
+  check('…the cap still applies to a lane', new TvSetupGate().admit({ ...h1!, cross_n: TV_SETUP.vb_cap + 1 }, T0, false, false) === 'quiet');
+  const r1 = parseTvMessage('RETEST AIOK 17.7 | stop 17.5 | mVWAP 17.6 (+0.6%) | line month | candle 240 | bb 30 | retest 1 | vwap 30s | tf 30S');
+  check('…a 4h lane RETEST off Momentum announces', new TvSetupGate().admit(r1!, T0, false, false) === 'notify', JSON.stringify(r1));
+  const g = new TvSetupGate();
+  check('two lanes crossing the same line on one 30s bar are two events (the candle is in the key)',
+    g.admit(h1!, T0, false, true) === 'notify' && g.admit({ ...h1!, candle_tf: '240', bb_tf: '30' }, T0, false, true) === 'notify'
+      && g.admit(h1!, T0 + 5, false, true) === 'drop');
+  const html = formatTvSetupAlert(d1!, 'NASDAQ:AIOK', null);
+  check('Telegram: the daily lane', html.includes('the 1D candle crossed over the month VWAP and the 1h BB upper band') && !html.includes('null'), html);
+}
+
 console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -398,7 +425,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'pbMax == 0 or s.fails < pbMax', '" | fails "', 'fails := math.min(fails, pbY.fails)', 'pbCapMark',
     // v21: the VWAP + BB cross from the 30s alert, drawn on the candle's chart; the setup switches
     '"CROSS "', '" | upper "', '" | open "', '" | candle "', '" | bb "', '" | cross "',
-    'vbSend = vbOk and timeframe.period == vbTf', 'timeframe.change(vbCandleTf)', 'timeframe.change(vbBbTf)',
+    'vbSend  = vbOk and timeframe.period == vbTf', 'timeframe.change(cTf)', 'timeframe.change(bTf)',   // v29: per lane
     // v23: the lines as they stand at the 30s close (what the chart draws), the day's first candle counts
     'cOpen <= math.max(ln, up) and cOpen <= math.min(ln, up) * (1 + vbTol / 100) and close > ln and close > up',
     'vbCan(vVw, vBand, vOpen, vSFired)',
@@ -416,13 +443,21 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v28', 'alert(vbRtMsg(), alert.freq_once_per_bar_close)', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v29', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     'vbHighest(vRtS, vRtM, vRtY, vVw, vMw, vYw)', 'vbRtWait > 0 and vRtAge >= vbRtWait', 'text = "RT"',
     '" | vwap " + (use30 ? "30s" : "chart")', 'options = ["30s bars", "Chart bars"]',
     'request.security_lower_tf(syminfo.tickerid, lower30 ? "30S" : timeframe.period, [hlc3 * volume, volume])',
     'float vTPV    = use30 ? vPV30 :', 'svwap = lower30 ?', 'input.float(0.0,         "VB: the candle may open up to %',
-    'size = size.tiny, display = display.none']) {
+    'size = size.tiny, display = display.none',
+    // v29: three more VB lanes in the same alert (1h / 4h / 1D on month + year by default), one replay per chart,
+    // a 4h+ lane's month / year retest carried over the day's end
+    'vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool laneOk) =>',
+    'vbStep(vb2Cndl, vb2Bb, vb2S, vb2M, vb2Y, vb2Ok)', 'vbStep(vb3Cndl, vb3Bb, vb3S, vb3M, vb3Y, vb3Ok)', 'vbStep(vb4Cndl, vb4Bb, vb4S, vb4M, vb4Y, vb4Ok)',
+    'vbStep(vlCndl, vlBb, vlS, vlM, vlY, vlOk)', 'input.timeframe("60",    "candle"', 'input.timeframe("240",   "candle"', 'input.timeframe("1D",    "candle"',
+    'bool vCarry    = timeframe.in_seconds(cTf) >= 14400',
+    'if vRtArmed and (vRtS or not vCarry)', 'not (gNewDay and (vSFired or not vCarry))',
+    'alert(vbMsg(v2FireS, v2FireM, v2FireY', 'alert(vbMsg(v4FireS', 'alert(vbRtMsg(v3RtS', 'vbLower    = vlOk and vbShow and timeframe.period == vlCndl']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
