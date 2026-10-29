@@ -3946,19 +3946,19 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
-  // tv_cross / tv_break, and tv_year for a message about the year line alone).
+  // tv_cross / tv_retest, and tv_year for a message about the year line alone).
   // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
   // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
   // had this stage announced in the last 5 min): recorded for grading, not
   // re-announced. mode 'quiet' (2026-10-05) = a stage switched off in the ⚙
-  // menu (`why` 'muted'; default BROKEN / HELD; a LEVEL always): recorded and
+  // menu (`why` 'muted'; default BROKEN / HELD): recorded and
   // shown in the 📐 sidebar (it reads tier_events), never announced. Rows
   // carry `quiet: true`.
   // v16: why 'capped' = a PULLBACK past TV_SETUP.pb_cap failures on a ticker that
   // isn't B+ or better on Momentum; `capExempt` = past the cap but announced anyway.
   // Rows carry `fails`, `capped`, `cap_exempt` for the grading.
-  // v21 CROSS (tv_cross) / v25 BREAK (tv_break): why 'capped' = past TV_SETUP.vb_cap on
+  // v21 CROSS (tv_cross) / v28 RETEST (tv_retest): why 'capped' = past TV_SETUP.vb_cap on
   // the line today; why 'offlist' = not on our Momentum list (vb_momentum_only, 2026-10-20).
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
@@ -3988,6 +3988,7 @@ class PollerService {
         yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
         fails: sig.fails ?? null, capped: pastCap(sig),
         ...vbFields(sig),
+        vwap_src: sig.vwap_src ?? null,
         on_screen: row != null, notified: mode === 'notify',
       },
     };
@@ -4002,17 +4003,19 @@ class PollerService {
       on_screen: row != null, notified: mode === 'notify', quiet: mode === 'quiet',
       fails: sig.fails ?? null, capped: pastCap(sig), cap_exempt: capExempt,
       ...vbFields(sig),
+      vwap_src: sig.vwap_src ?? null,
     });
     if (VB_STAGES.has(sig.stage)) {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
         (sig.stage === 'cross' ? ` · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%) · open ${sig.candle_open ?? '?'} · cross ${sig.cross_n ?? '?'}`
-          : ` · level ${sig.level ?? '?'} · stop ${sig.stop ?? '?'}` + (sig.stage === 'break' ? ` · break ${sig.break_n ?? '?'}` : '')) +
+          : ` · stop ${sig.stop ?? '?'} · retest ${sig.retest_n ?? '?'}`) +
         ` · day ${sig.day_gain ?? '?'}%` +
         (sig.vol_x != null ? ` · vol ${sig.vol_x}x` : '') + ` · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: ${sig.stage === 'break' ? `break ${sig.break_n}` : `cross ${sig.cross_n}`} today)`
-          : why === 'offlist' ? ' · quiet (off our Momentum list)' : sig.stage === 'level' ? ' · stored (a LEVEL is never announced)' : ' · quiet (stage switched off)') : ''));
+        (sig.vwap_src ? ` · vwap ${sig.vwap_src}` : '') +
+        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: ${sig.stage === 'retest' ? `retest ${sig.retest_n}` : `cross ${sig.cross_n}`} today)`
+          : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
     } else console.log(
       `[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'}` +
       ` · ${sig.line ?? '?'} line · touch ${sig.touch ?? '?'}` + (sig.peak_pct != null ? ` · peak +${sig.peak_pct}%` : '') +

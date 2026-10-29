@@ -15,7 +15,9 @@
 // (5m, 1h, …) crosses over both a VWAP line (session; v22 also month and year)
 // and the upper BB of another timeframe (45s, 2m, 30m, …) — CROSS, sent from the
 // 30s alert the moment a 30s close inside the candle is above both lines. v25 adds
-// its trigger: LEVEL when the candle closes, BREAK when price takes its high.
+// its trigger (LEVEL / BREAK); v28 replaced that with RETEST, the operator's entry: after the
+// VB candle closes, price comes back to the line and a 30s candle closes green above it.
+// v28 also builds the lines from 30s bars by default (`vwap 30s`) or the chart's (`vwap chart`).
 // v27 removed the RECLAIM setup (FORMING / READY / GO, v1–v26) and the BB breakout
 // (TOUCH / BREAKOUT / TRIGGERED, v17–v26); their rows stay in tier_events, and a
 // message of theirs is now rejected as unrecognised (400).
@@ -33,17 +35,17 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'level' | 'break';
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest';
 // The PULLBACK setup's stages (script v10).
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
 // The VWAP + BB cross (script v21): one stage, CROSS, on the candle timeframe's
 // session VWAP — v21 messages name no line — and since v22 also on the month and
 // year VWAPs (`line session|month|year`, combined like PULLBACK's). Stored as
 // tier_events event 'tv_setup' and announced behind the ⚙ stage switch and the cap.
-// v25 adds its trigger: LEVEL when a VB candle closes (its high = the buy stop, its
-// low = the stop; stored, never announced) and BREAK when price reaches that high
-// (announced like CROSS, its own ⚙ switch).
-export const VB_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['cross', 'level', 'break']);
+// v28 RETEST (it replaced v25–v27's LEVEL / BREAK): after the VB candle closes, price back
+// within 1% of the line it crossed and a 30s candle closing green above it; `stop` = a tick
+// under the pullback's low. Announced like CROSS (its own ⚙ switch, the cap on `retest N`).
+export const VB_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['cross', 'retest']);
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
 // e.g. "session+month". The legacy 'both' (v10–v13) meant session + month.
@@ -57,6 +59,9 @@ export function lineTokens(stage: TvStage, line: TvLine | null | undefined): TvL
   if (line === 'both') return ['session', 'month'];
   return line.split('+') as TvLineName[];
 }
+
+// v28: which bars the script built its VWAP lines from.
+export type TvVwapSrc = '30s' | 'chart';
 
 export interface TvSetupSignal {
   stage: TvStage;
@@ -86,10 +91,10 @@ export interface TvSetupSignal {
   bb_tf?: string | null;      // the band's timeframe: "2", "45S", …
   candle_open?: number | null; // the candle's open
   cross_n?: number | null;    // the day's crosses on this ticker, this one included
-  // VB break (script v25)
-  level?: number | null;      // LEVEL / BREAK: the VB candle's high, the trigger
-  stop?: number | null;       // LEVEL / BREAK: the VB candle's low
-  break_n?: number | null;    // BREAK: the day's breaks on this ticker, this one included
+  // VB retest (script v28)
+  stop?: number | null;       // RETEST: a tick under the pullback's low
+  retest_n?: number | null;   // RETEST: the day's retests on this ticker, this one included
+  vwap_src?: TvVwapSrc | null; // v28: the lines from 30s bars or the chart's bars; null = an older script (chart bars)
 }
 
 export const TV_SETUP = {
@@ -128,8 +133,8 @@ export const TV_SETUP = {
   // that crossed): a message saying the day high is at least this % still announces.
   // On 10-20 that would have added 18 off-list crosses on 11 tickers.
   vb_fresh_gain: 30,
-  // A v25 BREAK follows the same rules (its own ⚙ switch, Momentum or fresh, vb_cap on
-  // its own `break N`); a LEVEL is stored and shown in the sidebar, never announced.
+  // A v28 RETEST follows the same rules (its own ⚙ switch, Momentum or fresh, vb_cap on
+  // its own `retest N`).
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
@@ -137,7 +142,7 @@ export const TV_SETUP = {
 } as const;
 
 const STAGES: Record<string, TvStage> = {
-  pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', level: 'level', break: 'break',
+  pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
@@ -145,15 +150,15 @@ const STAGES: Record<string, TvStage> = {
 // v21: a CROSS past the day's TV_SETUP.vb_cap crosses on its ticker.
 export function pastCap(sig: TvSetupSignal): boolean {
   if (sig.stage === 'cross') return sig.cross_n != null && sig.cross_n > TV_SETUP.vb_cap;
-  if (sig.stage === 'break') return sig.break_n != null && sig.break_n > TV_SETUP.vb_cap;
+  if (sig.stage === 'retest') return sig.retest_n != null && sig.retest_n > TV_SETUP.vb_cap;
   return sig.stage === 'pullback' && sig.fails != null && sig.fails >= TV_SETUP.pb_cap;
 }
 
-// The VWAP + BB cross's fields (CROSS v21; LEVEL / BREAK v25) for the alert's setup info and
+// The VWAP + BB cross's fields (CROSS v21; RETEST v28) for the alert's setup info and
 // its tier_events row; none on other stages.
 export function vbFields(sig: TvSetupSignal): {
   upper?: number | null; upper_pct?: number | null; candle_tf?: string | null; bb_tf?: string | null;
-  candle_open?: number | null; cross_n?: number | null; level?: number | null; stop?: number | null; break_n?: number | null;
+  candle_open?: number | null; cross_n?: number | null; stop?: number | null; retest_n?: number | null;
 } {
   if (sig.stage === 'cross') {
     return {
@@ -161,11 +166,8 @@ export function vbFields(sig: TvSetupSignal): {
       bb_tf: sig.bb_tf ?? null, candle_open: sig.candle_open ?? null, cross_n: sig.cross_n ?? null,
     };
   }
-  if (sig.stage === 'level' || sig.stage === 'break') {
-    return {
-      level: sig.level ?? null, stop: sig.stop ?? null, candle_tf: sig.candle_tf ?? null, bb_tf: sig.bb_tf ?? null,
-      break_n: sig.break_n ?? null,
-    };
+  if (sig.stage === 'retest') {
+    return { stop: sig.stop ?? null, candle_tf: sig.candle_tf ?? null, bb_tf: sig.bb_tf ?? null, retest_n: sig.retest_n ?? null };
   }
   return {};
 }
@@ -179,11 +181,11 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'break', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
-// A stage v27 removed (forming / ready / go) is dropped.
+// A stage v27 or v28 removed (forming / ready / go, level / break) is dropped.
 export function parseStageList(v: unknown): TvStage[] | null {
   if (!Array.isArray(v)) return null;
   const wanted = new Set(v.filter((x): x is string => typeof x === 'string').map((x) => x.trim().toLowerCase()));
@@ -238,10 +240,15 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     bb_tf: toTf(o.bb_tf ?? o.bb),
     candle_open: toNum(o.candle_open ?? o.open),
     cross_n: toNum(o.cross_n ?? o.cross),
-    level: toNum(o.level),
     stop: toNum(o.stop),
-    break_n: toNum(o.break_n),
+    retest_n: toNum(o.retest_n ?? o.retest),
+    vwap_src: toVwapSrc(o.vwap_src ?? o.vwap),
   };
+}
+
+function toVwapSrc(v: unknown): TvVwapSrc | null {
+  const p = typeof v === 'string' ? v.trim().toLowerCase() : '';
+  return p === '30s' || p === 'chart' ? p : null;
 }
 
 function toTf(v: unknown): string | null {
@@ -255,8 +262,8 @@ function toTf(v: unknown): string | null {
 //   PULLBACK WFF 3.53 | sVWAP 3.12 (+13.1%) | mVWAP 3.11 (+13.5%) | yVWAP 3.39 (+4.1%) | line year | touch 4 | fails 2 | peak +45% | tf 30S   (v16)
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S   (v21)
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | … | tf 30S   (v22)
-//   LEVEL TANH 12.48 | level 12.59 | stop 11.8 | sVWAP 12.1 (+3.1%) | … | line month | candle 10 | bb 2 | tf 30S   (v25)
-//   BREAK TANH 12.6 | level 12.59 | stop 11.8 | … | line month | candle 10 | bb 2 | break 1 | day high +60% | tf 30S   (v25)
+//   RETEST AIOK 17.28 | stop 17.09 | sVWAP 17.1 (+1.1%) | mVWAP 14.2 (+21.7%) | line session | candle 5 | bb 45S | retest 1 | day high +46% | vwap 30s | tf 30S   (v28)
+// (v28 adds `vwap 30s|chart` to every message.)
 // (a negative day high is written "-2%"; scripts before v3 wrote "+-2%"), or a JSON
 // object with the TvSetupSignal field names. Express hands us the raw text for
 // text/plain bodies and an already-parsed object for JSON ones.
@@ -272,7 +279,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
       return null;
     }
   }
-  const head = /^(PULLBACK|BROKEN|HELD|CROSS|LEVEL|BREAK)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
@@ -296,8 +303,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const bbTf = /\|\s*bb\s+([0-9]+[A-Za-z]?)\b/i.exec(text);
   const open = /\|\s*open\s+\$?(\d*\.?\d+)/i.exec(text);
   const crossN = /\|\s*cross\s+(\d+)\b/i.exec(text);
-  const level = /\|\s*level\s+\$?(\d*\.?\d+)/i.exec(text);     // v25
-  const breakN = /\|\s*break\s+(\d+)\b/i.exec(text);
+  const retestN = /\|\s*retest\s+(\d+)\b/i.exec(text);   // v28
+  const vwapSrc = /\|\s*vwap\s+(30s|chart)\b/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -323,9 +330,9 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     bb_tf: toTf(bbTf?.[1]),
     candle_open: toNum(open?.[1]),
     cross_n: toNum(crossN?.[1]),
-    level: toNum(level?.[1]),
     stop: toNum(stop?.[1]),
-    break_n: toNum(breakN?.[1]),
+    retest_n: toNum(retestN?.[1]),
+    vwap_src: toVwapSrc(vwapSrc?.[1]),
   };
 }
 
@@ -334,7 +341,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
 // (1m and 30s), so one event arrives twice: the first copy counts, the second
 // is only logged. A first copy is then 'quiet' (stored and shown in the 📐
 // sidebar, not announced) for a stage switched off in the ⚙ menu, a PULLBACK
-// past the cap, or a CROSS / BREAK off our Momentum list, else announced — a
+// past the cap, or a CROSS / RETEST off our Momentum list, else announced — a
 // PULLBACK at most once per ticker and line per 5 min; the rest are logged.
 export type TvVerdict = 'notify' | 'quiet' | 'log' | 'drop' | 'flood';
 
@@ -359,7 +366,7 @@ export class TvSetupGate {
 
   // `capExempt`: a PULLBACK past the cap may still announce (v16 — the caller
   // knows the ticker's Momentum row and grade). `onMomentum`: the ticker is on
-  // our Momentum list now; off it, a CROSS or BREAK is quiet (vb_momentum_only)
+  // our Momentum list now; off it, a CROSS or RETEST is quiet (vb_momentum_only)
   // unless its day high is ≥ vb_fresh_gain %.
   admit(sig: TvSetupSignal, nowSec: number, capExempt = false, onMomentum = true): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
@@ -377,9 +384,7 @@ export class TvSetupGate {
     const dupSec = vb ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
-    // A v25 LEVEL is stored and shown on its CROSS row in the sidebar, never announced.
-    if (sig.stage === 'level') return 'quiet';
-    // v21 CROSS and v25 BREAK: one per candle / level from the 30s alert alone — no
+    // v21 CROSS and v28 RETEST: one per candle / VB candle from the 30s alert alone — no
     // copy to merge, and no 5-min spacing (the next one is a new event); the cap and
     // the Momentum-only rule limit them.
     if (vb) {
@@ -417,18 +422,17 @@ export class TvSetupGate {
 }
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', level: 'LEVEL', break: 'BREAK',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST',
 };
 const STAGE_ICON: Record<TvStage, string> = {
-  pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', level: '📏', break: '🔼',
+  pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁',
 };
 const STAGE_HINT: Record<TvStage, string> = {
   pullback: 'back near VWAP after the run — be ready',
   broken: 'closed under VWAP — setup broken',
   held: 'held — ran +10% from the pullback',
   cross: 'the candle crossed over the session VWAP and the BB upper band',
-  level: 'the VB candle closed: its high is the trigger, its low the stop',
-  break: "price took the VB candle's high",
+  retest: 'back at the VWAP line after the VB candle, and bounced',
 };
 // A TradingView interval, short: "5" → "5m", "60" → "1h", "30S" → "30s".
 export function fmtTf(tf: string | null | undefined): string {
@@ -466,7 +470,7 @@ export function formatTvSetupAlert(
   row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
 ): string {
   if (sig.stage === 'cross') return formatCross(sig, tvSym, row);
-  if (sig.stage === 'break' || sig.stage === 'level') return formatBreak(sig, tvSym, row);
+  if (sig.stage === 'retest') return formatRetest(sig, tvSym, row);
   // PULLBACK / BROKEN / HELD. PULLBACK and BROKEN name the line: "back near the
   // session VWAP after the run — be ready".
   const tokens = lineTokens(sig.stage, sig.line);
@@ -533,8 +537,9 @@ function formatCross(
   return lines.join('\n');
 }
 
-// v25 BREAK: "over the 10m VB candle's high $12.59 · stop $11.80 (its low, −6.3%)".
-function formatBreak(
+// v28 RETEST: "back at the session VWAP after the 5m VB candle (45s BB) and bounced · stop $17.09
+// (−1.1%, under the pullback low)".
+function formatRetest(
   sig: TvSetupSignal,
   tvSym: string,
   row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
@@ -542,15 +547,15 @@ function formatBreak(
   const tokens = lineTokens(sig.stage, sig.line);
   const lines = [
     `${row ? '⭐ ' : ''}📐 ${STAGE_ICON[sig.stage]} <b>${TV_STAGE_LABEL[sig.stage]}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>${sig.stage === 'break' ? 'over' : 'trigger:'} the ${fmtTf(sig.candle_tf)} VB candle's high ${fmtPx(sig.level ?? null)} (${tokens.join(' + ')} VWAP + ${fmtTf(sig.bb_tf)} BB cross)</i>`,
+    `<i>back at the ${tokens.join(' + ')} VWAP after the ${fmtTf(sig.candle_tf)} VB candle (${fmtTf(sig.bb_tf)} BB) and bounced</i>`,
   ];
   const what: string[] = [];
   if (sig.stop != null) {
-    const risk = sig.level != null && sig.level > 0 ? ` (its low, ${fmtSigned((sig.stop / sig.level - 1) * 100)})` : ' (its low)';
-    what.push(`stop ${fmtPx(sig.stop)}${risk}`);
+    const risk = sig.price != null && sig.price > 0 ? `${fmtSigned((sig.stop / sig.price - 1) * 100)}, ` : '';
+    what.push(`stop ${fmtPx(sig.stop)} (${risk}under the pullback low)`);
   }
-  if (sig.break_n != null) {
-    what.push(`break ${sig.break_n} today${sig.break_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
+  if (sig.retest_n != null) {
+    what.push(`retest ${sig.retest_n} today${sig.retest_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
   }
   if (what.length > 0) lines.push(what.join(' · '));
   const lvlOf: Record<TvLineName, string | null> = {

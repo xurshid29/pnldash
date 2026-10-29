@@ -2,19 +2,18 @@ import type { TvLine, TvLineName, TvSetupInfo, TvStage } from '../../api/types';
 
 // 📐 VWAP setup stage pill (TradingView webhook, 2026-10-03). Blue → red/green for
 // the PULLBACK setup (script v10) and its outcome; teal for the VWAP + BB cross
-// (v21, the chart's "VB" marker). Used by the 📐 sidebar.
+// (v21, the chart's "VB" marker) and its retest (v28). Used by the 📐 sidebar.
 export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg: string }> = {
   pullback: { label: 'PULLBACK', color: '#bae7ff', bg: '#003a8c' },
   broken: { label: 'BROKEN', color: '#ffccc7', bg: '#5c0011' },
   held: { label: 'HELD', color: '#d9f7be', bg: '#135200' },
   cross: { label: 'CROSS', color: '#b5f5ec', bg: '#00474f' },
-  level: { label: 'LEVEL', color: '#d9d9d9', bg: '#262626' },
-  break: { label: 'BREAK', color: '#ffffff', bg: '#08979c' },
+  retest: { label: 'RETEST', color: '#ffffff', bg: '#08979c' },
 };
 
-// The VWAP + BB cross's stages: CROSS (v21), LEVEL and BREAK (v25).
+// The VWAP + BB cross's stages: CROSS (v21) and RETEST (v28).
 export function isVbStage(stage: TvStage): boolean {
-  return stage === 'cross' || stage === 'level' || stage === 'break';
+  return stage === 'cross' || stage === 'retest';
 }
 
 // The individual lines of a signal (server: tv-setups.ts lineTokens). The legacy
@@ -56,20 +55,20 @@ export function fmtTf(tf: string | null | undefined): string {
   return /^\d+S$/i.test(tf) ? tf.toLowerCase() : tf;
 }
 
-// v21 CROSS: "5m/2m" — the candle's timeframe over the band's.
+// v21 CROSS / v28 RETEST: "5m/45s" — the candle's timeframe over the band's.
 export function crossTfText(s: TvSetupInfo): string | null {
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, level: 2, break: 3 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
 }
 
 // PULLBACK-setup stages show their line (S / M / S+M) and touch number (#1 = first);
-// a v21 CROSS its timeframes ("5m/2m", `tfs`) and the day's cross number as `touch`.
+// a v21 CROSS / v28 RETEST its timeframes ("5m/45s", `tfs`) and the day's number as `touch`.
 export function TvStageTag({ stage, dim, line, touch, tfs }: {
   stage: TvStage; dim?: boolean; line?: TvLine | null; touch?: number | null; tfs?: string | null;
 }) {
@@ -92,16 +91,23 @@ export function TvStageTag({ stage, dim, line, touch, tfs }: {
   );
 }
 
-// Where price sat at the signal. PULLBACK setup: "+0.7% vs sVWAP · +51.2% vs mVWAP ·
-// ran +17%", its own line first. v25: "break > $12.59 · stop $11.80" — the VB
-// candle's trigger and stop.
-export function vbTriggerText(s: TvSetupInfo, verb = 'break >'): string | null {
+// v28 RETEST: "retest · stop $17.09 (−1.1%)" — the stop under the pullback's low,
+// against the RETEST price.
+export function retestStopText(s: TvSetupInfo, price: number | null | undefined): string | null {
+  if (s.stop == null) return null;
   const px = (p: number) => `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
-  return s.level == null ? null : `${verb} ${px(s.level)}${s.stop != null ? ` · stop ${px(s.stop)}` : ''}`;
+  const pct = price != null && price > 0 ? ` (${fmtSignedPct((s.stop / price - 1) * 100).replace('-', '−')})` : '';
+  return `retest · stop ${px(s.stop)}${pct}`;
 }
 
-export function tvLevelsText(s: TvSetupInfo): string {
-  if (s.stage === 'level' || s.stage === 'break') return vbTriggerText(s, s.stage === 'break' ? 'over' : 'break >') ?? '';
+// Where price sat at the signal. PULLBACK setup: "+0.7% vs sVWAP · +51.2% vs mVWAP ·
+// ran +17%", its own line first.
+export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
+  // v28 RETEST: the stop, then where price sat against its line
+  if (s.stage === 'retest') {
+    const parts = [retestStopText(s, price), ...lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t))];
+    return parts.filter((p): p is string => p != null).join(' · ');
+  }
   // v21 CROSS: "+5.7% vs sVWAP · +1.2% vs 2m BB · opened $2.50" (v22: its own line first)
   if (s.stage === 'cross') {
     const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));

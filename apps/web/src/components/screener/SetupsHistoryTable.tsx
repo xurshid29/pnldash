@@ -37,19 +37,19 @@ interface SetupEvent {
   outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
-type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'break';
+type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'retest';
 
 function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const sorted = alerts
-    .filter((a) => a.kinds.includes('tv_setup') && a.setup && a.setup.stage !== 'level')   // v25 LEVELs annotate, they're not setups
+    .filter((a) => a.kinds.includes('tv_setup') && a.setup)
     .map((a) => ({ a, at: Date.parse(a.at) }))
     .sort((x, y) => x.at - y.at);
   const events: SetupEvent[] = [];
   const last = new Map<string, SetupEvent>();   // ticker|stage|lines → its latest event
   for (const { a, at } of sorted) {
     const s = a.setup!;
-    // A v21 CROSS comes from one alert: only a copy of the same cross merges, not the next candle's.
-    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : s.stage === 'break' ? `|${s.break_n ?? ''}` : ''}`;
+    // A v21 CROSS / v28 RETEST comes from one alert: only a copy of the same one merges, not the next.
+    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : ''}`;
     const prev = last.get(k);
     if (prev && at - prev.at <= MERGE_MS) {
       if (s.tf && !prev.tfs.includes(s.tf)) prev.tfs.push(s.tf);
@@ -99,13 +99,13 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const events = useMemo(() => buildEvents(data ?? []), [data]);
 
   const visible = useMemo(() => {
-    const on = new Set<TvStage>(settings?.announced ?? ['pullback', 'cross', 'break']);
+    const on = new Set<TvStage>(settings?.announced ?? ['pullback', 'cross', 'retest']);
     return events.filter((e) => {
       const st = e.setup.stage;
       if (stageFilter === 'on' && !on.has(st)) return false;
       if (stageFilter === 'pullback' && st !== 'pullback') return false;
       if (stageFilter === 'cross' && st !== 'cross') return false;
-      if (stageFilter === 'break' && st !== 'break') return false;
+      if (stageFilter === 'retest' && st !== 'retest') return false;
       return !momentumOnly || e.setup.on_screen;
     });
   }, [events, settings, stageFilter, momentumOnly]);
@@ -114,7 +114,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const held = pullbacks.filter((e) => e.outcome?.stage === 'held').length;
   const broke = pullbacks.filter((e) => e.outcome?.stage === 'broken').length;
   const crosses = visible.filter((e) => e.setup.stage === 'cross').length;
-  const breaks = visible.filter((e) => e.setup.stage === 'break').length;
+  const retests = visible.filter((e) => e.setup.stage === 'retest').length;
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -140,7 +140,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       render: (_v, e) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <TvStageTag stage={e.setup.stage} dim={!e.notified} line={e.setup.line}
-            touch={e.setup.stage === 'cross' ? e.setup.cross_n : e.setup.stage === 'break' ? e.setup.break_n : e.setup.touch} tfs={crossTfText(e.setup)} />
+            touch={e.setup.stage === 'cross' ? e.setup.cross_n : e.setup.stage === 'retest' ? e.setup.retest_n : e.setup.touch} tfs={crossTfText(e.setup)} />
           {e.setup.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
         </span>
       ),
@@ -186,7 +186,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             { label: 'All stages', value: 'all' },
             { label: 'PULLBACK', value: 'pullback' },
             { label: 'CROSS', value: 'cross' },
-            { label: 'BREAK', value: 'break' },
+            { label: 'RETEST', value: 'retest' },
           ]}
         />
         <Checkbox checked={momentumOnly} onChange={(e) => setMomentumOnly(e.target.checked)}>
@@ -198,7 +198,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
               {visible.length} setup{visible.length === 1 ? '' : 's'} · {pullbacks.length} PULLBACK
               {pullbacks.length > 0 && <> (<span style={{ color: '#52c41a' }}>{held} held</span> / <span style={{ color: '#ff4d4f' }}>{broke} broke</span>)</>}
               {crosses > 0 && <> · {crosses} CROSS</>}
-              {breaks > 0 && <> · {breaks} BREAK</>}
+              {retests > 0 && <> · {retests} RETEST</>}
             </>
           )}
         </Text>

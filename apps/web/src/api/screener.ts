@@ -16,7 +16,8 @@ import { isTvStage } from './types';
 
 export const screenerApi = {
   // The day's opportunity-alert log (default today, ET), newest first. 📐 rows of
-  // the setups removed in script v27 (RECLAIM's FORMING / READY / GO) are skipped.
+  // removed stages (v27: RECLAIM's FORMING / READY / GO; v28: the VB break's LEVEL /
+  // BREAK) are skipped.
   async alerts(day?: string): Promise<OpportunityAlert[]> {
     const res = await apiClient.get<OpportunityAlert[]>(`/api/screener/alerts${day ? `?day=${encodeURIComponent(day)}` : ''}`);
     return res.data.filter((a) => !a.kinds.includes('tv_setup') || isTvStage(a.setup?.stage));

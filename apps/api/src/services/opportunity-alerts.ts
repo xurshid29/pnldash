@@ -66,10 +66,10 @@ export interface TvSetupInfo {
   bb_tf?: string | null;      // "2", "30", …
   candle_open?: number | null;
   cross_n?: number | null;    // the day's crosses on the ticker, this one included
-  // VB break (script v25)
-  level?: number | null;      // LEVEL / BREAK: the VB candle's high
-  stop?: number | null;       // its low
-  break_n?: number | null;    // BREAK: the day's breaks on the ticker
+  // VB retest (script v28)
+  stop?: number | null;       // a tick under the pullback's low
+  retest_n?: number | null;   // v28 RETEST: the day's retests on the ticker
+  vwap_src?: '30s' | 'chart' | null; // v28: which bars the script built its VWAP lines from (null = before v28)
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe
 }

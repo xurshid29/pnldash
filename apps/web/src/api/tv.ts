@@ -20,7 +20,8 @@ export interface TvAlertSettings {
   defaults: TvStage[];
 }
 
-// Only the stages this build knows (script v27 removed RECLAIM's FORMING / READY / GO).
+// Only the stages this build knows (script v27 removed RECLAIM's FORMING / READY / GO,
+// v28 the VB break's LEVEL / BREAK).
 function knownStages(s: TvAlertSettings): TvAlertSettings {
   return { announced: s.announced.filter(isTvStage), stages: s.stages.filter(isTvStage), defaults: s.defaults.filter(isTvStage) };
 }

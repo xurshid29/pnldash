@@ -4,7 +4,8 @@
 // mvwap-bb-setup.pine) and the duplicate gate that keeps the phone usable.
 // Since script v27 (2026-10-28) the script has two setups, PULLBACK and the VWAP +
 // BB cross; RECLAIM (FORMING / READY / GO) and the BB breakout (TOUCH / BREAKOUT /
-// TRIGGERED) were removed, and their messages are rejected.
+// TRIGGERED) were removed, and their messages are rejected. v28 replaced the VB break
+// (LEVEL / BREAK) with RETEST and added `vwap 30s|chart` to every message.
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -69,6 +70,10 @@ console.log('Parse — rejects');
     check(`v27: rejects ${m.split(' ')[0]}`, parseTvMessage(m) == null);
   }
   check('v27: rejects their JSON too', parseTvMessage({ stage: 'go', ticker: 'NXL' }) == null && parseTvMessage({ stage: 'breakout', ticker: 'X' }) == null);
+  // v28 replaced the VB break with RETEST: a v25–v27 alert's LEVEL / BREAK is unrecognised too.
+  check('v28: rejects LEVEL and BREAK', parseTvMessage('LEVEL TANH 12.48 | level 12.59 | stop 11.8 | line month | candle 10 | bb 2 | tf 30S') == null
+    && parseTvMessage('BREAK TANH 12.6 | level 12.59 | stop 11.8 | line month | candle 10 | bb 2 | break 1 | tf 30S') == null
+    && parseTvMessage({ stage: 'break', ticker: 'TANH' }) == null);
 }
 
 console.log('PULLBACK setup (v10)');
@@ -196,12 +201,13 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'pullback', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, day_gain: 25, ah_gain: null,
     tf: '1', vol_x: null, run_pct: null, svwap: 1.95, spx_pct: 2.6, line: 'session', touch: 1, fails: 0, ...over,
   });
-  check('default switches: PULLBACK, CROSS, BREAK on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","break"]');
+  check('default switches: PULLBACK, CROSS, RETEST on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest"]');
   check('parseStageList keeps known stages in menu order, drops the rest (v27: a saved go / ready / forming too)',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 'ready', 7])) === '["pullback","held"]'
       && parseStageList('pullback') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists the five stages (LEVEL is never announced)',
-    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","break","broken","held"]');
+  check('menu order lists the five stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped)',
+    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","broken","held"]'
+      && JSON.stringify(parseStageList(['pullback', 'cross', 'break'])) === '["pullback","cross"]');
   const g = new TvSetupGate();
   g.setAnnounced(['cross']);
   check('PULLBACK switched off → quiet', g.admit(sig(), T0) === 'quiet' && !g.announces('pullback'));
@@ -344,34 +350,36 @@ console.log('VWAP + BB cross (v21, 2026-10-20)');
   check('Telegram: two lines', formatTvSetupAlert(both!, 'NASDAQ:AIXI', null).includes('crossed over the session + month VWAP'));
 }
 
-console.log('VB break (v25, 2026-10-22)');
+console.log('VB retest (v28, 2026-10-29)');
 {
-  const lvl = parseTvMessage('LEVEL TANH 12.48 | level 12.59 | stop 11.8 | sVWAP 12.1 (+3.1%) | mVWAP 11.5 (+8.5%) | line month | candle 10 | bb 2 | day high +45% | tf 30S');
-  check('LEVEL parses', lvl?.stage === 'level' && lvl.ticker === 'TANH' && lvl.price === 12.48 && lvl.level === 12.59 && lvl.stop === 11.8
-    && lvl.line === 'month' && lvl.candle_tf === '10' && lvl.bb_tf === '2' && lvl.break_n === null, JSON.stringify(lvl));
-  const brk = parseTvMessage('BREAK TANH 12.6 | level 12.59 | stop 11.8 | sVWAP 12.2 (+3.3%) | mVWAP 11.6 (+8.6%) | line month | candle 10 | bb 2 | break 1 | day high +60% | vol 2.0x | tf 30S');
-  check('BREAK parses', brk?.stage === 'break' && brk.price === 12.6 && brk.level === 12.59 && brk.stop === 11.8 && brk.break_n === 1
-    && brk.day_gain === 60 && brk.tf === '30S' && JSON.stringify(lineTokens('break', brk.line)) === '["month"]', JSON.stringify(brk));
-  check('…a BREAKOUT (the BB breakout, removed in v27) is not read as a BREAK', parseTvMessage('BREAKOUT XLAB 2.38 | upper 2.33 (+2.1%) | trigger 2.41 | stop 2.25 | tf 30S') == null);
-  check('…a CROSS has no level, a BREAK no cross count', parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S')?.level === null && brk?.cross_n === null);
-  check('…without a line it is the session line', JSON.stringify(lineTokens('level', null)) === '["session"]');
+  const msg = 'RETEST AIOK 17.28 | stop 17.09 | sVWAP 17.1 (+1.1%) | mVWAP 14.2 (+21.7%) | line session | candle 5 | bb 45S | retest 1 | day high +46% | vwap 30s | tf 30S';
+  const r = parseTvMessage(msg);
+  check('RETEST parses', r?.stage === 'retest' && r.ticker === 'AIOK' && r.price === 17.28 && r.stop === 17.09 && r.retest_n === 1
+    && r.line === 'session' && r.candle_tf === '5' && r.bb_tf === '45S' && r.day_gain === 46 && r.tf === '30S', JSON.stringify(r));
+  check('…the lines and the VWAP source', r?.svwap === 17.1 && r.spx_pct === 1.1 && r.mvwap === 14.2 && r.vwap_src === '30s', JSON.stringify(r));
+  check('…"vwap chart", and a message without it (before v28) is null',
+    parseTvMessage(msg.replace('vwap 30s', 'vwap chart'))?.vwap_src === 'chart'
+      && parseTvMessage('CROSS X 1.0 | sVWAP 0.98 (+2.0%) | candle 5 | bb 2 | cross 1 | tf 30S')?.vwap_src === null);
+  check('…the sVWAP / mVWAP labels are not read as the source', parseTvMessage('PULLBACK X 1.0 | sVWAP 0.98 (+2.0%) | line session | touch 1 | tf 1')?.vwap_src === null);
+  check('…JSON retest', parseTvMessage({ stage: 'retest', ticker: 'AIOK', stop: 17.09, retest: 2, vwap: 'chart' })?.retest_n === 2);
+  check('…a CROSS has no retest count, a RETEST no cross count', parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S')?.retest_n === null && r?.cross_n === null);
+  check('…without a line it is the session line', JSON.stringify(lineTokens('retest', null)) === '["session"]');
   const T0 = 1_792_166_400;
-  check('LEVEL is stored quietly, never announced', new TvSetupGate().admit(lvl!, T0, false, true) === 'quiet');
   const g = new TvSetupGate();
-  check('BREAK on Momentum announces', g.admit(brk!, T0, false, true) === 'notify');
-  check('…a re-delivery within 20 s drops', g.admit(brk!, T0 + 5, false, true) === 'drop');
-  check('…off Momentum: quiet under +30%, announced at +60% (fresh runner)',
-    new TvSetupGate().admit({ ...brk!, day_gain: 20 }, T0, false, false) === 'quiet' && new TvSetupGate().admit(brk!, T0, false, false) === 'notify');
-  check(`…past the cap (break ${TV_SETUP.vb_cap + 1}) quiet`, pastCap({ ...brk!, break_n: TV_SETUP.vb_cap + 1 })
-    && new TvSetupGate().admit({ ...brk!, break_n: TV_SETUP.vb_cap + 1 }, T0, false, true) === 'quiet');
+  check('RETEST on Momentum announces', g.admit(r!, T0, false, true) === 'notify');
+  check('…a re-delivery within 20 s drops', g.admit(r!, T0 + 5, false, true) === 'drop');
+  check('…off Momentum: quiet under +30%, announced at +46% (fresh runner)',
+    new TvSetupGate().admit({ ...r!, day_gain: 20 }, T0, false, false) === 'quiet' && new TvSetupGate().admit(r!, T0, false, false) === 'notify');
+  check(`…past the cap (retest ${TV_SETUP.vb_cap + 1}) quiet`, pastCap({ ...r!, retest_n: TV_SETUP.vb_cap + 1 })
+    && new TvSetupGate().admit({ ...r!, retest_n: TV_SETUP.vb_cap + 1 }, T0, false, true) === 'quiet');
   const off = new TvSetupGate();
   off.setAnnounced(['pullback', 'cross']);
-  check('…its own ⚙ switch (prod\'s saved list before v25 → quiet)', off.admit(brk!, T0, false, true) === 'quiet');
-  const html = formatTvSetupAlert(brk!, 'NASDAQ:TANH', { change_pct: 55, grade: 'A', float_m: 2.1 });
-  check('Telegram: BREAK headline and trigger', html.includes('🔼 <b>BREAK</b>') && html.includes('<b>TANH</b>') && html.includes('$12.60')
-    && html.includes("over the 10m VB candle's high $12.59 (month VWAP + 2m BB cross)"), html);
-  check('Telegram: stop, count, levels, Momentum', html.includes('stop $11.80 (its low, -6.3%)') && html.includes('break 1 today (first)')
-    && html.includes('mVWAP $11.60 (+8.6%)') && html.includes('⭐ <b>on Momentum</b>') && !html.includes('null'), html);
+  check('…its own ⚙ switch (a list saved before v28 → quiet until ticked)', off.admit(r!, T0, false, true) === 'quiet');
+  const html = formatTvSetupAlert(r!, 'NASDAQ:AIOK', { change_pct: 46, grade: 'A', float_m: 1.2 });
+  check('Telegram: RETEST headline and what happened', html.includes('🔁 <b>RETEST</b>') && html.includes('<b>AIOK</b>') && html.includes('$17.28')
+    && html.includes('back at the session VWAP after the 5m VB candle (45s BB) and bounced'), html);
+  check('Telegram: stop, count, levels, Momentum', html.includes('stop $17.09 (-1.1%, under the pullback low)') && html.includes('retest 1 today (first)')
+    && html.includes('sVWAP $17.10 (+1.1%)') && html.includes('⭐ <b>on Momentum</b>') && !html.includes('null') && !html.includes('undefined'), html);
 }
 
 console.log('Contract — the Pine script still emits what the parser reads');
@@ -402,18 +410,32 @@ console.log('Contract — the Pine script still emits what the parser reads');
     // v24: the month and year lines' PULLBACK may touch on the bar's low (a trial); the session line keeps the close
     'pbLowMY', 'float reach = useLow ? low : close', 'pbS.step(svwap, gainer, false)', 'pbM.step(mvwap, gainer, pbLowMY)',
     'pbY.step(yvwap, gainer, pbLowMY)',
-    // v25: the VB candle's high as a trigger — LEVEL at its close, BREAK one tick over it, cancelled under its line
-    'vbLvMsg("LEVEL")', 'vbLvMsg("BREAK")', '" | level "', '" | stop "', '" | break "', 'high >= vLvHigh + syminfo.mintick',
-    'text = "BRK"', '"VB: BB timeframe (the band)"',
-    // v26: the level is cancelled by a candle's close under its line (the VB candle's own included), not a 30s close
-    'if vbBrkCancel and vLvOn and not na(vOpen)', 'vbLowest(vLvS, vLvM, vLvY, vPrevVw, vPrevMw, vPrevYw)',
-    'if not na(vLnC) and vClose < vLnC', 'vPrevVw := vVw',
+    // v26: the cancel is a candle's close under the lowest crossed line (the VB candle's own included), not a 30s close
+    'vbLowest(vRtS, vRtM, vRtY, vPrevVw, vPrevMw, vPrevYw)', 'if not na(vLnC) and vClose < vLnC', 'vPrevVw := vVw',
     // v27: two setups; the operator's settings are the defaults (gainer 10%, VB 5m candle, 45s band)
-    'Script version: v27', 'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
-    'input.timeframe("45S",   "VB: BB timeframe (the band)"']) {
+    'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
+    'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
+    // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
+    'Script version: v28', 'alert(vbRtMsg(), alert.freq_once_per_bar_close)', '"RETEST "', '" | stop "', '" | retest "',
+    'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
+    'vbHighest(vRtS, vRtM, vRtY, vVw, vMw, vYw)', 'vbRtWait > 0 and vRtAge >= vbRtWait', 'text = "RT"',
+    '" | vwap " + (use30 ? "30s" : "chart")', 'options = ["30s bars", "Chart bars"]',
+    'request.security_lower_tf(syminfo.tickerid, lower30 ? "30S" : timeframe.period, [hlc3 * volume, volume])',
+    'float vTPV    = use30 ? vPV30 :', 'svwap = lower30 ?', 'input.float(0.0,         "VB: the candle may open up to %',
+    'size = size.tiny, display = display.none']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
+  // v28: the VB break (LEVEL / BREAK) is gone; the new inputs went last (after vbShow).
+  for (const gone of ['"LEVEL"', '"BREAK"', 'vbLvMsg', '" | level "', '" | break "', 'text = "BRK"']) {
+    check(`v28: script no longer has ${gone}`, !pine.includes(gone));
+  }
+  const at = (x: string) => pine.indexOf(x);
+  check('v28: the new inputs come after the last v27 one', at('vbShow     = input.bool') > 0 && at('vbShow     = input.bool') < at('vwSrc      = input.string')
+    && at('vwSrc      = input.string') < at('vbRtNear   = input.float') && at('vbRtNear   = input.float') < at('vbRtWait   = input.int'));
+  check('v28: the retest switches sit in the VB break\'s old places (same order around them)',
+    at('vbYear     = input.bool') < at('vbRtOn     = input.bool') && at('vbRtOn     = input.bool') < at('vbRtCancel = input.bool')
+      && at('vbRtCancel = input.bool') < at('vbTf       = input.timeframe'));
   // v27 removed RECLAIM and the BB breakout: none of their messages or inputs are left.
   for (const gone of ['"FORMING"', '"READY"', '"GO"', '"TOUCH"', '"BREAKOUT"', '"TRIGGERED"', '" | basis "', '" | path "', '" | via "',
     '" | trigger "', '" | run30 +"', '" | early +"', 'rcOn', 'boOn', 'reclaimConds', 'alertcondition(']) {

@@ -100,8 +100,9 @@ router.get('/ema-debug', authMiddleware, (req, res) => {
 // written before meta.id existed (2026-10-01) fold by ticker within 3s — one
 // cycle's inserts land milliseconds apart. 📐 tv_setup rows (TradingView VWAP
 // setups: PULLBACK since script v10, the VWAP + BB cross since v21) carry their
-// own id and the stage + levels in `setup`. Rows of the setups script v27 removed
-// (RECLAIM's FORMING / READY / GO) stay in the table but aren't listed.
+// own id and the stage + levels in `setup`. Rows of the stages scripts removed
+// (v27: RECLAIM's FORMING / READY / GO; v28: the VB break's LEVEL / BREAK) stay in the
+// table but aren't listed.
 router.get('/alerts', authMiddleware, async (req, res) => {
   const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
   if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
@@ -115,7 +116,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     .select(['event', 'ticker', 'at', 'meta'])
     .where('tier', '=', 'alert')
     .where('event', '!=', 'tv_breakout')   // v17–v26 BB breakouts (removed in v27; thousands a day)
-    .where(sql<boolean>`NOT (event = 'tv_setup' AND meta->>'stage' IN ('forming', 'ready', 'go'))`)
+    .where(sql<boolean>`NOT (event = 'tv_setup' AND meta->>'stage' IN ('forming', 'ready', 'go', 'level', 'break'))`)
     .where(dayExpr)
     .orderBy('ticker').orderBy('at')
     .limit(3000)
@@ -133,7 +134,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
       yvwap: number | null; ypx_pct: number | null;
       fails: number | null; capped: boolean;
       upper: number | null; upper_pct: number | null; candle_tf: string | null; bb_tf: string | null;
-      candle_open: number | null; cross_n: number | null; level: number | null; stop: number | null; break_n: number | null;
+      candle_open: number | null; cross_n: number | null; stop: number | null; retest_n: number | null; vwap_src: string | null;
       on_screen: boolean; notified: boolean;
     } | null;
   };
@@ -173,7 +174,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
         fails: num(m.fails), capped: m.capped === true,
         // VWAP + BB cross (v21) and its break (v25), as the live alert carries them (tv-setups.ts vbFields)
         upper: num(m.upper), upper_pct: num(m.upper_pct), candle_tf: str(m.candle_tf), bb_tf: str(m.bb_tf),
-        candle_open: num(m.candle_open), cross_n: num(m.cross_n), level: num(m.level), stop: num(m.stop), break_n: num(m.break_n),
+        candle_open: num(m.candle_open), cross_n: num(m.cross_n), stop: num(m.stop), retest_n: num(m.retest_n),
+        vwap_src: str(m.vwap_src),
         on_screen: m.on_screen === true, notified: m.notified !== false,
       };
     }

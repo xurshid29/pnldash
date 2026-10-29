@@ -67,7 +67,7 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     // (a v21 CROSS past its cap doesn't).
     const capped = pastCap(sig);
     const capExempt = capped && sig.stage === 'pullback' && poller.tvCapExempt(sig.ticker);
-    // A CROSS / BREAK pings only for a ticker on our Momentum list (or a fresh runner).
+    // A CROSS / RETEST pings only for a ticker on our Momentum list (or a fresh runner).
     const onMomentum = poller.tvOnMomentum(sig.ticker);
     const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt, onMomentum);
     if (verdict === 'flood') {
@@ -75,7 +75,7 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
       return res.status(429).json({ error: 'Too many alerts' });
     }
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
-    // A quiet CROSS / BREAK that isn't muted or capped is off our Momentum list (under vb_fresh_gain).
+    // A quiet CROSS / RETEST that isn't muted or capped is off our Momentum list (under vb_fresh_gain).
     const why = verdict !== 'quiet' ? undefined
       : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped' : 'offlist';
     const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);

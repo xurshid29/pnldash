@@ -334,11 +334,13 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // (script v10, 2026-10-05): price back near the session, month or year VWAP after
 // a run, then its outcome. CROSS is the VWAP + BB cross (script v21, 2026-10-20): a
 // candle of the chosen timeframe crossed over a VWAP line and another timeframe's
-// BB upper band. LEVEL / BREAK (script v25): the VB candle's high as a trigger —
-// LEVEL when it closes (stored, shown on the CROSS row), BREAK when price reaches it.
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'level' | 'break';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'level', 'break'];
-// Old days in History still hold v1–v26 rows of the removed setups; they're skipped.
+// BB upper band. RETEST (script v28, the operator's entry): after the VB candle
+// closes, price comes back to the line it crossed and a 30s candle closes green
+// above it. It replaced v25–v27's LEVEL / BREAK (the VB candle's high as a trigger).
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest'];
+// Old days in History still hold rows of removed stages (v1–v26 RECLAIM and the BB
+// breakout, v25–v27 LEVEL / BREAK); they're skipped.
 export function isTvStage(s: unknown): s is TvStage {
   return typeof s === 'string' && (TV_STAGES as readonly string[]).includes(s);
 }
@@ -373,10 +375,12 @@ export interface TvSetupInfo {
   bb_tf?: string | null;      // "2", "30", …
   candle_open?: number | null;
   cross_n?: number | null;    // the day's crosses on the ticker, this one included
-  // VB break (script v25)
-  level?: number | null;      // LEVEL / BREAK: the VB candle's high (the buy stop)
-  stop?: number | null;       // its low
-  break_n?: number | null;    // BREAK: the day's breaks on the ticker
+  // VB retest (script v28)
+  stop?: number | null;       // RETEST: the stop, under the pullback's low
+  retest_n?: number | null;   // RETEST: the day's retests on the ticker and line, this one included
+  // v28: which VWAP the script used — '30s' = our 30s-bar line (the same on every chart),
+  // 'chart' = TradingView's chart-bar VWAP; null on older messages
+  vwap_src?: '30s' | 'chart' | null;
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

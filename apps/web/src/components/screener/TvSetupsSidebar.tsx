@@ -10,7 +10,7 @@ import { useHiddenTickers } from '../../hooks/useHiddenTickers';
 import { useSelection } from '../../context/SelectionContext';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, tvLevelsText, fmtTf, isVbStage, lineTokens, lineDistanceText, crossTfText, vbTriggerText } from '../common/TvStageTag';
+import { TvStageTag, tvLevelsText, fmtTf, isVbStage, lineTokens, lineDistanceText, crossTfText, retestStopText } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
 import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
@@ -19,9 +19,9 @@ import rvolScript from '../../tv/rvol.pine?raw';
 const { Text } = Typography;
 const LOCAL_TZ = 'Asia/Tashkent'; // UTC+5, the operator's clock
 
-// What counts as live (operator, 2026-10-05): a fresh CROSS (v21) or BREAK (v25),
+// What counts as live (operator, 2026-10-05): a fresh CROSS (v21) or RETEST (v28),
 // or a pullback still waiting at its line. Everything else is "earlier".
-const LIVE_MIN = { pullback: 60, cross: 15, break: 15 } as const;
+const LIVE_MIN = { pullback: 60, cross: 15, retest: 15 } as const;
 // The 1m and 2m alerts report the same stage separately; within this window
 // they are one event.
 const MERGE_MS = 5 * 60_000;
@@ -39,7 +39,7 @@ interface TickerCard {
   events: SetupEvent[];   // oldest first, 1m/2m copies merged — every stage (the day trail)
   current: SetupEvent;    // the live event, or the latest one of a shown stage
   live: boolean;
-  resolved: boolean;      // CROSS / BREAK / HELD / BROKEN, or a PULLBACK a later BROKEN / HELD closed
+  resolved: boolean;      // CROSS / RETEST / HELD / BROKEN, or a PULLBACK a later BROKEN / HELD closed
   // How a PULLBACK shown as current ended — labelled on the row, since BROKEN /
   // HELD are usually switched off and hidden (2026-10-13, WFF 00:34 → broke 00:35).
   outcome: { stage: 'broken' | 'held'; at: number } | null;
@@ -47,8 +47,8 @@ interface TickerCard {
 
 // One setup thread per line combination: pullback (session / month / year and
 // combinations). A pullback's BROKEN / HELD also closes an open pullback on any
-// combination sharing one of its lines. The v21 VWAP + BB cross is its own
-// thread, one per line combination (v22).
+// combination sharing one of its lines. The v21 VWAP + BB cross and its v28
+// RETEST are their own thread, one per line combination (v22).
 function threadOf(s: TvSetupInfo): string {
   if (isVbStage(s.stage)) return `vb:${lineTokens(s.stage, s.line).join('+')}`;
   return `pb:${lineTokens(s.stage, s.line).join('+') || 'none'}`;
@@ -66,10 +66,9 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
   for (const { a, at } of sorted) {
     const s = a.setup!;
     const list = byTicker.get(a.ticker) ?? [];
-    // A VB CROSS / LEVEL / BREAK comes from one alert: only a copy of the same one merges, not the next.
+    // A VB CROSS / RETEST comes from one alert: only a copy of the same one merges, not the next.
     const dup = list.find((e) => e.setup.stage === s.stage && threadOf(e.setup) === threadOf(s) && at - e.at <= MERGE_MS
-      && (s.stage !== 'cross' || e.setup.cross_n === s.cross_n) && (s.stage !== 'break' || e.setup.break_n === s.break_n)
-      && (s.stage !== 'level' || e.setup.level === s.level));
+      && (s.stage !== 'cross' || e.setup.cross_n === s.cross_n) && (s.stage !== 'retest' || e.setup.retest_n === s.retest_n));
     if (dup) {
       if (s.tf && !dup.tfs.includes(s.tf)) dup.tfs.push(s.tf);
       dup.notified ||= s.notified;
@@ -82,8 +81,6 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
   for (const [ticker, events] of byTicker) {
     const latest = new Map<string, SetupEvent>();
     for (const e of events) {
-      // v25: a LEVEL only annotates its CROSS row (break > $X); it's never a row's state.
-      if (e.setup.stage === 'level') continue;
       const th = threadOf(e.setup);
       latest.set(th, e);
       if (e.setup.stage === 'broken' || e.setup.stage === 'held') {
@@ -105,7 +102,7 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
     const closer = latest.get(threadOf(current.setup));
     const closed = st === 'pullback' && closer != null && closer !== current
       && (closer.setup.stage === 'broken' || closer.setup.stage === 'held');
-    const resolved = st === 'cross' || st === 'break' || st === 'held' || st === 'broken' || closed;
+    const resolved = st === 'cross' || st === 'retest' || st === 'held' || st === 'broken' || closed;
     const outcome = closed ? { stage: closer!.setup.stage as 'broken' | 'held', at: closer!.at } : null;
     cards.push({ ticker, events, current, live: live != null, resolved, outcome });
   }
@@ -150,21 +147,22 @@ function hhmm(ms: number): string {
 
 const HOW_TO = (
   <div style={{ fontSize: 13, lineHeight: 1.6 }}>
-    <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line must sit exactly on your “VWAP Month” and its purple line on your “VWAP Session”. Its blue line is this year's VWAP built from hourly bars (v14). On liquid names it can differ from TradingView's own “VWAP Year” on an intraday chart, which only reaches back as far as the chart has loaded. Trust the blue one.</div>
+    <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line is the month VWAP, the purple one the session VWAP. With “VWAP lines from: chart bars” they sit exactly on TradingView's own “VWAP Month” and “VWAP Session”; with the default, 30s bars, they can differ a little on a 5m chart (see <b>VWAP lines</b> below). Its blue line is this year's VWAP built from hourly bars (v14). On liquid names it can differ from TradingView's own “VWAP Year” on an intraday chart, which only reaches back as far as the chart has loaded. Trust the blue one.</div>
     <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning. During the day the sidebar flags new names missing from it — <b>Copy</b> and add them to the watchlist (the alerts pick up added symbols by themselves).</div>
     <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>30 seconds</b>.</div>
-    <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts. v27 reordered the inputs: after pasting it, open the indicator's Settings → Defaults → <b>Reset settings</b> once (the defaults are your settings: gainer filter 10%, VB candle 5m, band 45s).</div>
+    <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts. For <b>v28</b>: after pasting it, open the indicator's Settings → Defaults → <b>Reset settings</b> once more. The defaults are your settings (gainer filter 10%, VB candle 5m, band 45s, tolerance 0), and the reset also restores the chart markers (BROKEN / HELD hidden, RETEST shown). Then recreate both alerts, and tick <b>RETEST</b> in ⚙ → 📐 Stages that alert if it isn't.</div>
     <div><b>On / off</b>: each setup has a switch in the script's Inputs — “Pullback setup on”, “VWAP + BB cross setup on”. Off = no markers and no alerts from it; a VWAP line no setup uses isn't drawn. The alerts copy the switches when you create them.</div>
+    <div><b>VWAP lines</b> (v28): the Inputs' “VWAP lines from” picks how the script builds its VWAPs, for the lines it draws and for every setup. <b>30s bars</b> (ours, the default): built from 30-second bars, so the line is the same on your 5m and 30s charts and closer to the true VWAP. <b>Chart bars</b>: TradingView's built-in way, from each chart's own bars, so it differs by timeframe (on your alerts, a 5m chart's line sat a median 0.4% from the 30s chart's, a 10m chart's 1.6%). The alerts copy the choice when you create them.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
     <div><b>RVol</b> (optional): ⋯ → <b>Copy RVol script</b> → a new Pine Editor tab → Add to chart. It shows the Momentum table's RVol 1m / 5m / Day in its own pane, in the same units; set the pane's scale to Logarithmic. No alert needed.</div>
     <div style={{ marginTop: 8, color: '#8c8c8c' }}>
-      <b>Reading the list.</b> Two setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD) and the <b>VWAP + BB cross</b> (CROSS, then LEVEL / BREAK). A CROSS or a BREAK pings only when the name is on Momentum (⭐) or its day high is +30% or more; off-list ones show dimmed.
+      <b>Reading the list.</b> Two setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD) and the <b>VWAP + BB cross</b> (CROSS, then RETEST). A CROSS or a RETEST pings only when the name is on Momentum (⭐) or its day high is +30% or more; off-list ones show dimmed.
       <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
       <div style={{ marginTop: 6 }}>
-        <b>CROSS</b> (v21, the 30s alert only): a candle of the timeframe you set (default <b>5m</b>) crosses a VWAP line and the upper BB of the other timeframe you set (default <b>45s</b>): at a 30s close inside it, its open is under both as they stand then (or sitting on the lower one, up to 2% over it) and the close is above both — the body crosses the lines the chart draws for that candle (v23; the day's first candle counts). The lines (v22): session (<b>S</b>), month (<b>M</b>) and year (<b>Y</b>), each with its own count. It rings while the candle is still open, and on the candle timeframe's chart that candle gets a marker: teal <b>VB</b> (session), yellow <b>VB M</b> (month), blue <b>VB Y</b> (year). The tag shows the line, the timeframes and the day's cross number on that line (#1 = first); after a line's 3rd cross of the day, its crosses stay quiet, and so do crosses on names off our Momentum list unless the day high is +30% or more (a runner the screen hasn't caught yet). ⚙ → 📐 Stages that alert → CROSS turns it on or off.
+        <b>CROSS</b> (v21, the 30s alert only): a candle of the timeframe you set (default <b>5m</b>) crosses a VWAP line and the upper BB of the other timeframe you set (default <b>45s</b>): at a 30s close inside it, its open is under both as they stand then (with the tolerance setting above 0, an open up to that % over the lower line also counts; default 0) and the close is above both — the body crosses the lines the chart draws for that candle (v23; the day's first candle counts). The lines (v22): session (<b>S</b>), month (<b>M</b>) and year (<b>Y</b>), each with its own count. It rings while the candle is still open, and on the candle timeframe's chart that candle gets a marker: teal <b>VB</b> (session), yellow <b>VB M</b> (month), blue <b>VB Y</b> (year). The tag shows the line, the timeframes and the day's cross number on that line (#1 = first); after a line's 3rd cross of the day, its crosses stay quiet, and so do crosses on names off our Momentum list unless the day high is +30% or more (a runner the screen hasn't caught yet). ⚙ → 📐 Stages that alert → CROSS turns it on or off.
       </div>
       <div style={{ marginTop: 6 }}>
-        <b>BREAK</b> (v25): when a VB candle closes, its row shows <b>break &gt; $high · stop $low</b> — place a buy stop there. BREAK rings when price reaches that high (when the buy stop fills); a newer VB candle replaces the level, and a candle closing back under the VWAP line it crossed cancels it (v26: the candle's close on your VB timeframe, so a wick under the line keeps the level). Measured on four months: buying the break beat buying the CROSS by ~0.7 points a trade, and a resting buy stop beat buying after the break by another ~0.7. ⚙ → BREAK turns its alerts on; you can switch CROSS off and keep only BREAK.
+        <b>RETEST</b> (v28, the 30s alert only): your entry. After the VB candle closes, price comes back to the VWAP line it crossed (within 1% of it, or under it) and a 30s candle closes green above the line — it rings at that close, and its row shows <b>retest · stop $X</b>: the stop under the pullback's low, with its distance from the RETEST price. A newer VB candle starts a new one, and a candle closing back under the line cancels it (on your VB timeframe, so a wick under the line doesn't). Like CROSS it pings only on Momentum names (or a day high of +30% or more), its tag shows the timeframes and the ticker's retest number for the day, and after its 3rd of the day it stays quiet. It waits up to 6 candles after the VB candle closes (an input). Measured on four months: the cheapest entry per trade (−0.9% against −1.3% for buying the break of the VB high and −1.9% for buying the CROSS), with a ~2% stop, but stopped more often — a heads-up, not an edge. ⚙ → RETEST turns it on or off.
       </div>
     </div>
   </div>
@@ -337,9 +335,8 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     // 10-20: a setup that just rang is lit for 20 s, so the row behind the sound
     // is easy to find.
     const fresh = e.notified && now - e.at < 20_000;
-    // v25: once the VB candle closed, its trigger shows on the CROSS row until it breaks.
-    const lvl = s.stage === 'cross' ? [...c.events].reverse().find((x) => x.setup.stage === 'level' && x.at >= e.at) : undefined;
-    const trigger = lvl && !c.events.some((x) => x.setup.stage === 'break' && x.at >= lvl.at) ? vbTriggerText(lvl.setup) : null;
+    // v28: a RETEST row leads with its stop (under the pullback's low) against the RETEST price.
+    const retestStop = s.stage === 'retest' ? retestStopText(s, e.price) : null;
     return (
       <div
         key={c.ticker}
@@ -356,7 +353,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           <TickerLinks ticker={c.ticker} />
           <TickerLink ticker={c.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
           {r && <span style={{ color: '#fadb14', fontSize: 11 }}>⭐</span>}
-          <TvStageTag stage={s.stage} dim={!e.notified} line={s.line} touch={s.stage === 'cross' ? s.cross_n : s.stage === 'break' ? s.break_n : s.touch} tfs={crossTfText(s)} />
+          <TvStageTag stage={s.stage} dim={!e.notified} line={s.line} touch={s.stage === 'cross' ? s.cross_n : s.stage === 'retest' ? s.retest_n : s.touch} tfs={crossTfText(s)} />
           {/* v16: past the day's cap — pings only for a B+-or-better Momentum name */}
           {s.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
           {proven && <span style={{ fontSize: 10, color: '#95de64', whiteSpace: 'nowrap' }}>{proven}</span>}
@@ -375,7 +372,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
             <GradeCell grade={r?.grade} faded={r?.grade_faded} offHigh={r?.off_high_pct} />
           </span>
           <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {trigger && <span style={{ color: '#5cdbd3', fontWeight: 600 }}>{trigger} · </span>}
+            {retestStop && <span style={{ color: '#5cdbd3', fontWeight: 600 }}>{retestStop} · </span>}
             {resolved
               ? (since != null
                 ? <span style={{ color: since >= 0 ? '#52c41a' : '#ff4d4f' }}>since {since >= 0 ? '+' : ''}{since.toFixed(1)}%</span>
@@ -389,14 +386,16 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
               {c.events.map((x) => (
                 <span key={x.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                  <TvStageTag stage={x.setup.stage} dim={!x.notified} line={x.setup.line} touch={x.setup.stage === 'cross' ? x.setup.cross_n : x.setup.stage === 'break' ? x.setup.break_n : x.setup.touch} />
+                  <TvStageTag stage={x.setup.stage} dim={!x.notified} line={x.setup.line} touch={x.setup.stage === 'cross' ? x.setup.cross_n : x.setup.stage === 'retest' ? x.setup.retest_n : x.setup.touch} />
                   <Text type="secondary" style={{ fontSize: 10 }}>{hhmm(x.at)}</Text>
                 </span>
               ))}
             </div>
             <div style={{ color: '#bfbfbf', marginTop: 3 }}>
-              {fmtPrice(e.price)} · {tvLevelsText(s)}
+              {fmtPrice(e.price)} · {tvLevelsText(s, e.price)}
               {s.day_gain != null && <> · day high {s.day_gain >= 0 ? '+' : '−'}{Math.abs(Math.round(s.day_gain))}%</>}
+              {/* v28: which VWAP the script used — our 30s-bar line or TradingView's chart-bar one */}
+              {s.vwap_src && <> · VWAP from {s.vwap_src === '30s' ? '30s bars' : 'chart bars'}</>}
             </div>
           </div>
         )}

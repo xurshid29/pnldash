@@ -147,7 +147,7 @@ function crossConfirmPing() {
 
 function setupReadyPing() {
   // 📐 PULLBACK — back near VWAP, be ready: three quick rising tones, between the
-  // soft off-list heads-up (watchPing) and the bright CROSS / BREAK pair.
+  // soft off-list heads-up (watchPing) and the bright CROSS / RETEST pair.
   beep(784, 130, 0, 0.45);     // G5
   beep(988, 130, 0.14, 0.45);  // B5
   beep(1175, 190, 0.28, 0.45); // D6
@@ -196,7 +196,7 @@ function fmtAlertPrice(p: number | null): string {
 }
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', level: 'LEVEL', break: 'BREAK',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -217,10 +217,11 @@ export function opportunityTitle(a: OpportunityAlert): string {
       const ln = lineTokens(s.stage, s.line).map((t) => SHORT_LINE[t]).join(' + ');
       return `${s.on_screen ? '⭐ ' : ''}📐 CROSS ${a.ticker} — ${shortTf(s.candle_tf)} candle over ${ln} + ${shortTf(s.bb_tf)} BB${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
     }
-    // v25: "📐 BREAK TANH — over the 10m VB high $12.59 · stop $11.80"
-    if (s.stage === 'break' || s.stage === 'level') {
-      const trig = s.level != null ? fmtAlertPrice(s.level) : '?';
-      return `${s.on_screen ? '⭐ ' : ''}📐 ${TV_STAGE_TITLE[s.stage]} ${a.ticker} — over the ${shortTf(s.candle_tf)} VB high ${trig}${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}`;
+    // v28: "📐 RETEST AIOK — back at the session VWAP after the 5m VB · stop $17.09"
+    if (s.stage === 'retest') {
+      const tokens = lineTokens(s.stage, s.line);
+      return `${s.on_screen ? '⭐ ' : ''}📐 RETEST ${a.ticker} — back at the ${tokens.join(' + ')} VWAP after the ${shortTf(s.candle_tf)} VB`
+        + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.retest_n != null ? ` · #${s.retest_n}` : ''}`;
     }
     // PULLBACK / BROKEN / HELD (the reclaim setup's stages went with script v27)
     const tokens = lineTokens(s.stage, s.line);
@@ -331,15 +332,15 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k]) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
-      // Loudest wins: A+ / 📐 CROSS (v21) / BREAK (v25) bright pair > fast-move radar >
+      // Loudest wins: A+ / 📐 CROSS (v21) / RETEST (v28) bright pair > fast-move radar >
       // 📐 PULLBACK triple > news chime > soft single tone (every 📐 stage on a
       // ticker that is NOT on our Momentum list — lower priority). 📐 BROKEN / HELD
-      // and LEVEL never arrive here: the server stores them quietly
+      // never arrive here while switched off: the server stores them quietly
       // (TV_SETUP.quiet_stages in tv-setups.ts).
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('break')) crossConfirmPing();
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('pullback')) setupReadyPing();
         else if (audible.some((a) => a.kinds.includes('news'))) chime();
