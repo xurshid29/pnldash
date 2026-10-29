@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-10-29
+# Session Handover — updated 2026-10-30
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-29 (Thu, 02:20 ET), last code commit `2aee072` (script v28, deployed 10-29 ~02:15 ET)
+## START HERE — state at 2026-10-30 (Thu, 15:55 ET), last code commit `642ec88` (script v29, deployed 10-30 ~15:52 ET)
 
 Later commits are docs and research only. Research-only commits under `apps/**`
 are pushed with `[skip ci]` so they don't redeploy.
@@ -25,8 +25,8 @@ are pushed with `[skip ci]` so they don't redeploy.
   the dashboard is that clock**. Date pickers stay on the ET trading day.
 
 **Their edge is setups that TradingView detects**, delivered by our webhook from
-one Pine script (**v28**: the alerts run what the operator last pasted until they paste
-v28, reset the settings and recreate both alerts) running as two watchlist alerts (1m +
+one Pine script (**v29**: the alerts run what the operator last pasted until they paste
+v29 and recreate both alerts) running as two watchlist alerts (1m +
 30s). **Since v27 it has two setups, the ones the operator kept after trying all four
 (10-28).** Their trading layout (10-29): a 5m chart for the VB and a 30s chart for the
 entry, side by side.
@@ -107,10 +107,18 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    outstanding are kept with `float_m` null (10-14). Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v28** (`apps/web/src/tv/mvwap-bb-setup.pine`, 770 lines; full
+5. **📐 TradingView script — v29** (`apps/web/src/tv/mvwap-bb-setup.pine`, 832 lines; full
    reference `docs/vwap-setup.md`: changelog §12, gate table §7.2, PULLBACK §13, RVol
    §15, VB §16, RETEST and the VWAP source §16.9; §1–§11 and §14 are the removed
    setups' record).
+   - **v29 deployed 10-30 ~15:52 ET (`642ec88`): VB lanes (§16.10).** The operator: "for
+     longer terms (1h, 4h, 1D), I'd like to use VB only with monthly vwap (plus, yearly)". Lanes
+     2–4 ride the same 30s alert, each its own candle / band / lines (defaults 1h/10m, 4h/30m,
+     1D/1h, month + year only); a VB on 60m+ candles announces off Momentum (`vb_long_min`, the
+     cap stays); a 4h+ lane's month / year retest carries over the day's end; the lane's candle
+     is in the duplicate key. New inputs last, plots unchanged: paste + recreate both alerts, no
+     Reset. Untested (our data can't follow a trade past the day). TradingView's 15-per-symbol-
+     per-3-min limit is shared by all lanes.
    - **v28 deployed 10-29 ~02:15 ET (`2aee072`). The operator pastes it, opens Settings →
      Defaults → Reset settings once more (the defaults are their settings: gainer 10%,
      VB 5m / 45S, `vbTol` 0; the reset also puts the chart markers right — the VB-break
@@ -184,7 +192,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
      - Quiet rows are stored (`quiet: true`) and graded. LEVEL / BREAK get 400 since v28.
      - Telegram slugs `tv_cross`, `tv_retest`.
    - **Contract and replica:** `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts`
-     (**259 checks** since v28, incl. rejecting the removed messages);
+     (**281 checks** since v29, incl. rejecting the removed messages);
      `research/vwap-setup/pinesim.py` mirrors PULLBACK and VB (`python3 pinesim.py`
      self-tests) and keeps the removed setups' simulators (v26 logic) for research. **Change procedure:** version bump, mirror in pinesim,
      extend the checks, changelog row, deploy (the server must parse new messages
@@ -226,7 +234,10 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 - Backups: `.env.bak-20260821`, `-20260821b`, `-20261001`, `-20261003`, `-20261007`.
 
 **Open items, ranked:**
-1. **Watch v28 live.** The operator pasted it, reset the settings and recreated the alerts on 10-29
+1. **Watch v29 live** after the operator's paste: lane rows (`1h/10m`, `4h/30m`, `1D/1h`, M / Y)
+   announce off Momentum; check one 1h lane CROSS against a 1h chart, and that the 30s alert
+   doesn't hit TradingView's calculation limit with four lanes.
+   **Before that, v28:** The operator pasted it, reset the settings and recreated the alerts on 10-29
    (~02:30 ET): "Everything is working as expected" — it compiled. The first RETEST rows can only
    come from 04:00 ET. The operator uses `vbTol` 0 (10-29, AIOK), now the default.
    After the paste: rows say `vwap 30s`, CROSS / RETEST say `5m/45s`, RETESTs arrive
@@ -334,6 +345,15 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-30 (15:30–15:55 ET) — SCRIPT v29: VB LANES (deployed ~15:52 ET, `642ec88`).** The operator asked whether the
+VB works on 1h / 4h ("chart timeframe 1h, indicator vb candle 1h and band 5min or 10min, and alert tfs 30s and 1min") —
+yes mechanically, but one alert = one VB timeframe, the Momentum-only rule silences off-screen names, and the daily reset
+kills 4h / 1D retests; the 1h / 4h numbers from our data are day-only (`vb_retest_study.py --candle 60 240`). Then: "for
+longer terms (1h, 4h, 1D), I'd like to use VB only with monthly vwap (plus, yearly)" → "yes, please" to lanes. Built
+lanes 2–4 in `vbStep()` (per-call state), one chart replay for the matching lane, the overnight carry for 4h+ month /
+year retests, and on the server `vb_long_min` 60 and the candle in the VB duplicate key. Verified on prod: a 1D lane
+CROSS parses (200). **The operator pastes v29 and recreates both alerts (no Reset).**
 
 **2026-10-29 (00:00–02:20 ET) — SCRIPT v28: RETEST, AND THE VWAP FROM 30S BARS (deployed ~02:15 ET, `2aee072`).** The
 operator's VB workflow (AIOK 10-28 screenshots, 5m + 30s panes): "I'm not using BREAKs for enter (because they can be very

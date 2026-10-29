@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v28** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v29** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). Since v29 up to three more VB timeframes (lanes: 1h / 4h / 1D on the month and year lines by default) ride the same alert (§16.10). Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1117,6 +1117,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-23 | v26 | `e38c06b` | Operator (XXII 10-23, 10m, a horizontal line at the 13:20 Tashkent VB candle's high 0.41): "it acts like a resistance … I think our VB-break should work the same way". v25 kept the level until it broke, but cancelled it on **any 30s close** under the line: XXII's level 0.4099 died on a 30s close at 0.3374 inside the next candle (a wick on the 10m chart, the candle closed ~0.40), and the break of 0.41 one candle later went unalerted; the only BREAK came on the month line at 0.4549, 11% higher. v26 cancels only on a **candle's close** on the VB timeframe under the lowest line the VB candle crossed, the VB candle's own close included (a level that dies there isn't sent). Measured first (§16.8): on 10m with the 2m band, 2R target, 6 candles: 2,755 breaks at −0.08R vs 2,461 at −0.09R (v25-style) and 3,876 at −0.11R (no cancel). Message unchanged, `vbBrkCancel` keeps its place (title only). Replica: `brk_cancel` True = v26, 'bar' = v25, plus an XXII-like self-test. Regression: 341 checks. **Paste the script and recreate the 30s alert.** |
 | 2026-10-28 | v27 | `c49c419` | Operator, after testing all four setups: "I liked the most VWAP+BB Cross and Pullback to VWAP types, and currently I'm using only those ones … we can remove/disable others from backend and pine script" → remove everywhere. **The script carries two setups**: RECLAIM (FORMING / READY / GO, v1–v26) and the BB breakout (TOUCH / BREAKOUT / TRIGGERED, v17–v26) are gone with their 31 inputs, the breakout's 30s `request.security_lower_tf` and the BB-basis line (1,121 → 713 lines). PULLBACK and VB logic and messages are unchanged. **The inputs are reordered** (gainer filter, alert window, PULLBACK, VB), so saved values shift: after the paste, Settings → Defaults → Reset settings. The defaults are the operator's settings (gainer filter 10%, VB candle 5m, band 45S). **Server:** the parser rejects the removed stages (400 "Unrecognised alert message"); the gate loses READY-once, GO-Momentum-only and the breakout path; ⚙ stages are PULLBACK / CROSS / BREAK / BROKEN / HELD (a saved go / ready / forming is dropped); `GET /api/screener/breakouts`, the SSE `breakout` event and the `tv_forming` / `tv_ready` / `tv_go` mutes are gone; `GET /api/screener/alerts` leaves out the old FORMING / READY / GO rows and now carries the VB fields (candle / band timeframes, `cross N`, LEVEL's level and stop, `break N`), which it never did, so a page reload lost CROSS rows' `5m/2m` and "break > $X". **Dashboard:** the ⚡ breakouts list, the breakout alarm and its ⚙ level, the GO / ⚡ Breakouts History filters, GO strength and the RECLAIM text. Rows stay in `tier_events`. Replica: the reclaim and breakout simulators stay for research (v26 logic). Regression: 240 checks. **Paste, Reset settings, recreate both alerts.** |
 | 2026-10-29 | v28 | `2aee072` | Operator (AIOK 10-28, a 5m pane for the VB and a 30s pane for the entry): "I'm not using BREAKs for enter (because they can be very extended by the moment entering), but waiting 1st 5min candle closes with VB and pulls back to vwap line and bounces, I'm entering right at that moment". Measured first (§16.9). **RETEST replaces LEVEL / BREAK**: armed when a VB candle closes; a 30s bar within `vbRtNear` 1% above the highest crossed line (or under it), then the first 30s close above it and above its open; `stop` a tick under the pullback low; off on a candle close under the lowest crossed line (v26), after `vbRtWait` 6 candles, a newer VB candle or the day's end. Announced like CROSS (⚙ RETEST, Momentum or +30%, cap on `retest N`), Telegram `tv_retest`, lime RT marker. **"VWAP lines from: 30s bars | Chart bars"** (`vwSrc`; the operator: "make it optional/configurable, so I can switch between tv default vwap and our 30s one"): 30s bars, the default, builds the session line, today's part of the year line and the VB's lines from 30s bars, so every pane shows one line; messages add `vwap 30s|chart`. Defaults: `vbTol` 0 (the operator's), BROKEN / HELD markers hidden (`display.none`). The retest's two switches reuse the VB break's slots; `vwSrc` / `vbRtNear` / `vbRtWait` go last. LEVEL / BREAK now get 400; `/alerts` skips their rows and carries `retest_n` / `vwap_src`. Replica: `simulate_vb_cross(retests=…, vwap=…)` + self-tests (touch / bounce / stop, wait, cancel, the 30s arithmetic). Regression: 259 checks. **Paste, Reset settings, recreate both alerts, tick RETEST in ⚙.** |
+| 2026-10-30 | v29 | `642ec88` | Operator: "for longer terms (1h, 4h, 1D), I'd like to use VB only with monthly vwap (plus, yearly), how could I configure alarms only for them?" With Premium's two alert slots one alert could carry one VB timeframe, so **three VB lanes** now ride the same 30s alert (§16.10): each its own candle, band and lines (defaults 1h / 10m, 4h / 30m, 1D / 1h, month + year only); length, StdDev, tolerance, gainers, the retest and the alert timeframe are shared. `vbStep()` takes the lane's settings (one state per call); a chart replays the lane whose candle timeframe it is. On 4h+ lanes a month / year retest **carries over the day's end**. Server: a VB on candles of 60m+ (`TV_SETUP.vb_long_min`) announces off Momentum too (the cap stays); the lane's candle is part of a VB event's duplicate key; a bare `D` parses as `1D`. New inputs last, the plot list unchanged: no Reset. Untested on our data (it can't follow a trade past the day; 1h / 4h day-only numbers in §16.10). Regression: 281 checks. **Paste, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1905,3 +1906,41 @@ chart's line: the 1m chart's sat a median 0.07% away, the 5m-candle line 0.4% (9
 
 **Grade with the rest:** RETEST against CROSS on the same days (the 2R race with the stop
 under the pullback low), by time of day and grade, and split by `vwap_src`.
+
+### 16.10 VB lanes for longer trades (script v29, 2026-10-30)
+
+**The ask:** "for longer terms (1h, 4h, 1D), I'd like to use VB only with monthly vwap (plus,
+yearly), how could I configure alarms only for them?" One alert carries one set of inputs, and
+Premium's two slots are taken (30s for the 5m VB, 1m for PULLBACK), so v29 runs more VB
+timeframes inside the same 30s alert.
+
+- **Inputs** ("VB lanes (v29)", last in the list): lanes 2–4, each on / off, a candle
+  timeframe, a band timeframe and its lines. Defaults: **1h candle / 10m band**, **4h / 30m**,
+  **1D / 1h**, each on the **month and year** lines only. BB length and StdDev, `vbTol`, the
+  gainer filter, the retest settings and "VB: alerts from" are shared with the main VB; the
+  main switch turns them all off.
+- **How:** `vbStep(cTf, bTf, onS, onM, onY, laneOk)` is called once per lane, each call with
+  its own state, so each lane counts its own `cross N` / `retest N`. Messages are the CROSS /
+  RETEST format with the lane's `candle` / `bb`. A chart replays the lane whose candle timeframe
+  it is (the main VB first), so a 1h chart shows the 1h lane's markers and band.
+- **Overnight:** on lanes of **4h or longer**, a retest of the month / year lines carries over
+  the day's end (a 4h candle closing at 20:00 arms it on the next day's first bar; a daily VB
+  candle arms it on the next day); `vbRtWait` counts candles (6 = 1.5 days on 4h, 6 days on
+  1D). A retest involving the session line still ends with the session.
+- **Our side:** a VB on candles of **60m or longer** (`TV_SETUP.vb_long_min`) announces off
+  Momentum too, since a longer trade needn't be on today's screen; the cap and the ⚙ switches
+  still apply. The lane's candle timeframe is part of a VB event's duplicate key, so two lanes
+  crossing on one 30s bar are two events. `D` is read as `1D`.
+
+**What our data can say (not much).** `vb_retest_study.py --candle 60 240 --bb 5 / 10 --tol 0`
+(06-12 → 10-28), session line, 5m band:
+
+| | 1h: avg per trade (n) | median stop | 4h: avg per trade (n) | median stop |
+|---|---:|---:|---:|---:|
+| buy the CROSS | −1.99% (2,765) | 8.7% | −1.91% (2,286) | 12% |
+| buy stop over the VB high | +0.08% (776) | 15% | +2.55% (293) | 22% |
+| RETEST | −1.16% (962) | 2.9% | −0.81% (311) | 2.7% |
+
+Our bars exist only while a name is on our Momentum screen and end at 20:00, so on 1h / 4h most
+trades end at the day's close or when the name leaves the screen (the 4h break's +2.6% has only
+6% stopped). Multi-day trades and the month / year lines can only be graded live.
