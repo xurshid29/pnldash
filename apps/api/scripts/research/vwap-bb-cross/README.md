@@ -106,3 +106,47 @@ python vb_break_study.py rows.csv.gz --candle 5 10 15 --rr 2 --hcandles 6 --canc
 The cancel rule changes how many breaks there are, not what one is worth. Breaks that
 come after the next candle (the XXII kind) were −0.02R on 10m under v26, against
 −0.08R with the 1m-close cancel. Built as script v26 (`docs/vwap-setup.md` §16.8).
+
+## The retest after the VB candle (2026-10-28/29)
+
+The operator, on AIOK 10-28 (5m chart for the VB, 30s chart for the entry): "I'm not using BREAKs for
+enter (because they can be very extended by the moment entering), but waiting 1st 5min candle closes with
+VB and pulls back to vwap line and bounces, I'm entering right at that moment". `vb_retest_study.py`
+replays it on 06-12 → 10-28 (23,461 ticker-days): after the VB candle closes, a bar whose low comes within
+`--touch` % of the session VWAP, then the first bar that closes above the VWAP and above its open — bought
+at that close, stop under the pullback's low (or 1% under the line). Same VB candles, same cancel (a candle
+closing under the VWAP, v26), 2R target, 6-candle horizon, `--tol 0` (the operator's setting), 1m band
+(the nearest to their 45s).
+
+```bash
+python vb_retest_study.py rows.csv.gz --candle 5 10 --bb 1 --tol 0
+python vb_retest_study.py rows.csv.gz --candle 5 --list AIOK 2026-10-28
+```
+
+| 5m candles, 1m band | trades | 2R before the stop | stopped | avg per trade | avg R | median risk |
+|---|---:|---:|---:|---:|---:|---:|
+| buy the CROSS | 6,539 | 14.8% | 59% | −1.87% | −0.33R | 4.6% |
+| buy stop over the VB high (BREAK) | 2,868 | 13.8% | 40% | −1.26% | −0.14R | 7.2% |
+| **RETEST** (within 1%, ≤ 6 candles, stop the pullback low) | 2,718 | 22.1% | 63% | **−0.92%** | −0.30R | 2.2% |
+
+- **The retest is the cheapest entry per trade** (−0.9% against −1.3% for the break and −1.9% for the
+  CROSS), because its stop sits ~2% under the entry instead of ~7%. It reaches 2R before the stop about
+  twice as often as the break (22% vs 14%), but it is stopped more often (63%), so **per unit of risk the
+  break is still better** (−0.14R vs −0.30R). With the same shares per trade the retest loses least; with the
+  same dollars at risk per trade the break does. Still a heads-up, not an edge, like every entry measured.
+- **It comes fast:** 42% of VB candles get a retest within 6 candles, a median 3 minutes after the candle
+  closes.
+- **The variants hardly differ:** a touch to the line, or within 0.5 / 1 / 2% of it; the stop under the
+  pullback low or 1% under the line; a 6-candle limit or none — all within ~0.15 points and ~0.05R.
+- **10m candles:** retest −0.91% (−0.25R), break −1.11% (−0.09R), CROSS −2.03% (−0.31R).
+- **By time of day** (5m, retest): 09:30–12:00 is the best (−0.79%, −0.20R); before 09:30 it is stopped
+  67–70% of the time (−0.38 to −0.42R).
+- **By grade** (October only, when grades were first stored): on A-grade Momentum names the retest did
+  −0.80% (−0.17R, 2R first 28%, n 251), on B grades −1.05% (−0.25R).
+- **Which VWAP:** our VWAP comes from 20-second snapshots, so it is closest to the VWAP TradingView builds from
+  30s bars. On TradingView the 5m-candle VWAP sat a median 0.4% from the 30s chart's (90% within 0.9%) and
+  the 10m one 1.6% (90% within 4.9%), from paired alert messages since 10-23.
+
+Limits: 1m bars from 20s snapshots (quick wicks to the line can be missed, and the alert uses 30s bars);
+our VWAP starts when a name reaches our screen (AIOK 10-28: ~$17.20 against TradingView's $17.02, which
+shifted its VB candles by one and cancelled the 22:40 one); the session line only; ideal fills.
