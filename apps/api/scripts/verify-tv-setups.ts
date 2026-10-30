@@ -417,7 +417,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     '"PULLBACK"', '"BROKEN"', '"HELD"', '" | sVWAP "', '" | line "', '" | touch "', '" | peak +"', '"session"', '"month"',
     '" | yVWAP "', '"year"', 'timeframe.change("M") or firstBar', 'firstBar = na(hlc3[1])',
     // v14: the year line from this year's hourly bars + today's chart bars; merged lines are named together
-    'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", yearBefore()', 'timeframe.change("12M")',
+    'request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", anchorsBefore()', 'timeframe.change("12M")',
     'pbJoin(names, "year")',
     // v15: the day's PULLBACK cap counts failed pullbacks, not every touch
     's.fails < pbMax', 's.fails := s.fails + 1',
@@ -443,7 +443,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v30', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v31', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -451,9 +451,15 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'str.tostring(na(lPx) ? close : lPx, format.mintick)', 'vb4Bb, v4RtPx), alert.freq_once_per_bar_close)',
     // v30: the chart's lane is chosen by timeframe.main_period (timeframe.period is 30S inside the replay)
     'vlN    = timeframe.main_period == vbCandleTf ? 1 : vb2On and timeframe.main_period == vb2Cndl ? 2',
+    // v31: the month line's own switch — this month's hourly bars + today's 30s bars, drawn, used by PULLBACK and the VB;
+    // a late RETEST is drawn on its own candle (one bar back)
+    'mvSrc      = input.string("30s bars", "Month VWAP from (v31)', '[yPrevPV, yPrevV, mPrevPV, mPrevV] = request.security(',
+    'mvwap = mv30 ? (na(mPrevV) or mPrevV + s30V <= 0 ? na : (mPrevPV + s30PV) / (mPrevV + s30V)) : mvChart',
+    'need30  = (use30 or mv30) and chartSec > 30', 'float vMPV    = mv30 ? vPV30 : vTPV', 'evM := pbM.step(mvwap, gainer, pbLowMY)',
+    'vRtLate  := true', '"VB retest, late close (v31)"', 'size = size.small, offset = -1)',
     'vbHighest(vRtS, vRtM, vRtY, vVw, vMw, vYw)', 'vbRtWait > 0 and vRtAge >= vbRtWait', 'text = "RT"',
     '" | vwap " + (use30 ? "30s" : "chart")', 'options = ["30s bars", "Chart bars"]',
-    'request.security_lower_tf(syminfo.tickerid, lower30 ? "30S" : timeframe.period, [hlc3 * volume, volume])',
+    'request.security_lower_tf(syminfo.tickerid, need30 ? "30S" : timeframe.period, [hlc3 * volume, volume])',
     'float vTPV    = use30 ? vPV30 :', 'svwap = lower30 ?', 'input.float(0.0,         "VB: the candle may open up to %',
     'size = size.tiny, display = display.none',
     // v29: three more VB lanes in the same alert (1h / 4h / 1D on month + year by default), one replay per chart,

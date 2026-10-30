@@ -654,6 +654,7 @@ VB = dict(candle_min=5,       # vbCandleTf: the candle's timeframe, minutes (the
           window=(240, 1200),  # alertWin in ET minutes [04:00, 20:00); None = always
           lines=('session', 'month', 'year'),   # v22: vbSession / vbMonth / vbYear
           vwap='30s',         # v28 vwSrc: today's part of the lines from the alert's bars ('30s') or the candles ('chart')
+          mv='30s',           # v31 mvSrc: the month line's today from the alert's bars ('30s') or per `vwap` ('chart')
           rt=True,            # v28 vbRtOn: the retest after the VB candle
           rt_cancel=True,     # vbRtCancel: a candle closing under the lowest crossed line cancels it (v26 rule)
           rt_near=1.0,        # vbRtNear: price back within % above the line (0 = to it or under it)
@@ -695,7 +696,9 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
     carries over the day's end (a VB candle closing at 20:00 arms it on the next day's first bar).
     v29's lanes are separate calls with their own candle_min / bb_min / lines.
     v30 (p['rt_when'] 'close', the default): no bounce test; at the close of a candle after the touch
-    (judged on its last bar), a close above the line fires the RETEST at that bar, price = that close."""
+    (judged on its last bar), a close above the line fires the RETEST at that bar, price = that close.
+    v31: a RETEST judged on the next bar (the candle's closing bar was missing) carries late=True, the
+    6th field; the script draws it one bar back. p['mv'] picks the month line's today's part."""
     p = dict(VB, **(params or {}))
     n_len = p['length']
     lines = ('session', 'month', 'year')
@@ -734,7 +737,7 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
                 if lns and c_close > max(lns) and prev_in_win:
                     rt['armed'], rt_n = False, rt_n + 1
                     if retests is not None:
-                        retests.append((b['t'], c_close, rt['low'] - _tick(rt['low']), '+'.join(rt['lines']), rt_n))
+                        retests.append((b['t'], c_close, rt['low'] - _tick(rt['low']), '+'.join(rt['lines']), rt_n, True))
             end_seen = False
             if new_day:
                 rt_n = 0
@@ -777,7 +780,8 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
         bef = before_of(b) if before_of else None
         for ln in ('month', 'year'):
             sums = bef.get(ln) if bef else None
-            vw[ln] = (sums[0] + tpv) / (sums[1] + tv) if sums is not None and sums[1] + tv > 0 else None
+            lpv, lv = (pv30, v30) if ln == 'month' and p['mv'] == '30s' else (tpv, tv)   # v31
+            vw[ln] = (sums[0] + lpv) / (sums[1] + lv) if sums is not None and sums[1] + lv > 0 else None
         avg = sum(vols) / len(vols) if vols else None
         vol_x = c_vol / avg if avg else None
         m_et = x.hour * 60 + x.minute
@@ -808,7 +812,7 @@ def simulate_vb_cross(bars, params=None, gainer_of=None, trace=None, before_of=N
             if rt['touched'] and in_win and line is not None and go:
                 rt['armed'], rt_n = False, rt_n + 1
                 if retests is not None:
-                    retests.append((b['t'], b['c'], rt['low'] - _tick(rt['low']), '+'.join(rt['lines']), rt_n))
+                    retests.append((b['t'], b['c'], rt['low'] - _tick(rt['low']), '+'.join(rt['lines']), rt_n, False))
         c_end_b = min(key + datetime.timedelta(minutes=p['candle_min']), x.replace(hour=20, minute=0, second=0, microsecond=0))
         if b['t'].astimezone(ET) + datetime.timedelta(seconds=p['bar_sec']) >= c_end_b:
             end_seen = True
@@ -847,7 +851,7 @@ def selftest_vb():
     above = [1.40, 1.45, 1.50, 1.55, 1.60, 1.60, 1.60, 1.60, 1.60, 1.60]    # 05:00 candle: opened above both
     path1 = spike + base + cross1 + cross2 + above
     day1 = bars_of(d1, path1, [1000] * 20 + [100] * (len(path1) - 20))
-    CHART = dict(vwap='chart', tol=2.0)   # what these were written for: v21–v27's candle VWAP, 2% tolerance
+    CHART = dict(vwap='chart', mv='chart', tol=2.0)   # what these were written for: v21–v27's candle VWAP, 2% tolerance
     got = [(e[0].strftime('%H:%M:%S'), e[7]) for e in simulate_vb_cross(day1, params=CHART)]
     ok1 = len(got) == 2 and got[0] == ('04:51:30', 1) and got[1][1] == 2 and '04:55:00' <= got[1][0] < '05:00:00'
     print('v21 VWAP + BB cross, day 1:', got, '→', 'OK' if ok1 else 'UNEXPECTED (want 04:51:30 #1, then #2 in the 04:55 candle)')
@@ -935,7 +939,25 @@ def selftest_vb():
             and [e[0].strftime('%H:%M:%S') for e in cl_bounce] == ['04:45:30'])
     print('v30 RETEST at the candle close:', got_c, '| CLPT-like (bounce, then a close under):', cl_close,
           '| bounce mode fired at', [e[0].strftime('%H:%M:%S') for e in cl_bounce], '→', 'OK' if ok_c else 'UNEXPECTED')
-    ok_lv = ok_rt and ok_rt2 and ok_30 and ok_4h and ok_c
+    # v31: day4's 04:45 candle with its closing bar (04:49:30) missing → the RETEST is judged on the
+    # next candle's first bar (04:50:00), flagged late (the script draws it one bar back); and with
+    # vwap 'chart' + mv '30s' the month line takes today's part from the bars, the session from candles.
+    gap4 = bars_of(d4, base4 + vb4) + bars_of(d4 + dt.timedelta(minutes=45), pull[:9]) \
+        + bars_of(d4 + dt.timedelta(minutes=50), [(1.04, 1.05, 1.04, 1.05)])
+    lt = []
+    simulate_vb_cross(gap4, retests=lt)
+    got_lt = [(e[0].strftime('%H:%M:%S'), e[1], e[5]) for e in lt]
+    on_time = [e[5] for e in c30]
+    trm = []
+    simulate_vb_cross(day4, params=dict(vwap='chart', mv='30s'), before_of=lambda b: month, trace=trm)
+    _, vwl, _ = trm[-1]
+    cpv = sum((b['h'] + b['l'] + b['c']) / 3 * b['v'] for b in day4)
+    cvv = sum(b['v'] for b in day4)
+    ok_31 = (got_lt == [('04:50:00', 1.04, True)] and on_time == [False]
+             and abs(vwl['month'] - (month['month'][0] + cpv) / (month['month'][1] + cvv)) < 1e-12)
+    print('v31 a late RETEST is flagged:', got_lt, '| on time:', on_time, '| month line from the bars with vwap chart:',
+          'OK' if ok_31 else 'UNEXPECTED')
+    ok_lv = ok_rt and ok_rt2 and ok_30 and ok_4h and ok_c and ok_31
 
     # Day 2: 2m closes alternating 0.97 / 1.01 → VWAP ≈ 0.99, band ≈ 1.03. A candle opening at
     # 1.00 (1% over the VWAP, under the band) and running to 1.10.

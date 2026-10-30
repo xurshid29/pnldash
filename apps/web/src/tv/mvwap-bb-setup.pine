@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v30 (2026-10-29). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v31 (2026-10-30). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -109,6 +109,9 @@ vb4Y       = input.bool(true,         "year", inline = "vb4l", group = "VB lanes
 // v30 inputs go last.
 vbRtWhen   = input.string("Candle close", "VB retest fires (v30): at the close of the candle that came back to the line, if it closes above it — or at the first green 30s close above it (v28)", options = ["Candle close", "30s bounce"], group = "VWAP + BB cross (v21)")
 rtAtClose  = vbRtWhen == "Candle close"
+// v31 inputs go last.
+mvSrc      = input.string("30s bars", "Month VWAP from (v31): 30s bars — this month's hourly bars + today's 30s bars, one line for every chart and setup — or the chart's bars (TradingView's anchored VWAP)", options = ["30s bars", "Chart bars"], group = "Alerts")
+mv30       = mvSrc == "30s bars"
 
 // Same lines as the chart: VWAP anchor Month on hlc3,
 // and (v10, PULLBACK) VWAP anchor Session, which resets at timeframe.change("D"),
@@ -117,7 +120,7 @@ rtAtClose  = vbRtWhen == "Candle close"
 // (`if na(src[1]) … isNewPeriod := true`), so a line never goes blank when its
 // anchor isn't in the loaded history (the month line late in a month on 30s).
 firstBar = na(hlc3[1])
-mvwap  = ta.vwap(hlc3, timeframe.change("M") or firstBar)
+mvChart = ta.vwap(hlc3, timeframe.change("M") or firstBar)
 svChart = ta.vwap(hlc3, timeframe.change("D") or firstBar)
 
 // v28 (operator, 10-29: "vwaps in tv chart are differs for 5min and 30s"): a VWAP built
@@ -127,12 +130,15 @@ svChart = ta.vwap(hlc3, timeframe.change("D") or firstBar)
 // (90% within 4.9%); the 1m one 0.07%. "30s bars" (the default) builds the session line,
 // and today's part of the year line, from the 30s bars inside each chart bar, so every
 // chart shows one line, closer to the true VWAP (and to our research's). Charts of 30s or
-// less use their own bars. "Chart bars" = TradingView's built-in, as before v28. The month
-// line stays the chart's anchored VWAP: most of its volume is from earlier days.
+// less use their own bars. "Chart bars" = TradingView's built-in, as before v28. v28 left the
+// month line as the chart's anchored VWAP ("most of its volume is from earlier days"); on a name
+// whose one day dwarfs the month that's wrong — ROMA 10-28: the 1h chart drew ~5.94, the 30s / 1m
+// alerts ~6.35, and the VB used its own line — so v31 gives the month line its own switch (below).
 use30   = vwSrc == "30s bars"
 chartSec = timeframe.in_seconds(timeframe.period)
 lower30 = use30 and chartSec > 30
-[w30PV, w30V] = request.security_lower_tf(syminfo.tickerid, lower30 ? "30S" : timeframe.period, [hlc3 * volume, volume])
+need30  = (use30 or mv30) and chartSec > 30   // v31: the month line can want 30s bars on its own
+[w30PV, w30V] = request.security_lower_tf(syminfo.tickerid, need30 ? "30S" : timeframe.period, [hlc3 * volume, volume])
 float barPV = 0.0
 float barV  = 0.0
 int   w30N  = array.size(w30PV)
@@ -155,26 +161,39 @@ svwap = lower30 ? (s30V > 0 ? s30PV / s30V : na) : svChart
 // on the 30s chart and 4.70 on the 2m alert. v14 takes this year's 60-minute bars
 // (extended hours) up to the end of yesterday, from a request that reaches back
 // to January, and adds today's bars from the chart, so the 30s chart, the 1m alert
-// and the 30s alert share one line. `yearBefore` returns the sums up to the start
-// of the current day; they don't depend on the current hour, which is why
+// and the 30s alert share one line. `anchorsBefore` returns the year's and (v31) the month's sums
+// up to the start of the current day; they don't depend on the current hour, which is why
 // lookahead_on is safe here.
-yearBefore() =>
-    var float pv    = 0.0
-    var float v     = 0.0
-    var float pvDay = 0.0
-    var float vDay  = 0.0
+anchorsBefore() =>
+    var float pv     = 0.0
+    var float v      = 0.0
+    var float pvDay  = 0.0
+    var float vDay   = 0.0
+    var float mpv    = 0.0
+    var float mv     = 0.0
+    var float mpvDay = 0.0
+    var float mvDay  = 0.0
     if timeframe.change("D")
-        pvDay := pv
-        vDay  := v
+        pvDay  := pv
+        vDay   := v
+        mpvDay := mpv
+        mvDay  := mv
+    if timeframe.change("M")
+        mpv    := 0.0
+        mv     := 0.0
+        mpvDay := 0.0
+        mvDay  := 0.0
     if timeframe.change("12M")
         pv    := 0.0
         v     := 0.0
         pvDay := 0.0
         vDay  := 0.0
-    pv := pv + hlc3 * volume
-    v  := v + volume
-    [pvDay, vDay]
-[yPrevPV, yPrevV] = request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", yearBefore(), lookahead = barmerge.lookahead_on)
+    pv  := pv + hlc3 * volume
+    v   := v + volume
+    mpv := mpv + hlc3 * volume
+    mv  := mv + volume
+    [pvDay, vDay, mpvDay, mvDay]
+[yPrevPV, yPrevV, mPrevPV, mPrevV] = request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", anchorsBefore(), lookahead = barmerge.lookahead_on)
 var float yDayPV = 0.0
 var float yDayV  = 0.0
 if timeframe.change("D")
@@ -183,6 +202,11 @@ if timeframe.change("D")
 yDayPV := yDayPV + (lower30 ? barPV : hlc3 * volume)
 yDayV  := yDayV + (lower30 ? barV : volume)
 yvwap = na(yPrevV) or yPrevV + yDayV <= 0 ? na : (yPrevPV + yDayPV) / (yPrevV + yDayV)
+// v31 "Month VWAP from: 30s bars" (the default): this month's hourly bars before today + today's
+// 30s bars (the chart's own on charts of 30s or less) — the line the VB has used since v28, now also
+// the one drawn and the one PULLBACK uses, the same on every chart. "Chart bars": the chart's
+// anchored VWAP, as before v31 (the VB keeps its hourly-based line either way).
+mvwap = mv30 ? (na(mPrevV) or mPrevV + s30V <= 0 ? na : (mPrevPV + s30PV) / (mPrevV + s30V)) : mvChart
 // Strength inputs sent with every signal (v9): the signal bar's volume vs the
 // average of the previous 20 bars, and the run-up over the previous 10 bars.
 // PULLBACK messages carry them; the server stores them for grading.
@@ -443,7 +467,7 @@ vb4Ok = vbOn and vb4On and timeframe.in_seconds(vb4Cndl) >= timeframe.in_seconds
 
 // The month's and the year's Σ hlc3 × volume and Σ volume up to the start of the
 // current day, on hourly bars (extended hours). They don't depend on the current
-// hour, which is why lookahead_on is safe here (as in yearBefore()).
+// hour, which is why lookahead_on is safe here (as in anchorsBefore()).
 vbAnchors() =>
     var float aMPV  = 0.0
     var float aMV   = 0.0
@@ -597,6 +621,7 @@ vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool 
     var float vV30     = 0.0
     var bool  vEndSeen = false  // v30: the forming candle's closing bar has been judged
     bool  vRt     = false
+    bool  vRtLate = false       // v31: judged on the next candle's first bar (its closing bar had no trades)
     float vRtStop = na
     float vRtPx   = na          // v30: the RETEST's price — the candle's close (with "Candle close")
     if gNewDay or vNewCndl or na(vOpen)
@@ -609,6 +634,7 @@ vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool 
                 vRt      := true
                 vRtStop  := vRtLow - syminfo.mintick
                 vRtPx    := vClose
+                vRtLate  := true
                 vRtCount := vRtCount + 1
         vEndSeen := false
         // The candle that just closed (its values are still here): a VB candle arms a retest,
@@ -672,7 +698,9 @@ vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool 
     float vTPV    = use30 ? vPV30 : vPV + (vHigh + vLow + close) / 3 * vVol
     float vTV     = use30 ? vV30 : vV + vVol
     float vVw     = vTV > 0 ? vTPV / vTV : na
-    float vMw     = not na(vMBV) and vMBV + vTV > 0 ? (vMBPV + vTPV) / (vMBV + vTV) : na
+    float vMPV    = mv30 ? vPV30 : vTPV    // v31: the month line's today, per its own switch
+    float vMV     = mv30 ? vV30 : vTV
+    float vMw     = not na(vMBV) and vMBV + vMV > 0 ? (vMBPV + vMPV) / (vMBV + vMV) : na
     float vYw     = not na(vYBV) and vYBV + vTV > 0 ? (vYBPV + vTPV) / (vYBV + vTV) : na
     float vAvgVol = array.size(vVols) > 0 ? array.avg(vVols) : na
     float vVolX   = not na(vAvgVol) and vAvgVol > 0 ? vVol / vAvgVol : na
@@ -719,14 +747,14 @@ vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool 
     vPrevVw := vVw
     vPrevMw := vMw
     vPrevYw := vYw
-    [vFireS, vFireM, vFireY, vVw, vMw, vYw, vBand, vOpen, gDay, gAh, vVolX, vSCount, vMCount, vYCount, vRt, vRtStop, vRtS, vRtM, vRtY, vRtCount, vRtPx]
+    [vFireS, vFireM, vFireY, vVw, vMw, vYw, vBand, vOpen, gDay, gAh, vVolX, vSCount, vMCount, vYCount, vRt, vRtStop, vRtS, vRtM, vRtY, vRtCount, vRtPx, vRtLate]
 
 // On the alert's own chart (30s): the alert, and its markers there (the main VB's).
-[vbFireS, vbFireM, vbFireY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbNS, vbNM, vbNY, vbRt, vbRtStop, vbRtS, vbRtM, vbRtY, vbRtN, vbRtPx] = vbStep(vbCandleTf, vbBbTf, vbSession, vbMonth, vbYear, vbOk)
+[vbFireS, vbFireM, vbFireY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbNS, vbNM, vbNY, vbRt, vbRtStop, vbRtS, vbRtM, vbRtY, vbRtN, vbRtPx, vbRtLate] = vbStep(vbCandleTf, vbBbTf, vbSession, vbMonth, vbYear, vbOk)
 // v29: the lanes, each its own state.
-[v2FireS, v2FireM, v2FireY, v2Vw, v2Mw, v2Yw, v2Band, v2Open, v2DayG, v2AhG, v2VolX, v2NS, v2NM, v2NY, v2Rt, v2RtStop, v2RtS, v2RtM, v2RtY, v2RtN, v2RtPx] = vbStep(vb2Cndl, vb2Bb, vb2S, vb2M, vb2Y, vb2Ok)
-[v3FireS, v3FireM, v3FireY, v3Vw, v3Mw, v3Yw, v3Band, v3Open, v3DayG, v3AhG, v3VolX, v3NS, v3NM, v3NY, v3Rt, v3RtStop, v3RtS, v3RtM, v3RtY, v3RtN, v3RtPx] = vbStep(vb3Cndl, vb3Bb, vb3S, vb3M, vb3Y, vb3Ok)
-[v4FireS, v4FireM, v4FireY, v4Vw, v4Mw, v4Yw, v4Band, v4Open, v4DayG, v4AhG, v4VolX, v4NS, v4NM, v4NY, v4Rt, v4RtStop, v4RtS, v4RtM, v4RtY, v4RtN, v4RtPx] = vbStep(vb4Cndl, vb4Bb, vb4S, vb4M, vb4Y, vb4Ok)
+[v2FireS, v2FireM, v2FireY, v2Vw, v2Mw, v2Yw, v2Band, v2Open, v2DayG, v2AhG, v2VolX, v2NS, v2NM, v2NY, v2Rt, v2RtStop, v2RtS, v2RtM, v2RtY, v2RtN, v2RtPx, v2RtLate] = vbStep(vb2Cndl, vb2Bb, vb2S, vb2M, vb2Y, vb2Ok)
+[v3FireS, v3FireM, v3FireY, v3Vw, v3Mw, v3Yw, v3Band, v3Open, v3DayG, v3AhG, v3VolX, v3NS, v3NM, v3NY, v3Rt, v3RtStop, v3RtS, v3RtM, v3RtY, v3RtN, v3RtPx, v3RtLate] = vbStep(vb3Cndl, vb3Bb, vb3S, vb3M, vb3Y, vb3Ok)
+[v4FireS, v4FireM, v4FireY, v4Vw, v4Mw, v4Yw, v4Band, v4Open, v4DayG, v4AhG, v4VolX, v4NS, v4NM, v4NY, v4Rt, v4RtStop, v4RtS, v4RtM, v4RtY, v4RtN, v4RtPx, v4RtLate] = vbStep(vb4Cndl, vb4Bb, vb4S, vb4M, vb4Y, vb4Ok)
 // On a candle timeframe's chart: the same 30s bars inside each candle, for the lane whose candle
 // timeframe the chart is (the main VB first) — one replay, whichever chart it is.
 // v30: the choice reads timeframe.main_period, the chart's timeframe even inside the replay's request.
@@ -740,16 +768,17 @@ vlM    = vlN == 2 ? vb2M : vlN == 3 ? vb3M : vlN == 4 ? vb4M : vbMonth
 vlY    = vlN == 2 ? vb2Y : vlN == 3 ? vb3Y : vlN == 4 ? vb4Y : vbYear
 vlOk   = vlN == 2 ? vb2Ok : vlN == 3 ? vb3Ok : vlN == 4 ? vb4Ok : vbOk
 vbView() =>
-    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY, vwRt, vwRtStop, vwRtS, vwRtM, vwRtY, vwRtN, vwRtPx] = vbStep(vlCndl, vlBb, vlS, vlM, vlY, vlOk)
-    [vwS, vwM, vwY, vwBand, vwRt]
+    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY, vwRt, vwRtStop, vwRtS, vwRtM, vwRtY, vwRtN, vwRtPx, vwRtLate] = vbStep(vlCndl, vlBb, vlS, vlM, vlY, vlOk)
+    [vwS, vwM, vwY, vwBand, vwRt and not vwRtLate, vwRt and vwRtLate]
 vbBaseSec  = timeframe.in_seconds(vbTf)
 vbChartSec = timeframe.in_seconds(timeframe.period)
 vbLower    = vlOk and vbShow and timeframe.period == vlCndl and vbChartSec > vbBaseSec
-[vbInS, vbInM, vbInY, vbInUp, vbInRt] = request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())
+[vbInS, vbInM, vbInY, vbInUp, vbInRt, vbInRtL] = request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())
 bool  vbMarkS = false
 bool  vbMarkM = false
 bool  vbMarkY = false
 bool  vbMarkR = false
+bool  vbMarkRL = false   // v31: a late RETEST, drawn on the candle before (the one that closed above the line)
 float vbUp    = na
 if vbLower
     int vbIn = array.size(vbInS)
@@ -764,12 +793,15 @@ if vbLower
                 vbMarkY := true
             if array.get(vbInRt, k)
                 vbMarkR := true
+            if array.get(vbInRtL, k)
+                vbMarkRL := true
 else if vbOk and vbShow and vbChartSec == vbBaseSec
     vbMarkS := vbFireS
     vbMarkM := vbFireM
     vbMarkY := vbFireY
-    vbMarkR := vbRt
-    vbUp    := vbBand
+    vbMarkR  := vbRt and not vbRtLate
+    vbMarkRL := vbRt and vbRtLate
+    vbUp     := vbBand
 
 // The message — a contract with services/tv-setups.ts parseTvMessage. The VWAPs are
 // the setup's lines (the candle timeframe's session VWAP, the hourly-anchored month
@@ -862,3 +894,7 @@ plotshape(vbMarkS and not vbMarkM and not vbMarkY, "VWAP + BB cross (session)", 
 plotshape(vbMarkM and not vbMarkY, "VWAP + BB cross (month, v22)", shape.labelup, location.belowbar, color.yellow, text = "VB M", textcolor = color.black, size = size.small)
 plotshape(vbMarkY, "VWAP + BB cross (year, v22)", shape.labelup, location.belowbar, color.blue, text = "VB Y", textcolor = color.white, size = size.small)
 plotshape(vbMarkR, "VB retest (v28)", shape.labelup, location.belowbar, color.lime, text = "RT", textcolor = color.black, size = size.small)
+// v31: a RETEST judged on the next bar (its candle's closing 30s bar had no trades) is drawn on that
+// candle, one bar back — ROMA 1h 10-28 drew one on the candle after. Its own plot (last in the list);
+// give it the same style as "VB retest (v28)" in Style if you restyled that one.
+plotshape(vbMarkRL, "VB retest, late close (v31)", shape.labelup, location.belowbar, color.lime, text = "RT", textcolor = color.black, size = size.small, offset = -1)
