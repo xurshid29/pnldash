@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-10-29
+# Session Handover — updated 2026-10-30
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -8,7 +8,7 @@ A running handover so a fresh session can continue without re-deriving context.
 detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, grading SQL).
 Memory files under `…/memory/` also carry the durable facts.
 
-## START HERE — state at 2026-10-29 (Thu, 16:40 ET), last code commit `850fcdc` (script v30, deployed 10-29 ~16:30 ET)
+## START HERE — state at 2026-10-30 (Fri, 07:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
 Later commits are docs and research only. Research-only commits under `apps/**`
 are pushed with `[skip ci]` so they don't redeploy.
@@ -25,7 +25,7 @@ are pushed with `[skip ci]` so they don't redeploy.
   the dashboard is that clock**. Date pickers stay on the ET trading day.
 
 **Their edge is setups that TradingView detects**, delivered by our webhook from
-one Pine script (**v30**, pasted by the operator 10-29 16:31 ET = their TradingView save 30; **our version numbers now follow TradingView's save counter**, so the next one is v31) running as two watchlist alerts (1m +
+one Pine script (**v31**; the operator is on v30 — their TradingView save 30 — until they paste it, which makes it save 31; **our version numbers follow TradingView's save counter**) running as two watchlist alerts (1m +
 30s). **Since v27 it has two setups, the ones the operator kept after trying all four
 (10-28).** Their trading layout (10-29): a 5m chart for the VB and a 30s chart for the
 entry, side by side.
@@ -106,10 +106,15 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
    outstanding are kept with `float_m` null (10-14). Prod filter:
    `ind_stocksonly,sh_price_0.1to100,sh_relvol_o3,ta_change_5to`, float cap 500M,
    top 50.
-5. **📐 TradingView script — v30** (`apps/web/src/tv/mvwap-bb-setup.pine`, ~850 lines; full
+5. **📐 TradingView script — v31** (`apps/web/src/tv/mvwap-bb-setup.pine`, ~850 lines; full
    reference `docs/vwap-setup.md`: changelog §12, gate table §7.2, PULLBACK §13, RVol
    §15, VB §16, RETEST and the VWAP source §16.9; §1–§11 and §14 are the removed
    setups' record).
+   - **v31 deployed 10-30 07:14 ET (`a9c46f3`) — inside the trading window, an oversight (webhooks kept
+     arriving).** "Month VWAP from: 30s bars | Chart bars" (`mvSrc`): the drawn month line, PULLBACK's and
+     the VB's are one line (this month's hourly bars + today's 30s bars) — ROMA 10-28 had the 1h chart at
+     ~5.94 vs the alerts' ~6.35. A late RETEST (closing bar without trades) draws one bar back on its own
+     plot. Paste + recreate both alerts, no Reset. PULLBACK month-line alerts move onto the shared line.
    - **v30's second commit, 10-29 ~16:30 ET (`850fcdc`; briefly called v31): fix — a lane's chart draws that lane.** The chart's lane
      choice read `timeframe.period`, which is 30S inside the replay request, so 1h / 4h / 1D charts drew
      the main 5m VB's session crosses and retests (CLPT 1h, 10-29). Now `timeframe.main_period`.
@@ -201,7 +206,7 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
      - Quiet rows are stored (`quiet: true`) and graded. LEVEL / BREAK get 400 since v28.
      - Telegram slugs `tv_cross`, `tv_retest`.
    - **Contract and replica:** `parseTvMessage` + `npx tsx scripts/verify-tv-setups.ts`
-     (**287 checks** since v30, incl. rejecting the removed messages);
+     (**298 checks** since v31, incl. rejecting the removed messages);
      `research/vwap-setup/pinesim.py` mirrors PULLBACK and VB (`python3 pinesim.py`
      self-tests) and keeps the removed setups' simulators (v26 logic) for research. **Change procedure:** version bump, mirror in pinesim,
      extend the checks, changelog row, deploy (the server must parse new messages
@@ -355,6 +360,14 @@ Everything else is parked (below). Prod: ~0.9 GB of 3.9 GB RAM, disk 27%.
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-10-30 (06:50–07:20 ET) — SCRIPT v31: ONE MONTH LINE, LATE RTs ON THEIR CANDLE (deployed 07:14 ET, `a9c46f3`).** From the
+operator's ROMA 4h / 1h screenshots: the second 4h RT (low ~6.24) only fits a month line near 6.2–6.3, not the drawn ~6.02 — the
+VB's month line (hourly + today's 30s, since v28) wasn't the one drawn; the 1h RT a candle late fits the closing-bar-missing
+fallback. SLGB 02:15–02:20 Tashkent (asked "why no VBs"): 02:15 opened on the session VWAP (tolerance 0); 02:20 opened above the
+month line (0.2634 vs 0.2627) on 5m, while the 1h and 4h lanes did send month-line CROSSes at 02:21 (announced). The operator:
+"build v31, and make it configurable as we did for session vwap" → `mvSrc`. **Deployed at 07:14 ET without checking the clock —
+inside 07:00–11:00; rows continued (07:14, 07:15, 07:16).** RETEST is still unticked in ⚙ (`["pullback","cross"]`).
 
 **2026-10-29 (16:25–16:45 ET) — SCRIPT v30, PART 2: THE LANE CHART FIX (deployed ~16:30 ET, `850fcdc`).** The operator (CLPT on a
 1h chart, lane 2 month + year only, still on v29): "Setting the chart tf to 1h, is displaying session vb and rt in that
