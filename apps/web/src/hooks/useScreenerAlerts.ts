@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { useHiddenTickers } from './useHiddenTickers';
 import { getAlertKinds } from './useAlertKinds';
+import { mutedByMomoOnly } from './useTvMomoOnly';
 import type { CyclePayload, OpportunityAlert, TvStage } from '../api/types';
 
 // Browser equivalent of the bash script's audio + voice alerts. Events:
@@ -329,7 +330,8 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
     const kindsOn = getAlertKinds();
     const audible = newAlerts
       .filter((a) => !hiddenRef.current.has(a.ticker))
-      .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k]) }))
+      // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names.
+      .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && mutedByMomoOnly(a.ticker, payload))) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
       // Loudest wins: A+ / 📐 CROSS (v21) / RETEST (v28) bright pair > fast-move radar >

@@ -5,6 +5,7 @@ import { useSelection } from '../../context/SelectionContext';
 import { useAlertsArmed } from '../../hooks/useAlertsArmed';
 import { useHiddenTickers } from '../../hooks/useHiddenTickers';
 import { getAlertKinds } from '../../hooks/useAlertKinds';
+import { mutedByMomoOnly } from '../../hooks/useTvMomoOnly';
 import { opportunityBody, opportunityTitle } from '../../hooks/useScreenerAlerts';
 
 const KIND_COLOR: Record<OpportunityKind, string> = {
@@ -46,7 +47,8 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
       if (seen.current.has(a.id)) continue;
       seen.current.add(a.id);
       if (!armed || hiddenRef.current.has(a.ticker)) continue;
-      const kinds = a.kinds.filter((k) => kindsOn[k]);
+      // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names.
+      const kinds = a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && mutedByMomoOnly(a.ticker, payload)));
       if (kinds.length === 0) continue;
       const shown = { ...a, kinds };
       // 📐 priority: a setup on a ticker that was on our Momentum list gets a gold

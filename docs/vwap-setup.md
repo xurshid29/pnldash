@@ -747,7 +747,11 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   Copy Pine script and How to. Under the title, the checkbox **Show only
   Momentum tickers** (2026-11-03, the operator's ask) hides the rows without a
   ⭐ (not on Momentum right now) from both sections; the header counts follow
-  it, and the browser remembers it (`tvSidebar.momoOnly`).
+  it, and the browser remembers it (`tvSidebar.momoOnly`). While it's ticked,
+  a 📐 setup on a name off Momentum also gets no toast, sound or browser
+  notification on the dashboard (same day, the operator's ask;
+  `hooks/useTvMomoOnly.ts`). Telegram and the server's announced / quiet
+  decision are unchanged.
   `components/screener/TvSetupsSidebar.tsx`.
 - **"Not in your TV list" nudge** (2026-10-05). The alerts only see the symbols
   on the TradingView watchlist, and that list is pasted in by hand. MI ran +634%

@@ -246,8 +246,10 @@ These are the detailed notes behind START HERE, kept verbatim.
 **2026-11-03 (14:20 ET) — SIDEBAR: "SHOW ONLY MOMENTUM TICKERS".** The operator asked for a checkbox on the 📐 list. It sits under
 the title, keeps only the ⭐ rows (on the Momentum screen right now; the filter waits for the first cycle so the list doesn't flash
 empty), the LIVE / EARLIER counts follow it, "N off Momentum not shown" sits beside it, and it's remembered per browser
-(`tvSidebar.momoOnly`). Display only: announcements are unchanged (CROSS / RETEST still ping off Momentum on a +30% day high or a
-60m+ lane). Same days: TradingView outages 11-02 04:16–05:59 ET and 14:20–14:51 ET (memory `tv_outage_check`).
+(`tvSidebar.momoOnly`). Follow-up the same evening (operator: "we don't need to show alerts (and play sound) for those"): while
+it's ticked, a 📐 setup off Momentum gets no toast, sound or browser notification on the dashboard either (`hooks/useTvMomoOnly.ts`,
+read by `AlertToasts` and `useScreenerAlerts`). Telegram is unchanged: CROSS / RETEST still ping the phone off Momentum on a +30%
+day high or a 60m+ lane. Same days: TradingView outages 11-02 04:16–05:59 ET and 14:20–14:51 ET (memory `tv_outage_check`).
 
 **2026-11-01 (02:20 ET) — HANDOVER REFRESH.** START HERE rewritten as one current snapshot (it had collected v26–v31 rollout
 notes). Checked on prod: ⚙ stages `["pullback","cross"]` saved 10-30 13:12 ET (RETEST was on 07:20–13:09 ET that day, then
