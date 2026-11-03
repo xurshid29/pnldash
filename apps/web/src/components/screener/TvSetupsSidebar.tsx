@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { App, Button, Dropdown, Modal, Typography } from 'antd';
+import { App, Button, Checkbox, Dropdown, Modal, Typography } from 'antd';
 import { useQuery } from '@tanstack/react-query';
 import { CaretDownOutlined, CaretRightOutlined, EllipsisOutlined } from '@ant-design/icons';
 import type { CyclePayload, OpportunityAlert, TvSetupInfo, TvStage } from '../../api/types';
@@ -157,7 +157,7 @@ const HOW_TO = (
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
     <div><b>RVol</b> (optional): ⋯ → <b>Copy RVol script</b> → a new Pine Editor tab → Add to chart. It shows the Momentum table's RVol 1m / 5m / Day in its own pane, in the same units; set the pane's scale to Logarithmic. No alert needed.</div>
     <div style={{ marginTop: 8, color: '#8c8c8c' }}>
-      <b>Reading the list.</b> Two setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD) and the <b>VWAP + BB cross</b> (CROSS, then RETEST). A CROSS or a RETEST pings only when the name is on Momentum (⭐) or its day high is +30% or more; off-list ones show dimmed.
+      <b>Reading the list.</b> Two setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD) and the <b>VWAP + BB cross</b> (CROSS, then RETEST). A CROSS or a RETEST pings only when the name is on Momentum (⭐) or its day high is +30% or more; off-list ones show dimmed. <b>Show only Momentum tickers</b> (the checkbox under the title) hides the rows without a ⭐; the browser remembers it.
       <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
       <div style={{ marginTop: 6 }}>
         <b>CROSS</b> (v21, the 30s alert only): a candle of the timeframe you set (default <b>5m</b>) crosses a VWAP line and the upper BB of the other timeframe you set (default <b>45s</b>): at a 30s close inside it, its open is under both as they stand then (with the tolerance setting above 0, an open up to that % over the lower line also counts; default 0) and the close is above both — the body crosses the lines the chart draws for that candle (v23; the day's first candle counts). The lines (v22): session (<b>S</b>), month (<b>M</b>) and year (<b>Y</b>), each with its own count. It rings while the candle is still open, and on the candle timeframe's chart that candle gets a marker: teal <b>VB</b> (session), yellow <b>VB M</b> (month), blue <b>VB Y</b> (year). The tag shows the line, the timeframes and the day's cross number on that line (#1 = first); after a line's 3rd cross of the day, its crosses stay quiet, and so do crosses on names off our Momentum list unless the day high is +30% or more (a runner the screen hasn't caught yet). ⚙ → 📐 Stages that alert → CROSS turns it on or off.
@@ -213,6 +213,10 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   const [showEarlier, setShowEarlier] = useState(() => {
     try { return localStorage.getItem('tvSidebar.earlier') !== '0'; } catch { return true; }
   });
+  // 11-03 (operator): "Show only momentum tickers" — only the ⭐ rows.
+  const [momoOnly, setMomoOnly] = useState(() => {
+    try { return localStorage.getItem('tvSidebar.momoOnly') === '1'; } catch { return false; }
+  });
   const [howTo, setHowTo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<CopiedList | null>(() => loadCopied());
@@ -248,9 +252,17 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     [allCards, hiddenKey],
   );
   const hiddenCount = allCards.length - cards.length;
-  const live = cards.filter((c) => c.live).sort((x, y) => y.current.at - x.current.at);
-  const earlier = cards.filter((c) => !c.live).sort((x, y) => y.current.at - x.current.at);
+  // On Momentum = on the screen right now (the ⭐). Before the first cycle
+  // arrives nothing is, so the filter waits for it.
+  const shown = momoOnly && payload ? cards.filter((c) => rowByTicker.has(c.ticker)) : cards;
+  const offMomo = cards.length - shown.length;
+  const live = shown.filter((c) => c.live).sort((x, y) => y.current.at - x.current.at);
+  const earlier = shown.filter((c) => !c.live).sort((x, y) => y.current.at - x.current.at);
 
+  const toggleMomoOnly = (v: boolean) => {
+    setMomoOnly(v);
+    try { localStorage.setItem('tvSidebar.momoOnly', v ? '1' : '0'); } catch { /* private mode */ }
+  };
   const toggleEarlier = () => setShowEarlier((v) => {
     try { localStorage.setItem('tvSidebar.earlier', v ? '0' : '1'); } catch { /* private mode */ }
     return !v;
@@ -415,6 +427,14 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           <Button size="small" type="text" icon={<EllipsisOutlined />} loading={busy} style={{ marginLeft: 'auto' }} />
         </Dropdown>
       </div>
+      <div style={{ padding: '2px 8px', borderBottom: '1px solid #262626', display: 'flex', alignItems: 'center', gap: 6 }}>
+        <Checkbox checked={momoOnly} onChange={(e) => toggleMomoOnly(e.target.checked)}>
+          <span style={{ fontSize: 11 }}>Show only Momentum tickers ⭐</span>
+        </Checkbox>
+        {momoOnly && offMomo > 0 && (
+          <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{offMomo} off Momentum not shown</Text>
+        )}
+      </div>
       {copied && missing.length > 0 && (
         <div style={{ padding: '4px 8px', background: '#2b2111', borderBottom: '1px solid #614700', display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontSize: 11, color: '#ffd666', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -433,7 +453,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           LIVE · {live.length}
         </div>
         {live.length === 0 && (
-          <div style={{ padding: '8px', fontSize: 11, color: '#595959' }}>Nothing live right now.</div>
+          <div style={{ padding: '8px', fontSize: 11, color: '#595959' }}>Nothing live{momoOnly ? ' on Momentum' : ''} right now.</div>
         )}
         {live.map((c) => row(c, false))}
         <div
@@ -443,9 +463,11 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           {showEarlier ? '▾' : '▸'} EARLIER TODAY · {earlier.length}
         </div>
         {showEarlier && earlier.map((c) => row(c, true))}
-        {cards.length === 0 && (
+        {shown.length === 0 && (
           <div style={{ padding: '8px', fontSize: 11, color: '#595959' }}>
-            No setups yet today. Signals appear here when the TradingView alerts fire (⋯ → How to).
+            {cards.length > 0
+              ? 'No setups on Momentum names today. Untick "Show only Momentum tickers" to see the rest.'
+              : 'No setups yet today. Signals appear here when the TradingView alerts fire (⋯ → How to).'}
           </div>
         )}
       </div>

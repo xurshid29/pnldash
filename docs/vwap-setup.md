@@ -744,7 +744,11 @@ rows of the latest cycle; at signal time that is stored as `on_screen`.
   row starts with the Finviz and TradingView buttons, then the ticker. The 1m
   and 2m copies of a stage merge into one event, tagged "1m+2m". A click selects
   the ticker and opens its day trail. The ⋯ menu has Copy list, Download .txt,
-  Copy Pine script and How to. `components/screener/TvSetupsSidebar.tsx`.
+  Copy Pine script and How to. Under the title, the checkbox **Show only
+  Momentum tickers** (2026-11-03, the operator's ask) hides the rows without a
+  ⭐ (not on Momentum right now) from both sections; the header counts follow
+  it, and the browser remembers it (`tvSidebar.momoOnly`).
+  `components/screener/TvSetupsSidebar.tsx`.
 - **"Not in your TV list" nudge** (2026-10-05). The alerts only see the symbols
   on the TradingView watchlist, and that list is pasted in by hand. MI ran +634%
   on 10-05 with no alerts all day: it hadn't been a runner when the list was
