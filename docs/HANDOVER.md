@@ -243,6 +243,14 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-06 (11:10 ET) — RSI CONFIRMATION, MEASURED (research only).** The operator's entry after a VB: 1m + 10m panes with
+TradingView's RSI (14) and its SMA-14; buy when the RSI crosses above its MA on both, after the pullback to the VWAP. (Side
+fact: Wilder's RSI direction = close vs the previous close.) `vwap-bb-cross/vb_rsi_study.py` (10m from Yahoo 5m, 60 days),
+08-20 → 11-05, 2m candles: the rule −0.80% / −0.24R per trade (531, 17% of VB candles) against the v30 RETEST −0.96% / −0.47R
+(1,357); same per trade, half the loss per unit of risk (enters +2.4% over the VWAP with a 3.1% stop, stopped 36% vs 61%);
+the 10m RSI adds nothing (the 1m cross alone −0.74% / −0.16R); 07:00–09:30 ET near break-even (n 96–170, a lead). Nothing
+built; README section. Since 11-02 the operator's alerts run 2m / 30S candles.
+
 **2026-11-03 (14:20 ET) — SIDEBAR: "SHOW ONLY MOMENTUM TICKERS".** The operator asked for a checkbox on the 📐 list. It sits under
 the title, keeps only the ⭐ rows (on the Momentum screen right now; the filter waits for the first cycle so the list doesn't flash
 empty), the LIVE / EARLIER counts follow it, "N off Momentum not shown" sits beside it, and it's remembered per browser

@@ -164,3 +164,62 @@ hair under the entry, and one gap through it counts as dozens of R.
 | first green 1m close above the line (v28) | 2,718 | −0.92% | −0.31R | 63% | −0.91% | −0.25R |
 | **at the candle's close, closed above (v30)** | 2,297 | **−0.84%** | **−0.26R** | 57% | **−0.83%** | **−0.18R** |
 | at the candle's close, green | 1,522 | −1.44% | −0.26R | 53% | −1.21% | −0.18R |
+
+## RSI confirmation after the pullback (2026-11-06)
+
+The operator (DBGI, VIVK 11-06): two panes, 1m and 10m, each with TradingView's default RSI (14) and its
+yellow "RSI-based MA" (SMA 14). After a VB alert they wait for the pullback and the bounce off the VWAP on
+the 1m chart, then enter "when both RSIs start to go up", meaning the purple line crosses above the yellow
+one on the 1m and on the 10m. `vb_rsi_study.py` replays the same VB candles, cancel and exits as
+`vb_retest_study.py`, and adds RSI entries:
+- the 1m RSI comes from our 1m bars;
+- the 10m RSI comes from Yahoo 5m bars with extended hours (`range=60d`, 1,034 of the 1,046 tickers that ran
+  ≥ +20% since 09-01), as the 10m chart shows it live, and again from finished 10m candles only (the
+  stepped line of a 10m RSI on the 1m chart with "Wait for timeframe closes" ticked).
+
+Checked against the operator's DBGI screenshot at 06:59 ET: 1m RSI / MA 42.77 / 40.64 against TradingView's
+42.76 / 40.75; 10m RSI 56.93 against 56.84, but its MA 69.1 against 63.1. Their TradingView data carries
+only part of pre-market trading, so the 10m closes behind the average differ.
+
+```bash
+cd apps/api/scripts/research/vwap-bb-cross
+python vb_rsi_study.py rows.csv.gz --yahoo yahoo/ --candle 2 5            # 6-candle horizon
+python vb_rsi_study.py rows.csv.gz --yahoo yahoo/ --candle 2 5 --hmin 30  # 30-minute horizon
+python vb_rsi_study.py rows.csv.gz --yahoo yahoo/ --candle 2 --list DBGI 2026-11-05
+```
+
+08-20 → 11-05, 2m candles (the operator's alerts since 11-02; 1m band, the nearest to their 30s), stop
+under the pullback low, 2R target, 6 candles, no limit on the wait (the setup ends on a candle closing under
+the VWAP or a newer VB candle). 3,178 VB candles had warm RSIs.
+
+| 2m candles | trades (of VB candles) | avg per trade | R | stopped | median wait | entry vs VWAP | median risk |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| RETEST at the candle's close (v30) | 1,357 (43%) | −0.96% | −0.47R | 61% | 1 min | +0.9% | 1.3% |
+| 1m RSI crosses its MA | 564 (18%) | **−0.74%** | **−0.16R** | 34% | 9 min | +2.4% | 3.1% |
+| 1m crosses while the 10m RSI is above its MA | 464 (15%) | −0.72% | −0.17R | 31% | 10 min | +2.6% | 3.4% |
+| **both above their MAs (the operator's rule)** | 531 (17%) | −0.80% | −0.24R | 36% | 7 min | +2.4% | 3.1% |
+| both, from finished 10m candles | 570 (18%) | −0.99% | −0.24R | 39% | 7 min | +2.3% | 2.9% |
+| both, the 10m crossing after the pullback | 275 (9%) | −1.06% | −0.32R | 33% | 10 min | +2.5% | 3.4% |
+
+- **Per trade, the RSI rule is about the same as the RETEST** (−0.8% against −1.0% on 2m; −0.95% against
+  −0.93% on 5m; with a 30-minute horizon on 2m −0.99% against −1.07%). None of the entries made money.
+- **Per unit of risk it is about half as bad** (−0.24R against −0.47R on 2m, −0.20R against −0.27R on 5m).
+  It waits for the 1m to recover, so it enters higher (+2.4% over the VWAP against +0.9%) with a wider stop
+  (3.1% against 1.3%), and is stopped far less often (36% against 61%). With a fixed dollar risk per trade it
+  loses less; with fixed shares it is the same.
+- **The 10m RSI adds nothing.** The 1m cross on its own is as good or slightly better (−0.16R), and
+  requiring the 10m to cross after the pullback is worse (−0.32R). The live 10m and the finished-candle 10m
+  are the same in R.
+- **It skips most setups:** 17% of VB candles get the RSI entry against 43% for the RETEST, a median 7
+  minutes later.
+- **07:00–09:30 ET is the one window where the RSI entries came near break-even:** on 2m, −0.18% / −0.20R
+  (96 trades) against −1.18% / −0.63R for the RETEST; on 5m +0.07% / −0.07R (170) against −0.36% / −0.18R.
+  The samples are small: a lead to watch, not a result. 04:00–07:00 and 09:30–16:00 are no better than
+  the RETEST.
+- **5m candles** (3,898 VB candles): RETEST 1,440 · −0.93% · −0.27R; the RSI rule 943 · −0.95% · −0.20R;
+  the 1m cross 1,075 · −0.89% · −0.17R.
+
+Limits: the session line only (our rows have no month line, and many of the operator's VBs are VB M); 1m
+bars from 20s snapshots; a 1m band instead of 30s; our 1m RSI skips the minutes a name was off our screen;
+the 10m comes from Yahoo's full data, not the operator's partial feed; ideal fills, though an entry after
+a move may slip more.
