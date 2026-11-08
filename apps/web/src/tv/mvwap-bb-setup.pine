@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v31 (2026-10-30). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v32 (2026-11-08). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -29,6 +29,10 @@
 //              stop under the pullback's low (the operator's entry; v25–v27 had LEVEL / BREAK here;
 //              v28–v29 fired at the first green 30s close above the line, still an option)
 // Built from the 30s alert's bars; drawn on the candle's own chart.
+// 3) RSI CROSS (v32, for longer trades): the 12h RSI (14) crosses above its MA (SMA 14, the
+// "RSI-based MA") while oversold, judged at each 6h candle's close; the 3h RSI rides along for
+// the pullback. Built from requests, so it works on the 2m chart (no 6h chart needed) and
+// sends from the 30s alert; the chart marks the bar that closed the 6h candle.
 // VB lanes (v29): up to three more candle timeframes in the same alert (1h / 4h / 1D on the
 // month and year lines by default), each with its own band and lines, for longer trades.
 // VWAP lines (v28): from 30s bars by default, so the session line is the same on every
@@ -898,3 +902,109 @@ plotshape(vbMarkR, "VB retest (v28)", shape.labelup, location.belowbar, color.li
 // candle, one bar back — ROMA 1h 10-28 drew one on the candle after. Its own plot (last in the list);
 // give it the same style as "VB retest (v28)" in Style if you restyled that one.
 plotshape(vbMarkRL, "VB retest, late close (v31)", shape.labelup, location.belowbar, color.lime, text = "RT", textcolor = color.black, size = size.small, offset = -1)
+
+// ── 3) RSI CROSS (v32) ────────────────────────────────────────────────────────
+// Operator, 2026-11-08 (XTND and DKI on a 6h chart with two RSIs, 12h and 3h): "12h rsi must be
+// oversold; signal is, when 12h rsi crosses the smoothing line" — for longer trades, without
+// leaving the 2m chart. The RSI is TradingView's (ta.rma of the gains and losses, as the default
+// RSI script) and its MA the default "RSI-based MA" (SMA 14). Requests return each RSI's state
+// after its last finished candle (lookahead on + [1]: no repainting); the live value at this bar
+// comes from that state and the bar's close, as the RSI's own chart shows it. It is sampled when a
+// 6h candle closes ("RSI: checked at the close of"): a signal is the 12h RSI above its MA at that
+// close after being at or under it at the previous one, with the RSI at or under the oversold
+// level then or within its last N candles (DKI 10-03: crossed at ~31 after ~22 a few candles
+// earlier). The 3h RSI only gates when "also require" is on. No gainer filter: these are
+// beaten-down names. A 6h candle whose closing bar had no trades is judged on the next bar and
+// drawn one bar back (as v31's late RT).
+// v32 inputs go last.
+rsOn    = input.bool(true,       "RSI setup on (v32): the signal RSI crosses above its MA while oversold — works on your 2m chart", group = "RSI cross (v32)")
+rsCheck = input.timeframe("360", "RSI: checked at the close of these candles (6h)", group = "RSI cross (v32)")
+rsTfA   = input.timeframe("720", "RSI: the signal RSI's timeframe (12h)", group = "RSI cross (v32)")
+rsTfB   = input.timeframe("180", "RSI: the second RSI's timeframe (3h, for the pullback; in the message)", group = "RSI cross (v32)")
+rsLen   = input.int(14,          "RSI: length", minval = 2, group = "RSI cross (v32)")
+rsMaLen = input.int(14,          "RSI: MA length (SMA — TradingView's “RSI-based MA”)", minval = 2, group = "RSI cross (v32)")
+rsOs    = input.float(30.0,      "RSI: oversold — the signal RSI at or under this…", group = "RSI cross (v32)")
+rsOsN   = input.int(6,           "…at the cross or within its last N candles (0 = at the cross)", minval = 0, group = "RSI cross (v32)")
+rsNeedB = input.bool(false,      "RSI: also require the second RSI above its MA", group = "RSI cross (v32)")
+
+// One RSI timeframe's state after its last finished candle: close, the two rma's, the sum of the
+// last (MA length − 1) RSI values, and the lowest RSI of the last N candles.
+rsState(simple int len, simple int maLen, simple int lowN) =>
+    float ch = ta.change(close)
+    float up = ta.rma(math.max(ch, 0), len)
+    float dn = ta.rma(-math.min(ch, 0), len)
+    float r  = dn == 0 ? 100.0 : up == 0 ? 0.0 : 100.0 - 100.0 / (1.0 + up / dn)
+    float sm = math.sum(r, maLen - 1)
+    float lo = ta.lowest(r, math.max(lowN, 1))
+    [close[1], up[1], dn[1], sm[1], lo[1]]
+rsSym = ticker.new(syminfo.prefix, syminfo.ticker, session.extended)
+[rsCA, rsUA, rsDA, rsSmA, rsLoA] = request.security(rsSym, rsTfA, rsState(rsLen, rsMaLen, rsOsN), lookahead = barmerge.lookahead_on)
+[rsCB, rsUB, rsDB, rsSmB, rsLoB] = request.security(rsSym, rsTfB, rsState(rsLen, rsMaLen, 1), lookahead = barmerge.lookahead_on)
+// The RSI and its MA as that timeframe's chart shows them now: the finished candles + `px` as the open one's close.
+rsLive(float c0, float up, float dn, float sm, float px) =>
+    float ch = px - c0
+    float u  = (up * (rsLen - 1) + math.max(ch, 0)) / rsLen
+    float d  = (dn * (rsLen - 1) + math.max(-ch, 0)) / rsLen
+    float r  = d == 0 ? 100.0 : u == 0 ? 0.0 : 100.0 - 100.0 / (1.0 + u / d)
+    [r, (sm + r) / rsMaLen]
+[rsA, rsMaA] = rsLive(rsCA, rsUA, rsDA, rsSmA, close)
+[rsB, rsMaB] = rsLive(rsCB, rsUB, rsDB, rsSmB, close)
+float rsLowA = rsOsN > 0 ? math.min(nz(rsLoA, rsA), rsA) : rsA
+
+// Sample at the 6h close (this bar closes the 6h candle), or late on the next bar.
+rsT      = time(rsCheck)
+rsOnTime = time_close == time_close(rsCheck)
+var int   rsDone   = na
+var float rsPrevA  = na
+var float rsPrevMa = na
+bool  rsSample = false
+bool  rsLate   = false
+float rsSA  = na
+float rsSMa = na
+float rsSB  = na
+float rsSMb = na
+float rsSLo = na
+float rsSPx = na
+if rsOn
+    if rsOnTime and (na(rsDone) or rsDone != rsT)
+        rsSample := true
+        rsSA  := rsA
+        rsSMa := rsMaA
+        rsSB  := rsB
+        rsSMb := rsMaB
+        rsSLo := rsLowA
+        rsSPx := close
+        rsDone := rsT
+    else if not na(rsT[1]) and rsT != rsT[1] and (na(rsDone) or rsDone != rsT[1])
+        rsSample := true
+        rsLate   := true
+        rsSA  := rsA[1]
+        rsSMa := rsMaA[1]
+        rsSB  := rsB[1]
+        rsSMb := rsMaB[1]
+        rsSLo := rsLowA[1]
+        rsSPx := close[1]
+        rsDone := rsT[1]
+bool rsCrossUp = rsSample and not na(rsPrevA) and not na(rsSA) and rsPrevA <= rsPrevMa and rsSA > rsSMa
+bool rsFire    = rsCrossUp and rsSLo <= rsOs and (not rsNeedB or rsSB > rsSMb) and inWindow
+if rsSample and not na(rsSA)
+    rsPrevA  := rsSA
+    rsPrevMa := rsSMa
+
+// The message — a contract with services/tv-setups.ts parseTvMessage (the signal RSI first):
+//   RSI XTND 1.07 | rsi 720 29.2 ma 27.0 | rsi 180 41.2 ma 30.7 | low 22.1 | candle 360 | tf 30S
+rsMsg() =>
+    string msg = "RSI " + syminfo.ticker + " " + str.tostring(rsSPx, format.mintick)
+    msg += " | rsi " + rsTfA + " " + str.tostring(rsSA, "#.0") + " ma " + str.tostring(rsSMa, "#.0")
+    if not na(rsSB)
+        msg += " | rsi " + rsTfB + " " + str.tostring(rsSB, "#.0") + " ma " + str.tostring(rsSMb, "#.0")
+    msg += " | low " + str.tostring(rsSLo, "#.0") + " | candle " + rsCheck
+    if rsLate
+        msg += " | late"
+    msg + " | tf " + timeframe.period
+
+// From the 30s alert alone (the VB's alert timeframe), like the VB.
+if rsFire and timeframe.period == vbTf
+    alert(rsMsg(), alert.freq_once_per_bar_close)
+plotshape(rsFire and not rsLate, "RSI cross (v32)", shape.labelup, location.belowbar, color.purple, text = "RSI", textcolor = color.white, size = size.small)
+plotshape(rsFire and rsLate, "RSI cross, late close (v32)", shape.labelup, location.belowbar, color.purple, text = "RSI", textcolor = color.white, size = size.small, offset = -1)

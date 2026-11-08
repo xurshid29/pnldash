@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CyclePayload } from '../api/types';
+import type { CyclePayload, OpportunityAlert } from '../api/types';
 
 // 📐 "Show only Momentum tickers" (2026-11-03): the setups sidebar's checkbox.
 // It keeps only the ⭐ rows (on the Momentum screen right now) and, since the
@@ -29,9 +29,10 @@ export function setTvMomoOnly(on: boolean): void {
 }
 
 // A 📐 setup the switch silences: it's on and the ticker isn't on the screen
-// in this payload (the same test as the sidebar's ⭐).
-export function mutedByMomoOnly(ticker: string, payload: CyclePayload): boolean {
-  return current && !(payload.rows ?? []).some((r) => r.ticker === ticker);
+// in this payload (the same test as the sidebar's ⭐). A v32 RSI cross is never
+// silenced — a longer trade, rarely on today's screen (the sidebar keeps its rows too).
+export function mutedByMomoOnly(a: OpportunityAlert, payload: CyclePayload): boolean {
+  return current && a.setup?.stage !== 'rsi' && !(payload.rows ?? []).some((r) => r.ticker === a.ticker);
 }
 
 export function useTvMomoOnly(): boolean {

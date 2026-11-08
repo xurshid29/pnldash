@@ -9,6 +9,7 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   held: { label: 'HELD', color: '#d9f7be', bg: '#135200' },
   cross: { label: 'CROSS', color: '#b5f5ec', bg: '#00474f' },
   retest: { label: 'RETEST', color: '#ffffff', bg: '#08979c' },
+  rsi: { label: 'RSI', color: '#efdbff', bg: '#391085' },   // v32, purple like its chart marker
 };
 
 // The VWAP + BB cross's stages: CROSS (v21) and RETEST (v28).
@@ -55,13 +56,15 @@ export function fmtTf(tf: string | null | undefined): string {
   return /^\d+S$/i.test(tf) ? tf.toLowerCase() : tf;
 }
 
-// v21 CROSS / v28 RETEST: "5m/45s" — the candle's timeframe over the band's.
+// v21 CROSS / v28 RETEST: "5m/45s" — the candle's timeframe over the band's. v32 RSI: the
+// signal RSI's timeframe ("12h").
 export function crossTfText(s: TvSetupInfo): string | null {
+  if (s.stage === 'rsi') return s.rsi_tf ? fmtTf(s.rsi_tf) : null;
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -100,9 +103,21 @@ export function retestStopText(s: TvSetupInfo, price: number | null | undefined)
   return `retest · stop ${px(s.stop)}${pct}`;
 }
 
+// v32 RSI cross: the signal RSI against its MA, its low, the second RSI, the check timeframe.
+export function rsiText(s: TvSetupInfo): string {
+  const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
+  const parts = [`${fmtTf(s.rsi_tf ?? null) || '?'} RSI ${one(s.rsi)} / MA ${one(s.rsi_ma)}`];
+  if (s.rsi_low != null) parts.push(`low ${one(s.rsi_low)}`);
+  if (s.rsi2 != null) parts.push(`${fmtTf(s.rsi2_tf ?? null) || '?'} ${one(s.rsi2)} / ${one(s.rsi2_ma)}`);
+  if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
+  return parts.join(' · ');
+}
+
 // Where price sat at the signal. PULLBACK setup: "+0.7% vs sVWAP · +51.2% vs mVWAP ·
 // ran +17%", its own line first.
 export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
+  // v32 RSI: "12h RSI 29.2 / MA 27.0 · low 22.1 · 3h 41.2 / 30.7 · at the 6h close"
+  if (s.stage === 'rsi') return rsiText(s);
   // v28 RETEST: the stop, then where price sat against its line
   if (s.stage === 'retest') {
     const parts = [retestStopText(s, price), ...lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t))];

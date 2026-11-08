@@ -48,7 +48,7 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
       seen.current.add(a.id);
       if (!armed || hiddenRef.current.has(a.ticker)) continue;
       // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names.
-      const kinds = a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && mutedByMomoOnly(a.ticker, payload)));
+      const kinds = a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && mutedByMomoOnly(a, payload)));
       if (kinds.length === 0) continue;
       const shown = { ...a, kinds };
       // 📐 priority: a setup on a ticker that was on our Momentum list gets a gold

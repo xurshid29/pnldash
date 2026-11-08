@@ -337,8 +337,10 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // BB upper band. RETEST (script v28, the operator's entry): after the VB candle
 // closes, price comes back to the line it crossed and a 30s candle closes green
 // above it. It replaced v25–v27's LEVEL / BREAK (the VB candle's high as a trigger).
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest'];
+// RSI (script v32, for longer trades): the 12h RSI crossed above its MA after being oversold,
+// judged at a 6h candle's close.
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi'];
 // Old days in History still hold rows of removed stages (v1–v26 RECLAIM and the BB
 // breakout, v25–v27 LEVEL / BREAK); they're skipped.
 export function isTvStage(s: unknown): s is TvStage {
@@ -381,6 +383,15 @@ export interface TvSetupInfo {
   // v28: which VWAP the script used — '30s' = our 30s-bar line (the same on every chart),
   // 'chart' = TradingView's chart-bar VWAP; null on older messages
   vwap_src?: '30s' | 'chart' | null;
+  // RSI cross (script v32); candle_tf is the timeframe it's checked at ("360" = the 6h close)
+  rsi_tf?: string | null;     // the signal RSI's timeframe ("720" = 12h)
+  rsi?: number | null;
+  rsi_ma?: number | null;     // its MA (SMA 14)
+  rsi2_tf?: string | null;    // the second RSI ("180" = 3h)
+  rsi2?: number | null;
+  rsi2_ma?: number | null;
+  rsi_low?: number | null;    // the signal RSI's lowest at the cross or within its last N candles
+  late?: boolean;
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

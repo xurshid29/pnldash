@@ -5,7 +5,8 @@
 // Since script v27 (2026-10-28) the script has two setups, PULLBACK and the VWAP +
 // BB cross; RECLAIM (FORMING / READY / GO) and the BB breakout (TOUCH / BREAKOUT /
 // TRIGGERED) were removed, and their messages are rejected. v28 replaced the VB break
-// (LEVEL / BREAK) with RETEST and added `vwap 30s|chart` to every message.
+// (LEVEL / BREAK) with RETEST and added `vwap 30s|chart` to every message. v32 added a
+// third setup, the RSI cross (stage RSI), for longer trades.
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -201,12 +202,12 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'pullback', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, day_gain: 25, ah_gain: null,
     tf: '1', vol_x: null, run_pct: null, svwap: 1.95, spx_pct: 2.6, line: 'session', touch: 1, fails: 0, ...over,
   });
-  check('default switches: PULLBACK, CROSS, RETEST on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest"]');
+  check('default switches: PULLBACK, CROSS, RETEST, RSI on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi"]');
   check('parseStageList keeps known stages in menu order, drops the rest (v27: a saved go / ready / forming too)',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 'ready', 7])) === '["pullback","held"]'
       && parseStageList('pullback') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists the five stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped)',
-    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","broken","held"]'
+  check('menu order lists the six stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST)',
+    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","broken","held"]'
       && JSON.stringify(parseStageList(['pullback', 'cross', 'break'])) === '["pullback","cross"]');
   const g = new TvSetupGate();
   g.setAnnounced(['cross']);
@@ -409,6 +410,38 @@ console.log('VB lanes (v29, 2026-10-30)');
   check('Telegram: the daily lane', html.includes('the 1D candle crossed over the month VWAP and the 1h BB upper band') && !html.includes('null'), html);
 }
 
+console.log('RSI cross (v32, 2026-11-08)');
+{
+  const T0 = 1_794_150_000;
+  const msg = 'RSI XTND 1.07 | rsi 720 29.2 ma 27.0 | rsi 180 41.2 ma 30.7 | low 22.1 | candle 360 | tf 30S';
+  const r = parseTvMessage(msg);
+  check('RSI parses: the signal RSI first, then the second', r?.stage === 'rsi' && r.ticker === 'XTND' && r.price === 1.07
+    && r.rsi_tf === '720' && r.rsi === 29.2 && r.rsi_ma === 27 && r.rsi2_tf === '180' && r.rsi2 === 41.2 && r.rsi2_ma === 30.7
+    && r.rsi_low === 22.1 && r.candle_tf === '360' && r.tf === '30S' && r.late === false, JSON.stringify(r));
+  check('…no VB or pullback fields, no line', r?.cross_n === null && r?.retest_n === null && r?.stop === null && r?.touch === null
+    && r?.line === null && JSON.stringify(lineTokens('rsi', null)) === '[]', JSON.stringify(r));
+  const late = parseTvMessage('RSI DKI 74.5 | rsi 720 31.0 ma 30.1 | low 22.4 | candle 360 | late | tf 30S');
+  check('…a late one, without the second RSI', late?.late === true && late.rsi === 31 && late.rsi2 === null && late.rsi2_tf === null, JSON.stringify(late));
+  check('…a 1D signal RSI ("D" reads as "1D")', parseTvMessage('RSI X 1 | rsi D 25.0 ma 24.0 | low 20 | candle 360 | tf 30S')?.rsi_tf === '1D');
+  check('…JSON', parseTvMessage({ stage: 'rsi', ticker: 'XTND', rsi_tf: '720', rsi: 29.2, rsi_ma: 27, low: 22.1, candle: '360', late: true })?.rsi_low === 22.1);
+  check('…a ticker can\'t pass for a field ("| rsi" needs a timeframe, a value and "ma")',
+    parseTvMessage('PULLBACK RSI 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.rsi === null);
+  const g = new TvSetupGate();
+  check('RSI announces off Momentum (a longer trade)', g.admit(r!, T0, false, false) === 'notify');
+  check('…the same check candle again is a re-delivery', g.admit(r!, T0 + 5, false, false) === 'drop');
+  check('…another check candle (or timeframe) is a new event', g.admit({ ...r!, candle_tf: '240' }, T0 + 10, false, false) === 'notify');
+  const off = new TvSetupGate();
+  off.setAnnounced(['pullback', 'cross']);
+  check('…switched off in ⚙ (the operator\'s saved list has no RSI yet) → quiet', off.admit(r!, T0, false, true) === 'quiet');
+  check('…never past a cap', !pastCap(r!));
+  const html = formatTvSetupAlert(r!, 'NASDAQ:XTND', null);
+  check('Telegram: RSI headline and what happened', html.includes('📈 <b>RSI</b>') && html.includes('<b>XTND</b>') && html.includes('$1.07')
+    && html.includes('the 12h RSI crossed above its MA after being oversold (at the 6h close)'), html);
+  check('Telegram: both RSIs, the low, not on Momentum', html.includes('12h RSI 29.2 · MA 27.0 · low 22.1') && html.includes('3h RSI 41.2 · MA 30.7 (above its MA)')
+    && html.includes('not on our Momentum list') && !html.includes('null'), html);
+  check('Telegram: a late one says so', formatTvSetupAlert(late!, 'NASDAQ:DKI', null).includes('(at the 6h close, a bar late)'));
+}
+
 console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -443,7 +476,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v31', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v32', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -469,7 +502,16 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'vbStep(vlCndl, vlBb, vlS, vlM, vlY, vlOk)', 'input.timeframe("60",    "candle"', 'input.timeframe("240",   "candle"', 'input.timeframe("1D",    "candle"',
     'bool vCarry    = timeframe.in_seconds(cTf) >= 14400',
     'if vRtArmed and (vRtS or not vCarry)', 'not (gNewDay and (vSFired or not vCarry))',
-    'alert(vbMsg(v2FireS, v2FireM, v2FireY', 'alert(vbMsg(v4FireS', 'alert(vbRtMsg(v3RtS', 'vbLower    = vlOk and vbShow and timeframe.period == vlCndl']) {
+    'alert(vbMsg(v2FireS, v2FireM, v2FireY', 'alert(vbMsg(v4FireS', 'alert(vbRtMsg(v3RtS', 'vbLower    = vlOk and vbShow and timeframe.period == vlCndl',
+    // v32: the RSI cross — 12h RSI over its SMA-14 while oversold, judged at the 6h close from requests (any chart), the 30s alert
+    '"RSI "', '" | rsi " + rsTfA', '" ma "', '" | rsi " + rsTfB', '" | low "', '" | candle " + rsCheck', '" | late"',
+    'input.timeframe("360", "RSI: checked at the close', 'input.timeframe("720", "RSI: the signal RSI', 'input.timeframe("180", "RSI: the second RSI',
+    'float up = ta.rma(math.max(ch, 0), len)', 'float dn = ta.rma(-math.min(ch, 0), len)', '[close[1], up[1], dn[1], sm[1], lo[1]]',
+    'request.security(rsSym, rsTfA, rsState(rsLen, rsMaLen, rsOsN), lookahead = barmerge.lookahead_on)',
+    'request.security(rsSym, rsTfB, rsState(rsLen, rsMaLen, 1), lookahead = barmerge.lookahead_on)',
+    '[r, (sm + r) / rsMaLen]', 'rsOnTime = time_close == time_close(rsCheck)', 'rsPrevA <= rsPrevMa and rsSA > rsSMa',
+    'rsSLo <= rsOs and (not rsNeedB or rsSB > rsSMb) and inWindow', 'if rsFire and timeframe.period == vbTf',
+    '"RSI cross (v32)"', '"RSI cross, late close (v32)"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
@@ -485,6 +527,10 @@ console.log('Contract — the Pine script still emits what the parser reads');
   check('v28: the retest switches sit in the VB break\'s old places (same order around them)',
     at('vbYear     = input.bool') < at('vbRtOn     = input.bool') && at('vbRtOn     = input.bool') < at('vbRtCancel = input.bool')
       && at('vbRtCancel = input.bool') < at('vbTf       = input.timeframe'));
+  check('v32: the RSI inputs come after the last v31 one, in order', at('mvSrc      = input.string') > 0
+    && at('mvSrc      = input.string') < at('rsOn    = input.bool') && at('rsOn    = input.bool') < at('rsCheck = input.timeframe')
+    && at('rsCheck = input.timeframe') < at('rsNeedB = input.bool')
+    && (pine.slice(at('rsNeedB = input.bool') + 'rsNeedB = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
   // v27 removed RECLAIM and the BB breakout: none of their messages or inputs are left.
   for (const gone of ['"FORMING"', '"READY"', '"GO"', '"TOUCH"', '"BREAKOUT"', '"TRIGGERED"', '" | basis "', '" | path "', '" | via "',
     '" | trigger "', '" | run30 +"', '" | early +"', 'rcOn', 'boOn', 'reclaimConds', 'alertcondition(']) {

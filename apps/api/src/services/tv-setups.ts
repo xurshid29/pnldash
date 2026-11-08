@@ -35,7 +35,7 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest';
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi';
 // The PULLBACK setup's stages (script v10).
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
 // The VWAP + BB cross (script v21): one stage, CROSS, on the candle timeframe's
@@ -46,6 +46,9 @@ export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback
 // within 1% of the line it crossed and a 30s candle closing green above it; `stop` = a tick
 // under the pullback's low. Announced like CROSS (its own ⚙ switch, the cap on `retest N`).
 export const VB_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['cross', 'retest']);
+// v32 RSI cross (operator, 2026-11-08, for longer trades): the 12h RSI crosses above its MA
+// (SMA 14) while oversold, judged at a 6h candle's close (`candle 360`), from the 30s alert alone;
+// the 3h RSI rides along. Announced off Momentum too (beaten-down names), behind its ⚙ switch.
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
 // e.g. "session+month". The legacy 'both' (v10–v13) meant session + month.
@@ -95,6 +98,15 @@ export interface TvSetupSignal {
   stop?: number | null;       // RETEST: a tick under the pullback's low
   retest_n?: number | null;   // RETEST: the day's retests on this ticker, this one included
   vwap_src?: TvVwapSrc | null; // v28: the lines from 30s bars or the chart's bars; null = an older script (chart bars)
+  // RSI cross (script v32); candle_tf is the timeframe it's checked at (360 = the 6h close)
+  rsi_tf?: string | null;     // the signal RSI's timeframe ("720" = 12h)
+  rsi?: number | null;        // its value at the check
+  rsi_ma?: number | null;     // its MA (SMA 14)
+  rsi2_tf?: string | null;    // the second RSI's timeframe ("180" = 3h)
+  rsi2?: number | null;
+  rsi2_ma?: number | null;
+  rsi_low?: number | null;    // the signal RSI's lowest at the cross or within its last N candles
+  late?: boolean;             // judged a bar late (the check candle's closing bar had no trades)
 }
 
 export const TV_SETUP = {
@@ -146,7 +158,7 @@ export const TV_SETUP = {
 } as const;
 
 const STAGES: Record<string, TvStage> = {
-  pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest',
+  pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest', rsi: 'rsi',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
@@ -176,6 +188,19 @@ export function vbFields(sig: TvSetupSignal): {
   return {};
 }
 
+// The v32 RSI cross's fields for the alert's setup info and its tier_events row; none on other stages.
+export function rsiFields(sig: TvSetupSignal): {
+  candle_tf?: string | null; rsi_tf?: string | null; rsi?: number | null; rsi_ma?: number | null;
+  rsi2_tf?: string | null; rsi2?: number | null; rsi2_ma?: number | null; rsi_low?: number | null; late?: boolean;
+} {
+  if (sig.stage !== 'rsi') return {};
+  return {
+    candle_tf: sig.candle_tf ?? null, rsi_tf: sig.rsi_tf ?? null, rsi: sig.rsi ?? null, rsi_ma: sig.rsi_ma ?? null,
+    rsi2_tf: sig.rsi2_tf ?? null, rsi2: sig.rsi2 ?? null, rsi2_ma: sig.rsi2_ma ?? null, rsi_low: sig.rsi_low ?? null,
+    late: sig.late === true,
+  };
+}
+
 const GRADE_LADDER = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'];
 // "B+" or better, by the Momentum grade ladder.
 export function gradeAtLeast(grade: string | null | undefined, min: string): boolean {
@@ -185,7 +210,7 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
@@ -247,6 +272,14 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     stop: toNum(o.stop),
     retest_n: toNum(o.retest_n ?? o.retest),
     vwap_src: toVwapSrc(o.vwap_src ?? o.vwap),
+    rsi_tf: toTf(o.rsi_tf),
+    rsi: toNum(o.rsi),
+    rsi_ma: toNum(o.rsi_ma),
+    rsi2_tf: toTf(o.rsi2_tf),
+    rsi2: toNum(o.rsi2),
+    rsi2_ma: toNum(o.rsi2_ma),
+    rsi_low: toNum(o.rsi_low ?? o.low),
+    late: o.late === true,
   };
 }
 
@@ -277,6 +310,7 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S   (v21)
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | … | tf 30S   (v22)
 //   RETEST AIOK 17.28 | stop 17.09 | sVWAP 17.1 (+1.1%) | mVWAP 14.2 (+21.7%) | line session | candle 5 | bb 45S | retest 1 | day high +46% | vwap 30s | tf 30S   (v28)
+//   RSI XTND 1.07 | rsi 720 29.2 ma 27.0 | rsi 180 41.2 ma 30.7 | low 22.1 | candle 360 | tf 30S   (v32; the signal RSI first, `| late` when judged a bar late)
 // (v28 adds `vwap 30s|chart` to every message.)
 // (a negative day high is written "-2%"; scripts before v3 wrote "+-2%"), or a JSON
 // object with the TvSetupSignal field names. Express hands us the raw text for
@@ -293,7 +327,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
       return null;
     }
   }
-  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST|RSI)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
@@ -319,6 +353,9 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const crossN = /\|\s*cross\s+(\d+)\b/i.exec(text);
   const retestN = /\|\s*retest\s+(\d+)\b/i.exec(text);   // v28
   const vwapSrc = /\|\s*vwap\s+(30s|chart)\b/i.exec(text);
+  // v32 RSI cross: "| rsi 720 29.2 ma 27.0" per RSI, the signal RSI first; "| low 22.1"; "| late"
+  const rsis = [...text.matchAll(/\|\s*rsi\s+([0-9]+[A-Za-z]?|[DWM])\s+(\d*\.?\d+)\s+ma\s+(\d*\.?\d+)/gi)];
+  const rsiLow = /\|\s*low\s+(\d*\.?\d+)/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -347,6 +384,14 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     stop: toNum(stop?.[1]),
     retest_n: toNum(retestN?.[1]),
     vwap_src: toVwapSrc(vwapSrc?.[1]),
+    rsi_tf: toTf(rsis[0]?.[1]),
+    rsi: toNum(rsis[0]?.[2]),
+    rsi_ma: toNum(rsis[0]?.[3]),
+    rsi2_tf: toTf(rsis[1]?.[1]),
+    rsi2: toNum(rsis[1]?.[2]),
+    rsi2_ma: toNum(rsis[1]?.[3]),
+    rsi_low: toNum(rsiLow?.[1]),
+    late: /\|\s*late\b/i.test(text),
   };
 }
 
@@ -393,12 +438,16 @@ export class TvSetupGate {
     // The line is part of the exact key: a PULLBACK on the month line two
     // minutes after one on the session line is a second event, not a re-delivery.
     const vb = VB_STAGES.has(sig.stage);
-    // v29: the VB lanes share the 30s alert, so the candle timeframe is part of a VB event's key.
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb ? `|${sig.candle_tf ?? ''}` : ''}`;
+    // v29: the VB lanes share the 30s alert, so the candle timeframe is part of a VB event's key
+    // (and of a v32 RSI cross's: its check timeframe).
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || sig.stage === 'rsi' ? `|${sig.candle_tf ?? ''}` : ''}`;
     const prev = this.lastExact.get(exact);
     const dupSec = vb ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
+    // v32 RSI cross: one per check candle from the 30s alert alone; a longer trade, so it
+    // announces off Momentum too — only its ⚙ switch makes it quiet.
+    if (sig.stage === 'rsi') return this.announced.has('rsi') ? 'notify' : 'quiet';
     // v21 CROSS and v28 RETEST: one per candle / VB candle from the 30s alert alone — no
     // copy to merge, and no 5-min spacing (the next one is a new event); the cap and
     // the Momentum-only rule limit them.
@@ -439,10 +488,10 @@ export class TvSetupGate {
 }
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI',
 };
 const STAGE_ICON: Record<TvStage, string> = {
-  pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁',
+  pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', rsi: '📈',
 };
 const STAGE_HINT: Record<TvStage, string> = {
   pullback: 'back near VWAP after the run — be ready',
@@ -450,6 +499,7 @@ const STAGE_HINT: Record<TvStage, string> = {
   held: 'held — ran +10% from the pullback',
   cross: 'the candle crossed over the session VWAP and the BB upper band',
   retest: 'back at the VWAP line after the VB candle, and bounced',
+  rsi: 'the RSI crossed above its MA after being oversold',
 };
 // A TradingView interval, short: "5" → "5m", "60" → "1h", "30S" → "30s".
 export function fmtTf(tf: string | null | undefined): string {
@@ -488,6 +538,7 @@ export function formatTvSetupAlert(
 ): string {
   if (sig.stage === 'cross') return formatCross(sig, tvSym, row);
   if (sig.stage === 'retest') return formatRetest(sig, tvSym, row);
+  if (sig.stage === 'rsi') return formatRsi(sig, tvSym, row);
   // PULLBACK / BROKEN / HELD. PULLBACK and BROKEN name the line: "back near the
   // session VWAP after the run — be ready".
   const tokens = lineTokens(sig.stage, sig.line);
@@ -582,6 +633,30 @@ function formatRetest(
   };
   const lvl = [...tokens, ...LINE_ORDER.filter((t) => !tokens.includes(t))].map((t) => lvlOf[t]).filter((x): x is string => x != null);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
+  lines.push(momentumLine(row));
+  const ctx = contextParts(sig);
+  if (ctx.length > 0) lines.push(ctx.join(' · '));
+  lines.push(linksLine(sig, tvSym));
+  return lines.join('\n');
+}
+
+// v32 RSI cross: "the 12h RSI crossed above its MA after being oversold (at the 6h close)".
+function formatRsi(
+  sig: TvSetupSignal,
+  tvSym: string,
+  row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
+): string {
+  const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
+  const a = fmtTf(sig.rsi_tf);
+  const lines = [
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.rsi} <b>${TV_STAGE_LABEL.rsi}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `<i>the ${a} RSI crossed above its MA after being oversold (at the ${fmtTf(sig.candle_tf)} close${sig.late ? ', a bar late' : ''})</i>`,
+    `${a} RSI ${one(sig.rsi)} · MA ${one(sig.rsi_ma)}${sig.rsi_low != null ? ` · low ${one(sig.rsi_low)}` : ''}`,
+  ];
+  if (sig.rsi2 != null) {
+    const above = sig.rsi2_ma != null ? (sig.rsi2 > sig.rsi2_ma ? ' (above its MA)' : ' (under its MA)') : '';
+    lines.push(`${fmtTf(sig.rsi2_tf)} RSI ${one(sig.rsi2)} · MA ${one(sig.rsi2_ma)}${above}`);
+  }
   lines.push(momentumLine(row));
   const ctx = contextParts(sig);
   if (ctx.length > 0) lines.push(ctx.join(' · '));

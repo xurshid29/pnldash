@@ -243,6 +243,15 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-08 (06:30 ET) — SCRIPT v32: THE RSI CROSS (a third setup, for longer trades).** The operator (XTND, DKI on a 6h chart,
+12h + 3h RSIs): "12h rsi must be oversold; signal is, when 12h rsi crosses the smoothing line", built without measuring (their
+call), and "I don't want to switch chart timeframe from 2min to 6h" — so it's computed from requests (each RSI's state after its
+last finished candle + the bar's close, TradingView's formula) and judged at each 6h close on any chart up to 6h; purple RSI marker;
+the 30s alert sends `RSI T px | rsi 720 x ma y | rsi 180 x ma y | low z | candle 360 | tf 30S`. Server stage `rsi`: announced off
+Momentum, its own ⚙ switch (**the operator's saved list doesn't have it — they must tick RSI**), Telegram `tv_rsi`, sidebar live
+6h, kept by "Show only Momentum tickers", History filter. No replica, no grading. docs/vwap-setup.md §17. Operator to do: paste v32,
+Save (check TradingView's save counter says 32), recreate both alerts, tick RSI. The 2m RSI layout is their short-term setup now.
+
 **2026-11-06 (11:10 ET) — RSI CONFIRMATION, MEASURED (research only).** The operator's entry after a VB: 1m + 10m panes with
 TradingView's RSI (14) and its SMA-14; buy when the RSI crosses above its MA on both, after the pullback to the VWAP. (Side
 fact: Wilder's RSI direction = close vs the previous close.) `vwap-bb-cross/vb_rsi_study.py` (10m from Yahoo 5m, 60 days),

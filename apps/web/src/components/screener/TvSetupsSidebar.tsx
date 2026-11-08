@@ -21,8 +21,9 @@ const { Text } = Typography;
 const LOCAL_TZ = 'Asia/Tashkent'; // UTC+5, the operator's clock
 
 // What counts as live (operator, 2026-10-05): a fresh CROSS (v21) or RETEST (v28),
-// or a pullback still waiting at its line. Everything else is "earlier".
-const LIVE_MIN = { pullback: 60, cross: 15, retest: 15 } as const;
+// or a pullback still waiting at its line; a v32 RSI cross until the next 6h check.
+// Everything else is "earlier".
+const LIVE_MIN = { pullback: 60, cross: 15, retest: 15, rsi: 360 } as const;
 // The 1m and 2m alerts report the same stage separately; within this window
 // they are one event.
 const MERGE_MS = 5 * 60_000;
@@ -51,6 +52,7 @@ interface TickerCard {
 // combination sharing one of its lines. The v21 VWAP + BB cross and its v28
 // RETEST are their own thread, one per line combination (v22).
 function threadOf(s: TvSetupInfo): string {
+  if (s.stage === 'rsi') return 'rsi';
   if (isVbStage(s.stage)) return `vb:${lineTokens(s.stage, s.line).join('+')}`;
   return `pb:${lineTokens(s.stage, s.line).join('+') || 'none'}`;
 }
@@ -103,7 +105,7 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
     const closer = latest.get(threadOf(current.setup));
     const closed = st === 'pullback' && closer != null && closer !== current
       && (closer.setup.stage === 'broken' || closer.setup.stage === 'held');
-    const resolved = st === 'cross' || st === 'retest' || st === 'held' || st === 'broken' || closed;
+    const resolved = st === 'cross' || st === 'retest' || st === 'rsi' || st === 'held' || st === 'broken' || closed;
     const outcome = closed ? { stage: closer!.setup.stage as 'broken' | 'held', at: closer!.at } : null;
     cards.push({ ticker, events, current, live: live != null, resolved, outcome });
   }
@@ -151,20 +153,23 @@ const HOW_TO = (
     <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line is the month VWAP, the purple one the session VWAP. With “VWAP lines from: chart bars” they sit exactly on TradingView's own “VWAP Month” and “VWAP Session”; with the default, 30s bars, they can differ a little on a 5m chart (see <b>VWAP lines</b> below). Its blue line is this year's VWAP built from hourly bars (v14). On liquid names it can differ from TradingView's own “VWAP Year” on an intraday chart, which only reaches back as far as the chart has loaded. Trust the blue one.</div>
     <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning. During the day the sidebar flags new names missing from it — <b>Copy</b> and add them to the watchlist (the alerts pick up added symbols by themselves).</div>
     <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>30 seconds</b>.</div>
-    <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts. For <b>v28</b>: after pasting it, open the indicator's Settings → Defaults → <b>Reset settings</b> once more. The defaults are your settings (gainer filter 10%, VB candle 5m, band 45s, tolerance 0), and the reset also restores the chart markers (BROKEN / HELD hidden, RETEST shown). Then recreate both alerts, and tick <b>RETEST</b> in ⚙ → 📐 Stages that alert if it isn't.</div>
+    <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts. For <b>v28</b>: after pasting it, open the indicator's Settings → Defaults → <b>Reset settings</b> once more. The defaults are your settings (gainer filter 10%, VB candle 5m, band 45s, tolerance 0), and the reset also restores the chart markers (BROKEN / HELD hidden, RETEST shown). Then recreate both alerts, and tick <b>RETEST</b> in ⚙ → 📐 Stages that alert if it isn't. For <b>v32</b> no reset is needed (its inputs come last); recreate both alerts and tick <b>RSI</b> in ⚙ → 📐 Stages that alert.</div>
     <div><b>On / off</b>: each setup has a switch in the script's Inputs — “Pullback setup on”, “VWAP + BB cross setup on”. Off = no markers and no alerts from it; a VWAP line no setup uses isn't drawn. The alerts copy the switches when you create them.</div>
     <div><b>VWAP lines</b> (v28): the Inputs' “VWAP lines from” picks how the script builds its VWAPs, for the lines it draws and for every setup. <b>30s bars</b> (ours, the default): built from 30-second bars, so the line is the same on your 5m and 30s charts and closer to the true VWAP. <b>Chart bars</b>: TradingView's built-in way, from each chart's own bars, so it differs by timeframe (on your alerts, a 5m chart's line sat a median 0.4% from the 30s chart's, a 10m chart's 1.6%). The alerts copy the choice when you create them. The month line has its own switch (v31), “Month VWAP from”: <b>30s bars</b> (the default) builds it from this month's hourly bars plus today's 30-second bars — the yellow line you see is then the one PULLBACK and the VB use, on every chart (on a name whose one day dwarfs the month, TradingView's own month VWAP can sit several % away: ROMA 10-28, ~6%); <b>chart bars</b> = TradingView's anchored VWAP, as before.</div>
     <div><b>VB lanes</b> (v29): the Inputs' “VB lanes” add up to three more candle timeframes to the same 30s alert, for longer trades — by default <b>1h</b> (10m band), <b>4h</b> (30m band) and <b>1D</b> (1h band), each on the <b>month and year</b> lines only. Each lane has its own candle, band and lines; the rest (BB length, tolerance, gainers, the retest) is shared. Their CROSS / RETEST rows show the lane's timeframes (<b>1h/10m</b>, <b>4h/30m</b>, <b>1D/1h</b>) and ping even off Momentum (a longer trade needn't be on today's screen; the daily cap still applies). On a 4h or daily lane a month / year retest carries over to the next day. A lane's markers draw on a chart of its candle timeframe (a 1h chart for the 1h lane). Untested on our data, which can't follow a trade past the day.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
     <div><b>RVol</b> (optional): ⋯ → <b>Copy RVol script</b> → a new Pine Editor tab → Add to chart. It shows the Momentum table's RVol 1m / 5m / Day in its own pane, in the same units; set the pane's scale to Logarithmic. No alert needed.</div>
     <div style={{ marginTop: 8, color: '#8c8c8c' }}>
-      <b>Reading the list.</b> Two setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD) and the <b>VWAP + BB cross</b> (CROSS, then RETEST). A CROSS or a RETEST pings only when the name is on Momentum (⭐) or its day high is +30% or more; off-list ones show dimmed. <b>Show only Momentum tickers</b> (the checkbox under the title) hides the rows without a ⭐ and silences their toasts and sounds on this dashboard (Telegram is unchanged); the browser remembers it.
+      <b>Reading the list.</b> Three setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD), the <b>VWAP + BB cross</b> (CROSS, then RETEST) and (v32) the <b>RSI cross</b> for longer trades. A CROSS or a RETEST pings only when the name is on Momentum (⭐) or its day high is +30% or more; off-list ones show dimmed. <b>Show only Momentum tickers</b> (the checkbox under the title) hides the rows without a ⭐ and silences their toasts and sounds on this dashboard (Telegram is unchanged; RSI rows stay — they're rarely on today's screen); the browser remembers it.
       <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
       <div style={{ marginTop: 6 }}>
         <b>CROSS</b> (v21, the 30s alert only): a candle of the timeframe you set (default <b>5m</b>) crosses a VWAP line and the upper BB of the other timeframe you set (default <b>45s</b>): at a 30s close inside it, its open is under both as they stand then (with the tolerance setting above 0, an open up to that % over the lower line also counts; default 0) and the close is above both — the body crosses the lines the chart draws for that candle (v23; the day's first candle counts). The lines (v22): session (<b>S</b>), month (<b>M</b>) and year (<b>Y</b>), each with its own count. It rings while the candle is still open, and on the candle timeframe's chart that candle gets a marker: teal <b>VB</b> (session), yellow <b>VB M</b> (month), blue <b>VB Y</b> (year). The tag shows the line, the timeframes and the day's cross number on that line (#1 = first); after a line's 3rd cross of the day, its crosses stay quiet, and so do crosses on names off our Momentum list unless the day high is +30% or more (a runner the screen hasn't caught yet). ⚙ → 📐 Stages that alert → CROSS turns it on or off.
       </div>
       <div style={{ marginTop: 6 }}>
         <b>RETEST</b> (v28, the 30s alert only): your entry. After the VB candle closes, price comes back to the VWAP line it crossed (within 1% of it, or under it), and (v30) <b>the candle that came back closes above the line</b> — it rings at that candle's close (a candle closing under it gives no RETEST and ends it); the Inputs' “VB retest fires” can switch back to v28's first green 30s close above the line. Its row shows <b>retest · stop $X</b>: the stop under the pullback's low, with its distance from the RETEST price. A newer VB candle starts a new one, and a candle closing back under the line cancels it (on your VB timeframe, so a wick under the line doesn't). Like CROSS it pings only on Momentum names (or a day high of +30% or more), its tag shows the timeframes and the ticker's retest number for the day, and after its 3rd of the day it stays quiet. It waits up to 6 candles after the VB candle closes (an input). Measured on four months: the cheapest entry per trade (−0.9% against −1.3% for buying the break of the VB high and −1.9% for buying the CROSS), with a ~2% stop, but stopped more often — a heads-up, not an edge. ⚙ → RETEST turns it on or off.
+      </div>
+      <div style={{ marginTop: 6 }}>
+        <b>RSI</b> (v32, the 30s alert only; for longer trades): the <b>12h RSI</b> crosses above its MA (the yellow “RSI-based MA”, SMA 14) while oversold — at or under <b>30</b> at the cross or within its last 6 candles — judged when a <b>6h candle closes</b> (10:00, 16:00 and 20:00 ET), the 12h RSI as it stands then. It works on your 2m chart (no 6h chart needed): the purple <b>RSI</b> marker sits on the bar that closed the 6h candle. The row shows the 12h RSI and its MA, its low and the <b>3h RSI</b> (for the pullback; the Inputs can also require it above its MA). It pings off Momentum too, and stays live until the next 6h check. All of it is in the Inputs' “RSI cross (v32)”. Untested on our data. ⚙ → RSI turns it on or off.
       </div>
     </div>
   </div>
@@ -253,8 +258,9 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   );
   const hiddenCount = allCards.length - cards.length;
   // On Momentum = on the screen right now (the ⭐). Before the first cycle
-  // arrives nothing is, so the filter waits for it.
-  const shown = momoOnly && payload ? cards.filter((c) => rowByTicker.has(c.ticker)) : cards;
+  // arrives nothing is, so the filter waits for it. A v32 RSI cross stays (a longer
+  // trade on a beaten-down name, rarely on today's screen).
+  const shown = momoOnly && payload ? cards.filter((c) => rowByTicker.has(c.ticker) || c.current.setup.stage === 'rsi') : cards;
   const offMomo = cards.length - shown.length;
   const live = shown.filter((c) => c.live).sort((x, y) => y.current.at - x.current.at);
   const earlier = shown.filter((c) => !c.live).sort((x, y) => y.current.at - x.current.at);

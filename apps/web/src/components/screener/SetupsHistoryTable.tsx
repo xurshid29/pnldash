@@ -37,7 +37,7 @@ interface SetupEvent {
   outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
-type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'retest';
+type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'retest' | 'rsi';
 
 function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const sorted = alerts
@@ -106,6 +106,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       if (stageFilter === 'pullback' && st !== 'pullback') return false;
       if (stageFilter === 'cross' && st !== 'cross') return false;
       if (stageFilter === 'retest' && st !== 'retest') return false;
+      if (stageFilter === 'rsi' && st !== 'rsi') return false;
       return !momentumOnly || e.setup.on_screen;
     });
   }, [events, settings, stageFilter, momentumOnly]);
@@ -115,6 +116,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const broke = pullbacks.filter((e) => e.outcome?.stage === 'broken').length;
   const crosses = visible.filter((e) => e.setup.stage === 'cross').length;
   const retests = visible.filter((e) => e.setup.stage === 'retest').length;
+  const rsis = visible.filter((e) => e.setup.stage === 'rsi').length;
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -187,6 +189,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             { label: 'PULLBACK', value: 'pullback' },
             { label: 'CROSS', value: 'cross' },
             { label: 'RETEST', value: 'retest' },
+            { label: 'RSI', value: 'rsi' },
           ]}
         />
         <Checkbox checked={momentumOnly} onChange={(e) => setMomentumOnly(e.target.checked)}>
@@ -199,6 +202,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
               {pullbacks.length > 0 && <> (<span style={{ color: '#52c41a' }}>{held} held</span> / <span style={{ color: '#ff4d4f' }}>{broke} broke</span>)</>}
               {crosses > 0 && <> · {crosses} CROSS</>}
               {retests > 0 && <> · {retests} RETEST</>}
+              {rsis > 0 && <> · {rsis} RSI</>}
             </>
           )}
         </Text>

@@ -197,7 +197,7 @@ function fmtAlertPrice(p: number | null): string {
 }
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -224,6 +224,12 @@ export function opportunityTitle(a: OpportunityAlert): string {
       return `${s.on_screen ? '⭐ ' : ''}📐 RETEST ${a.ticker} — back at the ${tokens.join(' + ')} VWAP after the ${shortTf(s.candle_tf)} VB`
         + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.retest_n != null ? ` · #${s.retest_n}` : ''}`;
     }
+    // v32: "📐 RSI XTND — 12h RSI 29.2 crossed its MA 27.0 (oversold, low 22.1)"
+    if (s.stage === 'rsi') {
+      const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
+      return `${s.on_screen ? '⭐ ' : ''}📐 RSI ${a.ticker} — ${shortTf(s.rsi_tf)} RSI ${one(s.rsi)} crossed its MA ${one(s.rsi_ma)}`
+        + ` (oversold${s.rsi_low != null ? `, low ${one(s.rsi_low)}` : ''})`;
+    }
     // PULLBACK / BROKEN / HELD (the reclaim setup's stages went with script v27)
     const tokens = lineTokens(s.stage, s.line);
     const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
@@ -241,6 +247,14 @@ export function opportunityTitle(a: OpportunityAlert): string {
 export function opportunityBody(a: OpportunityAlert): string {
   if (a.kinds.includes('tv_setup') && a.setup) {
     const s = a.setup;
+    if (s.stage === 'rsi') {
+      const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
+      const rb = [fmtAlertPrice(a.price)];
+      if (s.rsi2 != null) rb.push(`${shortTf(s.rsi2_tf)} RSI ${one(s.rsi2)} / MA ${one(s.rsi2_ma)}`);
+      if (s.candle_tf) rb.push(`at the ${shortTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
+      if (a.grade) rb.push(`grade ${a.grade}`);
+      return rb.filter(Boolean).join(' · ');
+    }
     const bits = [fmtAlertPrice(a.price)];
     if (s.svwap != null) bits.push(`sVWAP ${fmtAlertPrice(s.svwap)}`);
     if (s.upper != null) bits.push(`${shortTf(s.bb_tf)} BB upper ${fmtAlertPrice(s.upper)}`);
@@ -331,7 +345,7 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
     const audible = newAlerts
       .filter((a) => !hiddenRef.current.has(a.ticker))
       // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names.
-      .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && mutedByMomoOnly(a.ticker, payload))) }))
+      .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && mutedByMomoOnly(a, payload))) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
       // Loudest wins: A+ / 📐 CROSS (v21) / RETEST (v28) bright pair > fast-move radar >
@@ -344,7 +358,7 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       try {
         if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
-        else if (tvStage('pullback')) setupReadyPing();
+        else if (tvStage('pullback') || audible.some((a) => a.setup?.stage === 'rsi')) setupReadyPing();   // v32 RSI, on or off Momentum
         else if (audible.some((a) => a.kinds.includes('news'))) chime();
         else watchPing();
       } catch { /* audio context not unlocked */ }

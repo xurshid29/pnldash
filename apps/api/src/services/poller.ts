@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
+import { formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, rsiFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3946,7 +3946,7 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
-  // tv_cross / tv_retest, and tv_year for a message about the year line alone).
+  // tv_cross / tv_retest / tv_rsi, and tv_year for a message about the year line alone).
   // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
   // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
@@ -3988,6 +3988,7 @@ class PollerService {
         yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
         fails: sig.fails ?? null, capped: pastCap(sig),
         ...vbFields(sig),
+        ...rsiFields(sig),
         vwap_src: sig.vwap_src ?? null,
         on_screen: row != null, notified: mode === 'notify',
       },
@@ -4003,9 +4004,16 @@ class PollerService {
       on_screen: row != null, notified: mode === 'notify', quiet: mode === 'quiet',
       fails: sig.fails ?? null, capped: pastCap(sig), cap_exempt: capExempt,
       ...vbFields(sig),
+      ...rsiFields(sig),
       vwap_src: sig.vwap_src ?? null,
     });
-    if (VB_STAGES.has(sig.stage)) {
+    if (sig.stage === 'rsi') {
+      console.log(`[tv-setup] RSI ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +
+        ` · low ${sig.rsi_low ?? '?'} · ${sig.rsi2_tf ?? '?'} RSI ${sig.rsi2 ?? '?'} / MA ${sig.rsi2_ma ?? '?'}` +
+        ` · checked at the ${sig.candle_tf ?? '?'} close${sig.late ? ' (a bar late)' : ''} · tf ${sig.tf ?? '?'}` +
+        `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
+        (mode === 'quiet' ? ' · quiet (stage switched off)' : ''));
+    } else if (VB_STAGES.has(sig.stage)) {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
         (sig.stage === 'cross' ? ` · upper ${sig.upper ?? '?'} (${sig.upper_pct ?? '?'}%) · open ${sig.candle_open ?? '?'} · cross ${sig.cross_n ?? '?'}`
