@@ -243,6 +243,13 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-09 (13:10 ET) — MOMENTUM "COPY" BUTTON + TWO WATCHLISTS FOR THE OPERATOR.** Momentum tab header: **Copy** puts the rows
+shown (hidden and News-only applied) on the clipboard, `NASDAQ:`-prefixed like the 📐 Copy list (`tvSymbols()` in
+`api/tvSymbols.ts`), for a TradingView watchlist. Same day, two hand-picked lists of repeat runners for a separate TradingView
+watchlist (screener_ticker_days since 07-01 × Yahoo daily: runs, the share of a +20% spike kept at the close, $ volume, reverse
+splits; ⛔-flagged names left out): NCPL USDE NAUT CLRO SDEV XHLD QNME AEHL VEEA GRML CDTG MEDS, then SKYQ SAIQ PCLA TCRT SST BKYI
+EXYN IPDN MSGY TNMG CYCU JZ DAIC YMAT VCIG.
+
 **2026-11-08 (06:30 ET) — SCRIPT v32: THE RSI CROSS (a third setup, for longer trades).** The operator (XTND, DKI on a 6h chart,
 12h + 3h RSIs): "12h rsi must be oversold; signal is, when 12h rsi crosses the smoothing line", built without measuring (their
 call), and "I don't want to switch chart timeframe from 2min to 6h" — so it's computed from requests (each RSI's state after its

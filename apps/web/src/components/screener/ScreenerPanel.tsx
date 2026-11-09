@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
-import { Table, Tabs, Tag, Typography, Tooltip, Badge, Button, Space, Popover, List, Checkbox } from 'antd';
-import { FilterOutlined, CloseOutlined, EyeInvisibleOutlined } from '@ant-design/icons';
+import { App, Table, Tabs, Tag, Typography, Tooltip, Badge, Button, Space, Popover, List, Checkbox } from 'antd';
+import { FilterOutlined, CloseOutlined, CopyOutlined, EyeInvisibleOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import { LEAN_COMPONENT_FLAGS, type CatalystInfo, type CyclePayload, type EnrichedRow, type RowStatus, type TradingSession } from '../../api/types';
 import { useSelection } from '../../context/SelectionContext';
@@ -26,6 +26,7 @@ import { MomoSetupsPanel } from './MomoSetupsPanel';
 import { EdgePanel } from './EdgePanel';
 import { WatchlistPanel } from './WatchlistPanel';
 import { useWatchlist } from '../../hooks/useWatchlist';
+import { tvSymbols } from '../../api/tvSymbols';
 
 const { Text } = Typography;
 
@@ -98,6 +99,7 @@ function AppearedCell({ iso }: { iso: string | null }) {
 }
 
 export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
+  const { message } = App.useApp();
   const { selected, setSelected } = useSelection();
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [catalystModal, setCatalystModal] = useState<{ ticker: string; catalyst: CatalystInfo | null } | null>(null);
@@ -365,6 +367,20 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
   const hiddenOutside = [...hidden].filter((t) => !allRows.some((r) => r.ticker === t));
   const hiddenList = [...hiddenInScreener, ...hiddenOutside];
 
+  // Copy (operator, 2026-11-09: "so I can copy current momentum stocks for tv watchlist"):
+  // the rows shown now (hidden and News-only applied), NASDAQ:-prefixed like the 📐 list.
+  const copyMomentum = () => {
+    const tickers = rows.map((r) => r.ticker);
+    if (tickers.length === 0) {
+      message.info('Nothing on Momentum to copy');
+      return;
+    }
+    tvSymbols(tickers)
+      .then((syms) => navigator.clipboard.writeText(syms.join(',')))
+      .then(() => message.success(`Copied ${tickers.length} Momentum ticker${tickers.length === 1 ? '' : 's'} — paste them into a TradingView watchlist (⋯ → Import list)`))
+      .catch(() => message.error('Clipboard blocked by the browser'));
+  };
+
   // Header controls — Filters is Momentum-specific (the live config it edits
   // is the Momentum filter); the rest (hidden popover + live indicator) are
   // universal across tabs.
@@ -411,6 +427,11 @@ export function ScreenerPanel({ payload, connected }: ScreenerPanelProps) {
             🔥 News only
           </Checkbox>
         </Tooltip>
+      )}
+      {activeTab === 'momentum' && (
+        <Button size="small" icon={<CopyOutlined />} onClick={copyMomentum}>
+          Copy
+        </Button>
       )}
       {activeTab === 'momentum' && (
         <Tooltip title="Edit filters">
