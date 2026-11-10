@@ -243,6 +243,13 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-10 (07:40 ET) — SCRIPT v33: ONE RSI.** The operator: the two-RSI experiment (12h + 3h) failed; keep one RSI, drop the
+"also require" switch, and check a 30m RSI checked at the 30m close. Removed `rsTfB` / `rsNeedB` (the RSI group's later inputs shift
+one place: the operator re-sets length / MA / oversold / lookback once). Replica `pinesim.simulate_rsi` + `selftest_rsi`, real 2m bars
+for NCPL / USDE / NAUT / SDEV / CLRO: the script's sampling = the plain 30m cross (52/52). Pushed after 11:00 ET (trading window).
+Also 11-09: both TradingView alerts stopped at 10:36 / 10:39 ET (nothing reached nginx; our side healthy); told the operator to check
+the Alerts panel.
+
 **2026-11-09 (13:10 ET) — MOMENTUM "COPY" BUTTON + TWO WATCHLISTS FOR THE OPERATOR.** Momentum tab header: **Copy** puts the rows
 shown (hidden and News-only applied) on the clipboard, `NASDAQ:`-prefixed like the 📐 Copy list (`tvSymbols()` in
 `api/tvSymbols.ts`), for a TradingView watchlist. Same day, two hand-picked lists of repeat runners for a separate TradingView

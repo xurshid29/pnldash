@@ -1088,5 +1088,164 @@ def selftest():
     return ok and ok_lines
 
 
+
+# ── RSI cross (script v32; one RSI since v33) ──────────────────────────────────
+# The script reads each RSI timeframe's state after its last finished candle (request.security,
+# lookahead on + [1]) and adds the chart bar's close as the open candle, then samples it when a
+# chart bar closes a "check" candle (or one bar late if that bar had no trades). A signal: above
+# its MA now, at or under it at the previous check, and the RSI at or under `os` now or within
+# its last `os_n` finished candles. TradingView's RSI: ta.rma seeded with the SMA of the first n.
+RSI_DEFAULTS = dict(sig_min=720, check_min=360, n=14, ma_n=14, os=30.0, os_n=6)
+
+
+def _rsi_value(up, dn):
+    return 100.0 if dn == 0 else 0.0 if up == 0 else 100.0 - 100.0 / (1.0 + up / dn)
+
+
+def rsi_states(closes, n):
+    """Per close: (rma up, rma down, rsi) after it, TradingView's ta.rsi; None until seeded."""
+    out, up, dn, su, sd = [], None, None, [], []
+    for i, c in enumerate(closes):
+        if i == 0:
+            out.append(None)
+            continue
+        ch = c - closes[i - 1]
+        u, d = max(ch, 0.0), max(-ch, 0.0)
+        if up is None:
+            su.append(u); sd.append(d)
+            if len(su) == n:
+                up, dn = sum(su) / n, sum(sd) / n
+        else:
+            up, dn = (up * (n - 1) + u) / n, (dn * (n - 1) + d) / n
+        out.append(None if up is None else (up, dn, _rsi_value(up, dn)))
+    return out
+
+
+def _candle_start(t, minutes):
+    """TradingView's intraday candles on an extended chart start at the 04:00 ET session open
+    (6h: 04:00 / 10:00 / 16:00; 12h: 04:00 / 16:00); 30m and the like land on the same marks."""
+    m = t.hour * 60 + t.minute
+    s = 240 + (m - 240) // minutes * minutes if m >= 240 else m // minutes * minutes
+    return t.replace(hour=s // 60, minute=s % 60, second=0, microsecond=0)
+
+
+def resample_session(bars, minutes):
+    """Bars → `minutes` candles anchored like _candle_start (the 04:00 open)."""
+    out = []
+    for b in bars:
+        start = _candle_start(b['t'], minutes)
+        if out and out[-1]['t'] == start:
+            o = out[-1]
+            o['h'] = max(o['h'], b['h']); o['l'] = min(o['l'], b['l']); o['c'] = b['c']; o['v'] += b['v']
+        else:
+            out.append({**b, 't': start})
+    return out
+
+
+def rsi_crosses_direct(candles, p=None):
+    """The plain rule on the signal timeframe's own candles: on a candle's close the RSI crosses
+    above its SMA, the RSI at or under `os` then or within the last `os_n` candles → candle starts."""
+    p = dict(RSI_DEFAULTS, **(p or {}))
+    st = rsi_states([c['c'] for c in candles], p['n'])
+    rsi = [None if x is None else x[2] for x in st]
+    out, prev = [], None
+    for i in range(len(candles)):
+        win = rsi[i - p['ma_n'] + 1:i + 1] if i >= p['ma_n'] - 1 else []
+        if len(win) < p['ma_n'] or any(r is None for r in win):
+            prev = None
+            continue
+        ma = sum(win) / p['ma_n']
+        low = min([r for r in rsi[max(0, i - p['os_n']):i] if r is not None] + [rsi[i]]) if p['os_n'] > 0 else rsi[i]
+        if prev is not None and prev[0] <= prev[1] and rsi[i] > ma and low <= p['os']:
+            out.append(candles[i]['t'])
+        prev = (rsi[i], ma)
+    return out
+
+
+def simulate_rsi(bars, chart_min, p=None):
+    """The script's RSI section on chart bars of `chart_min` minutes → [(check candle start, late)]."""
+    p = dict(RSI_DEFAULTS, **(p or {}))
+    sig = resample_session(bars, p['sig_min']) if p['sig_min'] != chart_min else [dict(b) for b in bars]
+    st = rsi_states([c['c'] for c in sig], p['n'])
+    rsi_hist = [None if x is None else x[2] for x in st]
+    starts = [c['t'] for c in sig]
+    out, prev_sample, done = [], None, None
+    prev_live, prev_check_t = None, None
+    j = 0   # finished signal candles before the current chart bar's candle
+    for b in bars:
+        t = b['t']
+        cur = _candle_start(t, p['sig_min'])
+        while j < len(starts) and starts[j] < cur:
+            j += 1
+        live = None
+        if j >= 1 and st[j - 1] is not None and j - 1 >= p['ma_n'] - 1 and all(r is not None for r in rsi_hist[j - p['ma_n']:j - 1 + 1][-(p['ma_n'] - 1):]):
+            up, dn, _ = st[j - 1]
+            ch = b['c'] - sig[j - 1]['c']
+            u = (up * (p['n'] - 1) + max(ch, 0.0)) / p['n']
+            d = (dn * (p['n'] - 1) + max(-ch, 0.0)) / p['n']
+            r = _rsi_value(u, d)
+            ma = (sum(rsi_hist[j - (p['ma_n'] - 1):j]) + r) / p['ma_n']
+            lows = [x for x in rsi_hist[max(0, j - p['os_n']):j] if x is not None] if p['os_n'] > 0 else []
+            live = (r, ma, min(lows + [r]))
+        check_t = _candle_start(t, p['check_min'])
+        closes_check = _candle_start(t + datetime.timedelta(minutes=chart_min), p['check_min']) != check_t or chart_min >= p['check_min']
+        sample, late = None, False
+        if closes_check and done != check_t:
+            sample, done = (check_t, live), check_t
+        elif prev_check_t is not None and check_t != prev_check_t and done != prev_check_t:
+            sample, done, late = (prev_check_t, prev_live), prev_check_t, True
+        if sample and sample[1] is not None:
+            r, ma, low = sample[1]
+            if prev_sample is not None and prev_sample[0] <= prev_sample[1] and r > ma and low <= p['os']:
+                out.append((sample[0], late))
+            prev_sample = (r, ma)
+        prev_live, prev_check_t = live, check_t
+    return out
+
+
+def selftest_rsi():
+    """v33 RSI cross: the replica of the script's sampling gives the plain rule's marks — a 30m RSI
+    checked at the 30m close, on a 30m chart, a 2m chart and a 1m chart with missing minutes
+    (those come a bar late, on the same candle)."""
+    import datetime as dt, math, random
+    rnd = random.Random(7)
+    t0 = dt.datetime(2026, 9, 1, 4, 0, tzinfo=ET)
+    bars, px = [], 10.0
+    for day in range(25):
+        drift = rnd.choice([-0.0012, -0.0008, 0.0006, 0.0010])
+        for m in range(240, 1200):
+            px *= math.exp(drift + rnd.gauss(0, 0.004))
+            if m % 30 != 29 and rnd.random() < 0.15:      # thin tape: some minutes have no trades…
+                continue
+            if day % 3 == 0 and m % 30 == 29 and rnd.random() < 0.5:
+                continue                                   # …sometimes a candle's last minute too
+            t = t0 + dt.timedelta(days=day, minutes=m - 240)
+            bars.append({'t': t, 'o': px, 'h': px * 1.001, 'l': px * 0.999, 'c': px, 'v': 100})
+    p = dict(sig_min=30, check_min=30)
+    want = rsi_crosses_direct(resample_session(bars, 30), p)
+    on30 = simulate_rsi(resample_session(bars, 30), 30, p)
+    on2 = simulate_rsi(resample_session(bars, 2), 2, p)
+    on1 = simulate_rsi(bars, 1, p)
+    same = lambda got: [t for t, _ in got] == want
+    late1 = sum(1 for _, late in on1 if late)
+    ok = len(want) >= 5 and same(on30) and same(on2) and same(on1) and not any(l for _, l in on30) and late1 > 0
+    print(f'RSI cross (v33), 30m RSI at the 30m close: {len(want)} marks by the plain rule; the script on a 30m chart '
+          f'{len(on30)}, 2m {len(on2)}, 1m {len(on1)} ({late1} a bar late)', '→', 'OK' if ok else 'UNEXPECTED')
+    # v32's default, a 12h RSI checked at the 6h close: the 2m chart marks what the 6h chart marks
+    # (four months of the same kind of tape, so the 12h RSI has room to swing)
+    rnd2 = random.Random(11)
+    long, px = [], 10.0
+    for day in range(120):
+        if day % 8 == 0:                              # multi-day trends, so the 12h RSI reaches oversold
+            drift = rnd2.choice([-0.0004, -0.0003, 0.0003, 0.0004])
+        for m in range(240, 1200, 2):
+            px *= math.exp(drift * 2 + rnd2.gauss(0, 0.005))
+            long.append({'t': t0 + dt.timedelta(days=day, minutes=m - 240), 'o': px, 'h': px, 'l': px, 'c': px, 'v': 100})
+    p2 = dict(sig_min=720, check_min=360, os=40.0)
+    a, b = simulate_rsi(long, 2, p2), simulate_rsi(resample_session(long, 360), 360, p2)
+    ok2 = len(a) >= 2 and [t for t, _ in a] == [t for t, _ in b]
+    print(f'…12h RSI at the 6h close, 2m chart vs 6h chart: {len(a)} / {len(b)} marks', '→', 'OK' if ok2 else 'UNEXPECTED')
+    return ok and ok2
+
 if __name__ == '__main__':
-    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb()) else 1)
+    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb() & selftest_rsi()) else 1)

@@ -1130,7 +1130,8 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-29 | v30 | `1c46d01` | Operator (CLPT 10-29: an RT on a 5m candle that closed under the VWAP): "RT should not be fired if its candle's close is under the vwap". **"VB retest fires: Candle close"** (`vbRtWhen`, the default): the RETEST waits for the close of the candle that came back within 1% of the line and fires only if it closes above it — on that candle's closing 30s bar (`time_close == time_close(tf)`; a candle without a closing bar is judged on the next one); the message price is the candle's close. "30s bounce" keeps v28's rule. Measured first (§16.9): 5m / 10m −0.84% / −0.83% a trade vs −0.92% / −0.91% at the bounce, −0.26R / −0.18R vs −0.31R / −0.25R (stops ≥ 0.5%), stopped 57% vs 63%; also requiring a green candle was worse (−1.44% / −1.21%). New input last, message unchanged. Replica: closing-bar detection (`bar_sec`) + a CLPT-like self-test. Regression: 287 checks. **Paste, recreate both alerts.** |
 | 2026-10-29 | v30, the fix | `850fcdc` | Fix, shipped as part of v30. Operator (CLPT on a 1h chart, lane 2 = month + year): a session VB and an RT in one 1h candle. A chart picks the lane whose candle timeframe it is, and v29 read `timeframe.period` for that — inside the replay's `request.security_lower_tf` it is the requested 30S, so every lane's chart replayed the main 5m VB (its session crosses and retests, bunched into 1h bars). Now `timeframe.main_period`, the chart's timeframe in any context. The alerts were never affected (each lane runs on its own on the 30s alert). Released as "v31" for two minutes, then renamed: the operator went from v29 straight to this code (their TradingView save 30), and **since v30 the script's number follows TradingView's version counter** (operator, 10-29: "lets call it v30"). v30 = `1c46d01` + `850fcdc`. |
 | 2026-10-30 | v31 | `a9c46f3` | Operator (ROMA 4h / 1h, 10-28): markers that didn't fit the drawn month line. Since v28 the VB built its month line from this month's hourly bars + today's 30s bars, while the chart drew — and PULLBACK used — TradingView's anchored VWAP on the chart's bars; ROMA 10-28 ~12:00 ET: the 1h chart drew ~5.94, the 30s / 1m alerts reported ~6.35. **"Month VWAP from: 30s bars | Chart bars"** (`mvSrc`, default 30s bars; the operator: "make it configurable as we did for session vwap"): 30s bars builds the drawn line, PULLBACK's and the VB's from the same sums (`anchorsBefore()` returns the month's with the year's); Chart bars = as before. Also: a RETEST judged on the next bar (its candle's closing 30s bar had no trades) is flagged and drawn one bar back on its own plot ("VB retest, late close (v31)"; restyle it like the RT if you restyled that). New input and plot last: no Reset. Deployed 07:14 ET, inside the trading window (an oversight; webhooks kept arriving). Replica: `mv`, the late flag; regression 298 checks. **Paste, recreate both alerts.** |
-| 2026-11-08 | v32 | (this commit) | Operator (XTND, DKI on a 6h chart with a 12h and a 3h RSI): a third setup for longer trades, the **RSI cross** (§17): at each 6h close the 12h RSI crosses above its SMA-14 while at or under 30 (now or within its last 6 candles); the 3h RSI in the message, optionally a gate. Built from requests so it works on the 2m chart ("I don't want to switch chart timeframe from 2min to 6h"), sent from the 30s alert, purple RSI marker. New inputs and plots last: no Reset. Server stage `rsi` (announced off Momentum, its own ⚙ switch, `tv_rsi`); sidebar, History, toasts. Untested; no replica. Regression 335 checks. **Paste, recreate both alerts, tick RSI in ⚙.** |
+| 2026-11-08 | v32 | `8c2079c` | Operator (XTND, DKI on a 6h chart with a 12h and a 3h RSI): a third setup for longer trades, the **RSI cross** (§17): at each 6h close the 12h RSI crosses above its SMA-14 while at or under 30 (now or within its last 6 candles); the 3h RSI in the message, optionally a gate. Built from requests so it works on the 2m chart ("I don't want to switch chart timeframe from 2min to 6h"), sent from the 30s alert, purple RSI marker. New inputs and plots last: no Reset. Server stage `rsi` (announced off Momentum, its own ⚙ switch, `tv_rsi`); sidebar, History, toasts. Untested; no replica. Regression 335 checks. **Paste, recreate both alerts, tick RSI in ⚙.** |
+| 2026-11-10 | v33 | (this commit) | Operator: the two-RSI experiment failed; one RSI, no "also require" (§17.1). Removed the second RSI's input, request and message field; the RSI group's later inputs shift one place (set them once after the paste; no Reset). Replica `simulate_rsi` + `selftest_rsi`: a 30m RSI checked at the 30m close marks the plain rule's crosses on 30m / 2m / 1m charts (and on five names' real 2m bars, 52 of 52). Regression 340 checks. **Paste, set the RSI group, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2014,3 +2015,34 @@ without measuring first (the operator: "you don't need to check it against our d
     RSI rows and their sounds; History has an RSI filter.
 - **Not built:** a replica in `pinesim.py`, and any grading. It's untested on our data, and our
   bars end when a name leaves the screen, so a multi-day trade can only be graded live.
+
+### 17.1 One RSI (script v33, 2026-11-10)
+
+The operator: "The experiment with 2 different RSIs failed … remove the second rsi (keep only
+one) and remove its checkbox. And check if it works with … the same 30min timeframe for both RSI
+and chart timeframe."
+- **The change.** v33 removed the second RSI (`rsTfB`, its request and message field) and its
+  "also require" switch (`rsNeedB`). The setup is one RSI (`rsTfA`), checked at the close of
+  `rsCheck`. The message is `RSI T px | rsi 30 x ma y | low z | candle 30 | tf 30S`. The server
+  still reads v32's second `| rsi …` on old rows.
+- **Inputs shift.** Removing `rsTfB`, which was not the last input, shifts the saved values of
+  length, MA length, oversold and the lookback by one place (TradingView keeps them by
+  position). The operator sets those four once after the paste. Everything before the group
+  keeps its place, so no Reset is needed.
+- **Checked:**
+  - `pinesim.simulate_rsi` replicates the section (the state after the last finished candle,
+    the live close, the on-time and late samples). `selftest_rsi` compares it with the plain
+    rule, `rsi_crosses_direct`: on a candle's close the RSI crosses above its SMA with the RSI
+    ≤ 30 then or within N candles. A **30m RSI checked at the 30m close** gives the same 8 marks
+    on a 30m, 2m and 1m chart; on the 1m chart with missing minutes, 3 come a bar late on the
+    same candle.
+  - A 12h RSI at the 6h close gives the same marks on a 2m chart and a 6h chart.
+  - On Yahoo 2m bars (extended hours, 09-29 → 11-10), NCPL, USDE, NAUT, SDEV and CLRO gave the
+    same 52 marks as the plain 30m rule, 6 of them a bar late.
+  - What the replica can't check is Pine's own request semantics. The design relies on
+    lookahead on + `[1]` returning the last finished candle on every chart bar, TradingView's
+    documented non-repainting idiom.
+  - The marks match TradingView's own RSI only on an **extended-hours** chart. The requests use
+    `session.extended`.
+- Candles start at the 04:00 ET open (`_candle_start`): 30m on :00 / :30, 6h at 04:00 / 10:00 /
+  16:00, 12h at 04:00 / 16:00.

@@ -6,7 +6,7 @@
 // BB cross; RECLAIM (FORMING / READY / GO) and the BB breakout (TOUCH / BREAKOUT /
 // TRIGGERED) were removed, and their messages are rejected. v28 replaced the VB break
 // (LEVEL / BREAK) with RETEST and added `vwap 30s|chart` to every message. v32 added a
-// third setup, the RSI cross (stage RSI), for longer trades.
+// third setup, the RSI cross (stage RSI), for longer trades; v33 kept one RSI.
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -422,6 +422,11 @@ console.log('RSI cross (v32, 2026-11-08)');
     && r?.line === null && JSON.stringify(lineTokens('rsi', null)) === '[]', JSON.stringify(r));
   const late = parseTvMessage('RSI DKI 74.5 | rsi 720 31.0 ma 30.1 | low 22.4 | candle 360 | late | tf 30S');
   check('…a late one, without the second RSI', late?.late === true && late.rsi === 31 && late.rsi2 === null && late.rsi2_tf === null, JSON.stringify(late));
+  const one = parseTvMessage('RSI NCPL 1.26 | rsi 30 28.4 ma 26.9 | low 24.1 | candle 30 | tf 30S');
+  check('v33: one RSI (30m, checked at the 30m close)', one?.stage === 'rsi' && one.rsi_tf === '30' && one.rsi === 28.4 && one.rsi_ma === 26.9
+    && one.candle_tf === '30' && one.rsi2 === null && one.rsi2_tf === null && one.rsi_low === 24.1, JSON.stringify(one));
+  check('…its Telegram has no second-RSI line', !formatTvSetupAlert(one!, 'NASDAQ:NCPL', null).includes('MA ?')
+    && formatTvSetupAlert(one!, 'NASDAQ:NCPL', null).includes('30m RSI 28.4 · MA 26.9 · low 24.1'));
   check('…a 1D signal RSI ("D" reads as "1D")', parseTvMessage('RSI X 1 | rsi D 25.0 ma 24.0 | low 20 | candle 360 | tf 30S')?.rsi_tf === '1D');
   check('…JSON', parseTvMessage({ stage: 'rsi', ticker: 'XTND', rsi_tf: '720', rsi: 29.2, rsi_ma: 27, low: 22.1, candle: '360', late: true })?.rsi_low === 22.1);
   check('…a ticker can\'t pass for a field ("| rsi" needs a timeframe, a value and "ma")',
@@ -476,7 +481,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v32', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v33', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -504,13 +509,12 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if vRtArmed and (vRtS or not vCarry)', 'not (gNewDay and (vSFired or not vCarry))',
     'alert(vbMsg(v2FireS, v2FireM, v2FireY', 'alert(vbMsg(v4FireS', 'alert(vbRtMsg(v3RtS', 'vbLower    = vlOk and vbShow and timeframe.period == vlCndl',
     // v32: the RSI cross — 12h RSI over its SMA-14 while oversold, judged at the 6h close from requests (any chart), the 30s alert
-    '"RSI "', '" | rsi " + rsTfA', '" ma "', '" | rsi " + rsTfB', '" | low "', '" | candle " + rsCheck', '" | late"',
-    'input.timeframe("360", "RSI: checked at the close', 'input.timeframe("720", "RSI: the signal RSI', 'input.timeframe("180", "RSI: the second RSI',
+    '"RSI "', '" | rsi " + rsTfA', '" ma "', '" | low "', '" | candle " + rsCheck', '" | late"',
+    'input.timeframe("360", "RSI: checked at the close', 'input.timeframe("720", "RSI: the RSI\'s timeframe',
     'float up = ta.rma(math.max(ch, 0), len)', 'float dn = ta.rma(-math.min(ch, 0), len)', '[close[1], up[1], dn[1], sm[1], lo[1]]',
     'request.security(rsSym, rsTfA, rsState(rsLen, rsMaLen, rsOsN), lookahead = barmerge.lookahead_on)',
-    'request.security(rsSym, rsTfB, rsState(rsLen, rsMaLen, 1), lookahead = barmerge.lookahead_on)',
     '[r, (sm + r) / rsMaLen]', 'rsOnTime = time_close == time_close(rsCheck)', 'rsPrevA <= rsPrevMa and rsSA > rsSMa',
-    'rsSLo <= rsOs and (not rsNeedB or rsSB > rsSMb) and inWindow', 'if rsFire and timeframe.period == vbTf',
+    'bool rsFire    = rsCrossUp and rsSLo <= rsOs and inWindow', 'if rsFire and timeframe.period == vbTf',
     '"RSI cross (v32)"', '"RSI cross, late close (v32)"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
@@ -529,8 +533,10 @@ console.log('Contract — the Pine script still emits what the parser reads');
       && at('vbRtCancel = input.bool') < at('vbTf       = input.timeframe'));
   check('v32: the RSI inputs come after the last v31 one, in order', at('mvSrc      = input.string') > 0
     && at('mvSrc      = input.string') < at('rsOn    = input.bool') && at('rsOn    = input.bool') < at('rsCheck = input.timeframe')
-    && at('rsCheck = input.timeframe') < at('rsNeedB = input.bool')
-    && (pine.slice(at('rsNeedB = input.bool') + 'rsNeedB = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
+    && at('rsCheck = input.timeframe') < at('rsOsN   = input.int')
+    && (pine.slice(at('rsOsN   = input.int') + 'rsOsN   = input.int'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
+  // v33: one RSI — the second RSI and its "also require" switch are gone
+  for (const gone of ['rsTfB', 'rsNeedB', 'rsSB', 'rsMaB', '"RSI: the second', 'also require the second']) check(`v33: script no longer has ${gone}`, !pine.includes(gone));
   // v27 removed RECLAIM and the BB breakout: none of their messages or inputs are left.
   for (const gone of ['"FORMING"', '"READY"', '"GO"', '"TOUCH"', '"BREAKOUT"', '"TRIGGERED"', '" | basis "', '" | path "', '" | via "',
     '" | trigger "', '" | run30 +"', '" | early +"', 'rcOn', 'boOn', 'reclaimConds', 'alertcondition(']) {
