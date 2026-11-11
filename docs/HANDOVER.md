@@ -243,6 +243,31 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-10 (15:00–16:00 ET) — AUDIT OF THE PINE SCRIPT (v33, nothing changed; fixes await the operator's go).** Own line-by-line
+read + an independent subagent read + live `tier_events`. The maths holds (live 30m RSI alerts match the plain rule on Yahoo bars
+where the feeds are comparable, e.g. SDEV 53.3 / 36.7 vs 52.7 / 36.8; no look-ahead leak; no runtime-error path; 9 requests).
+Findings, by weight:
+1. **Day-boundary RETEST** (`vbStep`, the late judgment runs before the new-day disarm, and `vRtCount` is zeroed after its
+   increment): 153 rows with `retest 0` since 10-30 — 1D 96 (96 of 100 daily-lane retests arrive the next day), 240: 41, 60: 13,
+   2: 2, 30: 1. Lanes under 4h should send nothing (the retest ends with the day).
+2. **Late alerts on thin names** (the script runs only when a bar exists; the operator's feed is partial): 11-10, RSI 30 / 30:
+   40 of 55 `late`, 10 of 55 ten minutes or more after the candle closed; RETEST on 30m candles: 55 of 93 over a minute after
+   the close, 13 over ten minutes. RETEST messages carry no `late` token (RSI's do).
+3. A late RETEST's message returns `vRtS / vRtM / vRtY` after the re-arm (wrong line when the retest candle is itself a VB on
+   another line) and mixes the old candle's price with the new bar's lines and percentages.
+4. RSI: the on-time branch pre-empts the late sample (`if / else if`), so a check candle can be skipped (rare).
+5. RSI marks are drawn, wrong, on charts above the check timeframe (30m RSI on the 1h / 4h charts): no guard.
+6. Lane 4 (1D): its candle is the 04:00–20:00 extended day, not the daily chart's regular-session candle (147 of 510 daily-lane
+   crosses fired outside 09:30–16:00); `timeframe.main_period == "1D"` may never match a daily chart ("D"), unverified. The lane
+   has sent nothing since 11-06 (off in the operator's alerts).
+7. The default 45S band can't be built exactly from 30s bars (every other close 15 s late); the operator runs 30S.
+8. TradingView stops a watchlist symbol at 15 triggers in 3 minutes (1,000 for the list); our per-alert per-symbol maximum is 11.
+9. Cosmetic: stale header ("Two setups"), the `vbRtOn` label (v28's rule), month / year lines not drawn when only a lane uses
+   them, stale month / year lines on big-chart history without 30s intrabars.
+Proposed v34: 1, 3, 4, 5, 7, 9 and a `| late` token on RETEST (+ dashboard "N min late"); the operator to choose whether a 4h /
+1D lane's overnight RETEST is kept. Operator's settings seen in the messages on 11-10: RSI 30 / 30 on v33, oversold 30 (lows
+24–29.8), main lane tried on 30 / 2 / 1 / 5 / 3-minute candles with a 30S band, lanes 60 / 10 and 240 / 30 on.
+
 **2026-11-10 (07:40 ET) — SCRIPT v33: ONE RSI.** The operator: the two-RSI experiment (12h + 3h) failed; keep one RSI, drop the
 "also require" switch, and check a 30m RSI checked at the 30m close. Removed `rsTfB` / `rsNeedB` (the RSI group's later inputs shift
 one place: the operator re-sets length / MA / oversold / lookback once). Replica `pinesim.simulate_rsi` + `selftest_rsi`, real 2m bars
