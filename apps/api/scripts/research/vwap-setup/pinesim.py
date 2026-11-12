@@ -1089,13 +1089,14 @@ def selftest():
 
 
 
-# ── RSI cross (script v32; one RSI since v33) ──────────────────────────────────
+# ── RSI cross (script v32; one RSI since v33) and its DIP (v34) ────────────────
 # The script reads each RSI timeframe's state after its last finished candle (request.security,
 # lookahead on + [1]) and adds the chart bar's close as the open candle, then samples it when a
 # chart bar closes a "check" candle (or one bar late if that bar had no trades). A signal: above
 # its MA now, at or under it at the previous check, and the RSI at or under `os` now or within
 # its last `os_n` finished candles. TradingView's RSI: ta.rma seeded with the SMA of the first n.
-RSI_DEFAULTS = dict(sig_min=720, check_min=360, n=14, ma_n=14, os=30.0, os_n=6)
+RSI_DEFAULTS = dict(sig_min=720, check_min=360, n=14, ma_n=14, os=30.0, os_n=6,
+                    dip_wait=16, dip_max=2)   # v34: the DIP's dials (rsDipWait, rsDipMax)
 
 
 def _rsi_value(up, dn):
@@ -1162,23 +1163,121 @@ def rsi_crosses_direct(candles, p=None):
     return out
 
 
-def simulate_rsi(bars, chart_min, p=None):
-    """The script's RSI section on chart bars of `chart_min` minutes → [(check candle start, late)]."""
+class _RsiSetup:
+    """The script's `RsiSetup` type and its three methods (v34), one step per sampled candle close."""
+    def __init__(self, p):
+        self.p = p
+        self.prevA = self.prevMa = self.prevR = None
+        self.armed, self.age, self.in_dip = False, 0, False
+        self.lowR, self.low_new, self.low_px, self.n = None, False, None, 0
+
+    def check_cross(self, r, ma, lo):
+        up = self.prevA is not None and r is not None and self.prevA <= self.prevMa and r > ma and lo <= self.p['os']
+        if r is not None:
+            self.prevA, self.prevMa = r, ma
+        return up
+
+    def arm_dip(self):
+        self.armed, self.age, self.in_dip = True, 0, False
+        self.lowR, self.low_new, self.low_px, self.n = None, False, None, 0
+
+    def step_dip(self, r, ma, c_low):
+        """→ 0 nothing, 1 the dip starts, 2 DIP."""
+        ev = 0
+        if r is None or ma is None:
+            return ev
+        if self.armed:
+            self.age += 1
+            if not self.in_dip:
+                if r < ma:
+                    self.in_dip, self.lowR, self.low_new, self.low_px, self.n = True, r, True, c_low, 0
+                    ev = 1
+                elif self.p['dip_wait'] > 0 and self.age >= self.p['dip_wait']:
+                    self.armed = False
+            else:
+                self.low_px = c_low if self.low_px is None else min(self.low_px, c_low)
+                rose = self.prevR is not None and r > self.prevR
+                if ((rose and self.low_new) or (r > ma and self.n == 0)) and self.n < self.p['dip_max']:
+                    self.n += 1
+                    ev = 2
+                if r > ma:
+                    self.armed = self.in_dip = False
+                elif r < self.lowR:
+                    self.lowR, self.low_new = r, True
+                else:
+                    self.low_new = False
+        self.prevR = r
+        return ev
+
+
+def _rsi_series(candles, p):
+    """Per candle of the RSI's timeframe: (rsi, its SMA, the lowest RSI over it and the `os_n` before) or None."""
+    st = rsi_states([c['c'] for c in candles], p['n'])
+    rsi = [None if x is None else x[2] for x in st]
+    out = []
+    for i in range(len(candles)):
+        win = rsi[i - p['ma_n'] + 1:i + 1] if i >= p['ma_n'] - 1 else []
+        if len(win) < p['ma_n'] or any(r is None for r in win):
+            out.append(None)
+            continue
+        low = min([r for r in rsi[max(0, i - p['os_n']):i] if r is not None] + [rsi[i]]) if p['os_n'] > 0 else rsi[i]
+        out.append((rsi[i], sum(win) / p['ma_n'], low))
+    return out
+
+
+def rsi_rule_direct(candles, p=None):
+    """The plain rule (v34) on the RSI timeframe's own candles, for a check timeframe that is a multiple
+    of it: the RSI as it stands at each check candle's close (its last candle there) crosses above its
+    SMA while oversold → RSI; then, candle by candle, the dip under the SMA and its turns up → DIP.
+    → dict(crosses=[check candle start], starts=[candle start], dips=[(candle start, n, lowest price, age)])."""
     p = dict(RSI_DEFAULTS, **(p or {}))
-    sig = resample_session(bars, p['sig_min']) if p['sig_min'] != chart_min else [dict(b) for b in bars]
+    assert p['check_min'] % p['sig_min'] == 0
+    ser = _rsi_series(candles, p)
+    s = _RsiSetup(p)
+    out = dict(crosses=[], starts=[], dips=[])
+    for i, c in enumerate(candles):
+        chk = _candle_start(c['t'], p['check_min'])
+        last_in_check = i + 1 == len(candles) or _candle_start(candles[i + 1]['t'], p['check_min']) != chk
+        r, ma, lo = ser[i] if ser[i] is not None else (None, None, None)
+        ev = s.step_dip(r, ma, c['l'])
+        if ev == 1:
+            out['starts'].append(c['t'])
+        if ev == 2:
+            out['dips'].append((c['t'], s.n, s.low_px, s.age))
+        if last_in_check and s.check_cross(r, ma, lo):
+            out['crosses'].append(chk)
+            s.arm_dip()
+    return out
+
+
+def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
+    """The script's RSI section (v34) on chart bars of `chart_min` minutes → [(check candle start, late)],
+    or with full=True a dict: crosses, starts [(RSI candle start)], dips [(RSI candle start, late, n,
+    lowest price, age)], both (bars that sampled a late and an on-time candle of one kind), late_c /
+    late_a (late samples of check / RSI candles). `fine`: the bars the RSI's candles are really made
+    of, for a chart whose bars don't divide the RSI's timeframe (the request reads true candles)."""
+    p = dict(RSI_DEFAULTS, **(p or {}))
+    cross_ok = chart_min <= p['sig_min'] and p['check_min'] % chart_min == 0
+    dip_ok = cross_ok and p['sig_min'] % chart_min == 0
+    sig = resample_session(fine or bars, p['sig_min']) if fine or p['sig_min'] != chart_min else [dict(b) for b in bars]
     st = rsi_states([c['c'] for c in sig], p['n'])
     rsi_hist = [None if x is None else x[2] for x in st]
     starts = [c['t'] for c in sig]
-    out, prev_sample, done = [], None, None
-    prev_live, prev_check_t = None, None
-    j = 0   # finished signal candles before the current chart bar's candle
+    s = _RsiSetup(p)
+    out = dict(crosses=[], starts=[], dips=[], both=0, late_c=0, late_a=0)
+    done_c = done_a = None
+    prev_live, prev_tc, prev_ta = None, None, None
+    c_low = c_low_p = None
+    step = datetime.timedelta(minutes=chart_min)
+    j = 0   # finished RSI candles before the current chart bar's candle
     for b in bars:
         t = b['t']
-        cur = _candle_start(t, p['sig_min'])
-        while j < len(starts) and starts[j] < cur:
+        ta = _candle_start(t, p['sig_min'])
+        tc = _candle_start(t, p['check_min'])
+        while j < len(starts) and starts[j] < ta:
             j += 1
         live = None
-        if j >= 1 and st[j - 1] is not None and j - 1 >= p['ma_n'] - 1 and all(r is not None for r in rsi_hist[j - p['ma_n']:j - 1 + 1][-(p['ma_n'] - 1):]):
+        if j >= 1 and st[j - 1] is not None and j >= p['ma_n'] and all(r is not None for r in rsi_hist[j - (p['ma_n'] - 1):j]):
             up, dn, _ = st[j - 1]
             ch = b['c'] - sig[j - 1]['c']
             u = (up * (p['n'] - 1) + max(ch, 0.0)) / p['n']
@@ -1187,37 +1286,75 @@ def simulate_rsi(bars, chart_min, p=None):
             ma = (sum(rsi_hist[j - (p['ma_n'] - 1):j]) + r) / p['ma_n']
             lows = [x for x in rsi_hist[max(0, j - p['os_n']):j] if x is not None] if p['os_n'] > 0 else []
             live = (r, ma, min(lows + [r]))
-        check_t = _candle_start(t, p['check_min'])
-        closes_check = _candle_start(t + datetime.timedelta(minutes=chart_min), p['check_min']) != check_t or chart_min >= p['check_min']
-        sample, late = None, False
-        if closes_check and done != check_t:
-            sample, done = (check_t, live), check_t
-        elif prev_check_t is not None and check_t != prev_check_t and done != prev_check_t:
-            sample, done, late = (prev_check_t, prev_live), prev_check_t, True
-        if sample and sample[1] is not None:
-            r, ma, low = sample[1]
-            if prev_sample is not None and prev_sample[0] <= prev_sample[1] and r > ma and low <= p['os']:
-                out.append((sample[0], late))
-            prev_sample = (r, ma)
-        prev_live, prev_check_t = live, check_t
-    return out
+        if prev_ta is None or ta != prev_ta:
+            c_low_p, c_low = c_low, b['l']
+        else:
+            c_low = min(c_low, b['l'])
+        end_c = _candle_start(t + step, p['check_min']) != tc or chart_min >= p['check_min']
+        end_a = _candle_start(t + step, p['sig_min']) != ta or chart_min >= p['sig_min']
+        late_c = prev_tc is not None and tc != prev_tc and done_c != prev_tc
+        late_a = prev_ta is not None and ta != prev_ta and done_a != prev_ta
+        none3 = (None, None, None)
+        if cross_ok:
+            if dip_ok and late_a:
+                out['late_a'] += 1
+                r, ma, _ = prev_live or none3
+                ev = s.step_dip(r, ma, c_low_p)
+                done_a = prev_ta
+                if ev == 1:
+                    out['starts'].append(prev_ta)
+                if ev == 2:
+                    out['dips'].append((prev_ta, True, s.n, s.low_px, s.age))
+            if late_c:
+                out['late_c'] += 1
+                r, ma, lo = prev_live or none3
+                fired = s.check_cross(r, ma, lo)
+                done_c = prev_tc
+                if fired:
+                    out['crosses'].append((prev_tc, True))
+                    s.arm_dip()
+            if dip_ok and end_a and done_a != ta:
+                out['both'] += 1 if late_a else 0
+                r, ma, _ = live or none3
+                ev = s.step_dip(r, ma, c_low)
+                done_a = ta
+                if ev == 1:
+                    out['starts'].append(ta)
+                if ev == 2:
+                    out['dips'].append((ta, False, s.n, s.low_px, s.age))
+            if end_c and done_c != tc:
+                out['both'] += 1 if late_c else 0
+                r, ma, lo = live or none3
+                fired = s.check_cross(r, ma, lo)
+                done_c = tc
+                if fired:
+                    out['crosses'].append((tc, False))
+                    s.arm_dip()
+        prev_live, prev_tc, prev_ta = live, tc, ta
+    return out if full else out['crosses']
 
 
 def selftest_rsi():
-    """v33 RSI cross: the replica of the script's sampling gives the plain rule's marks — a 30m RSI
-    checked at the 30m close, on a 30m chart, a 2m chart and a 1m chart with missing minutes
-    (those come a bar late, on the same candle)."""
+    """The RSI cross (v33) and its DIP (v34): the replica of the script's sampling gives the plain
+    rule's marks on every chart whose bars line up — a 30m RSI checked at the 30m close; a 15m RSI
+    checked at the 1h close with its dips; a 12h RSI at the 6h close."""
     import datetime as dt, math, random
     rnd = random.Random(7)
     t0 = dt.datetime(2026, 9, 1, 4, 0, tzinfo=ET)
     bars, px = [], 10.0
     for day in range(25):
         drift = rnd.choice([-0.0012, -0.0008, 0.0006, 0.0010])
+        thin = None
         for m in range(240, 1200):
             px *= math.exp(drift + rnd.gauss(0, 0.004))
+            if m % 15 == 0:
+                thin = rnd.random() < 0.06            # a quarter-hour with a single print, in its last minute
+            last = day == 24 and m == 1199             # the series ends on a print (a late sample needs a later bar)
+            if thin and m % 15 != 14:
+                continue
             if m % 30 != 29 and rnd.random() < 0.15:      # thin tape: some minutes have no trades…
                 continue
-            if day % 3 == 0 and m % 30 == 29 and rnd.random() < 0.5:
+            if day % 3 == 0 and m % 15 == 14 and not thin and not last and rnd.random() < 0.5:
                 continue                                   # …sometimes a candle's last minute too
             t = t0 + dt.timedelta(days=day, minutes=m - 240)
             bars.append({'t': t, 'o': px, 'h': px * 1.001, 'l': px * 0.999, 'c': px, 'v': 100})
@@ -1225,12 +1362,40 @@ def selftest_rsi():
     want = rsi_crosses_direct(resample_session(bars, 30), p)
     on30 = simulate_rsi(resample_session(bars, 30), 30, p)
     on2 = simulate_rsi(resample_session(bars, 2), 2, p)
-    on1 = simulate_rsi(bars, 1, p)
+    f1 = simulate_rsi(bars, 1, p, full=True)
+    on1 = f1['crosses']
     same = lambda got: [t for t, _ in got] == want
-    late1 = sum(1 for _, late in on1 if late)
-    ok = len(want) >= 5 and same(on30) and same(on2) and same(on1) and not any(l for _, l in on30) and late1 > 0
+    ok = (len(want) >= 5 and same(on30) and same(on2) and same(on1) and not any(l for _, l in on30) and f1['late_c'] > 0
+          and rsi_rule_direct(resample_session(bars, 30), p)['crosses'] == want)
     print(f'RSI cross (v33), 30m RSI at the 30m close: {len(want)} marks by the plain rule; the script on a 30m chart '
-          f'{len(on30)}, 2m {len(on2)}, 1m {len(on1)} ({late1} a bar late)', '→', 'OK' if ok else 'UNEXPECTED')
+          f"{len(on30)}, 2m {len(on2)}, 1m {len(on1)} ({f1['late_c']} of its candles sampled a bar late)", '→', 'OK' if ok else 'UNEXPECTED')
+    # v34 DIP, the operator's settings (a 15m RSI checked at the 1h close): the plain rule on 15m candles
+    # against the script on 15m, 5m, 3m and 1m charts — the same RSI marks, dip starts and DIPs (candle,
+    # number, lowest price, candles since the RSI cross); a 10m chart keeps the RSI marks and draws no DIP.
+    p3 = dict(sig_min=15, check_min=60, os=38.0)
+    d = rsi_rule_direct(resample_session(bars, 15), p3)
+    ok3, shown = len(d['crosses']) >= 5 and len(d['dips']) >= 5 and any(n == 2 for _, n, _, _ in d['dips']), []
+    for cm in (15, 5, 3, 1):
+        g = simulate_rsi(resample_session(bars, cm) if cm > 1 else bars, cm, p3, full=True)
+        ok3 = (ok3 and [t for t, _ in g['crosses']] == d['crosses'] and g['starts'] == d['starts']
+               and [(t, n, lp, age) for t, _, n, lp, age in g['dips']] == d['dips'])
+        shown.append(f"{cm}m {len(g['crosses'])} / {len(g['dips'])}" + (f" ({sum(1 for x in g['dips'] if x[1])} late, {g['both']} bars sampling two)" if cm == 1 else ''))
+    one = simulate_rsi(bars, 1, p3, full=True)
+    ten = simulate_rsi(resample_session(bars, 10), 10, p3, full=True, fine=bars)
+    hour = simulate_rsi(resample_session(bars, 60), 60, p3, full=True)
+    # (on the 10m chart the RSI marks are right when the hour's last 10 minutes traded; no DIP marks there)
+    ten_same = len(set(d['crosses']) & {t for t, _ in ten['crosses']})
+    ok3 = (ok3 and one['both'] > 0 and one['late_a'] > 0 and ten_same >= len(d['crosses']) - 1
+           and ten['dips'] == [] and hour['crosses'] == [] and hour['dips'] == [])
+    print(f"RSI dip (v34), 15m RSI at the 1h close: {len(d['crosses'])} RSI / {len(d['starts'])} dips / {len(d['dips'])} DIP by the plain rule; "
+          f"the script: {', '.join(shown)}; 10m chart {ten_same} of the RSI marks / {len(ten['dips'])} DIP, 1h chart none", '→', 'OK' if ok3 else 'UNEXPECTED')
+    # the dip's dials: off → RSI marks only; one signal per dip; a dip that must start at once
+    off = simulate_rsi(bars, 1, dict(p3, dip_wait=1), full=True)
+    cap = simulate_rsi(bars, 1, dict(p3, dip_max=1), full=True)
+    ok4 = (len(off['starts']) < len(one['starts'])
+           and all(n == 1 for _, _, n, _, _ in cap['dips']) and len(cap['dips']) < len(one['dips']))
+    print(f"…dials: at most 1 per dip → {len(cap['dips'])} DIP (of {len(one['dips'])}); must start on the next candle → {len(off['starts'])} dips (of {len(one['starts'])})",
+          '→', 'OK' if ok4 else 'UNEXPECTED')
     # v32's default, a 12h RSI checked at the 6h close: the 2m chart marks what the 6h chart marks
     # (four months of the same kind of tape, so the 12h RSI has room to swing)
     rnd2 = random.Random(11)
@@ -1245,7 +1410,7 @@ def selftest_rsi():
     a, b = simulate_rsi(long, 2, p2), simulate_rsi(resample_session(long, 360), 360, p2)
     ok2 = len(a) >= 2 and [t for t, _ in a] == [t for t, _ in b]
     print(f'…12h RSI at the 6h close, 2m chart vs 6h chart: {len(a)} / {len(b)} marks', '→', 'OK' if ok2 else 'UNEXPECTED')
-    return ok and ok2
+    return ok and ok2 and ok3 and ok4
 
 if __name__ == '__main__':
     raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb() & selftest_rsi()) else 1)

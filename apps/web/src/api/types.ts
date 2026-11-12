@@ -338,9 +338,14 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // closes, price comes back to the line it crossed and a 30s candle closes green
 // above it. It replaced v25–v27's LEVEL / BREAK (the VB candle's high as a trigger).
 // RSI (script v32, for longer trades): the 12h RSI crossed above its MA after being oversold,
-// judged at a 6h candle's close.
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi'];
+// judged at a 6h candle's close. DIP (script v34): after an RSI cross, the RSI closed back under
+// its MA on its own timeframe and turned up — the pullback entry. It rides the RSI's ⚙ switch.
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip'];
+// The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
+export function stageSwitch(stage: TvStage): TvStage {
+  return stage === 'dip' ? 'rsi' : stage;
+}
 // Old days in History still hold rows of removed stages (v1–v26 RECLAIM and the BB
 // breakout, v25–v27 LEVEL / BREAK); they're skipped.
 export function isTvStage(s: unknown): s is TvStage {
@@ -390,8 +395,11 @@ export interface TvSetupInfo {
   rsi2_tf?: string | null;    // the second RSI ("180" = 3h)
   rsi2?: number | null;
   rsi2_ma?: number | null;
-  rsi_low?: number | null;    // the signal RSI's lowest at the cross or within its last N candles
+  rsi_low?: number | null;    // the signal RSI's lowest at the cross or within its last N candles (DIP: the dip's lowest RSI)
   late?: boolean;
+  // RSI dip (script v34): rsi / rsi_ma at the turn, stop = under the dip's lowest price
+  dip_n?: number | null;      // the signal's number in this dip
+  since_n?: number | null;    // the RSI's candles since the RSI cross
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

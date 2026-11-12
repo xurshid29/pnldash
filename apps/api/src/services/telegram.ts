@@ -43,6 +43,7 @@ export type AlertComponent =
   | 'tv_cross'      // 📐 VWAP + BB cross (script v21): a candle crossed over the session VWAP and the BB upper band
   | 'tv_retest'     // 📐 VB retest (script v28): back at the VWAP line after the VB candle, and bounced
   | 'tv_rsi'        // 📐 RSI cross (script v32): the 12h RSI crossed above its MA after being oversold
+  | 'tv_dip'        // 📐 RSI dip (script v34): after an RSI cross, the RSI dipped under its MA and turned up
   | 'tv_year';      // 📐 any setup message about the year VWAP alone (PULLBACK v14, VB v22)
 let disabledAlerts: Set<string> | null = null;
 export function alertDisabled(component: AlertComponent): boolean {

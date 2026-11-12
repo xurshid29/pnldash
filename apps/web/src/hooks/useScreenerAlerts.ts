@@ -197,7 +197,7 @@ function fmtAlertPrice(p: number | null): string {
 }
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -230,6 +230,14 @@ export function opportunityTitle(a: OpportunityAlert): string {
       return `${s.on_screen ? '⭐ ' : ''}📐 RSI ${a.ticker} — ${shortTf(s.rsi_tf)} RSI ${one(s.rsi)} crossed its MA ${one(s.rsi_ma)}`
         + ` (oversold${s.rsi_low != null ? `, low ${one(s.rsi_low)}` : ''})`;
     }
+    // v34: "📐 DIP OMH — 15m RSI turned up under its MA (31.4 / 31.3, dip low 30.9) · stop $7.89 · #1"
+    if (s.stage === 'dip') {
+      const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
+      const over = s.rsi != null && s.rsi_ma != null && s.rsi > s.rsi_ma;
+      return `${s.on_screen ? '⭐ ' : ''}📐 DIP ${a.ticker} — ${shortTf(s.rsi_tf)} RSI turned up ${over ? 'and is back over' : 'under'} its MA`
+        + ` (${one(s.rsi)} / ${one(s.rsi_ma)}${s.rsi_low != null ? `, dip low ${one(s.rsi_low)}` : ''})`
+        + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.dip_n != null ? ` · #${s.dip_n}` : ''}`;
+    }
     // PULLBACK / BROKEN / HELD (the reclaim setup's stages went with script v27)
     const tokens = lineTokens(s.stage, s.line);
     const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
@@ -254,6 +262,14 @@ export function opportunityBody(a: OpportunityAlert): string {
       if (s.candle_tf) rb.push(`at the ${shortTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
       if (a.grade) rb.push(`grade ${a.grade}`);
       return rb.filter(Boolean).join(' · ');
+    }
+    if (s.stage === 'dip') {
+      const db = [fmtAlertPrice(a.price)];
+      if (s.stop != null && a.price != null && a.price > 0) db.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the dip's low`);
+      if (s.since_n != null) db.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the RSI cross`);
+      if (s.candle_tf) db.push(`at the ${shortTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
+      if (a.grade) db.push(`grade ${a.grade}`);
+      return db.filter(Boolean).join(' · ');
     }
     const bits = [fmtAlertPrice(a.price)];
     if (s.svwap != null) bits.push(`sVWAP ${fmtAlertPrice(s.svwap)}`);
@@ -356,7 +372,9 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest')) crossConfirmPing();
+        // (a v34 DIP is an entry signal: the bright pair, on or off Momentum)
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest')
+          || audible.some((a) => a.setup?.stage === 'dip')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('pullback') || audible.some((a) => a.setup?.stage === 'rsi')) setupReadyPing();   // v32 RSI, on or off Momentum
         else if (audible.some((a) => a.kinds.includes('news'))) chime();

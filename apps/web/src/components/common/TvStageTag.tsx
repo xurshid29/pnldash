@@ -10,6 +10,7 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   cross: { label: 'CROSS', color: '#b5f5ec', bg: '#00474f' },
   retest: { label: 'RETEST', color: '#ffffff', bg: '#08979c' },
   rsi: { label: 'RSI', color: '#efdbff', bg: '#391085' },   // v32, purple like its chart marker
+  dip: { label: 'DIP', color: '#ffffff', bg: '#c41d7f' },   // v34, magenta like its chart marker
 };
 
 // The VWAP + BB cross's stages: CROSS (v21) and RETEST (v28).
@@ -57,14 +58,14 @@ export function fmtTf(tf: string | null | undefined): string {
 }
 
 // v21 CROSS / v28 RETEST: "5m/45s" — the candle's timeframe over the band's. v32 RSI: the
-// signal RSI's timeframe ("12h").
+// signal RSI's timeframe ("12h"); its v34 DIP the same.
 export function crossTfText(s: TvSetupInfo): string | null {
-  if (s.stage === 'rsi') return s.rsi_tf ? fmtTf(s.rsi_tf) : null;
+  if (s.stage === 'rsi' || s.stage === 'dip') return s.rsi_tf ? fmtTf(s.rsi_tf) : null;
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -95,12 +96,22 @@ export function TvStageTag({ stage, dim, line, touch, tfs }: {
 }
 
 // v28 RETEST: "retest · stop $17.09 (−1.1%)" — the stop under the pullback's low,
-// against the RETEST price.
+// against the RETEST price. v34 DIP: "dip · stop $7.89 (−2.5%)", under the dip's low.
 export function retestStopText(s: TvSetupInfo, price: number | null | undefined): string | null {
   if (s.stop == null) return null;
   const px = (p: number) => `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
   const pct = price != null && price > 0 ? ` (${fmtSignedPct((s.stop / price - 1) * 100).replace('-', '−')})` : '';
-  return `retest · stop ${px(s.stop)}${pct}`;
+  return `${s.stage === 'dip' ? 'dip' : 'retest'} · stop ${px(s.stop)}${pct}`;
+}
+
+// v34 DIP: the stop, the RSI against its MA at the turn, the dip's lowest RSI, how long after the RSI cross.
+export function dipText(s: TvSetupInfo, price?: number | null): string {
+  const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
+  const parts = [retestStopText(s, price), `${fmtTf(s.rsi_tf ?? null) || '?'} RSI ${one(s.rsi)} / MA ${one(s.rsi_ma)}`];
+  if (s.rsi_low != null) parts.push(`dip low ${one(s.rsi_low)}`);
+  if (s.since_n != null) parts.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the RSI cross`);
+  if (s.late) parts.push('late');
+  return parts.filter((p): p is string => p != null).join(' · ');
 }
 
 // v32 RSI cross: the signal RSI against its MA, its low, the second RSI, the check timeframe.
@@ -118,6 +129,7 @@ export function rsiText(s: TvSetupInfo): string {
 export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   // v32 RSI: "12h RSI 29.2 / MA 27.0 · low 22.1 · 3h 41.2 / 30.7 · at the 6h close"
   if (s.stage === 'rsi') return rsiText(s);
+  if (s.stage === 'dip') return dipText(s, price);
   // v28 RETEST: the stop, then where price sat against its line
   if (s.stage === 'retest') {
     const parts = [retestStopText(s, price), ...lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t))];

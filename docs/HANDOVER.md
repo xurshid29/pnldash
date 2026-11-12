@@ -243,6 +243,19 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-12 (15:25–17:00 ET) — SCRIPT v34: THE RSI DIP.** The operator runs the RSI cross as a 15m RSI checked at the 1h close and
+looks for the RSI's drop under its MA afterwards on a 15m chart (OMH 11-11 / 11-12): "add a signal when RSI cross signal fires and rsi
+purple line crosses down the smoothing line (and find the deepest part of it somehow)". Built as **DIP** (`docs/vwap-setup.md` §17.2):
+armed by an RSI cross, sampled at the RSI's own candles' closes; the dip starts when the RSI closes under its MA (within 16 candles),
+DIP = the first close with the RSI higher than the candle before after the dip's low (a lower low and another rise → #2, max 2), stop
+a tick under the dip's low. Stage `dip` rides the RSI ⚙ switch (nothing for the operator to tick), `tv_dip` on Telegram, magenta pill,
+entry sound. Two audit items fixed inside the RSI section (4: late samples first; 5: marks only on charts whose bars line up — DIP
+marks need a chart dividing the RSI's timeframe, so not the operator's 10m chart with a 15m RSI). Replica + six names' real 5m bars
+agree with the plain rule; on OMH's night it gives the dip at 01:30 and DIP at 02:00 Tashkent, where the operator marked 01:20–02:00.
+Not graded. **The audit's other items (1 day-boundary RETEST, 3 late-RETEST message, 6 daily lane, 7 45S default, 9 labels) are still
+open, unanswered by the operator.** The session went to manual permission mode mid-way (a heredoc edit was refused by the shell's
+safety check): file edits go through the Edit tool.
+
 **2026-11-10 (15:00–16:00 ET) — AUDIT OF THE PINE SCRIPT (v33, nothing changed; fixes await the operator's go).** Own line-by-line
 read + an independent subagent read + live `tier_events`. The maths holds (live 30m RSI alerts match the plain rule on Yahoo bars
 where the feeds are comparable, e.g. SDEV 53.3 / 36.7 vs 52.7 / 36.8; no look-ahead leak; no runtime-error path; 9 requests).

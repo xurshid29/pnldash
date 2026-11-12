@@ -1131,7 +1131,8 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-29 | v30, the fix | `850fcdc` | Fix, shipped as part of v30. Operator (CLPT on a 1h chart, lane 2 = month + year): a session VB and an RT in one 1h candle. A chart picks the lane whose candle timeframe it is, and v29 read `timeframe.period` for that — inside the replay's `request.security_lower_tf` it is the requested 30S, so every lane's chart replayed the main 5m VB (its session crosses and retests, bunched into 1h bars). Now `timeframe.main_period`, the chart's timeframe in any context. The alerts were never affected (each lane runs on its own on the 30s alert). Released as "v31" for two minutes, then renamed: the operator went from v29 straight to this code (their TradingView save 30), and **since v30 the script's number follows TradingView's version counter** (operator, 10-29: "lets call it v30"). v30 = `1c46d01` + `850fcdc`. |
 | 2026-10-30 | v31 | `a9c46f3` | Operator (ROMA 4h / 1h, 10-28): markers that didn't fit the drawn month line. Since v28 the VB built its month line from this month's hourly bars + today's 30s bars, while the chart drew — and PULLBACK used — TradingView's anchored VWAP on the chart's bars; ROMA 10-28 ~12:00 ET: the 1h chart drew ~5.94, the 30s / 1m alerts reported ~6.35. **"Month VWAP from: 30s bars | Chart bars"** (`mvSrc`, default 30s bars; the operator: "make it configurable as we did for session vwap"): 30s bars builds the drawn line, PULLBACK's and the VB's from the same sums (`anchorsBefore()` returns the month's with the year's); Chart bars = as before. Also: a RETEST judged on the next bar (its candle's closing 30s bar had no trades) is flagged and drawn one bar back on its own plot ("VB retest, late close (v31)"; restyle it like the RT if you restyled that). New input and plot last: no Reset. Deployed 07:14 ET, inside the trading window (an oversight; webhooks kept arriving). Replica: `mv`, the late flag; regression 298 checks. **Paste, recreate both alerts.** |
 | 2026-11-08 | v32 | `8c2079c` | Operator (XTND, DKI on a 6h chart with a 12h and a 3h RSI): a third setup for longer trades, the **RSI cross** (§17): at each 6h close the 12h RSI crosses above its SMA-14 while at or under 30 (now or within its last 6 candles); the 3h RSI in the message, optionally a gate. Built from requests so it works on the 2m chart ("I don't want to switch chart timeframe from 2min to 6h"), sent from the 30s alert, purple RSI marker. New inputs and plots last: no Reset. Server stage `rsi` (announced off Momentum, its own ⚙ switch, `tv_rsi`); sidebar, History, toasts. Untested; no replica. Regression 335 checks. **Paste, recreate both alerts, tick RSI in ⚙.** |
-| 2026-11-10 | v33 | (this commit) | Operator: the two-RSI experiment failed; one RSI, no "also require" (§17.1). Removed the second RSI's input, request and message field; the RSI group's later inputs shift one place (set them once after the paste; no Reset). Replica `simulate_rsi` + `selftest_rsi`: a 30m RSI checked at the 30m close marks the plain rule's crosses on 30m / 2m / 1m charts (and on five names' real 2m bars, 52 of 52). Regression 340 checks. **Paste, set the RSI group, recreate both alerts.** |
+| 2026-11-10 | v33 | `b4babf3` | Operator: the two-RSI experiment failed; one RSI, no "also require" (§17.1). Removed the second RSI's input, request and message field; the RSI group's later inputs shift one place (set them once after the paste; no Reset). Replica `simulate_rsi` + `selftest_rsi`: a 30m RSI checked at the 30m close marks the plain rule's crosses on 30m / 2m / 1m charts (and on five names' real 2m bars, 52 of 52). Regression 340 checks. **Paste, set the RSI group, recreate both alerts.** |
+| 2026-11-12 | v34 | (this commit) | Operator (OMH, a 15m RSI checked at the 1h close): a signal for the pullback after an RSI cross, at "the deepest part". **DIP** (§17.2): armed by an RSI cross, sampled at the RSI's own candles' closes — the dip starts when the RSI closes under its MA, DIP when it then closes higher than the candle before (a lower low and another rise → #2; max 2). Message `DIP … | stop … | dip N | since N`, stop under the dip's low. Three inputs and three plots last: nothing shifts. Server stage `dip` rides the RSI ⚙ switch (`tv_dip` on Telegram); sidebar, History, toasts, the entry sound. Two audit fixes in the RSI section: late samples before on-time ones, and marks only on charts whose bars line up (RSI marks no longer drawn on 1h / 4h charts; DIP marks need bars dividing the RSI's timeframe). Replica `rsi_rule_direct` / `simulate_rsi(full)`; six names' real 5m bars agree (113 DIP). Regression 377 checks. **Paste, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2046,3 +2047,58 @@ and chart timeframe."
     `session.extended`.
 - Candles start at the 04:00 ET open (`_candle_start`): 30m on :00 / :30, 6h at 04:00 / 10:00 /
   16:00, 12h at 04:00 / 16:00.
+
+### 17.2 The DIP after an RSI cross (script v34, 2026-11-12)
+
+The operator (OMH on 11-11 / 11-12, RSI settings: a **15m RSI checked at the 1h close**): "can we
+add a signal when RSI cross signal fires and rsi purple line crosses down the smoothing line (and
+find the deepest part of it somehow) … I'm getting the RSI Cross signals from 1h + 15min rsi
+timeframe and seeking the RSI drop in 15min chart". Built without grading.
+
+- **The rule.** An RSI cross arms it. From then on the script samples the RSI at every close of
+  **its own timeframe's** candles (15m), whatever the check timeframe:
+  - **The dip starts** when the RSI closes under its MA, within `rsDipWait` (16) of the RSI's
+    candles after the cross. The chart gets a small purple ▼ over that bar.
+  - **DIP** is the first candle that closes with the RSI **higher than the candle before** when
+    that candle before made the dip's lowest RSI so far: the low was one candle ago. A lower
+    low followed by another rise gives the next DIP, up to `rsDipMax` (2) per dip. If the RSI
+    gets back over its MA with no DIP sent yet, that close is the DIP.
+  - **The dip is over** when the RSI closes back over its MA. One dip per RSI cross; the next
+    cross arms the next one.
+- **The message**, from the 30s alert only:
+  `DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | tf 30S`
+  - `low` is the dip's lowest RSI, and `stop` a tick under the lowest price since the dip began.
+  - `dip` is the signal's number in this dip, and `since` the RSI's candles since the cross.
+  - `candle` is the RSI's timeframe. `| late` marks a candle judged on the next bar.
+- **How.** The state is a `RsiSetup` object stepped by three methods: `checkCross` at check
+  closes, `stepDip` at the RSI candles' closes, `armDip` on a cross. Each timeframe has its own
+  sampler: on time on the bar that closes the candle, or late on the next bar from `[1]`.
+- **Two fixes from the 11-10 audit ride along.**
+  - A bar takes its late samples before its on-time ones. v33's `else if` skipped an unsampled
+    candle when one bar ended both.
+  - Marks are drawn only where the chart's bars line up. The RSI marks need a chart no bigger
+    than the RSI's timeframe whose bars divide the check timeframe (`rsCrossOk`). The DIP marks
+    also need bars that divide the RSI's timeframe (`rsDipOk`): with a 15m RSI that is a 15m,
+    5m, 3m or 1m chart, not 10m. The 30s alert always qualifies.
+- **Our side** (stage `dip`, fields `rsi_tf` / `rsi` / `rsi_ma` / `rsi_low` / `stop` / `dip_n` /
+  `since_n` / `candle_tf` / `late`):
+  - It has no ⚙ switch of its own and **rides the RSI switch** (`stageSwitch()`), shown as
+    "RSI + DIP", so the operator has nothing to tick. Telegram mute slug `tv_dip`.
+  - It announces off Momentum like the RSI cross. The duplicate key includes the timeframe;
+    there is no cap.
+  - Dashboard: a magenta DIP pill, the row leading with `dip · stop $X (−y%)`, live for an hour
+    and sharing the RSI's thread on the card. "Show only Momentum tickers" keeps it. It plays
+    the entry sound (the bright pair). History's "RSI + DIP" filter covers both.
+- **Checked** (`pinesim.selftest_rsi`; `rsi_rule_direct` is the plain rule on the RSI's own
+  candles, `simulate_rsi(..., full=True)` the script's sampling):
+  - Thin synthetic tape, a 15m RSI at the 1h close: the plain rule gives 24 RSI / 16 dips / 20
+    DIP. The script gives the same on 15m, 5m, 3m and 1m charts, where the 1m chart had 7 late
+    DIPs and 11 bars sampling two candles. A 10m chart keeps the RSI marks and draws no DIP; a
+    1h chart draws nothing.
+  - Yahoo 5m bars, 08-20 → 11-12, for OMH, NCPL, SDEV, USDE, CLRO and VIVK: 110 RSI, 96 dips
+    and 113 DIP, each name the same as the plain rule.
+  - OMH on the operator's night, in Tashkent time: RSI cross at the 00:00 close, the dip starts
+    at 01:30 (RSI 30.9 / MA 31.0, 8.01), DIP #1 at 02:00 (31.4 / 31.3, 8.09, stop under 7.90).
+    The operator had marked 01:20–02:00 by eye.
+  - Not checked: the Pine itself, which can't be compiled here, and whether a DIP is worth
+    taking.
