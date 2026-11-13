@@ -341,12 +341,13 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // judged at a 6h candle's close. DIP (script v34): after an RSI cross, the RSI closed back under
 // its MA on its own timeframe and turned up — the pullback entry. It rides the RSI's ⚙ switch.
 // EMA (script v35): the EMA of a timeframe's closes (3m, length 9) crossed above a VWAP line,
-// judged at that timeframe's candle close.
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'ema';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'ema'];
+// judged at that timeframe's candle close. BOUNCE (script v37): after an EMA cross, a pullback to
+// the EMA or the VWAP and a green close above the EMA — the pullback entry. It rides the EMA's ⚙ switch.
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'ema' | 'bounce';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'ema', 'bounce'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
 export function stageSwitch(stage: TvStage): TvStage {
-  return stage === 'dip' ? 'rsi' : stage;
+  return stage === 'dip' ? 'rsi' : stage === 'bounce' ? 'ema' : stage;
 }
 // Old days in History still hold rows of removed stages (v1–v26 RECLAIM and the BB
 // breakout, v25–v27 LEVEL / BREAK); they're skipped.
@@ -409,6 +410,9 @@ export interface TvSetupInfo {
   under_n?: number | null;    // candles in a row the EMA had been at or under the line before the cross
   flips_n?: number | null;    // EMA / line crossings in the 20 candles before
   weak?: boolean;             // the filter calls it weak: stored, never announced, kept out of the live list
+  // EMA bounce (script v37): stop = under the pullback's low, since_n = candles after the cross, weak = its cross was
+  bounce_n?: number | null;   // the day's bounces on the line
+  bounce_from?: 'ema' | 'vwap' | 'ema+vwap' | null;   // what the pullback came down to
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

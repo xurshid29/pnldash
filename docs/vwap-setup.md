@@ -1135,6 +1135,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-12 | v34 | `de282ef` | Operator (OMH, a 15m RSI checked at the 1h close): a signal for the pullback after an RSI cross, at "the deepest part". **DIP** (§17.2): armed by an RSI cross, sampled at the RSI's own candles' closes — the dip starts when the RSI closes under its MA, DIP when it then closes higher than the candle before (a lower low and another rise → #2; max 2). Message `DIP … | stop … | dip N | since N`, stop under the dip's low. Three inputs and three plots last: nothing shifts. Server stage `dip` rides the RSI ⚙ switch (`tv_dip` on Telegram); sidebar, History, toasts, the entry sound. Two audit fixes in the RSI section: late samples before on-time ones, and marks only on charts whose bars line up (RSI marks no longer drawn on 1h / 4h charts; DIP marks need bars dividing the RSI's timeframe). Replica `rsi_rule_direct` / `simulate_rsi(full)`; six names' real 5m bars agree (113 DIP). Regression 377 checks. **Paste, recreate both alerts.** |
 | 2026-11-13 | v35 | `5a8d40b` | Operator: "notified when ema crosses up the vwap (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". A fourth setup, the **EMA cross over VWAP** (§18): the EMA 9 of 3m closes above the session VWAP at a 3m close after being at or under it at the close before (month / year lines as switches), from a request like the RSI, sent from the 30s alert; gainers only; the day's first candle can't fire; a late sample across the day's end isn't announced. Message `EMA … | ema 9 x | line … | candle 3 | cross N`. Eight inputs and six plots last: nothing shifts. Server stage `ema`: announced like CROSS (⚙ switch EMA, Momentum or a +30% day high, `em_cap` 3 per line a day, `tv_ema`); sidebar, History, toasts. Replica `ema_rule_direct` / `simulate_ema`: the plain rule's crosses on 3m and 1m charts and on six names' real 1m bars. Regression 414 checks. **Paste, recreate both alerts, tick EMA in ⚙.** |
 | 2026-11-13 | v36 | `7de1369` | Operator (PARA, 3m): "is there anyway we can filter/optimize the false ones?". Measured first (`research/ema-vwap`, 3,768 crosses, in / out of sample): about half close back under the VWAP within 5 candles and the plain cross loses; the hour, a short stay under the line and chop before the cross mark the worse ones in both halves; the video's ADX and volume filters don't. **The EMA filter** (§18.1): a cross is **weak** when its candle opened before 07:00 New York, the EMA had been under the line for fewer than 5 candles, or the two crossed more than 2 times in the 20 candles before. Every cross is still sent, with `| under N | flips N`, and `| weak` when weak; a weak one takes no `cross N`, gets a gray `ema` mark, and the server stores it quietly (`why` weak). Four inputs and two plots last: nothing shifts. Dashboard: weak crosses never take a 📐 row; History lists them with "weak". Replica: `_EmaLine` under / ran / flips, `selftest_ema` compares readings and verdicts. Regression 442 checks. **Paste, recreate both alerts.** |
+| 2026-11-13 | v37 | (this commit) | Operator (PARA with v36's marks): "maybe, pullback or bounce from ema and/or vwap can help?". Measured first (`research/ema-vwap/ema_pullback_study.py`): a bounce comes on about 44% of the crosses; those entries are false 35–37% of the time (the cross: 47–49%) and lose −0.06R to −0.10R (the cross: −0.20R to −0.22R), in both halves, on 5m candles and with other waits; still not positive. **BOUNCE** (§18.2, stage `bounce`): a sent cross arms a 10-candle wait; a candle's low comes down to the EMA or the VWAP (within 1%), then that candle or a later one closes green above the EMA; a close under the VWAP, a newer cross or the day's end stops it. Message `BOUNCE … | stop … | from ema+vwap | bounce N | since N`, stop a tick under the pullback's low; `| weak` and a gray mark after a weak cross. Five inputs and four plots last: nothing shifts. Server: rides the EMA ⚙ switch (`tv_bounce` on Telegram), limited like the cross. Dashboard: lime BOUNCE pill, `bounce · stop`, History "EMA + BOUNCE". Replica `ema_bounce_direct` / `simulate_ema(full)`. Regression 493 checks. **Paste, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2217,3 +2218,67 @@ off it is v35. Not checked: the Pine itself on TradingView.
 **To grade** (after a week or two of rows): strong against weak from `tier_events`
 (`meta->>'weak'`), by the study's "false" and by B. If the weak ones aren't worse live, the filter
 goes.
+
+### 18.2 The BOUNCE after a cross (script v37, 2026-11-13)
+
+**The ask** (PARA on 3m with v36's marks): "maybe, pullback or bounce from ema and/or vwap can
+help?"
+
+**Measured first** (`research/ema-vwap/ema_pullback_study.py`, table in its README): the same 3,768
+crosses, and for each the first entry within 10 candles after the cross candle.
+
+- A bounce (a candle's low down to the EMA or the VWAP, then a green close above the EMA) comes
+  on about 44% of the crosses.
+- Those entries close back under the VWAP within 5 candles 37% / 35% of the time (in / out of
+  sample), against 49% / 47% for buying the cross; B is −0.10R / −0.06R against −0.20R / −0.22R.
+- It holds on 5m candles, with a 5 or a 20 candle wait, and with tighter touches. The control (the
+  next green candle, no touch) does no better than the cross per trade in sample.
+- The crosses that never give a bounce are mostly the failures (68–71% false), not runs that got
+  away. No version is positive in both halves.
+
+**The rule** (per line, on the EMA's own candles; stage `bounce`):
+
+1. A **sent** cross arms the wait (`arm()`), weak or strong. A newer cross starts it over.
+2. At each later candle close (`stepBounce()`), in this order:
+   - the candle's low at or under the EMA × (1 + `emBncTolE` %) or the line × (1 + `emBncTolV` %)
+     is a **touch**; from the touch on, the lowest low is kept;
+   - a close under the line ends the wait;
+   - else, after a touch, a close above the candle's open and above the EMA is the **BOUNCE**;
+   - else the wait ends after `emBncWait` candles.
+3. The day's end ends every wait. A late sample across it isn't announced.
+
+One bounce per cross. A bounce after a weak cross is weak: sent with `| weak`, drawn gray, not
+counted in `bounce N`.
+
+**Inputs** (the last five of "EMA cross over VWAP"): `emBncOn` (on), `emBncFrom` ("EMA or VWAP" |
+"EMA" | "VWAP"), `emBncWait` (10), `emBncTolE` (0), `emBncTolV` (1).
+
+**How.** The wait's state lives in `EmaLine` (`armed`, `age`, `hitE`, `hitV`, `lowP`, `weakX`, `bn`).
+The candle's open and low are built from the chart's bars (`emCO` / `emCL`, and `emCOp` / `emCLp`
+for a late sample). On one sample the bounce of an earlier cross is judged and read before the
+cross, which re-arms.
+
+**The message:**
+`BOUNCE PARA 0.1021 | stop 0.0985 | sVWAP 0.0975 (+4.7%) | ema 9 0.099 | line session | from ema+vwap | candle 3 | bounce 1 | since 3 | day high +25% | vwap 30s | tf 30S`
+
+- `stop` = a tick under the pullback's low; `from` = what the pullback came down to; `since N` =
+  candles after the cross candle; `| weak` after `since` when its cross was weak.
+
+**The chart:** a lime **BNC** label; gray **bnc** after a weak cross (four plots, last).
+
+**Our side.** Fields `stop`, `bounce_n`, `since_n`, `bounce_from`, `weak`, and the EMA's
+`candle_tf` / `ema_len` / `ema`.
+
+- It rides the EMA's ⚙ switch (`stageSwitch('bounce') === 'ema'`, shown as **EMA + BOUNCE**), like
+  the DIP rides the RSI's. Telegram mute slug `tv_bounce`.
+- Announced like the cross: Momentum names or a day high ≥ +30%, quiet past `em_cap` (3) on its own
+  `bounce N`, quiet when weak.
+- Dashboard: a lime BOUNCE pill in the EMA's thread, live for 15 minutes, the row leading with
+  `bounce · stop $X (−3.5%)`; the CROSS sound; History filter "EMA + BOUNCE".
+
+**Checked.** `pinesim.selftest_ema`: 37 bounces after 60 crosses by the plain rule
+(`ema_bounce_direct`); the script's sampling (`simulate_ema(full=True)`) gives the same ones, lows,
+counts and weak flags on the 3m chart and on the 1m chart with missing minutes (7 a bar late). Not
+checked: the Pine itself on TradingView.
+
+**To grade** with the filter: bounces against crosses from `tier_events`, strong and weak apart.

@@ -49,7 +49,7 @@ function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   for (const { a, at } of sorted) {
     const s = a.setup!;
     // A v21 CROSS / v28 RETEST comes from one alert: only a copy of the same one merges, not the next.
-    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : s.stage === 'ema' ? `|${emaEventKey(s)}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'dip' ? `|${s.dip_n ?? ''}` : ''}`;
+    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : s.stage === 'ema' || s.stage === 'bounce' ? `|${emaEventKey(s)}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'dip' ? `|${s.dip_n ?? ''}` : ''}`;
     const prev = last.get(k);
     if (prev && at - prev.at <= MERGE_MS) {
       if (s.tf && !prev.tfs.includes(s.tf)) prev.tfs.push(s.tf);
@@ -107,7 +107,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       if (stageFilter === 'cross' && st !== 'cross') return false;
       if (stageFilter === 'retest' && st !== 'retest') return false;
       if (stageFilter === 'rsi' && stageSwitch(st) !== 'rsi') return false;
-      if (stageFilter === 'ema' && st !== 'ema') return false;
+      if (stageFilter === 'ema' && stageSwitch(st) !== 'ema') return false;   // the EMA cross and its BOUNCE
       return !momentumOnly || e.setup.on_screen;
     });
   }, [events, settings, stageFilter, momentumOnly]);
@@ -120,7 +120,9 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const rsis = visible.filter((e) => e.setup.stage === 'rsi').length;
   const dips = visible.filter((e) => e.setup.stage === 'dip').length;
   const emas = visible.filter((e) => e.setup.stage === 'ema').length;
-  const weakEmas = visible.filter((e) => isWeakEma(e.setup)).length;   // v36: the ones the script's filter kept quiet
+  const weakEmas = visible.filter((e) => e.setup.stage === 'ema' && isWeakEma(e.setup)).length;   // v36: the ones the script's filter kept quiet
+  const bounces = visible.filter((e) => e.setup.stage === 'bounce').length;
+  const weakBounces = visible.filter((e) => e.setup.stage === 'bounce' && isWeakEma(e.setup)).length;
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -195,7 +197,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             { label: 'CROSS', value: 'cross' },
             { label: 'RETEST', value: 'retest' },
             { label: 'RSI + DIP', value: 'rsi' },
-            { label: 'EMA', value: 'ema' },
+            { label: 'EMA + BOUNCE', value: 'ema' },
           ]}
         />
         <Checkbox checked={momentumOnly} onChange={(e) => setMomentumOnly(e.target.checked)}>
@@ -211,6 +213,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
               {rsis > 0 && <> · {rsis} RSI</>}
               {dips > 0 && <> · {dips} DIP</>}
               {emas > 0 && <> · {emas} EMA{weakEmas > 0 && <> ({weakEmas} weak)</>}</>}
+              {bounces > 0 && <> · {bounces} BOUNCE{weakBounces > 0 && <> ({weakBounces} weak)</>}</>}
             </>
           )}
         </Text>

@@ -12,6 +12,7 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   rsi: { label: 'RSI', color: '#efdbff', bg: '#391085' },   // v32, purple like its chart marker
   dip: { label: 'DIP', color: '#ffffff', bg: '#c41d7f' },   // v34, magenta like its chart marker
   ema: { label: 'EMA', color: '#1f1f1f', bg: '#fa8c16' },   // v35, orange like its chart marker
+  bounce: { label: 'BOUNCE', color: '#1f1f1f', bg: '#a0d911' },   // v37, lime like its chart marker
 };
 
 // The VWAP + BB cross's stages: CROSS (v21) and RETEST (v28).
@@ -62,28 +63,30 @@ export function fmtTf(tf: string | null | undefined): string {
 // signal RSI's timeframe ("12h"); its v34 DIP the same.
 export function crossTfText(s: TvSetupInfo): string | null {
   if (s.stage === 'rsi' || s.stage === 'dip') return s.rsi_tf ? fmtTf(s.rsi_tf) : null;
-  // v35 EMA cross: "3m/9" — the EMA's timeframe over its length
-  if (s.stage === 'ema') return s.candle_tf ? `${fmtTf(s.candle_tf)}/${s.ema_len ?? '?'}` : null;
+  // v35 EMA cross: "3m/9" — the EMA's timeframe over its length (its v37 BOUNCE the same)
+  if (s.stage === 'ema' || s.stage === 'bounce') return s.candle_tf ? `${fmtTf(s.candle_tf)}/${s.ema_len ?? '?'}` : null;
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
 }
 
 // v36: an EMA cross the script's filter calls weak (too early in the day, the EMA under the line
-// too briefly, or too much crossing before it). Stored and listed in the history, not announced,
-// and never a ticker's live row in the 📐 sidebar.
+// too briefly, or too much crossing before it), and (v37) the BOUNCE after one. Stored and listed
+// in the history, not announced, and never a ticker's live row in the 📐 sidebar.
 export function isWeakEma(s: TvSetupInfo): boolean {
-  return s.stage === 'ema' && s.weak === true;
+  return (s.stage === 'ema' || s.stage === 'bounce') && s.weak === true;
 }
 
-// What tells one EMA cross from the next when merging copies: a weak cross doesn't take a day's
-// number, so two of them carry the same `cross N`.
+// What tells one EMA cross (or bounce) from the next when merging copies: a weak one doesn't take
+// a day's number, so two of them carry the same `cross N` / `bounce N`.
 export function emaEventKey(s: TvSetupInfo): string {
+  if (s.stage === 'bounce') return `${s.bounce_n ?? ''}/${s.since_n ?? ''}/${s.stop ?? ''}/${s.weak ? 'w' : ''}`;
   return `${s.cross_n ?? ''}/${s.under_n ?? ''}/${s.flips_n ?? ''}/${s.weak ? 'w' : ''}`;
 }
 
 // The number beside a stage tag: a pullback's touch, a CROSS's or an EMA cross's number today, a
-// RETEST's, a DIP's. A weak EMA cross has none (the script doesn't count it).
+// RETEST's, a DIP's, a BOUNCE's. A weak EMA cross or bounce has none (the script doesn't count it).
 export function tagNumber(s: TvSetupInfo): number | null {
   if (s.stage === 'ema') return s.weak ? null : s.cross_n ?? null;
+  if (s.stage === 'bounce') return s.weak ? null : s.bounce_n ?? null;
   if (s.stage === 'cross') return s.cross_n ?? null;
   if (s.stage === 'retest') return s.retest_n ?? null;
   if (s.stage === 'dip') return s.dip_n ?? null;
@@ -91,7 +94,7 @@ export function tagNumber(s: TvSetupInfo): number | null {
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2, ema: 1 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2, ema: 1, bounce: 2 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -122,12 +125,25 @@ export function TvStageTag({ stage, dim, line, touch, tfs }: {
 }
 
 // v28 RETEST: "retest · stop $17.09 (−1.1%)" — the stop under the pullback's low,
-// against the RETEST price. v34 DIP: "dip · stop $7.89 (−2.5%)", under the dip's low.
+// against the RETEST price. v34 DIP: "dip · stop $7.89 (−2.5%)", under the dip's low. v37 BOUNCE:
+// "bounce · stop $0.0985 (−3.5%)", under the pullback's low.
 export function retestStopText(s: TvSetupInfo, price: number | null | undefined): string | null {
   if (s.stop == null) return null;
   const px = (p: number) => `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
   const pct = price != null && price > 0 ? ` (${fmtSignedPct((s.stop / price - 1) * 100).replace('-', '−')})` : '';
-  return `${s.stage === 'dip' ? 'dip' : 'retest'} · stop ${px(s.stop)}${pct}`;
+  return `${s.stage === 'dip' ? 'dip' : s.stage === 'bounce' ? 'bounce' : 'retest'} · stop ${px(s.stop)}${pct}`;
+}
+
+// v37 BOUNCE: the stop, where price sat against its line, the EMA, what the pullback came down to,
+// how long after the cross.
+export function bounceText(s: TvSetupInfo, price?: number | null): string {
+  const parts = [retestStopText(s, price), ...lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t))];
+  if (s.ema != null) parts.push(`EMA ${s.ema_len ?? '?'} $${s.ema < 1 ? s.ema.toFixed(4) : s.ema.toFixed(2)}`);
+  if (s.bounce_from) parts.push(`off ${s.bounce_from === 'ema+vwap' ? 'the EMA and the VWAP' : s.bounce_from === 'vwap' ? 'the VWAP' : 'the EMA'}`);
+  if (s.since_n != null) parts.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the cross`);
+  if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
+  if (s.weak) parts.push('after a weak cross');
+  return parts.filter((p): p is string => p != null).join(' · ');
 }
 
 // v34 DIP: the stop, the RSI against its MA at the turn, the dip's lowest RSI, how long after the RSI cross.
@@ -156,6 +172,7 @@ export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   // v32 RSI: "12h RSI 29.2 / MA 27.0 · low 22.1 · 3h 41.2 / 30.7 · at the 6h close"
   if (s.stage === 'rsi') return rsiText(s);
   if (s.stage === 'dip') return dipText(s, price);
+  if (s.stage === 'bounce') return bounceText(s, price);
   // v35 EMA cross: "+1.0% vs sVWAP · EMA 9 $8.03 · at the 3m close · 12 candles under · 1 flip" (v36: the filter's readings)
   if (s.stage === 'ema') {
     const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));

@@ -59,6 +59,56 @@ counts only if it helps in both.
 - **5m candles** (2,149 crosses): all crosses −0.14R / −0.12R; the rule 41% / 41% false; 09:30–11:00
   with the rule +0.08R / +0.04R on 157 / 94 trades, too few to lean on.
 
+## Is the pullback after the cross a better entry? (2026-11-13)
+
+The operator, looking at v36's marks on PARA: "maybe, pullback or bounce from ema and/or vwap can
+help?"
+
+```bash
+python ema_pullback_study.py rows.csv.gz                 # 3m candles, an entry within 10 candles
+python ema_pullback_study.py rows.csv.gz --wait 20       # also --wait 5, --tf 5, --tol-ema 0.5 --tol-vwap 0.5
+```
+
+`ema_pullback_study.py` takes the same crosses and, for each, the first entry within 10 candles
+after the cross candle. A candle closing under the VWAP before it ends the wait.
+
+- **cross** = the cross candle's close (what v35 / v36 announce).
+- **next** = the first later candle closing green above the EMA, no touch needed (the control: is it
+  the pullback that helps, or only the waiting?).
+- **ema** = a candle's low comes down to the EMA, then that candle or a later one closes green above
+  the EMA. **vwap** = the same against the VWAP (a low within 1% above it). **either** = whichever
+  comes first.
+- B's stop is a tick under the lowest low from the touch to the entry candle; target 2R, 20 candles.
+- **per cross** = the entry's share of the crosses × its average R: what waiting is worth per signal.
+
+| 3m candles, all crosses | in sample | | | | out of sample | | | |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| | share | false | B | per cross | share | false | B | per cross |
+| cross | 100% | 49% | −0.20R | −0.19R | 100% | 47% | −0.22R | −0.20R |
+| next (no touch) | 56% | 36% | −0.20R | −0.10R | 52% | 34% | −0.11R | −0.05R |
+| ema | 40% | 36% | −0.09R | −0.03R | 37% | 35% | −0.07R | −0.02R |
+| vwap | 36% | 42% | −0.14R | −0.05R | 36% | 38% | −0.00R | −0.00R |
+| **either** | **44%** | **37%** | **−0.10R** | **−0.04R** | **43%** | **35%** | **−0.06R** | **−0.02R** |
+| either, strong crosses only | 46% | 34% | −0.10R | −0.04R | 44% | 32% | −0.04R | −0.01R |
+| either, weak crosses only | 42% | 42% | −0.09R | −0.03R | 41% | 41% | −0.10R | −0.04R |
+
+- **The bounce is a better entry than the cross, in both halves:** about a third of them fail fast
+  instead of half, and the loss per trade is under half. It holds on 5m candles (either: −0.10R /
+  −0.08R against −0.14R / −0.12R), with a 5 or a 20 candle wait, and with tighter touches.
+- **It is the pullback, not only the waiting:** the control (the next green candle) is no better
+  than the cross per trade in sample (−0.20R).
+- **Waiting costs little.** The crosses that never give a bounce are mostly the failures: buying the
+  cross on those was false 68–71% of the time and −0.54R / −0.56R. That split is hindsight (a close
+  under the VWAP is what ends the wait), but it shows the runs that get away are few (7–9% of them
+  reach 2R first).
+- **Still not an edge on its own.** No version is positive in both halves; 09:30–11:00 on strong
+  crosses is positive out of sample only (+0.07R to +0.25R on under 100 trades).
+- A bounce after a weak cross fails fast more often (41–42% against 32–34%), so v37 keeps those quiet.
+- Nothing in the buckets (how long after the cross, how far price ran first, how far the EMA sits
+  above the VWAP) separates the better bounces in both halves.
+
+Built as script v37's BOUNCE (`docs/vwap-setup.md` §18.2).
+
 Limits: bars exist only while a name is on our screen, and each run warms up 15 candles, so a
 cross in a name's first 45 minutes on the screen isn't counted (TradingView's EMA carries over from
 the day before); our VWAP starts when the name reaches the screen; 1m bars from 20s snapshots; ideal

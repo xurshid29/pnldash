@@ -3946,7 +3946,7 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
-  // tv_cross / tv_retest / tv_rsi / tv_dip / tv_ema, and tv_year for a message about the year line alone).
+  // tv_cross / tv_retest / tv_rsi / tv_dip / tv_ema / tv_bounce, and tv_year for a message about the year line alone).
   // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
   // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
@@ -3961,6 +3961,7 @@ class PollerService {
   // v21 CROSS (tv_cross) / v28 RETEST (tv_retest): why 'capped' = past TV_SETUP.vb_cap on
   // the line today; why 'offlist' = not on our Momentum list (vb_momentum_only, 2026-10-20).
   // v36 EMA cross: why 'weak' = the script's filter called the cross weak (rows carry `weak`).
+  // v37 BOUNCE (tv_bounce): limited like the EMA cross; why 'weak' = its cross was weak.
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist' | 'weak', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
@@ -4019,6 +4020,15 @@ class PollerService {
         (mode === 'quiet' ? (why === 'weak' ? ' · quiet (the filter calls it weak)'
           : why === 'capped' ? ` · quiet (past the cap: cross ${sig.cross_n} today)`
           : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
+    } else if (sig.stage === 'bounce') {
+      console.log(`[tv-setup] BOUNCE ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · from ${sig.bounce_from ?? '?'} · stop ${sig.stop ?? '?'}` +
+        ` · ${sig.candle_tf ?? '?'} candle · EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'} · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
+        ` · bounce ${sig.bounce_n ?? '?'} · ${sig.since_n ?? '?'} candles after the cross · day ${sig.day_gain ?? '?'}%` +
+        `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +
+        `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
+        (mode === 'quiet' ? (why === 'weak' ? ' · quiet (after a weak cross)'
+          : why === 'capped' ? ` · quiet (past the cap: bounce ${sig.bounce_n} today)`
+          : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (the EMA stage is switched off)') : ''));
     } else if (sig.stage === 'dip') {
       console.log(`[tv-setup] DIP ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +
         ` · dip low ${sig.rsi_low ?? '?'} · stop ${sig.stop ?? '?'} · dip ${sig.dip_n ?? '?'} · ${sig.since_n ?? '?'} candles after the RSI cross` +

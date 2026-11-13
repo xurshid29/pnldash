@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v36 (2026-11-13). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v37 (2026-11-13). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -44,6 +44,9 @@
 //         (v36) the filter calls a cross weak — its candle opened before 07:00 New York, the EMA
 //         was under the line for fewer than 5 candles, or the two crossed more than 2 times in
 //         the 20 candles before: drawn gray, sent with `| weak`, not announced
+//   BOUNCE (v37) after an EMA cross, a candle's low comes down to the EMA or the VWAP and that
+//         candle or a later one closes green above the EMA — the pullback entry, with a stop
+//         under the pullback's low; a close under the VWAP first ends the wait
 // VB lanes (v29): up to three more candle timeframes in the same alert (1h / 4h / 1D on the
 // month and year lines by default), each with its own band and lines, for longer trades.
 // VWAP lines (v28): from 30s bars by default, so the session line is the same on every
@@ -1217,6 +1220,22 @@ emFilterOn = input.bool(true,    "EMA filter on (v36): weak crosses are drawn gr
 emMinUnder = input.int(5,        "EMA filter: the EMA was under the line for at least N candles before the cross", minval = 0, group = "EMA cross over VWAP (v35)")
 emMaxFlips = input.int(2,        "EMA filter: at most N EMA / line crossings in the 20 candles before", minval = 0, group = "EMA cross over VWAP (v35)")
 emFromHour = input.int(7,        "EMA filter: not before this hour, New York time (4 = from the pre-market open)", minval = 0, maxval = 23, group = "EMA cross over VWAP (v35)")
+// v37 inputs go last: the BOUNCE (operator, 11-13, PARA with v36's marks: "maybe, pullback or bounce
+// from ema and/or vwap can help?"). Measured first (research/ema-vwap/ema_pullback_study.py, the same
+// 3,768 crosses): waiting after a cross for a candle whose low comes down to the EMA or the VWAP and
+// then a green close above the EMA takes about 44% of the crosses. Those entries close back under the
+// VWAP within 5 candles 35% of the time (the cross itself: 48%) and lose about −0.08R with a stop
+// under the pullback's low and a 2R target (the cross: −0.21R) — in both halves of the data, on 5m
+// candles, and with a 5 or a 20 candle wait. The crosses that never give one are mostly the failures
+// (65–70% false), not runs that got away. Fewer false ones and under half the loss; still not an edge.
+// A bounce after a weak cross is weak too: gray, `| weak`, not announced.
+emBncOn   = input.bool(true,           "EMA bounce on (v37): after an EMA cross, a pullback to the EMA or the VWAP, then a green close above the EMA", group = "EMA cross over VWAP (v35)")
+emBncFrom = input.string("EMA or VWAP", "EMA bounce: the pullback comes down to", options = ["EMA or VWAP", "EMA", "VWAP"], group = "EMA cross over VWAP (v35)")
+emBncWait = input.int(10,              "EMA bounce: within N candles after the cross", minval = 1, group = "EMA cross over VWAP (v35)")
+emBncTolE = input.float(0.0,           "EMA bounce: a low within this % above the EMA counts as a touch", minval = 0, step = 0.1, group = "EMA cross over VWAP (v35)")
+emBncTolV = input.float(1.0,           "EMA bounce: a low within this % above the VWAP counts as a touch", minval = 0, step = 0.1, group = "EMA cross over VWAP (v35)")
+emBncE = emBncFrom != "VWAP"
+emBncV = emBncFrom != "EMA"
 
 // The EMA after the last finished candle of its timeframe, and live at this bar (that EMA's
 // chart value now: the finished candles + this bar's close as the open one's).
@@ -1235,6 +1254,13 @@ type EmaLine
     int   under = 0     // v36: closes in a row with the EMA at or under the line, up to the last one
     int   ran   = 0     // v36: at the last cross, how many closes the EMA had been under the line…
     int   flips = 0     // …and how many times the two had crossed in the 20 closes before it
+    bool  armed = false // v37: a cross is waiting for its bounce
+    int   age   = 0     // candles since that cross's candle
+    bool  hitE  = false // a candle's low has come down to the EMA since…
+    bool  hitV  = false // …or to the line
+    float lowP  = na    // the lowest low since that touch (the stop goes a tick under it)
+    bool  weakX = false // the cross was weak (v36), so its bounce is
+    int   bn    = 0     // the day's bounces sent on this line (the weak ones aren't counted)
 
 // A candle close → true when the EMA crossed above the line. `hist` is this line's last 20 closes
 // (1 = the EMA above the line), kept beside the object.
@@ -1263,8 +1289,41 @@ method restart(EmaLine s, array<int> hist) =>
     s.prevE := na
     s.prevL := na
     s.under := 0
+    s.armed := false
     array.clear(hist)
     true
+
+// v37: a sent cross starts the wait for its bounce (a newer cross starts it over).
+method arm(EmaLine s, bool weak) =>
+    s.armed := true
+    s.age   := 0
+    s.hitE  := false
+    s.hitV  := false
+    s.lowP  := na
+    s.weakX := weak
+    true
+
+// v37: one candle close of the wait → true at the bounce. The candle's low comes down to the EMA or
+// the line (a touch; from then on the lowest low is kept), and the same candle or a later one closes
+// green above the EMA. A close under the line first, or emBncWait candles without one, ends the wait.
+method stepBounce(EmaLine s, float e, float ln, float cOpen, float cLow, float cClose) =>
+    bool go = false
+    if s.armed and not na(e) and not na(ln) and not na(cOpen) and not na(cLow)
+        s.age := s.age + 1
+        if emBncE and cLow <= e * (1 + emBncTolE / 100)
+            s.hitE := true
+        if emBncV and cLow <= ln * (1 + emBncTolV / 100)
+            s.hitV := true
+        if s.hitE or s.hitV
+            s.lowP := na(s.lowP) ? cLow : math.min(s.lowP, cLow)
+        if cClose < ln
+            s.armed := false
+        else if (s.hitE or s.hitV) and cClose > cOpen and cClose > e
+            go := true
+            s.armed := false
+        else if s.age >= emBncWait
+            s.armed := false
+    go
 
 // v36: a weak cross — too early in the day, too short a stay under the line, or too much crossing before it.
 emWeak(EmaLine s, bool early) => emFilterOn and (early or s.ran < emMinUnder or s.flips > emMaxFlips)
@@ -1295,6 +1354,34 @@ emCount(EmaLine s, EmaLine m, EmaLine y, bool fS, bool fM, bool fY) =>
         n := math.min(n, y.n)
     n
 
+// v37: the fired lines' bounce, for the message — the lowest pullback low, the fewest candles since
+// the cross, what the pullback came down to, and the lowest of the day's counts.
+emBRead(EmaLine s, EmaLine m, EmaLine y, bool fS, bool fM, bool fY) =>
+    float lo = na
+    int   ag = 999
+    bool  hE = false
+    bool  hV = false
+    int   n  = 999
+    if fS
+        lo := s.lowP
+        ag := s.age
+        hE := s.hitE
+        hV := s.hitV
+        n  := s.bn
+    if fM
+        lo := na(lo) ? m.lowP : math.min(lo, m.lowP)
+        ag := math.min(ag, m.age)
+        hE := hE or m.hitE
+        hV := hV or m.hitV
+        n  := math.min(n, m.bn)
+    if fY
+        lo := na(lo) ? y.lowP : math.min(lo, y.lowP)
+        ag := math.min(ag, y.age)
+        hE := hE or y.hitE
+        hV := hV or y.hitV
+        n  := math.min(n, y.bn)
+    [lo, ag, hE, hV, n]
+
 var EmaLine emS = EmaLine.new()
 var EmaLine emM = EmaLine.new()
 var EmaLine emY = EmaLine.new()
@@ -1307,6 +1394,18 @@ var int emDone = na
 bool emLateS = not na(emT[1]) and emT != emT[1] and (na(emDone) or emDone != emT[1])
 bool emNewM  = timeframe.change("M")
 bool emNewY  = timeframe.change("12M")
+// v37: the open and the low of the EMA's candle so far, and of the one before (for a late sample).
+var float emCO  = na
+var float emCL  = na
+var float emCOp = na
+var float emCLp = na
+if na(emT[1]) or emT != emT[1]
+    emCOp := emCO
+    emCLp := emCL
+    emCO  := open
+    emCL  := low
+else
+    emCL := math.min(emCL, low)
 // A late sample's crosses (the candle before, from the bar before) and this bar's own; with each,
 // the day's number, the stay under the line, the flips before, and whether the filter calls it weak.
 bool emLS = false
@@ -1323,13 +1422,60 @@ int  emCN = 0
 int  emCU = 0
 int  emCF = 0
 bool emCW = false
+// v37: the same for the bounces — the lines that fired, the day's number, the stop (a tick under the
+// pullback's low), the candles since the cross, what the pullback came down to, and weak or not.
+bool  emBLS = false
+bool  emBLM = false
+bool  emBLY = false
+int   emBLN = 0
+float emBLStop = na
+int   emBLAge = 0
+bool  emBLE = false
+bool  emBLV = false
+bool  emBLW = false
+bool  emBCS = false
+bool  emBCM = false
+bool  emBCY = false
+int   emBCN = 0
+float emBCStop = na
+int   emBCAge = 0
+bool  emBCE = false
+bool  emBCV = false
+bool  emBCW = false
 if emOk
     if emLateS
+        bool emOkL = inWindow and not newDay and (not emGainOn or gainer[1])
+        // v37: an earlier cross's bounce first (a cross candle can't be its own bounce). Weak when none
+        // of its lines' crosses was strong; only a strong bounce takes a day's number.
+        bool emB1 = emBncOn and emSession and emS.stepBounce(emLive[1], svwap[1], emCOp, emCLp, close[1])
+        bool emB2 = emBncOn and emMonth and emM.stepBounce(emLive[1], mvwap[1], emCOp, emCLp, close[1])
+        bool emB3 = emBncOn and emYear and emY.stepBounce(emLive[1], yvwap[1], emCOp, emCLp, close[1])
+        emBLS := emB1 and emOkL
+        emBLM := emB2 and emOkL
+        emBLY := emB3 and emOkL
+        bool emH1 = emBLS and not emS.weakX
+        bool emH2 = emBLM and not emM.weakX
+        bool emH3 = emBLY and not emY.weakX
+        emBLW := not (emH1 or emH2 or emH3)
+        if emH1
+            emS.bn := emS.bn + 1
+        if emH2
+            emM.bn := emM.bn + 1
+        if emH3
+            emY.bn := emY.bn + 1
+        bool emQ1 = emBLW ? emBLS : emH1
+        bool emQ2 = emBLW ? emBLM : emH2
+        bool emQ3 = emBLW ? emBLY : emH3
+        [emBLo1, emBAg1, emBE1, emBV1, emBN1] = emBRead(emS, emM, emY, emQ1, emQ2, emQ3)
+        emBLStop := emBLo1 - syminfo.mintick
+        emBLAge  := emBAg1
+        emBLE    := emBE1
+        emBLV    := emBV1
+        emBLN    := emBN1
         bool emX1 = emSession and emS.crossUp(emHS, emLive[1], svwap[1])
         bool emX2 = emMonth and emM.crossUp(emHM, emLive[1], mvwap[1])
         bool emX3 = emYear and emY.crossUp(emHY, emLive[1], yvwap[1])
         emDone := emT[1]
-        bool emOkL = inWindow and not newDay and (not emGainOn or gainer[1])
         emLS := emX1 and emOkL
         emLM := emX2 and emOkL
         emLY := emX3 and emOkL
@@ -1355,22 +1501,59 @@ if emOk
         [emU1, emF1] = emRead(emS, emM, emY, emP1, emP2, emP3)
         emLU := emU1
         emLF := emF1
-    // The anchors: a new day restarts the session line and the day's counts.
+        // v37: a sent cross starts the wait for its bounce (weak if the cross was).
+        if emLS
+            emS.arm(not emG1)
+        if emLM
+            emM.arm(not emG2)
+        if emLY
+            emY.arm(not emG3)
+    // The anchors: a new day restarts the session line and the day's counts, and ends every wait.
     if newDay
         emS.restart(emHS)
         emS.n := 0
         emM.n := 0
         emY.n := 0
+        emS.bn := 0
+        emM.bn := 0
+        emY.bn := 0
+        emM.armed := false
+        emY.armed := false
     if emNewM
         emM.restart(emHM)
     if emNewY
         emY.restart(emHY)
     if emEnd and (na(emDone) or emDone != emT)
+        bool emOkC = inWindow and (not emGainOn or gainer)
+        bool emB4 = emBncOn and emSession and emS.stepBounce(emLive, svwap, emCO, emCL, close)
+        bool emB5 = emBncOn and emMonth and emM.stepBounce(emLive, mvwap, emCO, emCL, close)
+        bool emB6 = emBncOn and emYear and emY.stepBounce(emLive, yvwap, emCO, emCL, close)
+        emBCS := emB4 and emOkC
+        emBCM := emB5 and emOkC
+        emBCY := emB6 and emOkC
+        bool emH4 = emBCS and not emS.weakX
+        bool emH5 = emBCM and not emM.weakX
+        bool emH6 = emBCY and not emY.weakX
+        emBCW := not (emH4 or emH5 or emH6)
+        if emH4
+            emS.bn := emS.bn + 1
+        if emH5
+            emM.bn := emM.bn + 1
+        if emH6
+            emY.bn := emY.bn + 1
+        bool emQ4 = emBCW ? emBCS : emH4
+        bool emQ5 = emBCW ? emBCM : emH5
+        bool emQ6 = emBCW ? emBCY : emH6
+        [emBLo2, emBAg2, emBE2, emBV2, emBN2] = emBRead(emS, emM, emY, emQ4, emQ5, emQ6)
+        emBCStop := emBLo2 - syminfo.mintick
+        emBCAge  := emBAg2
+        emBCE    := emBE2
+        emBCV    := emBV2
+        emBCN    := emBN2
         bool emX4 = emSession and emS.crossUp(emHS, emLive, svwap)
         bool emX5 = emMonth and emM.crossUp(emHM, emLive, mvwap)
         bool emX6 = emYear and emY.crossUp(emHY, emLive, yvwap)
         emDone := emT
-        bool emOkC = inWindow and (not emGainOn or gainer)
         emCS := emX4 and emOkC
         emCM := emX5 and emOkC
         emCY := emX6 and emOkC
@@ -1392,6 +1575,12 @@ if emOk
         [emU2, emF2] = emRead(emS, emM, emY, emP4, emP5, emP6)
         emCU := emU2
         emCF := emF2
+        if emCS
+            emS.arm(not emG4)
+        if emCM
+            emM.arm(not emG5)
+        if emCY
+            emY.arm(not emG6)
 
 // The message — a contract with services/tv-setups.ts parseTvMessage. Every value is the sampled
 // candle's (a late one's from the bar before):
@@ -1427,7 +1616,43 @@ emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, f
         msg += " | late"
     msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
 
+// v37, the bounce's message (the same contract):
+//   BOUNCE PARA 0.1021 | stop 0.0985 | sVWAP 0.0975 (+4.7%) | ema 9 0.099 | line session | from ema+vwap | candle 3 | bounce 1 | since 3 | day high +25% | vwap 30s | tf 30S
+// `stop` = a tick under the pullback's low, `from` = what the pullback came down to (ema, vwap or
+// ema+vwap), `since N` = candles after the cross candle, `| weak` when its cross was weak.
+emBncMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, float stop, int age, bool hitE, bool hitV, bool weak) =>
+    string names = ""
+    if fS
+        names := pbJoin(names, "session")
+    if fM
+        names := pbJoin(names, "month")
+    if fY
+        names := pbJoin(names, "year")
+    string msg = "BOUNCE " + syminfo.ticker + " " + str.tostring(px, format.mintick) + " | stop " + str.tostring(stop, format.mintick)
+    if not na(sv)
+        msg += " | sVWAP " + str.tostring(sv, format.mintick) + " (" + emPct(px, sv) + "%)"
+    if not na(mv)
+        msg += " | mVWAP " + str.tostring(mv, format.mintick) + " (" + emPct(px, mv) + "%)"
+    if not na(yv)
+        msg += " | yVWAP " + str.tostring(yv, format.mintick) + " (" + emPct(px, yv) + "%)"
+    msg += " | ema " + str.tostring(emLen) + " " + str.tostring(e, format.mintick)
+    msg += " | line " + names + " | from " + (hitE and hitV ? "ema+vwap" : hitE ? "ema" : "vwap")
+    msg += " | candle " + emTf + " | bounce " + str.tostring(n) + " | since " + str.tostring(age)
+    if weak
+        msg += " | weak"
+    if not na(dayHighGain)
+        msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
+    if not na(ahGain)
+        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
+    if late
+        msg += " | late"
+    msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
+
 // From the 30s alert alone (the VB's alert timeframe), like the VB and the RSI.
+if (emBLS or emBLM or emBLY) and timeframe.period == vbTf
+    alert(emBncMsg(emBLS, emBLM, emBLY, emBLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true, emBLStop, emBLAge, emBLE, emBLV, emBLW), alert.freq_once_per_bar_close)
+if (emBCS or emBCM or emBCY) and timeframe.period == vbTf
+    alert(emBncMsg(emBCS, emBCM, emBCY, emBCN, close, emLive, svwap, mvwap, yvwap, false, emBCStop, emBCAge, emBCE, emBCV, emBCW), alert.freq_once_per_bar_close)
 if (emLS or emLM or emLY) and timeframe.period == vbTf
     alert(emMsg(emLS, emLM, emLY, emLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true, emLU, emLF, emLW), alert.freq_once_per_bar_close)
 if (emCS or emCM or emCY) and timeframe.period == vbTf
@@ -1442,3 +1667,8 @@ plot(emOn and emYear and not ((pbOn and pbYear) or (vbOn and vbYear)) ? yvwap : 
 // v36 plots go last: the crosses the filter calls weak, in gray (sent with `| weak`, stored, not announced).
 plotshape(emShow and (emCS or emCM or emCY) and emCW, "EMA cross, filtered (v36)", shape.labelup, location.belowbar, color.gray, text = "ema", textcolor = color.white, size = size.tiny)
 plotshape(emShow and (emLS or emLM or emLY) and emLW, "EMA cross, filtered, late close (v36)", shape.labelup, location.belowbar, color.gray, text = "ema", textcolor = color.white, size = size.tiny, offset = -1)
+// v37 plots go last: the bounce after a cross (green), and the ones after a weak cross (gray).
+plotshape(emShow and (emBCS or emBCM or emBCY) and not emBCW, "EMA bounce (v37)", shape.labelup, location.belowbar, color.lime, text = "BNC", textcolor = color.black, size = size.small)
+plotshape(emShow and (emBLS or emBLM or emBLY) and not emBLW, "EMA bounce, late close (v37)", shape.labelup, location.belowbar, color.lime, text = "BNC", textcolor = color.black, size = size.small, offset = -1)
+plotshape(emShow and (emBCS or emBCM or emBCY) and emBCW, "EMA bounce, filtered (v37)", shape.labelup, location.belowbar, color.gray, text = "bnc", textcolor = color.white, size = size.tiny)
+plotshape(emShow and (emBLS or emBLM or emBLY) and emBLW, "EMA bounce, filtered, late close (v37)", shape.labelup, location.belowbar, color.gray, text = "bnc", textcolor = color.white, size = size.tiny, offset = -1)

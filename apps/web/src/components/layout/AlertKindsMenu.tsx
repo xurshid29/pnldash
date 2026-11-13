@@ -12,9 +12,11 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
   { kind: 'tv_setup', label: '📐 VWAP setup', hint: 'sound + notification on this device' },
 ].filter((k) => DASHBOARD_KINDS.includes(k.kind as AlertKind)) as Array<{ kind: AlertKind; label: string; hint: string }>;
 
-// The RSI switch also covers its v34 DIP (the server lists no switch for 'dip').
+// The RSI switch also covers its v34 DIP, and the EMA switch its v37 BOUNCE (the server lists no
+// switch for 'dip' or 'bounce').
 const STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI + DIP', dip: 'DIP', ema: 'EMA',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI + DIP', dip: 'DIP',
+  ema: 'EMA + BOUNCE', bounce: 'BOUNCE',
 };
 
 // Click-to-open switches for which opportunity alerts make a sound and a

@@ -198,6 +198,7 @@ function fmtAlertPrice(p: number | null): string {
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
+  bounce: 'BOUNCE',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -243,6 +244,12 @@ export function opportunityTitle(a: OpportunityAlert): string {
       const ln = lineTokens(s.stage, s.line).map((t) => SHORT_LINE[t]).join(' + ') || 'VWAP';
       return `${s.on_screen ? '⭐ ' : ''}📐 EMA ${a.ticker} — ${shortTf(s.candle_tf)} EMA ${s.ema_len ?? '?'} over ${ln}${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
     }
+    // v37: "📐 BOUNCE PARA — bounced off the EMA after the 3m EMA 9 cross · stop $0.0985 · #1"
+    if (s.stage === 'bounce') {
+      const off = s.bounce_from === 'ema+vwap' ? 'the EMA and the VWAP' : s.bounce_from === 'vwap' ? 'the VWAP' : 'the EMA';
+      return `${s.on_screen ? '⭐ ' : ''}📐 BOUNCE ${a.ticker} — bounced off ${off} after the ${shortTf(s.candle_tf)} EMA ${s.ema_len ?? '?'} cross`
+        + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.bounce_n != null ? ` · #${s.bounce_n}` : ''}`;
+    }
     // PULLBACK / BROKEN / HELD (the reclaim setup's stages went with script v27)
     const tokens = lineTokens(s.stage, s.line);
     const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
@@ -277,7 +284,9 @@ export function opportunityBody(a: OpportunityAlert): string {
       return db.filter(Boolean).join(' · ');
     }
     const bits = [fmtAlertPrice(a.price)];
-    if (s.stage === 'ema' && s.ema != null) bits.push(`EMA ${fmtAlertPrice(s.ema)}`);
+    if (s.stage === 'bounce' && s.stop != null && a.price != null && a.price > 0) bits.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the pullback's low`);
+    if (s.stage === 'bounce' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the cross`);
+    if ((s.stage === 'ema' || s.stage === 'bounce') && s.ema != null) bits.push(`EMA ${fmtAlertPrice(s.ema)}`);
     if (s.svwap != null) bits.push(`sVWAP ${fmtAlertPrice(s.svwap)}`);
     if (s.upper != null) bits.push(`${shortTf(s.bb_tf)} BB upper ${fmtAlertPrice(s.upper)}`);
     if (s.mvwap != null) bits.push(`mVWAP ${fmtAlertPrice(s.mvwap)}`);
@@ -378,8 +387,8 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        // (a v34 DIP is an entry signal: the bright pair, on or off Momentum; a v35 EMA cross sounds like a CROSS)
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema')
+        // (a v34 DIP is an entry signal: the bright pair, on or off Momentum; a v35 EMA cross and its v37 BOUNCE sound like a CROSS)
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce')
           || audible.some((a) => a.setup?.stage === 'dip')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('pullback') || audible.some((a) => a.setup?.stage === 'rsi')) setupReadyPing();   // v32 RSI, on or off Momentum

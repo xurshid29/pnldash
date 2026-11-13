@@ -245,6 +245,19 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-13 (09:00–10:30 ET) — SCRIPT v37: THE EMA BOUNCE.** The operator pasted v36 (it compiles: three PARA screenshots show
+the orange EMA and gray ema marks) and asked: "maybe, pullback or bounce from ema and/or vwap can help?". Measured first
+(`research/ema-vwap/ema_pullback_study.py`, README table): after a cross, a candle's low down to the EMA or the VWAP and then a
+green close above the EMA comes on about 44% of the crosses within 10 candles. Those entries are false 37% / 35% of the time (the
+cross: 49% / 47%) and lose −0.10R / −0.06R (the cross: −0.20R / −0.22R), on 5m candles and with 5 / 20 candle waits too; the
+control (next green candle, no touch) is no better than the cross in sample; the crosses that never bounce are mostly the failures.
+**Still not positive in both halves; the operator was told so.** Built as stage `bounce` (`docs/vwap-setup.md` §18.2): armed by a
+sent cross, judged at the EMA's candle closes, stop a tick under the pullback's low, weak after a weak cross (gray, quiet). It
+rides the EMA ⚙ switch (label **EMA + BOUNCE**), `tv_bounce` on Telegram, lime pill, History "EMA + BOUNCE". Five inputs and four
+plots last: **paste, Save (37), recreate both alerts.** Replica (`ema_bounce_direct` against `simulate_ema(full=True)`) and 493
+checks agree. Built without an explicit "add it" (the question was whether it helps), as v36 was; the script switch `emBncOn`
+turns it off. **The operator still has no alerts running** (deleted for v35, testing on the chart), so no live rows yet.
+
 **2026-11-13 (later) — SCRIPT v36: THE EMA CROSS FILTER.** The operator, on PARA's 3m chart: "is there anyway we can
 filter/optimize the false ones?", with a video whose optimized ADX / time-window / ATR settings overfit (profitable on 35 trades,
 not on 287). Then: "you can run/deploy anytime, we're still experimenting, not trading for real" — **the trading-window hold is

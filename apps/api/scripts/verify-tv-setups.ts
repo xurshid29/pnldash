@@ -15,7 +15,7 @@ import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, lineTokens,
-  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, type TvSetupSignal,
+  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, stageSwitch, type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -549,6 +549,55 @@ console.log('EMA cross over VWAP (v35, 2026-11-13)');
     && wHtml.includes('3 candles under the line before · 4 crossings in the 20 before · filtered as weak'), wHtml);
 }
 
+console.log('EMA bounce (v37, 2026-11-13)');
+{
+  const T0 = 1_794_580_000;
+  const msg = 'BOUNCE PARA 0.1021 | stop 0.0985 | sVWAP 0.0975 (+4.7%) | ema 9 0.099 | line session | from ema+vwap | candle 3 | bounce 1 | since 3 | day high +25% | vwap 30s | tf 30S';
+  const b = parseTvMessage(msg);
+  check('BOUNCE parses', b?.stage === 'bounce' && b.ticker === 'PARA' && b.price === 0.1021 && b.stop === 0.0985 && b.svwap === 0.0975 && b.spx_pct === 4.7
+    && b.ema_len === 9 && b.ema === 0.099 && b.line === 'session' && b.bounce_from === 'ema+vwap' && b.candle_tf === '3' && b.bounce_n === 1
+    && b.since_n === 3 && b.day_gain === 25 && b.vwap_src === '30s' && b.tf === '30S' && b.weak === false && b.late === false, JSON.stringify(b));
+  check('…no cross number, filter readings, VB or RSI fields', b?.cross_n === null && b?.under_n === null && b?.flips_n === null && b?.upper === null
+    && b?.retest_n === null && b?.rsi === null && b?.dip_n === null && b?.touch === null, JSON.stringify(b));
+  const wk = parseTvMessage('BOUNCE OMH 8.12 | stop 8.01 | sVWAP 8.03 (+1.1%) | mVWAP 7.5 (+8.3%) | ema 9 8.06 | line session+month | from vwap | candle 5 | bounce 0 | since 9 | weak | late | vwap chart | tf 30S');
+  check('…one after a weak cross: late, two lines, off the VWAP, a 5m EMA', wk?.weak === true && wk.late === true && wk.bounce_from === 'vwap' && wk.bounce_n === 0
+    && wk.since_n === 9 && wk.line === 'session+month' && wk.candle_tf === '5' && wk.stop === 8.01 && wk.px_pct === 8.3, JSON.stringify(wk));
+  check('…"from ema" alone, and JSON', parseTvMessage(msg.replace('from ema+vwap', 'from ema'))?.bounce_from === 'ema'
+    && parseTvMessage({ stage: 'bounce', ticker: 'PARA', stop: 0.0985, bounce: 2, since: 4, from: 'ema', candle: '3' })?.bounce_n === 2
+    && parseTvMessage({ stage: 'bounce', ticker: 'PARA', bounce_from: 'ema+vwap' })?.bounce_from === 'ema+vwap');
+  check('…other stages carry no bounce fields, and "BOUNCE" as a ticker still parses as one',
+    parseTvMessage('EMA X 1.0 | sVWAP 1 (+0%) | ema 9 1.0 | line session | candle 3 | cross 1 | under 9 | flips 0 | tf 30S')?.bounce_n === null
+      && parseTvMessage('EMA X 1.0 | sVWAP 1 (+0%) | ema 9 1.0 | line session | candle 3 | cross 1 | tf 30S')?.bounce_from === null
+      && parseTvMessage('PULLBACK BOUNCE 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.ticker === 'BOUNCE');
+  check('BOUNCE rides the EMA switch', stageSwitch('bounce') === 'ema' && stageSwitch('ema') === 'ema' && !TV_STAGE_ORDER.includes('bounce'));
+  check('BOUNCE on Momentum announces', new TvSetupGate().admit(b!, T0, false, true) === 'notify');
+  const g = new TvSetupGate();
+  check('…the same one again is a re-delivery; the next is a new event; an EMA cross on the same bar is its own event',
+    g.admit(b!, T0, false, true) === 'notify' && g.admit(b!, T0 + 5, false, true) === 'drop'
+      && g.admit({ ...b!, bounce_n: 2 }, T0 + 400, false, true) === 'notify'
+      && g.admit(parseTvMessage('EMA PARA 0.1021 | sVWAP 0.0975 (+4.7%) | ema 9 0.099 | line session | candle 3 | cross 2 | under 6 | flips 1 | tf 30S')!, T0 + 400, false, true) === 'notify');
+  check('…off Momentum quiet, unless the day high is +30% or more', new TvSetupGate().admit(b!, T0, false, false) === 'quiet'
+    && new TvSetupGate().admit({ ...b!, day_gain: 31 }, T0, false, false) === 'notify');
+  check(`…past the cap (bounce ${TV_SETUP.em_cap + 1}) quiet`, pastCap({ ...b!, bounce_n: TV_SETUP.em_cap + 1 }) && !pastCap(b!)
+    && new TvSetupGate().admit({ ...b!, bounce_n: TV_SETUP.em_cap + 1 }, T0, false, true) === 'quiet');
+  check('…after a weak cross quiet, on Momentum too', new TvSetupGate().admit(wk!, T0, false, true) === 'quiet' && !pastCap(wk!));
+  const off = new TvSetupGate();
+  off.setAnnounced(['pullback', 'cross', 'rsi']);
+  check('…the EMA switch off → quiet', off.admit(b!, T0, false, true) === 'quiet' && !off.announces('bounce'));
+  const on = new TvSetupGate();
+  on.setAnnounced(['ema']);
+  check('…the EMA switch on → announces', on.announces('bounce') && on.admit(b!, T0, false, true) === 'notify');
+  const html = formatTvSetupAlert(b!, 'NASDAQ:PARA', { change_pct: 24.1, grade: 'B+', float_m: 3.2 });
+  check('Telegram: BOUNCE headline and what happened', html.includes('<b>BOUNCE</b>') && html.includes('<b>PARA</b>') && html.includes('$0.1021')
+    && html.includes('after the 3m EMA 9 crossed above the session VWAP, price pulled back to the EMA and the VWAP and bounced (at the 3m close)'), html);
+  check('Telegram: the stop, the count, the levels, Momentum', html.includes("stop $0.0985 (-3.5%, under the pullback's low)")
+    && html.includes('bounce 1 today (first) · 3 candles after the cross') && html.includes('EMA $0.0990 · sVWAP $0.0975 (+4.7%)')
+    && html.includes('on Momentum') && !html.includes('null') && !html.includes('weak'), html);
+  const wkHtml = formatTvSetupAlert(wk!, 'NASDAQ:OMH', null);
+  check('Telegram: one after a weak cross says so', wkHtml.includes('price pulled back to the VWAP and bounced (at the 5m close, a bar late)')
+    && wkHtml.includes('after a weak cross') && wkHtml.includes('crossed above the session + month VWAP'), wkHtml);
+}
+
 console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -583,7 +632,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v36', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v37', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -650,7 +699,24 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'input.int(5,        "EMA filter: the EMA was under the line for at least N candles', 'input.int(2,        "EMA filter: at most N EMA / line crossings',
     'input.int(7,        "EMA filter: not before this hour, New York time',
     'plotshape(emShow and (emCS or emCM or emCY) and not emCW, "EMA cross (v35)"', 'plotshape(emShow and (emLS or emLM or emLY) and not emLW, "EMA cross, late close (v35)"',
-    '"EMA cross, filtered (v36)"', '"EMA cross, filtered, late close (v36)"']) {
+    '"EMA cross, filtered (v36)"', '"EMA cross, filtered, late close (v36)"',
+    // v37: the BOUNCE — a sent cross arms a wait; a candle's low at the EMA or the line, then a green close above the EMA;
+    // a close under the line, the wait's end, a newer cross or the day's end stop it; the stop a tick under the pullback's low
+    '"BOUNCE "', '" | stop " + str.tostring(stop, format.mintick)', '" | from " + (hitE and hitV ? "ema+vwap" : hitE ? "ema" : "vwap")',
+    '" | candle " + emTf + " | bounce " + str.tostring(n) + " | since " + str.tostring(age)',
+    'method arm(EmaLine s, bool weak) =>', 'method stepBounce(EmaLine s, float e, float ln, float cOpen, float cLow, float cClose) =>',
+    'if emBncE and cLow <= e * (1 + emBncTolE / 100)', 'if emBncV and cLow <= ln * (1 + emBncTolV / 100)',
+    's.lowP := na(s.lowP) ? cLow : math.min(s.lowP, cLow)', 'if cClose < ln', 'else if (s.hitE or s.hitV) and cClose > cOpen and cClose > e',
+    'else if s.age >= emBncWait', 'emBncE = emBncFrom != "VWAP"', 'emBncV = emBncFrom != "EMA"',
+    'bool emB1 = emBncOn and emSession and emS.stepBounce(emLive[1], svwap[1], emCOp, emCLp, close[1])',
+    'bool emB4 = emBncOn and emSession and emS.stepBounce(emLive, svwap, emCO, emCL, close)',
+    'bool emH1 = emBLS and not emS.weakX', 'emBLStop := emBLo1 - syminfo.mintick', 'emBCStop := emBLo2 - syminfo.mintick',
+    'emS.arm(not emG1)', 'emS.arm(not emG4)', 'emM.armed := false', 'emS.bn := 0',
+    'input.string("EMA or VWAP", "EMA bounce: the pullback comes down to", options = ["EMA or VWAP", "EMA", "VWAP"]',
+    'input.int(10,              "EMA bounce: within N candles after the cross"', 'input.float(1.0,           "EMA bounce: a low within this % above the VWAP',
+    'alert(emBncMsg(emBLS, emBLM, emBLY, emBLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true, emBLStop, emBLAge, emBLE, emBLV, emBLW), alert.freq_once_per_bar_close)',
+    'alert(emBncMsg(emBCS, emBCM, emBCY, emBCN, close, emLive, svwap, mvwap, yvwap, false, emBCStop, emBCAge, emBCE, emBCV, emBCW), alert.freq_once_per_bar_close)',
+    '"EMA bounce (v37)"', '"EMA bounce, late close (v37)"', '"EMA bounce, filtered (v37)"', '"EMA bounce, filtered, late close (v37)"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
@@ -675,14 +741,28 @@ console.log('Contract — the Pine script still emits what the parser reads');
     && at('emOn      = input.bool') < at('emTf      = input.timeframe') && at('emTf      = input.timeframe') < at('emLen     = input.int')
     && at('emLen     = input.int') < at('emSession = input.bool') && at('emSession = input.bool') < at('emGainOn  = input.bool')
     && at('emGainOn  = input.bool') < at('emShow    = input.bool'));
-  check('v36: the four EMA filter inputs come last, in order', at('emShow    = input.bool') < at('emFilterOn = input.bool')
+  check('v36: the four EMA filter inputs come after the v35 ones, in order', at('emShow    = input.bool') < at('emFilterOn = input.bool')
     && at('emFilterOn = input.bool') < at('emMinUnder = input.int') && at('emMinUnder = input.int') < at('emMaxFlips = input.int')
-    && at('emMaxFlips = input.int') < at('emFromHour = input.int')
-    && (pine.slice(at('emFromHour = input.int') + 'emFromHour = input.int'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
-  // v36 plots go last (TradingView keeps a plot's style by position too)
-  check('v36: the two gray "filtered" marks are the script\'s last plots', at('"yVWAP (EMA cross, v35)"') < at('"EMA cross, filtered (v36)"')
+    && at('emMaxFlips = input.int') < at('emFromHour = input.int'));
+  check('v37: the five EMA bounce inputs come last, in order', at('emFromHour = input.int') < at('emBncOn   = input.bool')
+    && at('emBncOn   = input.bool') < at('emBncFrom = input.string') && at('emBncFrom = input.string') < at('emBncWait = input.int')
+    && at('emBncWait = input.int') < at('emBncTolE = input.float') && at('emBncTolE = input.float') < at('emBncTolV = input.float')
+    && (pine.slice(at('emBncTolV = input.float') + 'emBncTolV = input.float'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
+  // New plots go last (TradingView keeps a plot's style by position too)
+  check('v36 / v37: the gray "filtered" marks, then the four bounce marks, are the script\'s last plots',
+    at('"yVWAP (EMA cross, v35)"') < at('"EMA cross, filtered (v36)"')
     && at('"EMA cross, filtered (v36)"') < at('"EMA cross, filtered, late close (v36)"')
-    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"EMA cross, filtered, late close (v36)"'))));
+    && at('"EMA cross, filtered, late close (v36)"') < at('"EMA bounce (v37)"') && at('"EMA bounce (v37)"') < at('"EMA bounce, late close (v37)"')
+    && at('"EMA bounce, late close (v37)"') < at('"EMA bounce, filtered (v37)"') && at('"EMA bounce, filtered (v37)"') < at('"EMA bounce, filtered, late close (v37)"')
+    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"EMA bounce, filtered, late close (v37)"'))));
+  // v37: on one sample the bounce of an earlier cross is judged before the cross (which re-arms), and read before the arm resets it
+  check('v37: the bounce step, then the cross, then the arm — late and on time', at('bool emB1 = emBncOn') > 0
+    && at('bool emB1 = emBncOn') < at('bool emX1 = emSession and emS.crossUp') && at('bool emX1 = emSession and emS.crossUp') < at('emS.arm(not emG1)')
+    && at('emS.arm(not emG1)') < at('bool emB4 = emBncOn') && at('bool emB4 = emBncOn') < at('bool emX4 = emSession and emS.crossUp')
+    && at('bool emX4 = emSession and emS.crossUp') < at('emS.arm(not emG4)')
+    && at('emBLStop := emBLo1 - syminfo.mintick') < at('bool emX1 = emSession and emS.crossUp'));
+  check('v37: the candle\'s open and low are tracked before the samples use them', at('if na(emT[1]) or emT != emT[1]') > 0
+    && at('if na(emT[1]) or emT != emT[1]') < at('if emLateS') && at('emCOp := emCO') < at('emCO  := open'));
   // v35: the late sample first, then the anchors' restarts, then this bar's own close
   check('v35: late sample, then the day\'s restart, then the on-time sample', at('if emLateS') > 0 && at('if emLateS') < at('emS.restart(emHS)')
     && at('emS.restart(emHS)') < at('if emEnd and (na(emDone) or emDone != emT)'));

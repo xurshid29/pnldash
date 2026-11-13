@@ -1423,7 +1423,12 @@ def selftest_rsi():
 # had been at or under the line for fewer than `min_under` candles, or when the two crossed more than
 # `max_flips` times in the 20 candles before. A weak cross is still sent (`| weak`), takes no day's
 # number, and the server keeps it quiet. Measured in ../ema-vwap/.
-EMA_DEFAULTS = dict(tf_min=3, n=9, filter=True, min_under=5, max_flips=2, from_hour=7)
+# v37, the BOUNCE: a sent cross starts a wait of `wait` candles. A candle's low comes down to the EMA
+# (within `tol_e` % above it) or the VWAP (within `tol_v` %), and that candle or a later one closes
+# green above the EMA → BOUNCE, the stop under the lowest low since the touch. A close under the VWAP
+# first ends the wait; a newer cross starts it over. A bounce after a weak cross is weak.
+EMA_DEFAULTS = dict(tf_min=3, n=9, filter=True, min_under=5, max_flips=2, from_hour=7,
+                    bounce=True, wait=10, tol_e=0.0, tol_v=1.0, from_ema=True, from_vwap=True)
 
 
 def _ema_weak(p, hour, under, flips):
@@ -1476,6 +1481,33 @@ class _EmaLine:
         self.n = 0
         self.under = self.ran = self.flips = 0   # v36
         self.hist = []                           # the last 20 closes: 1 = the EMA above the line
+        self.armed = self.hitE = self.hitV = self.weakX = False   # v37, the wait for a bounce
+        self.age = self.bn = 0
+        self.lowP = None
+
+    def arm(self, weak):
+        self.armed, self.age, self.hitE, self.hitV, self.lowP, self.weakX = True, 0, False, False, None, weak
+
+    def step_bounce(self, e, ln, c_open, c_low, c_close, p):
+        go = False
+        if self.armed and e is not None and ln is not None and c_open is not None and c_low is not None:
+            self.age += 1
+            if p['from_ema'] and c_low <= e * (1 + p['tol_e'] / 100):
+                self.hitE = True
+            if p['from_vwap'] and c_low <= ln * (1 + p['tol_v'] / 100):
+                self.hitV = True
+            if self.hitE or self.hitV:
+                self.lowP = c_low if self.lowP is None else min(self.lowP, c_low)
+            if c_close < ln:
+                self.armed = False
+            elif (self.hitE or self.hitV) and c_close > c_open and c_close > e:
+                go, self.armed = True, False
+            elif self.age >= p['wait']:
+                self.armed = False
+        return go
+
+    def came_from(self):
+        return 'ema+vwap' if self.hitE and self.hitV else 'ema' if self.hitE else 'vwap'
 
     def cross_up(self, e, ln):
         up = self.prevE is not None and e is not None and ln is not None and self.prevE <= self.prevL and e > ln
@@ -1494,6 +1526,7 @@ class _EmaLine:
         self.prevE = self.prevL = None
         self.under = 0
         self.hist = []
+        self.armed = False
 
 
 def ema_rule_direct(bars, p=None):
@@ -1529,19 +1562,64 @@ def ema_rule_direct(bars, p=None):
     return out
 
 
-def simulate_ema(bars, chart_min, p=None, fine=None):
+def ema_bounce_direct(bars, p=None):
+    """The plain bounce rule (v37) on the EMA timeframe's own candles: for each cross, the candles
+    after it until a bounce, a close under the VWAP, `wait` candles, a newer cross or the day's end.
+    → [(candle start, the day's number, the candle is its day's last, the pullback's low, candles
+    after the cross, 'ema' | 'vwap' | 'ema+vwap', weak)]."""
+    p = dict(EMA_DEFAULTS, **(p or {}))
+    c = resample_vw(bars, p['tf_min'])
+    e = ema_series([x['c'] for x in c], p['n'])
+    idx = {x['t']: i for i, x in enumerate(c)}
+    crosses = [(idx[t], weak) for t, _, _, _, _, weak in ema_rule_direct(bars, p)]
+    cross_at = {i for i, _ in crosses}
+    out, day, bn = [], None, 0
+    for i, weak in crosses:
+        d = c[i]['t'].date()
+        if d != day:
+            day, bn = d, 0
+        hit_e = hit_v = False
+        low_p, age = None, 0
+        for j in range(i + 1, len(c)):
+            x = c[j]
+            if x['t'].date() != d:
+                break
+            if e[j] is None or x['vw'] is None:
+                continue
+            age += 1
+            hit_e = hit_e or (p['from_ema'] and x['l'] <= e[j] * (1 + p['tol_e'] / 100))
+            hit_v = hit_v or (p['from_vwap'] and x['l'] <= x['vw'] * (1 + p['tol_v'] / 100))
+            if hit_e or hit_v:
+                low_p = x['l'] if low_p is None else min(low_p, x['l'])
+            if x['c'] < x['vw']:
+                break
+            if (hit_e or hit_v) and x['c'] > x['o'] and x['c'] > e[j]:
+                if not weak:
+                    bn += 1
+                last = j + 1 == len(c) or c[j + 1]['t'].date() != d
+                out.append((x['t'], bn, last, low_p, age, 'ema+vwap' if hit_e and hit_v else 'ema' if hit_e else 'vwap', weak))
+                break
+            if age >= p['wait'] or j in cross_at:
+                break
+    return out
+
+
+def simulate_ema(bars, chart_min, p=None, fine=None, full=False):
     """The script's EMA section (v35, v36's filter) on chart bars of `chart_min` minutes carrying 'vw' →
     [(candle start, late, the day's number, under, flips, weak)]. `fine`: the bars the EMA's candles
-    are really made of, for a chart of the EMA's own timeframe built from smaller bars."""
+    are really made of, for a chart of the EMA's own timeframe built from smaller bars.
+    `full`: → (those crosses, the v37 bounces [(candle start, late, the day's number, the pullback's
+    low, candles after the cross, what it came down to, weak)])."""
     p = dict(EMA_DEFAULTS, **(p or {}))
     if not (chart_min <= p['tf_min'] and p['tf_min'] % chart_min == 0):
-        return []
+        return ([], []) if full else []
     c = resample_vw(fine or bars, p['tf_min'])
     e_after = ema_series([x['c'] for x in c], p['n'])
     starts = [x['t'] for x in c]
     alpha = 2.0 / (p['n'] + 1)
-    line, out, done = _EmaLine(), [], None
-    prev_live = prev_vw = prev_t = prev_day = None
+    line, out, bounces, done = _EmaLine(), [], [], None
+    prev_live = prev_vw = prev_t = prev_day = prev_c = None
+    co = cl = cop = clp = None      # the EMA candle's open and low so far, and the candle before's
     step = datetime.timedelta(minutes=chart_min)
     j = 0   # finished EMA candles before the current chart bar's candle
     for b in bars:
@@ -1551,7 +1629,16 @@ def simulate_ema(bars, chart_min, p=None, fine=None):
             j += 1
         live = alpha * b['c'] + (1 - alpha) * e_after[j - 1] if j >= 1 and e_after[j - 1] is not None else None
         new_day = prev_day is not None and t.date() != prev_day
+        if prev_t is None or ct != prev_t:
+            cop, clp, co, cl = co, cl, b['o'], b['l']
+        else:
+            cl = min(cl, b['l'])
         if prev_t is not None and ct != prev_t and done != prev_t:      # the candle before, from the bar before
+            # v37: an earlier cross's bounce first (a cross candle can't be its own bounce)
+            if p['bounce'] and line.step_bounce(prev_live, prev_vw, cop, clp, prev_c, p) and not new_day:
+                if not line.weakX:
+                    line.bn += 1
+                bounces.append((prev_t, True, line.bn, line.lowP, line.age, line.came_from(), line.weakX))
             fired = line.cross_up(prev_live, prev_vw)
             done = prev_t
             if fired and not new_day:
@@ -1559,11 +1646,16 @@ def simulate_ema(bars, chart_min, p=None, fine=None):
                 if not weak:
                     line.n += 1
                 out.append((prev_t, True, line.n, line.ran, line.flips, weak))
+                line.arm(weak)
         if new_day:
             line.restart()
-            line.n = 0
+            line.n = line.bn = 0
         ends = _candle_start(t + step, p['tf_min']) != ct or chart_min >= p['tf_min']
         if ends and done != ct:
+            if p['bounce'] and line.step_bounce(live, b['vw'], co, cl, b['c'], p):
+                if not line.weakX:
+                    line.bn += 1
+                bounces.append((ct, False, line.bn, line.lowP, line.age, line.came_from(), line.weakX))
             fired = line.cross_up(live, b['vw'])
             done = ct
             if fired:
@@ -1571,8 +1663,9 @@ def simulate_ema(bars, chart_min, p=None, fine=None):
                 if not weak:
                     line.n += 1
                 out.append((ct, False, line.n, line.ran, line.flips, weak))
-        prev_live, prev_vw, prev_t, prev_day = live, b['vw'], ct, t.date()
-    return out
+                line.arm(weak)
+        prev_live, prev_vw, prev_t, prev_day, prev_c = live, b['vw'], ct, t.date(), b['c']
+    return (out, bounces) if full else out
 
 
 def selftest_ema():
@@ -1635,7 +1728,36 @@ def selftest_ema():
     print(f'…the filter (v36): {weak_n} of {len(all_f)} weak ({early} before 07:00, {short} under the line < 5 candles, {chop} with 3+ flips); '
           f'the script gives the same readings and verdicts on the 3m and 1m charts, and numbers the strong ones 1, 2, … per day',
           '→', 'OK' if ok5 else 'UNEXPECTED')
-    return ok and first_of_day == 0 and ok5
+    # v37, the BOUNCE: for each cross, the plain rule's bounce against the script's sampling
+    wantb = ema_bounce_direct(fine)
+    _, b3 = simulate_ema(resample_vw(fine, 3), 3, fine=fine, full=True)
+    _, b1 = simulate_ema(fine, 1, full=True)
+    bkey = lambda got: [(t, n, lo, age, frm, w) for t, _, n, lo, age, frm, w in got]
+    all_b = [(t, n, lo, age, frm, w) for t, n, _, lo, age, frm, w in wantb]
+    end_b = {(t, n, lo, age, frm, w) for t, n, last, lo, age, frm, w in wantb if last}
+    drop_b = [x for x in all_b if x not in bkey(b1)]
+    weak_b = sum(1 for x in all_b if x[5])
+    late_b = sum(1 for _, late, *_ in b1 if late)
+    cross_t = {t for t, *_ in wantf}
+    only_e = ema_bounce_direct(fine, dict(from_vwap=False))
+    only_v = ema_bounce_direct(fine, dict(from_ema=False))
+    short = ema_bounce_direct(fine, dict(wait=1))
+    ok6 = (len(all_b) >= 15 and bkey(b3) == all_b and not any(late for _, late, *_ in b3)
+           and [x for x in all_b if x not in drop_b] == bkey(b1) and all(x in end_b for x in drop_b)
+           and 0 < weak_b < len(all_b) and len(all_b) < len(all_f)
+           and all(1 <= age <= 10 and lo is not None for _, _, lo, age, _, _ in all_b)
+           and {frm for *_, frm, _ in all_b} <= {'ema', 'vwap', 'ema+vwap'}
+           and all(frm == 'ema' for *_, frm, _ in only_e) and all(frm == 'vwap' for *_, frm, _ in only_v)
+           and 0 < len(short) < len(all_b) and all(age == 1 for *_, age, _, _ in short)
+           and simulate_ema(fine, 1, dict(bounce=False), full=True)[1] == []
+           and bkey(simulate_ema(resample_vw(fine, 3), 3, dict(from_vwap=False), fine=fine, full=True)[1])
+           == [(t, n, lo, age, frm, w) for t, n, _, lo, age, frm, w in only_e])
+    on_cross = sum(1 for t, *_ in all_b if t in cross_t)
+    print(f'…the bounce (v37): {len(all_b)} bounces after {len(all_f)} crosses by the plain rule ({weak_b} after a weak cross; '
+          f'EMA only {len(only_e)}, VWAP only {len(only_v)}, a 1-candle wait {len(short)}); the script gives the same ones, lows and counts on the 3m chart '
+          f'and on the 1m chart ({late_b} a bar late, {len(drop_b)} on a day\'s last candle not announced; {on_cross} on a newer cross\'s candle)',
+          '→', 'OK' if ok6 else 'UNEXPECTED')
+    return ok and first_of_day == 0 and ok5 and ok6
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ import { authMiddleware } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
-import { DEFAULT_ANNOUNCED, parseStageList, parseTvMessage, pastCap, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
+import { DEFAULT_ANNOUNCED, EMA_STAGES, parseStageList, parseTvMessage, pastCap, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
 
 // TradingView ↔ dashboard bridge for the 📐 VWAP setup (services/tv-setups.ts).
 const router = Router();
@@ -76,10 +76,10 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     }
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
     // A quiet CROSS / RETEST that isn't muted or capped is off our Momentum list (under vb_fresh_gain).
-    // v36: an EMA cross the script's filter calls weak is quiet for that.
+    // v36: an EMA cross the script's filter calls weak is quiet for that (v37: and its BOUNCE).
     const why = verdict !== 'quiet' ? undefined
       : !gate.announces(sig.stage) ? 'muted'
-        : sig.stage === 'ema' && sig.weak ? 'weak'
+        : EMA_STAGES.has(sig.stage) && sig.weak ? 'weak'
           : capped && !capExempt ? 'capped' : 'offlist';
     const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
