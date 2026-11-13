@@ -50,7 +50,7 @@ export interface ScreenerTickerDaysTable {
 // Small global key/value settings (migration 20261006090000_app_settings).
 export interface AppSettingsTable {
   key: string;
-  value: JSONColumnType<object>;   // any JSON value the key defines (tv_alert_stages: a stage list)
+  value: JSONColumnType<object>;   // any JSON value the key defines (tv_alert_stages: { announced, known } stage lists; before 2026-11-13 a plain list)
   updated_at: Generated<Date>;
 }
 

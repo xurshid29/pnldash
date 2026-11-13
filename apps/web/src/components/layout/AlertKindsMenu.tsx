@@ -12,10 +12,10 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
   { kind: 'tv_setup', label: '📐 VWAP setup', hint: 'sound + notification on this device' },
 ].filter((k) => DASHBOARD_KINDS.includes(k.kind as AlertKind)) as Array<{ kind: AlertKind; label: string; hint: string }>;
 
-// The RSI switch also covers its v34 DIP, and the EMA switch its v37 BOUNCE (the server lists no
-// switch for 'dip' or 'bounce').
+// The EMA switch also covers its v37 BOUNCE (the server lists no switch for 'bounce'). RSI and its
+// DIP have one each since 2026-11-13.
 const STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI + DIP', dip: 'DIP',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP',
   ema: 'EMA + BOUNCE', bounce: 'BOUNCE',
 };
 

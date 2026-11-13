@@ -6,7 +6,9 @@ import { authMiddleware } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
-import { DEFAULT_ANNOUNCED, EMA_STAGES, parseStageList, parseTvMessage, pastCap, TV_STAGE_ORDER, TvSetupGate } from '../services/tv-setups.js';
+import {
+  DEFAULT_ANNOUNCED, EMA_STAGES, parseStageList, parseTvMessage, pastCap, readStoredStages, storedStages, TV_STAGE_ORDER, TvSetupGate,
+} from '../services/tv-setups.js';
 
 // TradingView ↔ dashboard bridge for the 📐 VWAP setup (services/tv-setups.ts).
 const router = Router();
@@ -16,6 +18,8 @@ const gate = new TvSetupGate();
 // phone and dashboard alike. One global row in app_settings, like the
 // screener config, because the gate and Telegram are global. Loaded once,
 // before the first webhook or settings read; never rejects (defaults stay).
+// Stored as { announced, known } since 2026-11-13 (DIP got its own switch); an older plain list
+// is read with DIP following RSI (readStoredStages).
 const STAGES_KEY = 'tv_alert_stages';
 let settingsLoad: Promise<void> | null = null;
 function loadSettings(): Promise<void> {
@@ -23,7 +27,7 @@ function loadSettings(): Promise<void> {
     .selectFrom('app_settings').select('value').where('key', '=', STAGES_KEY)
     .executeTakeFirst()
     .then((row) => {
-      const stages = row ? parseStageList(row.value) : null;
+      const stages = row ? readStoredStages(row.value) : null;
       if (stages) gate.setAnnounced(stages);
       console.log(`[tv-setup] announced stages: ${gate.announcedStages().join(', ') || 'none'}${stages ? '' : ' (default)'}`);
     })
@@ -105,11 +109,12 @@ router.put('/settings', authMiddleware, async (req, res) => {
   if (!parsed.success) return res.status(400).json({ error: 'announced must be a list of stages' });
   await loadSettings();   // so a late first load can't overwrite this change
   const stages = parseStageList(parsed.data.announced) ?? [];
+  const value = JSON.stringify(storedStages(stages));
   try {
     await getDb()
       .insertInto('app_settings')
-      .values({ key: STAGES_KEY, value: JSON.stringify(stages), updated_at: new Date() })
-      .onConflict((oc) => oc.column('key').doUpdateSet({ value: JSON.stringify(stages), updated_at: new Date() }))
+      .values({ key: STAGES_KEY, value, updated_at: new Date() })
+      .onConflict((oc) => oc.column('key').doUpdateSet({ value, updated_at: new Date() }))
       .execute();
   } catch (err) {
     console.error('[tv-setup] stage settings save failed:', err instanceof Error ? err.message : err);

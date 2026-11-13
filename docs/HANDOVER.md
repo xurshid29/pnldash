@@ -245,6 +245,13 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-13 (later) — DIP GETS ITS OWN ⚙ SWITCH.** The operator: "please, separate RSI+DIP alert settings". `dip` is now in
+`TV_STAGE_ORDER` (after `rsi`; the ⚙ menu shows RSI and DIP apart) and `stageSwitch('dip')` is `dip`; BOUNCE still rides EMA.
+The saved switches are now stored as `{ announced, known }` (`storedStages`); `readStoredStages` reads the old plain list (the
+operator's was `["pullback","cross","rsi","ema"]`, saved 14:45 UTC) with DIP taking the RSI's value, so DIP stays on until they
+untick it. Nothing written to `app_settings` by me: the new format lands on their next ⚙ change. History's "RSI + DIP" filter and
+"Show only Momentum tickers" still treat the two together. No script change (still v37). 498 checks.
+
 **2026-11-13 (09:00–10:30 ET) — SCRIPT v37: THE EMA BOUNCE.** The operator pasted v36 (it compiles: three PARA screenshots show
 the orange EMA and gray ema marks) and asked: "maybe, pullback or bounce from ema and/or vwap can help?". Measured first
 (`research/ema-vwap/ema_pullback_study.py`, README table): after a cross, a candle's low down to the EMA or the VWAP and then a

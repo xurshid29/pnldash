@@ -102,11 +102,11 @@ export function SetupsHistoryTable({ date }: { date: string }) {
     const on = new Set<TvStage>(settings?.announced ?? ['pullback', 'cross', 'retest']);
     return events.filter((e) => {
       const st = e.setup.stage;
-      if (stageFilter === 'on' && !on.has(stageSwitch(st))) return false;   // a DIP rides the RSI switch
+      if (stageFilter === 'on' && !on.has(stageSwitch(st))) return false;   // a BOUNCE rides the EMA switch
       if (stageFilter === 'pullback' && st !== 'pullback') return false;
       if (stageFilter === 'cross' && st !== 'cross') return false;
       if (stageFilter === 'retest' && st !== 'retest') return false;
-      if (stageFilter === 'rsi' && stageSwitch(st) !== 'rsi') return false;
+      if (stageFilter === 'rsi' && st !== 'rsi' && st !== 'dip') return false;   // the RSI cross and its DIP, one view
       if (stageFilter === 'ema' && stageSwitch(st) !== 'ema') return false;   // the EMA cross and its BOUNCE
       return !momentumOnly || e.setup.on_screen;
     });

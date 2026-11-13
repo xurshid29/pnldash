@@ -2085,8 +2085,11 @@ timeframe and seeking the RSI drop in 15min chart". Built without grading.
     5m, 3m or 1m chart, not 10m. The 30s alert always qualifies.
 - **Our side** (stage `dip`, fields `rsi_tf` / `rsi` / `rsi_ma` / `rsi_low` / `stop` / `dip_n` /
   `since_n` / `candle_tf` / `late`):
-  - It has no ⚙ switch of its own and **rides the RSI switch** (`stageSwitch()`), shown as
-    "RSI + DIP", so the operator has nothing to tick. Telegram mute slug `tv_dip`.
+  - **Its own ⚙ switch, DIP, since 2026-11-13** (operator: "separate RSI+DIP alert settings").
+    It rode the RSI switch before, shown as "RSI + DIP". The saved switches became
+    `{ announced, known }`; a plain list saved before the split gives DIP the RSI's value
+    (`readStoredStages`), so nothing changed until the operator unticks one. Telegram mute slug
+    `tv_dip`.
   - It announces off Momentum like the RSI cross. The duplicate key includes the timeframe;
     there is no cap.
   - Dashboard: a magenta DIP pill, the row leading with `dip · stop $X (−y%)`, live for an hour
@@ -2270,7 +2273,7 @@ cross, which re-arms.
 `candle_tf` / `ema_len` / `ema`.
 
 - It rides the EMA's ⚙ switch (`stageSwitch('bounce') === 'ema'`, shown as **EMA + BOUNCE**), like
-  the DIP rides the RSI's. Telegram mute slug `tv_bounce`.
+  the DIP rode the RSI's until 11-13. Telegram mute slug `tv_bounce`.
 - Announced like the cross: Momentum names or a day high ≥ +30%, quiet past `em_cap` (3) on its own
   `bounce N`, quiet when weak.
 - Dashboard: a lime BOUNCE pill in the EMA's thread, live for 15 minutes, the row leading with

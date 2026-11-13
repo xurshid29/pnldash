@@ -339,7 +339,7 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // above it. It replaced v25–v27's LEVEL / BREAK (the VB candle's high as a trigger).
 // RSI (script v32, for longer trades): the 12h RSI crossed above its MA after being oversold,
 // judged at a 6h candle's close. DIP (script v34): after an RSI cross, the RSI closed back under
-// its MA on its own timeframe and turned up — the pullback entry. It rides the RSI's ⚙ switch.
+// its MA on its own timeframe and turned up — the pullback entry. Its own ⚙ switch since 2026-11-13.
 // EMA (script v35): the EMA of a timeframe's closes (3m, length 9) crossed above a VWAP line,
 // judged at that timeframe's candle close. BOUNCE (script v37): after an EMA cross, a pullback to
 // the EMA or the VWAP and a green close above the EMA — the pullback entry. It rides the EMA's ⚙ switch.
@@ -347,7 +347,7 @@ export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi
 export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'ema', 'bounce'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
 export function stageSwitch(stage: TvStage): TvStage {
-  return stage === 'dip' ? 'rsi' : stage === 'bounce' ? 'ema' : stage;
+  return stage === 'bounce' ? 'ema' : stage;
 }
 // Old days in History still hold rows of removed stages (v1–v26 RECLAIM and the BB
 // breakout, v25–v27 LEVEL / BREAK); they're skipped.

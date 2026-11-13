@@ -51,12 +51,13 @@ export const VB_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['cross', 'retes
 // the 3h RSI rides along. Announced off Momentum too (beaten-down names), behind its ⚙ switch.
 // v34 DIP (operator, 2026-11-12): after an RSI cross, the RSI closes back under its MA on its own
 // timeframe's candles and then turns up — the pullback entry, with a stop under the dip's low.
-// It rides the RSI's ⚙ switch (no switch of its own), so it needs no setup.
+// It rode the RSI's ⚙ switch until 2026-11-13; since then it has its own (operator: "separate
+// RSI+DIP alert settings"). A list saved before that gives DIP the RSI's value (readStoredStages).
 // v37 BOUNCE (operator, 2026-11-13): after an EMA cross, a candle's low comes down to the EMA or
 // the VWAP and that candle or a later one closes green above the EMA — the pullback entry, with a
-// stop under the pullback's low. It rides the EMA's ⚙ switch, the same way.
+// stop under the pullback's low. It rides the EMA's ⚙ switch (no switch of its own).
 export function stageSwitch(stage: TvStage): TvStage {
-  return stage === 'dip' ? 'rsi' : stage === 'bounce' ? 'ema' : stage;
+  return stage === 'bounce' ? 'ema' : stage;
 }
 // The EMA cross and its bounce: one alert each from the 30s alert, limited alike.
 export const EMA_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'bounce']);
@@ -283,7 +284,7 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'dip', 'ema', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
@@ -292,6 +293,40 @@ export function parseStageList(v: unknown): TvStage[] | null {
   if (!Array.isArray(v)) return null;
   const wanted = new Set(v.filter((x): x is string => typeof x === 'string').map((x) => x.trim().toLowerCase()));
   return TV_STAGE_ORDER.filter((s) => wanted.has(s));
+}
+
+// A stage that got its own switch after riding another's starts with that switch's value, so a
+// list saved before the split keeps announcing what it did (2026-11-13: DIP, from RSI).
+const SPLIT_FROM: Partial<Record<TvStage, TvStage>> = { dip: 'rsi' };
+
+// The stored switches: `{ announced, known }`, `known` = the menu's stages when it was saved. A
+// stage the list didn't know takes the switch it split from, or its default. A plain array (saved
+// before 2026-11-13) knew every stage but DIP. Null if the value is neither.
+export function readStoredStages(v: unknown): TvStage[] | null {
+  let list: unknown;
+  let known: Set<string>;
+  if (Array.isArray(v)) {
+    list = v;
+    known = new Set(TV_STAGE_ORDER.filter((s) => s !== 'dip'));
+  } else if (v && typeof v === 'object' && Array.isArray((v as { announced?: unknown }).announced)
+    && Array.isArray((v as { known?: unknown }).known)) {
+    list = (v as { announced: unknown[] }).announced;
+    known = new Set((v as { known: unknown[] }).known.filter((x): x is string => typeof x === 'string'));
+  } else {
+    return null;
+  }
+  const on = new Set(parseStageList(list) ?? []);
+  for (const s of TV_STAGE_ORDER) {
+    if (known.has(s)) continue;
+    const from = SPLIT_FROM[s];
+    if (from ? on.has(from) : DEFAULT_ANNOUNCED.includes(s)) on.add(s);
+  }
+  return TV_STAGE_ORDER.filter((s) => on.has(s));
+}
+
+// What PUT /api/tv/settings stores: the switches and the stages the menu had.
+export function storedStages(stages: readonly TvStage[]): { announced: TvStage[]; known: TvStage[] } {
+  return { announced: [...stages], known: [...TV_STAGE_ORDER] };
 }
 
 function toLine(v: unknown): TvLine | null {
@@ -555,8 +590,8 @@ export class TvSetupGate {
     if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
     // v32 RSI cross: one per check candle from the 30s alert alone; a longer trade, so it
-    // announces off Momentum too — only its ⚙ switch makes it quiet. Its v34 DIP rides that switch.
-    if (rsi) return this.announced.has('rsi') ? 'notify' : 'quiet';
+    // announces off Momentum too — only its ⚙ switch makes it quiet. Its v34 DIP likewise, behind its own switch.
+    if (rsi) return this.announced.has(sig.stage) ? 'notify' : 'quiet';   // since 11-13 the DIP has its own switch
     // v35 EMA cross: one per candle and line from the 30s alert alone, limited like a CROSS —
     // its ⚙ switch, the day's cap, and Momentum names only (or a day high ≥ vb_fresh_gain).
     // v36: a cross the script's filter calls weak is quiet. v37: its BOUNCE follows the same rules

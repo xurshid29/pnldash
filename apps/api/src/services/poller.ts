@@ -4034,7 +4034,7 @@ class PollerService {
         ` · dip low ${sig.rsi_low ?? '?'} · stop ${sig.stop ?? '?'} · dip ${sig.dip_n ?? '?'} · ${sig.since_n ?? '?'} candles after the RSI cross` +
         `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? ' · quiet (the RSI stage is switched off)' : ''));
+        (mode === 'quiet' ? ' · quiet (DIP switched off)' : ''));
     } else if (sig.stage === 'rsi') {
       console.log(`[tv-setup] RSI ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +
         ` · low ${sig.rsi_low ?? '?'} · ${sig.rsi2_tf ?? '?'} RSI ${sig.rsi2 ?? '?'} / MA ${sig.rsi2_ma ?? '?'}` +

@@ -7,15 +7,17 @@
 // TRIGGERED) were removed, and their messages are rejected. v28 replaced the VB break
 // (LEVEL / BREAK) with RETEST and added `vwap 30s|chart` to every message. v32 added a
 // third setup, the RSI cross (stage RSI), for longer trades; v33 kept one RSI; v34 added its
-// DIP (the pullback after the cross), which rides the RSI's ⚙ switch. v35 added a fourth setup,
-// the EMA cross over VWAP (stage EMA).
+// DIP (the pullback after the cross), which rode the RSI's ⚙ switch until it got its own (11-13).
+// v35 added a fourth setup, the EMA cross over VWAP (stage EMA); v36 its filter; v37 its BOUNCE,
+// which rides the EMA's switch.
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import {
   parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, lineTokens,
-  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, stageSwitch, type TvSetupSignal,
+  parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, stageSwitch, readStoredStages, storedStages,
+  type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -204,13 +206,28 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'pullback', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, day_gain: 25, ah_gain: null,
     tf: '1', vol_x: null, run_pct: null, svwap: 1.95, spx_pct: 2.6, line: 'session', touch: 1, fails: 0, ...over,
   });
-  check('default switches: PULLBACK, CROSS, RETEST, RSI, EMA on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi","ema"]');
+  check('default switches: PULLBACK, CROSS, RETEST, RSI, DIP, EMA on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi","dip","ema"]');
   check('parseStageList keeps known stages in menu order, drops the rest (v27: a saved go / ready / forming too)',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 'ready', 7])) === '["pullback","held"]'
       && parseStageList('pullback') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists the seven stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST; v35 EMA after it)',
-    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","ema","broken","held"]'
+  check('menu order lists the eight stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST; 11-13 DIP after it; v35 EMA)',
+    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","dip","ema","broken","held"]'
       && JSON.stringify(parseStageList(['pullback', 'cross', 'break'])) === '["pullback","cross"]');
+  // 2026-11-13: DIP got its own switch. A list saved before that (a plain array) gives DIP the RSI's value;
+  // one saved since ({ announced, known }) is read as saved.
+  const legacy = readStoredStages(['pullback', 'cross', 'rsi', 'ema']);
+  check('an old saved list with RSI on → DIP on too, the rest as saved', JSON.stringify(legacy) === '["pullback","cross","rsi","dip","ema"]', JSON.stringify(legacy));
+  check('…with RSI off → DIP off; an empty old list stays empty',
+    JSON.stringify(readStoredStages(['pullback', 'cross', 'ema'])) === '["pullback","cross","ema"]' && JSON.stringify(readStoredStages([])) === '[]');
+  check('a new saved list is read as saved: RSI on and DIP off stays off; DIP on and RSI off stays so',
+    JSON.stringify(readStoredStages(storedStages(['pullback', 'rsi']))) === '["pullback","rsi"]'
+      && JSON.stringify(readStoredStages(storedStages(['dip', 'ema']))) === '["dip","ema"]');
+  check('…a stage the saved list didn\'t know takes the switch it split from (DIP ← RSI), any other its default',
+    JSON.stringify(readStoredStages({ announced: ['rsi'], known: ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'] })) === '["rsi","dip"]'
+      && JSON.stringify(readStoredStages({ announced: [], known: ['pullback'] })) === '["cross","retest","rsi","dip","ema"]');
+  check('…stored as { announced, known }; anything else is no list',
+    JSON.stringify(storedStages(['rsi'])) === `{"announced":["rsi"],"known":${JSON.stringify(TV_STAGE_ORDER)}}`
+      && readStoredStages('pullback') === null && readStoredStages({ announced: ['rsi'] }) === null && readStoredStages(null) === null);
   const g = new TvSetupGate();
   g.setAnnounced(['cross']);
   check('PULLBACK switched off → quiet', g.admit(sig(), T0) === 'quiet' && !g.announces('pullback'));
@@ -465,16 +482,18 @@ console.log('RSI dip (v34, 2026-11-12)');
     parseTvMessage('RSI XTND 1.07 | rsi 30 29.2 ma 27.0 | low 22.1 | candle 30 | tf 30S')?.dip_n === null
       && parseTvMessage('PULLBACK DIP 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.ticker === 'DIP');
   const g = new TvSetupGate();
-  check('DIP announces off Momentum, behind the RSI switch (the default list has it on)', g.admit(d!, T0, false, false) === 'notify' && g.announces('dip'));
+  check('DIP announces off Momentum, behind its own switch (the default list has it on)', g.admit(d!, T0, false, false) === 'notify' && g.announces('dip'));
   check('…the same DIP again is a re-delivery; the next turn is a new event', g.admit(d!, T0 + 5, false, false) === 'drop'
     && g.admit({ ...d!, dip_n: 2 }, T0 + 900, false, false) === 'notify');
+  // 2026-11-13 (operator: "separate RSI+DIP alert settings"): RSI and DIP have a switch each.
   const off = new TvSetupGate();
-  off.setAnnounced(['pullback', 'cross']);
-  check('…RSI switched off in ⚙ → DIP quiet too', off.admit(d!, T0, false, true) === 'quiet' && !off.announces('dip'));
+  off.setAnnounced(['pullback', 'cross', 'rsi']);
+  check('…DIP switched off, RSI on → DIP quiet, the RSI cross still announces', off.admit(d!, T0, false, true) === 'quiet' && !off.announces('dip')
+    && off.announces('rsi') && stageSwitch('dip') === 'dip');
   const on = new TvSetupGate();
-  on.setAnnounced(['rsi']);
-  check('…the operator\'s saved list (with rsi) announces it without a switch of its own', on.admit(d!, T0, false, false) === 'notify'
-    && !TV_STAGE_ORDER.includes('dip') && JSON.stringify(parseStageList(['rsi', 'dip'])) === '["rsi"]');
+  on.setAnnounced(['dip']);
+  check('…DIP on, RSI off → DIP announces, the RSI cross is quiet', on.admit(d!, T0, false, false) === 'notify' && !on.announces('rsi')
+    && TV_STAGE_ORDER.includes('dip') && JSON.stringify(parseStageList(['rsi', 'dip'])) === '["rsi","dip"]');
   check('…never past a cap', !pastCap(d!));
   const html = formatTvSetupAlert(d!, 'NASDAQ:OMH', null);
   check('Telegram: DIP headline and what happened', html.includes('🎯 <b>DIP</b>') && html.includes('<b>OMH</b>') && html.includes('$8.09')
