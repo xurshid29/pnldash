@@ -257,6 +257,13 @@ script calls such a cross **weak**, still sends it (`| under N | flips N | weak`
 `cross N`; the server stores it quietly (`why` weak); the 📐 sidebar never gives it a row; History lists it with "weak". Four
 inputs and two plots last, so nothing shifts: **paste, Save (36), recreate both alerts.** Replica and 442 checks agree. To do in a
 week or two: grade strong against weak from `tier_events` (`meta->>'weak'`). The audit's VB items are still open.
+Pushed `7de1369`, live 08:08 ET; prod parses the three message shapes (weak, strong, v35) by dry run.
+**Found while verifying: TradingView has sent nothing since 07:18:02 ET** (nginx: 34 webhook POSTs 07:00–07:18, all 200, none
+after; both the 1m and the 30s alert stop there), and **no `ema` row has ever been stored**, so the v35 alerts never delivered.
+That is four minutes after the v35 deploy, when the operator updated the indicator: most likely the old alerts were deleted and
+the new ones aren't running (not recreated, stopped with an error, or no webhook URL). The operator was asked to look at the
+Alerts panel when recreating them for v36. If v36 alerts don't arrive either, suspect the script on the 30s alert (a runtime
+error stops an alert) and ask for the alert's status text.
 
 **2026-11-13 (07:00–08:00 ET) — SCRIPT v35: THE EMA CROSS OVER VWAP (a fourth setup).** The operator: "I want to experiment a new
 setup - ema crosses over vwap … (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". Built as stage `ema`
