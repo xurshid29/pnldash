@@ -3960,7 +3960,8 @@ class PollerService {
   // Rows carry `fails`, `capped`, `cap_exempt` for the grading.
   // v21 CROSS (tv_cross) / v28 RETEST (tv_retest): why 'capped' = past TV_SETUP.vb_cap on
   // the line today; why 'offlist' = not on our Momentum list (vb_momentum_only, 2026-10-20).
-  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist', capExempt = false): OpportunityAlert {
+  // v36 EMA cross: why 'weak' = the script's filter called the cross weak (rows carry `weak`).
+  deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist' | 'weak', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
     const at = new Date(nowSec * 1000).toISOString();
@@ -4012,9 +4013,11 @@ class PollerService {
     if (sig.stage === 'ema') {
       console.log(`[tv-setup] EMA ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · ${sig.candle_tf ?? '?'} candle · EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%) · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
+        ` · under ${sig.under_n ?? '?'} · flips ${sig.flips_n ?? '?'}` +
         `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: cross ${sig.cross_n} today)`
+        (mode === 'quiet' ? (why === 'weak' ? ' · quiet (the filter calls it weak)'
+          : why === 'capped' ? ` · quiet (past the cap: cross ${sig.cross_n} today)`
           : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
     } else if (sig.stage === 'dip') {
       console.log(`[tv-setup] DIP ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +

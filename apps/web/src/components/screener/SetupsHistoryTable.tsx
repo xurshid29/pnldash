@@ -16,7 +16,7 @@ import { useSelection } from '../../context/SelectionContext';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens } from '../common/TvStageTag';
+import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens, isWeakEma, emaEventKey, tagNumber } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
 import { fmtPct, fmtPrice } from '../../utils/format';
 
@@ -49,7 +49,7 @@ function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   for (const { a, at } of sorted) {
     const s = a.setup!;
     // A v21 CROSS / v28 RETEST comes from one alert: only a copy of the same one merges, not the next.
-    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' || s.stage === 'ema' ? `|${s.cross_n ?? ''}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'dip' ? `|${s.dip_n ?? ''}` : ''}`;
+    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : s.stage === 'ema' ? `|${emaEventKey(s)}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'dip' ? `|${s.dip_n ?? ''}` : ''}`;
     const prev = last.get(k);
     if (prev && at - prev.at <= MERGE_MS) {
       if (s.tf && !prev.tfs.includes(s.tf)) prev.tfs.push(s.tf);
@@ -120,6 +120,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const rsis = visible.filter((e) => e.setup.stage === 'rsi').length;
   const dips = visible.filter((e) => e.setup.stage === 'dip').length;
   const emas = visible.filter((e) => e.setup.stage === 'ema').length;
+  const weakEmas = visible.filter((e) => isWeakEma(e.setup)).length;   // v36: the ones the script's filter kept quiet
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -145,8 +146,9 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       render: (_v, e) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <TvStageTag stage={e.setup.stage} dim={!e.notified} line={e.setup.line}
-            touch={e.setup.stage === 'cross' || e.setup.stage === 'ema' ? e.setup.cross_n : e.setup.stage === 'retest' ? e.setup.retest_n : e.setup.stage === 'dip' ? e.setup.dip_n : e.setup.touch} tfs={crossTfText(e.setup)} />
+            touch={tagNumber(e.setup)} tfs={crossTfText(e.setup)} />
           {e.setup.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
+          {isWeakEma(e.setup) && <Text type="secondary" style={{ fontSize: 10 }}>weak</Text>}
         </span>
       ),
     },
@@ -208,7 +210,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
               {retests > 0 && <> · {retests} RETEST</>}
               {rsis > 0 && <> · {rsis} RSI</>}
               {dips > 0 && <> · {dips} DIP</>}
-              {emas > 0 && <> · {emas} EMA</>}
+              {emas > 0 && <> · {emas} EMA{weakEmas > 0 && <> ({weakEmas} weak)</>}</>}
             </>
           )}
         </Text>

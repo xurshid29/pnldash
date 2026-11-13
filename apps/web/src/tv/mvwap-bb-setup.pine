@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v35 (2026-11-13). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v36 (2026-11-13). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -41,6 +41,9 @@
 // VWAP line (session; month and year are switches), judged at each close of that timeframe's
 // candles. Built from a request like the RSI, so it works on the 3m chart or a smaller one.
 //   EMA   above the line at this close, at or under it at the one before
+//         (v36) the filter calls a cross weak — its candle opened before 07:00 New York, the EMA
+//         was under the line for fewer than 5 candles, or the two crossed more than 2 times in
+//         the 20 candles before: drawn gray, sent with `| weak`, not announced
 // VB lanes (v29): up to three more candle timeframes in the same alert (1h / 4h / 1D on the
 // month and year lines by default), each with its own band and lines, for longer trades.
 // VWAP lines (v28): from 30s bars by default, so the session line is the same on every
@@ -1202,6 +1205,18 @@ emMonth   = input.bool(false,    "month VWAP", inline = "eml", group = "EMA cros
 emYear    = input.bool(false,    "year VWAP", inline = "eml", group = "EMA cross over VWAP (v35)")
 emGainOn  = input.bool(true,     "EMA: gainers only (the gainer filter at the top)", group = "EMA cross over VWAP (v35)")
 emShow    = input.bool(true,     "EMA: draw the EMA line and the markers", group = "EMA cross over VWAP (v35)")
+// v36 inputs go last: the filter (operator, 11-13, PARA: "is there anyway we can filter/optimize the
+// false ones?"). Measured on our data (research/ema-vwap, 08-14 → 11-13, 3,768 crosses): about half
+// close back under the VWAP within 5 candles, and three things mark the worse ones in both halves of
+// the data — the hour (before 07:00 ET: 60–64% false), a short stay under the line before the cross
+// (under 5 candles: 56–62%) and crossing back and forth before it (5+ flips in 20 candles: 64%). The
+// crosses this filter calls weak were false 57% of the time, the rest 41–44%; the plain cross loses
+// either way (a heads-up, not an edge), and the ADX and volume filters of the video did nothing.
+// A weak cross is drawn gray and its message says `| weak`: the server stores it and stays quiet.
+emFilterOn = input.bool(true,    "EMA filter on (v36): weak crosses are drawn gray and sent quietly", group = "EMA cross over VWAP (v35)")
+emMinUnder = input.int(5,        "EMA filter: the EMA was under the line for at least N candles before the cross", minval = 0, group = "EMA cross over VWAP (v35)")
+emMaxFlips = input.int(2,        "EMA filter: at most N EMA / line crossings in the 20 candles before", minval = 0, group = "EMA cross over VWAP (v35)")
+emFromHour = input.int(7,        "EMA filter: not before this hour, New York time (4 = from the pre-market open)", minval = 0, maxval = 23, group = "EMA cross over VWAP (v35)")
 
 // The EMA after the last finished candle of its timeframe, and live at this bar (that EMA's
 // chart value now: the finished candles + this bar's close as the open one's).
@@ -1216,21 +1231,58 @@ emOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0
 type EmaLine
     float prevE = na    // the EMA and the line at the candle close before
     float prevL = na
-    int   n     = 0     // the day's crosses sent on this line
+    int   n     = 0     // the day's crosses sent on this line (v36: the weak ones aren't counted)
+    int   under = 0     // v36: closes in a row with the EMA at or under the line, up to the last one
+    int   ran   = 0     // v36: at the last cross, how many closes the EMA had been under the line…
+    int   flips = 0     // …and how many times the two had crossed in the 20 closes before it
 
-// A candle close → true when the EMA crossed above the line.
-method crossUp(EmaLine s, float e, float ln) =>
+// A candle close → true when the EMA crossed above the line. `hist` is this line's last 20 closes
+// (1 = the EMA above the line), kept beside the object.
+method crossUp(EmaLine s, array<int> hist, float e, float ln) =>
     bool up = not na(s.prevE) and not na(e) and not na(ln) and s.prevE <= s.prevL and e > ln
     if not na(e) and not na(ln)
+        if up
+            s.ran := s.under
+            int f = 0
+            int m = array.size(hist)
+            if m > 1
+                for i = 1 to m - 1
+                    if array.get(hist, i) != array.get(hist, i - 1)
+                        f += 1
+            s.flips := f
+        s.under := e > ln ? 0 : s.under + 1
+        array.push(hist, e > ln ? 1 : 0)
+        if array.size(hist) > 20
+            array.shift(hist)
         s.prevE := e
         s.prevL := ln
     up
 
 // The line's anchor restarted: its next candle has no close before it.
-method restart(EmaLine s) =>
+method restart(EmaLine s, array<int> hist) =>
     s.prevE := na
     s.prevL := na
+    s.under := 0
+    array.clear(hist)
     true
+
+// v36: a weak cross — too early in the day, too short a stay under the line, or too much crossing before it.
+emWeak(EmaLine s, bool early) => emFilterOn and (early or s.ran < emMinUnder or s.flips > emMaxFlips)
+
+// The fired lines' best reading, for the message: the longest stay under the line and the fewest flips.
+emRead(EmaLine s, EmaLine m, EmaLine y, bool fS, bool fM, bool fY) =>
+    int u = 0
+    int f = 999
+    if fS
+        u := math.max(u, s.ran)
+        f := math.min(f, s.flips)
+    if fM
+        u := math.max(u, m.ran)
+        f := math.min(f, m.flips)
+    if fY
+        u := math.max(u, y.ran)
+        f := math.min(f, y.flips)
+    [u, f]
 
 // The lowest of the fired lines' counts (as the VB's `cross N`).
 emCount(EmaLine s, EmaLine m, EmaLine y, bool fS, bool fM, bool fY) =>
@@ -1246,70 +1298,108 @@ emCount(EmaLine s, EmaLine m, EmaLine y, bool fS, bool fM, bool fY) =>
 var EmaLine emS = EmaLine.new()
 var EmaLine emM = EmaLine.new()
 var EmaLine emY = EmaLine.new()
+var emHS = array.new<int>()   // v36: each line's last 20 closes (1 = the EMA above it), for the flips
+var emHM = array.new<int>()
+var emHY = array.new<int>()
 emT   = time(emTf)
 emEnd = time_close == time_close(emTf)
 var int emDone = na
 bool emLateS = not na(emT[1]) and emT != emT[1] and (na(emDone) or emDone != emT[1])
 bool emNewM  = timeframe.change("M")
 bool emNewY  = timeframe.change("12M")
-// A late sample's crosses (the candle before, from the bar before) and this bar's own.
+// A late sample's crosses (the candle before, from the bar before) and this bar's own; with each,
+// the day's number, the stay under the line, the flips before, and whether the filter calls it weak.
 bool emLS = false
 bool emLM = false
 bool emLY = false
 int  emLN = 0
+int  emLU = 0
+int  emLF = 0
+bool emLW = false
 bool emCS = false
 bool emCM = false
 bool emCY = false
 int  emCN = 0
+int  emCU = 0
+int  emCF = 0
+bool emCW = false
 if emOk
     if emLateS
-        bool emX1 = emSession and emS.crossUp(emLive[1], svwap[1])
-        bool emX2 = emMonth and emM.crossUp(emLive[1], mvwap[1])
-        bool emX3 = emYear and emY.crossUp(emLive[1], yvwap[1])
+        bool emX1 = emSession and emS.crossUp(emHS, emLive[1], svwap[1])
+        bool emX2 = emMonth and emM.crossUp(emHM, emLive[1], mvwap[1])
+        bool emX3 = emYear and emY.crossUp(emHY, emLive[1], yvwap[1])
         emDone := emT[1]
         bool emOkL = inWindow and not newDay and (not emGainOn or gainer[1])
         emLS := emX1 and emOkL
         emLM := emX2 and emOkL
         emLY := emX3 and emOkL
-        if emLS
+        // v36: the strong ones among them (the hour is the candle's own, by its open). Only a strong
+        // cross takes a day's number, and a message is weak when none of its lines is strong.
+        bool emEarlyL = hour(emT[1], "America/New_York") < emFromHour
+        bool emG1 = emLS and not emWeak(emS, emEarlyL)
+        bool emG2 = emLM and not emWeak(emM, emEarlyL)
+        bool emG3 = emLY and not emWeak(emY, emEarlyL)
+        emLW := not (emG1 or emG2 or emG3)
+        if emG1
             emS.n := emS.n + 1
-        if emLM
+        if emG2
             emM.n := emM.n + 1
-        if emLY
+        if emG3
             emY.n := emY.n + 1
-        emLN := emCount(emS, emM, emY, emLS, emLM, emLY)
+        // The message's numbers: the strong lines' when there is one, else the fired lines' (a weak
+        // cross then carries the day's count so far, 0 before the first strong one).
+        bool emP1 = emLW ? emLS : emG1
+        bool emP2 = emLW ? emLM : emG2
+        bool emP3 = emLW ? emLY : emG3
+        emLN := emCount(emS, emM, emY, emP1, emP2, emP3)
+        [emU1, emF1] = emRead(emS, emM, emY, emP1, emP2, emP3)
+        emLU := emU1
+        emLF := emF1
     // The anchors: a new day restarts the session line and the day's counts.
     if newDay
-        emS.restart()
+        emS.restart(emHS)
         emS.n := 0
         emM.n := 0
         emY.n := 0
     if emNewM
-        emM.restart()
+        emM.restart(emHM)
     if emNewY
-        emY.restart()
+        emY.restart(emHY)
     if emEnd and (na(emDone) or emDone != emT)
-        bool emX4 = emSession and emS.crossUp(emLive, svwap)
-        bool emX5 = emMonth and emM.crossUp(emLive, mvwap)
-        bool emX6 = emYear and emY.crossUp(emLive, yvwap)
+        bool emX4 = emSession and emS.crossUp(emHS, emLive, svwap)
+        bool emX5 = emMonth and emM.crossUp(emHM, emLive, mvwap)
+        bool emX6 = emYear and emY.crossUp(emHY, emLive, yvwap)
         emDone := emT
         bool emOkC = inWindow and (not emGainOn or gainer)
         emCS := emX4 and emOkC
         emCM := emX5 and emOkC
         emCY := emX6 and emOkC
-        if emCS
+        bool emEarlyC = hour(emT, "America/New_York") < emFromHour
+        bool emG4 = emCS and not emWeak(emS, emEarlyC)
+        bool emG5 = emCM and not emWeak(emM, emEarlyC)
+        bool emG6 = emCY and not emWeak(emY, emEarlyC)
+        emCW := not (emG4 or emG5 or emG6)
+        if emG4
             emS.n := emS.n + 1
-        if emCM
+        if emG5
             emM.n := emM.n + 1
-        if emCY
+        if emG6
             emY.n := emY.n + 1
-        emCN := emCount(emS, emM, emY, emCS, emCM, emCY)
+        bool emP4 = emCW ? emCS : emG4
+        bool emP5 = emCW ? emCM : emG5
+        bool emP6 = emCW ? emCY : emG6
+        emCN := emCount(emS, emM, emY, emP4, emP5, emP6)
+        [emU2, emF2] = emRead(emS, emM, emY, emP4, emP5, emP6)
+        emCU := emU2
+        emCF := emF2
 
 // The message — a contract with services/tv-setups.ts parseTvMessage. Every value is the sampled
 // candle's (a late one's from the bar before):
-//   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | day high +25% | vwap 30s | tf 30S
+//   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S
+// v36: `under N` = the candles the EMA had been at or under the line, `flips N` = its crossings of the
+// line in the 20 candles before, and `| weak` after them when the filter calls the cross weak.
 emPct(float px, float ln) => (px >= ln ? "+" : "") + str.tostring((px / ln - 1) * 100, "#.0")
-emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late) =>
+emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak) =>
     string names = ""
     if fS
         names := pbJoin(names, "session")
@@ -1326,6 +1416,9 @@ emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, f
         msg += " | yVWAP " + str.tostring(yv, format.mintick) + " (" + emPct(px, yv) + "%)"
     msg += " | ema " + str.tostring(emLen) + " " + str.tostring(e, format.mintick)
     msg += " | line " + names + " | candle " + emTf + " | cross " + str.tostring(n)
+    msg += " | under " + str.tostring(under) + " | flips " + str.tostring(flips)
+    if weak
+        msg += " | weak"
     if not na(dayHighGain)
         msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
     if not na(ahGain)
@@ -1336,13 +1429,16 @@ emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, f
 
 // From the 30s alert alone (the VB's alert timeframe), like the VB and the RSI.
 if (emLS or emLM or emLY) and timeframe.period == vbTf
-    alert(emMsg(emLS, emLM, emLY, emLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true), alert.freq_once_per_bar_close)
+    alert(emMsg(emLS, emLM, emLY, emLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true, emLU, emLF, emLW), alert.freq_once_per_bar_close)
 if (emCS or emCM or emCY) and timeframe.period == vbTf
-    alert(emMsg(emCS, emCM, emCY, emCN, close, emLive, svwap, mvwap, yvwap, false), alert.freq_once_per_bar_close)
+    alert(emMsg(emCS, emCM, emCY, emCN, close, emLive, svwap, mvwap, yvwap, false, emCU, emCF, emCW), alert.freq_once_per_bar_close)
 // v35 plots go last: the EMA line, the markers, and a VWAP line this setup uses that no other draws.
 plot(emOk and emShow ? emLive : na, "EMA (EMA cross, v35)", color.aqua)
-plotshape(emShow and (emCS or emCM or emCY), "EMA cross (v35)", shape.labelup, location.belowbar, color.orange, text = "EMA", textcolor = color.black, size = size.small)
-plotshape(emShow and (emLS or emLM or emLY), "EMA cross, late close (v35)", shape.labelup, location.belowbar, color.orange, text = "EMA", textcolor = color.black, size = size.small, offset = -1)
+plotshape(emShow and (emCS or emCM or emCY) and not emCW, "EMA cross (v35)", shape.labelup, location.belowbar, color.orange, text = "EMA", textcolor = color.black, size = size.small)
+plotshape(emShow and (emLS or emLM or emLY) and not emLW, "EMA cross, late close (v35)", shape.labelup, location.belowbar, color.orange, text = "EMA", textcolor = color.black, size = size.small, offset = -1)
 plot(emOn and emSession and not ((pbOn and pbSession) or (vbOn and vbSession)) ? svwap : na, "sVWAP (EMA cross, v35)", color.purple)
 plot(emOn and emMonth and not ((pbOn and pbMonth) or (vbOn and vbMonth)) ? mvwap : na, "mVWAP (EMA cross, v35)", color.yellow)
 plot(emOn and emYear and not ((pbOn and pbYear) or (vbOn and vbYear)) ? yvwap : na, "yVWAP (EMA cross, v35)", color.blue)
+// v36 plots go last: the crosses the filter calls weak, in gray (sent with `| weak`, stored, not announced).
+plotshape(emShow and (emCS or emCM or emCY) and emCW, "EMA cross, filtered (v36)", shape.labelup, location.belowbar, color.gray, text = "ema", textcolor = color.white, size = size.tiny)
+plotshape(emShow and (emLS or emLM or emLY) and emLW, "EMA cross, filtered, late close (v36)", shape.labelup, location.belowbar, color.gray, text = "ema", textcolor = color.white, size = size.tiny, offset = -1)

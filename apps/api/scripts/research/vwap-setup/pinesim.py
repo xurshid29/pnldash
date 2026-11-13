@@ -1419,7 +1419,16 @@ def selftest_rsi():
 # script reads the EMA after the last finished candle (request.security, lookahead on + [1]) and
 # adds the chart bar's close; a candle whose closing bar had no trades is sampled on the next bar,
 # but not announced across the day's end. The day's first candle can't fire (the line restarts).
-EMA_DEFAULTS = dict(tf_min=3, n=9)
+# v36, the filter: a cross is weak when its candle opened before `from_hour` (New York), when the EMA
+# had been at or under the line for fewer than `min_under` candles, or when the two crossed more than
+# `max_flips` times in the 20 candles before. A weak cross is still sent (`| weak`), takes no day's
+# number, and the server keeps it quiet. Measured in ../ema-vwap/.
+EMA_DEFAULTS = dict(tf_min=3, n=9, filter=True, min_under=5, max_flips=2, from_hour=7)
+
+
+def _ema_weak(p, hour, under, flips):
+    """The script's emWeak, with the candle's hour."""
+    return p['filter'] and (hour < p['from_hour'] or under < p['min_under'] or flips > p['max_flips'])
 
 
 def ema_series(closes, n):
@@ -1465,41 +1474,65 @@ class _EmaLine:
     def __init__(self):
         self.prevE = self.prevL = None
         self.n = 0
+        self.under = self.ran = self.flips = 0   # v36
+        self.hist = []                           # the last 20 closes: 1 = the EMA above the line
 
     def cross_up(self, e, ln):
         up = self.prevE is not None and e is not None and ln is not None and self.prevE <= self.prevL and e > ln
         if e is not None and ln is not None:
+            if up:
+                self.ran = self.under
+                self.flips = sum(1 for i in range(1, len(self.hist)) if self.hist[i] != self.hist[i - 1])
+            self.under = 0 if e > ln else self.under + 1
+            self.hist.append(1 if e > ln else 0)
+            if len(self.hist) > 20:
+                self.hist.pop(0)
             self.prevE, self.prevL = e, ln
         return up
 
     def restart(self):
         self.prevE = self.prevL = None
+        self.under = 0
+        self.hist = []
 
 
 def ema_rule_direct(bars, p=None):
     """The plain rule on the EMA timeframe's own candles (`bars` carry 'vw'): the EMA closes above
-    the session VWAP after closing at or under it, the day's first candle excluded.
-    → [(candle start, the day's cross number, the candle is its day's last)]."""
+    the session VWAP after closing at or under it, the day's first candle excluded. The filter's
+    readings are taken from the day's candles directly, as the study does (ema_vwap_study.py).
+    → [(candle start, the day's number, the candle is its day's last, under, flips, weak)]."""
     p = dict(EMA_DEFAULTS, **(p or {}))
     c = resample_vw(bars, p['tf_min'])
     e = ema_series([x['c'] for x in c], p['n'])
-    line, out, day = _EmaLine(), [], None
+    out, day, n = [], None, 0
+    seen = []          # the day's candles with an EMA and a line: (EMA, line)
     for i, x in enumerate(c):
         if x['t'].date() != day:
-            day = x['t'].date()
-            line.restart()
-            line.n = 0
-        if line.cross_up(e[i], x['vw']):
-            line.n += 1
+            day, n, seen = x['t'].date(), 0, []
+        if e[i] is None or x['vw'] is None:
+            continue
+        above = [a > b for a, b in seen]
+        if seen and not above[-1] and e[i] > x['vw']:
+            under = 0
+            for a in reversed(above):
+                if a:
+                    break
+                under += 1
+            last20 = above[-20:]
+            flips = sum(1 for k in range(1, len(last20)) if last20[k] != last20[k - 1])
+            weak = _ema_weak(p, x['t'].hour, under, flips)
+            if not weak:
+                n += 1
             last = i + 1 == len(c) or c[i + 1]['t'].date() != day
-            out.append((x['t'], line.n, last))
+            out.append((x['t'], n, last, under, flips, weak))
+        seen.append((e[i], x['vw']))
     return out
 
 
 def simulate_ema(bars, chart_min, p=None, fine=None):
-    """The script's EMA section (v35) on chart bars of `chart_min` minutes carrying 'vw' →
-    [(candle start, late, the day's cross number)]. `fine`: the bars the EMA's candles are really
-    made of, for a chart of the EMA's own timeframe built from smaller bars."""
+    """The script's EMA section (v35, v36's filter) on chart bars of `chart_min` minutes carrying 'vw' →
+    [(candle start, late, the day's number, under, flips, weak)]. `fine`: the bars the EMA's candles
+    are really made of, for a chart of the EMA's own timeframe built from smaller bars."""
     p = dict(EMA_DEFAULTS, **(p or {}))
     if not (chart_min <= p['tf_min'] and p['tf_min'] % chart_min == 0):
         return []
@@ -1522,8 +1555,10 @@ def simulate_ema(bars, chart_min, p=None, fine=None):
             fired = line.cross_up(prev_live, prev_vw)
             done = prev_t
             if fired and not new_day:
-                line.n += 1
-                out.append((prev_t, True, line.n))
+                weak = _ema_weak(p, prev_t.hour, line.ran, line.flips)     # the candle's own hour, by its open
+                if not weak:
+                    line.n += 1
+                out.append((prev_t, True, line.n, line.ran, line.flips, weak))
         if new_day:
             line.restart()
             line.n = 0
@@ -1532,8 +1567,10 @@ def simulate_ema(bars, chart_min, p=None, fine=None):
             fired = line.cross_up(live, b['vw'])
             done = ct
             if fired:
-                line.n += 1
-                out.append((ct, False, line.n))
+                weak = _ema_weak(p, ct.hour, line.ran, line.flips)
+                if not weak:
+                    line.n += 1
+                out.append((ct, False, line.n, line.ran, line.flips, weak))
         prev_live, prev_vw, prev_t, prev_day = live, b['vw'], ct, t.date()
     return out
 
@@ -1555,22 +1592,50 @@ def selftest_ema():
             bars.append({'t': t0 + dt.timedelta(days=day, minutes=m - 240), 'o': px, 'h': px * 1.001, 'l': px * 0.999,
                          'c': px, 'v': 100 + rnd.randrange(400)})
     fine = with_session_vwap(bars)
-    want = ema_rule_direct(fine)
-    on3 = simulate_ema(resample_vw(fine, 3), 3, fine=fine)
-    on1 = simulate_ema(fine, 1)
-    key = lambda got: [(t, n) for t, _, n in got]
-    all_w = [(t, n) for t, n, _ in want]
+    # v35's rule first, the filter off: every cross takes a day's number
+    plain = dict(filter=False)
+    want = ema_rule_direct(fine, plain)
+    on3 = simulate_ema(resample_vw(fine, 3), 3, plain, fine=fine)
+    on1 = simulate_ema(fine, 1, plain)
+    key = lambda got: [(t, n) for t, _, n, _, _, _ in got]
+    all_w = [(t, n) for t, n, _, _, _, _ in want]
     dropped = [x for x in all_w if x not in key(on1)]
-    day_end = {(t, n) for t, n, last in want if last}
-    late1 = sum(1 for _, late, _ in on1 if late)
-    ok = (len(want) >= 20 and key(on3) == all_w and not any(l for _, l, _ in on3)
+    day_end = {(t, n) for t, n, last, _, _, _ in want if last}
+    late1 = sum(1 for _, late, _, _, _, _ in on1 if late)
+    ok = (len(want) >= 20 and key(on3) == all_w and not any(l for _, l, _, _, _, _ in on3)
           and [x for x in all_w if x not in dropped] == key(on1) and all(x in day_end for x in dropped) and late1 > 0
+          and not any(w for _, _, _, _, _, w in want + on3 + on1)
           and simulate_ema(resample_vw(fine, 2), 2, fine=fine) == [] and simulate_ema(resample_vw(fine, 5), 5, fine=fine) == [])
-    first_of_day = sum(1 for t, _, _ in want if t.hour == 4 and t.minute < 3)
+    first_of_day = sum(1 for t, _, _, _, _, _ in want if t.hour == 4 and t.minute < 3)
     print(f'EMA cross (v35), EMA 9 of 3m closes over the session VWAP: {len(want)} crosses by the plain rule; the script on a 3m chart '
           f'{len(on3)}, on a 1m chart {len(on1)} ({late1} a bar late, {len(dropped)} on a day\'s last candle not announced); '
           f'2m and 5m charts none; none on a day\'s first candle ({first_of_day})', '→', 'OK' if ok and first_of_day == 0 else 'UNEXPECTED')
-    return ok and first_of_day == 0
+    # v36, the filter on (the defaults): the same crosses, each with the stay under the line, the flips
+    # before and the verdict the plain rule gives; only the strong ones take a day's number
+    wantf = ema_rule_direct(fine)
+    f3 = simulate_ema(resample_vw(fine, 3), 3, fine=fine)
+    f1 = simulate_ema(fine, 1)
+    full = lambda got: [(t, n, u, f, w) for t, _, n, u, f, w in got]
+    all_f = [(t, n, u, f, w) for t, n, _, u, f, w in wantf]
+    end_f = {(t, n, u, f, w) for t, n, last, u, f, w in wantf if last}
+    drop_f = [x for x in all_f if x not in full(f1)]
+    weak_n = sum(1 for x in all_f if x[4])
+    early = sum(1 for t, _, _, u, f, w in wantf if w and t.hour < 7)
+    short = sum(1 for t, _, _, u, f, w in wantf if w and t.hour >= 7 and u < 5)
+    chop = sum(1 for t, _, _, u, f, w in wantf if w and t.hour >= 7 and u >= 5 and f > 2)
+    strong_days = {}
+    for t, n, _, u, f, w in wantf:
+        if not w:
+            strong_days.setdefault(t.date(), []).append(n)
+    ok5 = ([t for t, _, _, _, _ in all_f] == [t for t, _ in all_w] and full(f3) == all_f
+           and [x for x in all_f if x not in drop_f] == full(f1) and all(x in end_f for x in drop_f)
+           and 0 < weak_n < len(all_f) and early > 0 and short > 0 and chop > 0
+           and all(ns == list(range(1, len(ns) + 1)) for ns in strong_days.values())
+           and all(w == (t.hour < 7 or u < 5 or f > 2) for t, _, u, f, w in all_f))
+    print(f'…the filter (v36): {weak_n} of {len(all_f)} weak ({early} before 07:00, {short} under the line < 5 candles, {chop} with 3+ flips); '
+          f'the script gives the same readings and verdicts on the 3m and 1m charts, and numbers the strong ones 1, 2, … per day',
+          '→', 'OK' if ok5 else 'UNEXPECTED')
+    return ok and first_of_day == 0 and ok5
 
 
 if __name__ == '__main__':

@@ -405,6 +405,10 @@ export interface TvSetupInfo {
   // EMA cross (script v35): candle_tf = the EMA's timeframe, cross_n = the day's crosses on the line
   ema_len?: number | null;    // the EMA's length (9)
   ema?: number | null;        // its value at the candle's close
+  // v36, the script's filter on an EMA cross
+  under_n?: number | null;    // candles in a row the EMA had been at or under the line before the cross
+  flips_n?: number | null;    // EMA / line crossings in the 20 candles before
+  weak?: boolean;             // the filter calls it weak: stored, never announced, kept out of the live list
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

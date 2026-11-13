@@ -48,9 +48,11 @@ version is v32.
 - "Polish/improve our dashboard and strategies/setups". Small changes, measured on our data
   first where possible ("data before decisions"), shipped the same day. They answer
   questions with screenshots; zoom in (`sips` crop) and check against their own alert rows.
-- **Check the ET clock before pushing anything under `apps/**`: 07:00–11:00 ET is their
-  trading window** — a deploy restarts the API (~20 s; webhooks can drop). v31 went out at
-  07:14 ET by oversight (rows kept arriving). Mid-session only when they ask for "now".
+- **No trading-window hold for now (operator, 2026-11-13): "you can run/deploy anytime, we're
+  still experimenting, not trading for real".** Push `apps/**` and run heavy exports at any
+  hour; a deploy still restarts the API (~20 s; webhooks in that gap are lost), so say so
+  afterwards. Before that the rule was to hold them for 07:00–11:00 ET (v31 went out at
+  07:14 ET by oversight); it comes back when they say they trade for real.
 - **Test any "fire earlier" rule on the night-before watchlist universe**
   (`research/bb-breakout/early_study.py`), not on days that ended +20% (hindsight).
 
@@ -232,8 +234,8 @@ Yahoo + SEC + halts).
   commit and add files by name.
 - A deploy resets in-memory state; firstSeen, VWAP, the fade cap, alert dedup, today's 📐
   tickers and (on the first webhook) the ⚙ switches are re-seeded.
-- **Research exports aren't in the repo** (session scratchpads get wiped). Re-export outside
-  07:00–11:00 ET: `research/vwap-pullback/export-rows.sql` (edit its date range; ~3 min, ~130 MB
+- **Research exports aren't in the repo** (session scratchpads get wiped). Re-export (any hour
+  since 11-13, see above): `research/vwap-pullback/export-rows.sql` (edit its date range; ~3 min, ~130 MB
   for 06-12 → 10-28), into a venv with duckdb; `research/vwap-bb-cross/vb_retest_study.py` and
   `vb_break_study.py` read it.
 - Live API checks without a browser login: mint a 2-minute JWT inside the api container
@@ -242,6 +244,19 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-13 (later) — SCRIPT v36: THE EMA CROSS FILTER.** The operator, on PARA's 3m chart: "is there anyway we can
+filter/optimize the false ones?", with a video whose optimized ADX / time-window / ATR settings overfit (profitable on 35 trades,
+not on 287). Then: "you can run/deploy anytime, we're still experimenting, not trading for real" — **the trading-window hold is
+off** (START HERE and memory updated). Measured first (`apps/api/scripts/research/ema-vwap/`, README): 3,768 crosses on 08-14 →
+11-13, in / out of sample. About half close back under the VWAP within 5 candles and the plain cross loses (−0.20R / −0.22R); the
+hour (before 07:00 ET), a short stay under the line (< 5 candles) and chop (EMA / VWAP crossings in the 20 candles before) mark the
+worse ones in both halves; ADX and volume don't. Those three keep 61%: kept 44% / 41% false and −0.16R, dropped 57% / 57% and
+−0.26R / −0.31R. **No filter makes it profitable; the operator was told so.** Built as v36 (`docs/vwap-setup.md` §18.1): the
+script calls such a cross **weak**, still sends it (`| under N | flips N | weak`), draws it gray, and doesn't count it in
+`cross N`; the server stores it quietly (`why` weak); the 📐 sidebar never gives it a row; History lists it with "weak". Four
+inputs and two plots last, so nothing shifts: **paste, Save (36), recreate both alerts.** Replica and 442 checks agree. To do in a
+week or two: grade strong against weak from `tier_events` (`meta->>'weak'`). The audit's VB items are still open.
 
 **2026-11-13 (07:00–08:00 ET) — SCRIPT v35: THE EMA CROSS OVER VWAP (a fourth setup).** The operator: "I want to experiment a new
 setup - ema crosses over vwap … (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". Built as stage `ema`

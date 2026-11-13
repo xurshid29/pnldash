@@ -523,6 +523,30 @@ console.log('EMA cross over VWAP (v35, 2026-11-13)');
     && html.includes('sVWAP $8.01 (+1.0%) · mVWAP $7.50 (+7.9%)') && html.includes('on Momentum') && html.includes('grade B+') && !html.includes('null'), html);
   check('Telegram: a late one on two lines says so', formatTvSetupAlert(late!, 'NASDAQ:NCPL', null).includes('crossed above the session + month VWAP (at the 5m close, a bar late)')
     && formatTvSetupAlert(late!, 'NASDAQ:NCPL', null).includes('cross 4 today — past the cap'));
+
+  // v36: the script's filter — its readings ride every EMA message, `| weak` when it calls the cross weak
+  check('v35 messages carry no filter readings and are not weak', e?.under_n === null && e?.flips_n === null && e?.weak === false
+    && late?.weak === false, JSON.stringify(e));
+  const strong = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S');
+  check('v36: a strong cross parses with its readings', strong?.stage === 'ema' && strong.under_n === 12 && strong.flips_n === 1 && strong.weak === false
+    && strong.cross_n === 1 && strong.day_gain === 25 && strong.ema === 8.03 && strong.candle_tf === '3', JSON.stringify(strong));
+  const weak = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 0 | under 3 | flips 4 | weak | day high +25% | late | vwap 30s | tf 30S');
+  check('v36: a weak cross parses (cross 0: it takes no number)', weak?.weak === true && weak.under_n === 3 && weak.flips_n === 4 && weak.cross_n === 0
+    && weak.late === true && weak.day_gain === 25 && weak.tf === '30S', JSON.stringify(weak));
+  check('…JSON', parseTvMessage({ stage: 'ema', ticker: 'OMH', ema_len: 9, ema: 8.03, under: 3, flips: 4, weak: true })?.weak === true
+    && parseTvMessage({ stage: 'ema', ticker: 'OMH', under_n: 7, flips_n: 0 })?.under_n === 7);
+  check('…"weak", "under" and "flips" are read after a "|" only (a ticker named WEAK is not a weak cross)',
+    parseTvMessage('EMA WEAK 1.0 | sVWAP 1 (+0%) | ema 9 1.0 | line session | candle 3 | cross 1 | under 9 | flips 0 | tf 30S')?.weak === false
+      && parseTvMessage('PULLBACK X 1.0 | sVWAP 1 (+0%) | line session | touch 1 | fails 2 | tf 1')?.flips_n === null);
+  check('v36: a strong cross on Momentum announces; a weak one is quiet, on Momentum and with a +30% day high alike',
+    new TvSetupGate().admit(strong!, T0, false, true) === 'notify' && new TvSetupGate().admit(weak!, T0, false, true) === 'quiet'
+      && new TvSetupGate().admit({ ...weak!, day_gain: 80 }, T0, false, true) === 'quiet');
+  check('…a weak cross does not use up the cap (cross 0), and the next strong one announces',
+    !pastCap(weak!) && (() => { const g3 = new TvSetupGate(); return g3.admit(weak!, T0, false, true) === 'quiet' && g3.admit(strong!, T0 + 400, false, true) === 'notify'; })());
+  const wHtml = formatTvSetupAlert(weak!, 'NASDAQ:OMH', null);
+  check('Telegram: the readings, and "filtered as weak"', formatTvSetupAlert(strong!, 'NASDAQ:OMH', null).includes('12 candles under the line before · 1 crossing in the 20 before')
+    && !formatTvSetupAlert(strong!, 'NASDAQ:OMH', null).includes('weak')
+    && wHtml.includes('3 candles under the line before · 4 crossings in the 20 before · filtered as weak'), wHtml);
 }
 
 console.log('Contract — the Pine script still emits what the parser reads');
@@ -559,7 +583,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v35', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v36', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -609,13 +633,24 @@ console.log('Contract — the Pine script still emits what the parser reads');
     '"EMA "', '" | ema " + str.tostring(emLen) + " " + str.tostring(e, format.mintick)', '" | candle " + emTf + " | cross " + str.tostring(n)',
     'emPrevE = request.security(rsSym, emTf, ta.ema(close, emLen)[1], lookahead = barmerge.lookahead_on)',
     'emLive  = emAlpha * close + (1 - emAlpha) * emPrevE', 'emOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0',
-    'type EmaLine', 'method crossUp(EmaLine s, float e, float ln) =>', 's.prevE <= s.prevL and e > ln',
+    'type EmaLine', 'method crossUp(EmaLine s, array<int> hist, float e, float ln) =>', 's.prevE <= s.prevL and e > ln',
     'emEnd = time_close == time_close(emTf)', 'bool emOkL = inWindow and not newDay and (not emGainOn or gainer[1])',
-    'bool emOkC = inWindow and (not emGainOn or gainer)', 'emS.restart()',
+    'bool emOkC = inWindow and (not emGainOn or gainer)', 'emS.restart(emHS)',
     'input.timeframe("3", "EMA: candle timeframe', 'input.int(9,         "EMA: length"',
-    'alert(emMsg(emLS, emLM, emLY, emLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true), alert.freq_once_per_bar_close)',
-    'alert(emMsg(emCS, emCM, emCY, emCN, close, emLive, svwap, mvwap, yvwap, false), alert.freq_once_per_bar_close)',
-    '"EMA (EMA cross, v35)"', '"EMA cross (v35)"', '"EMA cross, late close (v35)"', '"sVWAP (EMA cross, v35)"']) {
+    'alert(emMsg(emLS, emLM, emLY, emLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true, emLU, emLF, emLW), alert.freq_once_per_bar_close)',
+    'alert(emMsg(emCS, emCM, emCY, emCN, close, emLive, svwap, mvwap, yvwap, false, emCU, emCF, emCW), alert.freq_once_per_bar_close)',
+    '"EMA (EMA cross, v35)"', '"EMA cross (v35)"', '"EMA cross, late close (v35)"', '"sVWAP (EMA cross, v35)"',
+    // v36: the filter — how long the EMA sat under the line, the crossings in the 20 candles before, the candle's hour in
+    // New York; a weak cross says so, takes no day's number and is drawn gray
+    '" | under " + str.tostring(under) + " | flips " + str.tostring(flips)', 'msg += " | weak"',
+    'emWeak(EmaLine s, bool early) => emFilterOn and (early or s.ran < emMinUnder or s.flips > emMaxFlips)',
+    's.ran := s.under', 's.under := e > ln ? 0 : s.under + 1', 'array.push(hist, e > ln ? 1 : 0)', 'if array.size(hist) > 20',
+    'bool emEarlyL = hour(emT[1], "America/New_York") < emFromHour', 'bool emEarlyC = hour(emT, "America/New_York") < emFromHour',
+    'emLW := not (emG1 or emG2 or emG3)', 'emCW := not (emG4 or emG5 or emG6)',
+    'input.int(5,        "EMA filter: the EMA was under the line for at least N candles', 'input.int(2,        "EMA filter: at most N EMA / line crossings',
+    'input.int(7,        "EMA filter: not before this hour, New York time',
+    'plotshape(emShow and (emCS or emCM or emCY) and not emCW, "EMA cross (v35)"', 'plotshape(emShow and (emLS or emLM or emLY) and not emLW, "EMA cross, late close (v35)"',
+    '"EMA cross, filtered (v36)"', '"EMA cross, filtered, late close (v36)"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
@@ -636,14 +671,21 @@ console.log('Contract — the Pine script still emits what the parser reads');
     && at('rsCheck = input.timeframe') < at('rsOsN   = input.int'));
   check('v34: the three RSI dip inputs come after the RSI ones, in order', at('rsOsN   = input.int') < at('rsDipOn   = input.bool')
     && at('rsDipOn   = input.bool') < at('rsDipWait = input.int') && at('rsDipWait = input.int') < at('rsDipMax  = input.int'));
-  check('v35: the EMA inputs come last, in order', at('rsDipMax  = input.int') < at('emOn      = input.bool')
+  check('v35: the EMA inputs come after the RSI dip ones, in order', at('rsDipMax  = input.int') < at('emOn      = input.bool')
     && at('emOn      = input.bool') < at('emTf      = input.timeframe') && at('emTf      = input.timeframe') < at('emLen     = input.int')
     && at('emLen     = input.int') < at('emSession = input.bool') && at('emSession = input.bool') < at('emGainOn  = input.bool')
-    && at('emGainOn  = input.bool') < at('emShow    = input.bool')
-    && (pine.slice(at('emShow    = input.bool') + 'emShow    = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
+    && at('emGainOn  = input.bool') < at('emShow    = input.bool'));
+  check('v36: the four EMA filter inputs come last, in order', at('emShow    = input.bool') < at('emFilterOn = input.bool')
+    && at('emFilterOn = input.bool') < at('emMinUnder = input.int') && at('emMinUnder = input.int') < at('emMaxFlips = input.int')
+    && at('emMaxFlips = input.int') < at('emFromHour = input.int')
+    && (pine.slice(at('emFromHour = input.int') + 'emFromHour = input.int'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
+  // v36 plots go last (TradingView keeps a plot's style by position too)
+  check('v36: the two gray "filtered" marks are the script\'s last plots', at('"yVWAP (EMA cross, v35)"') < at('"EMA cross, filtered (v36)"')
+    && at('"EMA cross, filtered (v36)"') < at('"EMA cross, filtered, late close (v36)"')
+    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"EMA cross, filtered, late close (v36)"'))));
   // v35: the late sample first, then the anchors' restarts, then this bar's own close
-  check('v35: late sample, then the day\'s restart, then the on-time sample', at('if emLateS') > 0 && at('if emLateS') < at('emS.restart()')
-    && at('emS.restart()') < at('if emEnd and (na(emDone) or emDone != emT)'));
+  check('v35: late sample, then the day\'s restart, then the on-time sample', at('if emLateS') > 0 && at('if emLateS') < at('emS.restart(emHS)')
+    && at('emS.restart(emHS)') < at('if emEnd and (na(emDone) or emDone != emT)'));
   // v34: the late sample comes before the bar's own closes (v33's else-if skipped it), for the dip and the cross alike
   check('v34: late samples are taken before the on-time ones', at('if rsDipOk and rsLateA') > 0 && at('if rsDipOk and rsLateA') < at('if rsLateC')
     && at('if rsLateC') < at('if rsDipOk and rsEndA and') && at('if rsDipOk and rsEndA and') < at('if rsEndC and (na(rsDoneC)'));

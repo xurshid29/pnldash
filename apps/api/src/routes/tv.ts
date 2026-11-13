@@ -76,8 +76,11 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     }
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
     // A quiet CROSS / RETEST that isn't muted or capped is off our Momentum list (under vb_fresh_gain).
+    // v36: an EMA cross the script's filter calls weak is quiet for that.
     const why = verdict !== 'quiet' ? undefined
-      : !gate.announces(sig.stage) ? 'muted' : capped && !capExempt ? 'capped' : 'offlist';
+      : !gate.announces(sig.stage) ? 'muted'
+        : sig.stage === 'ema' && sig.weak ? 'weak'
+          : capped && !capExempt ? 'capped' : 'offlist';
     const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });
   } catch (err) {

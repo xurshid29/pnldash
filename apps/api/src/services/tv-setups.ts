@@ -59,6 +59,9 @@ export function stageSwitch(stage: TvStage): TvStage {
 // above a VWAP line (session; month / year are script switches), judged at that timeframe's
 // candle close, from the 30s alert alone. Announced like CROSS: its own ⚙ switch, Momentum names
 // (or a day high ≥ vb_fresh_gain), TV_SETUP.em_cap on the day's `cross N` per line.
+// v36: the script's filter marks a cross `| weak` (before 07:00 ET, the EMA under the line for
+// fewer than 5 candles, or more than 2 crossings in the 20 candles before; its inputs). A weak
+// cross is stored and shown, never announced; the script doesn't count it in `cross N`.
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
 // e.g. "session+month". The legacy 'both' (v10–v13) meant session + month.
@@ -124,6 +127,10 @@ export interface TvSetupSignal {
   // EMA cross (script v35): candle_tf = the EMA's timeframe, cross_n = the day's crosses on the line
   ema_len?: number | null;    // the EMA's length (9)
   ema?: number | null;        // its value at the candle's close
+  // v36, the script's filter: what it measured, and its verdict
+  under_n?: number | null;    // candles in a row the EMA had been at or under the line before the cross
+  flips_n?: number | null;    // EMA / line crossings in the 20 candles before
+  weak?: boolean;             // the filter calls the cross weak → stored, not announced
 }
 
 export const TV_SETUP = {
@@ -234,11 +241,13 @@ export function rsiFields(sig: TvSetupSignal): {
 // The v35 EMA cross's fields for the alert's setup info and its tier_events row; none on other stages.
 export function emaFields(sig: TvSetupSignal): {
   candle_tf?: string | null; cross_n?: number | null; ema_len?: number | null; ema?: number | null; late?: boolean;
+  under_n?: number | null; flips_n?: number | null; weak?: boolean;
 } {
   if (sig.stage !== 'ema') return {};
   return {
     candle_tf: sig.candle_tf ?? null, cross_n: sig.cross_n ?? null, ema_len: sig.ema_len ?? null, ema: sig.ema ?? null,
     late: sig.late === true,
+    under_n: sig.under_n ?? null, flips_n: sig.flips_n ?? null, weak: sig.weak === true,
   };
 }
 
@@ -325,6 +334,9 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     since_n: toNum(o.since_n ?? o.since),
     ema_len: toNum(o.ema_len),
     ema: toNum(o.ema),
+    under_n: toNum(o.under_n ?? o.under),
+    flips_n: toNum(o.flips_n ?? o.flips),
+    weak: o.weak === true,
   };
 }
 
@@ -358,6 +370,7 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 //   RSI XTND 1.07 | rsi 720 29.2 ma 27.0 | rsi 180 41.2 ma 30.7 | low 22.1 | candle 360 | tf 30S   (v32; the signal RSI first, `| late` when judged a bar late)
 //   DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | tf 30S   (v34; `low` the dip's lowest RSI, `candle` the RSI's timeframe)
 //   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | day high +25% | vwap 30s | tf 30S   (v35; `ema` its length and value, `candle` its timeframe)
+//   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 0 | under 3 | flips 4 | weak | day high +25% | vwap 30s | tf 30S   (v36; the filter's readings, `| weak` when it calls the cross weak)
 // (v28 adds `vwap 30s|chart` to every message.)
 // (a negative day high is written "-2%"; scripts before v3 wrote "+-2%"), or a JSON
 // object with the TvSetupSignal field names. Express hands us the raw text for
@@ -406,6 +419,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const dipN = /\|\s*dip\s+(\d+)\b/i.exec(text);       // v34
   const sinceN = /\|\s*since\s+(\d+)\b/i.exec(text);
   const ema = /\|\s*ema\s+(\d+)\s+\$?(\d*\.?\d+)/i.exec(text);   // v35: "| ema 9 8.03"
+  const underN = /\|\s*under\s+(\d+)\b/i.exec(text);   // v36
+  const flipsN = /\|\s*flips\s+(\d+)\b/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -446,6 +461,9 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     since_n: toNum(sinceN?.[1]),
     ema_len: toNum(ema?.[1]),
     ema: toNum(ema?.[2]),
+    under_n: toNum(underN?.[1]),
+    flips_n: toNum(flipsN?.[1]),
+    weak: /\|\s*weak\b/i.test(text),
   };
 }
 
@@ -506,9 +524,11 @@ export class TvSetupGate {
     if (rsi) return this.announced.has('rsi') ? 'notify' : 'quiet';
     // v35 EMA cross: one per candle and line from the 30s alert alone, limited like a CROSS —
     // its ⚙ switch, the day's cap, and Momentum names only (or a day high ≥ vb_fresh_gain).
+    // v36: a cross the script's filter calls weak is quiet.
     if (ema) {
       const fresh = sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
-      const quiet = !this.announced.has('ema') || pastCap(sig) || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
+      const quiet = !this.announced.has('ema') || sig.weak === true || pastCap(sig)
+        || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
       return quiet ? 'quiet' : 'notify';
     }
     // v21 CROSS and v28 RETEST: one per candle / VB candle from the 30s alert alone — no
@@ -776,6 +796,10 @@ function formatEma(
   if (sig.cross_n != null) {
     what.push(`cross ${sig.cross_n} today${sig.cross_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
   }
+  // v36: what the filter measured.
+  if (sig.under_n != null) what.push(`${sig.under_n} candle${sig.under_n === 1 ? '' : 's'} under the line before`);
+  if (sig.flips_n != null) what.push(`${sig.flips_n} crossing${sig.flips_n === 1 ? '' : 's'} in the 20 before`);
+  if (sig.weak) what.push('filtered as weak');
   if (what.length > 0) lines.push(what.join(' · '));
   // Levels: the crossed line(s) first, then the others the message carries.
   const lvlOf: Record<TvLineName, string | null> = {

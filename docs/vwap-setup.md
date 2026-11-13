@@ -1133,7 +1133,8 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-08 | v32 | `8c2079c` | Operator (XTND, DKI on a 6h chart with a 12h and a 3h RSI): a third setup for longer trades, the **RSI cross** (§17): at each 6h close the 12h RSI crosses above its SMA-14 while at or under 30 (now or within its last 6 candles); the 3h RSI in the message, optionally a gate. Built from requests so it works on the 2m chart ("I don't want to switch chart timeframe from 2min to 6h"), sent from the 30s alert, purple RSI marker. New inputs and plots last: no Reset. Server stage `rsi` (announced off Momentum, its own ⚙ switch, `tv_rsi`); sidebar, History, toasts. Untested; no replica. Regression 335 checks. **Paste, recreate both alerts, tick RSI in ⚙.** |
 | 2026-11-10 | v33 | `b4babf3` | Operator: the two-RSI experiment failed; one RSI, no "also require" (§17.1). Removed the second RSI's input, request and message field; the RSI group's later inputs shift one place (set them once after the paste; no Reset). Replica `simulate_rsi` + `selftest_rsi`: a 30m RSI checked at the 30m close marks the plain rule's crosses on 30m / 2m / 1m charts (and on five names' real 2m bars, 52 of 52). Regression 340 checks. **Paste, set the RSI group, recreate both alerts.** |
 | 2026-11-12 | v34 | `de282ef` | Operator (OMH, a 15m RSI checked at the 1h close): a signal for the pullback after an RSI cross, at "the deepest part". **DIP** (§17.2): armed by an RSI cross, sampled at the RSI's own candles' closes — the dip starts when the RSI closes under its MA, DIP when it then closes higher than the candle before (a lower low and another rise → #2; max 2). Message `DIP … | stop … | dip N | since N`, stop under the dip's low. Three inputs and three plots last: nothing shifts. Server stage `dip` rides the RSI ⚙ switch (`tv_dip` on Telegram); sidebar, History, toasts, the entry sound. Two audit fixes in the RSI section: late samples before on-time ones, and marks only on charts whose bars line up (RSI marks no longer drawn on 1h / 4h charts; DIP marks need bars dividing the RSI's timeframe). Replica `rsi_rule_direct` / `simulate_rsi(full)`; six names' real 5m bars agree (113 DIP). Regression 377 checks. **Paste, recreate both alerts.** |
-| 2026-11-13 | v35 | (this commit) | Operator: "notified when ema crosses up the vwap (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". A fourth setup, the **EMA cross over VWAP** (§18): the EMA 9 of 3m closes above the session VWAP at a 3m close after being at or under it at the close before (month / year lines as switches), from a request like the RSI, sent from the 30s alert; gainers only; the day's first candle can't fire; a late sample across the day's end isn't announced. Message `EMA … | ema 9 x | line … | candle 3 | cross N`. Eight inputs and six plots last: nothing shifts. Server stage `ema`: announced like CROSS (⚙ switch EMA, Momentum or a +30% day high, `em_cap` 3 per line a day, `tv_ema`); sidebar, History, toasts. Replica `ema_rule_direct` / `simulate_ema`: the plain rule's crosses on 3m and 1m charts and on six names' real 1m bars. Regression 414 checks. **Paste, recreate both alerts, tick EMA in ⚙.** |
+| 2026-11-13 | v35 | `5a8d40b` | Operator: "notified when ema crosses up the vwap (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". A fourth setup, the **EMA cross over VWAP** (§18): the EMA 9 of 3m closes above the session VWAP at a 3m close after being at or under it at the close before (month / year lines as switches), from a request like the RSI, sent from the 30s alert; gainers only; the day's first candle can't fire; a late sample across the day's end isn't announced. Message `EMA … | ema 9 x | line … | candle 3 | cross N`. Eight inputs and six plots last: nothing shifts. Server stage `ema`: announced like CROSS (⚙ switch EMA, Momentum or a +30% day high, `em_cap` 3 per line a day, `tv_ema`); sidebar, History, toasts. Replica `ema_rule_direct` / `simulate_ema`: the plain rule's crosses on 3m and 1m charts and on six names' real 1m bars. Regression 414 checks. **Paste, recreate both alerts, tick EMA in ⚙.** |
+| 2026-11-13 | v36 | (this commit) | Operator (PARA, 3m): "is there anyway we can filter/optimize the false ones?". Measured first (`research/ema-vwap`, 3,768 crosses, in / out of sample): about half close back under the VWAP within 5 candles and the plain cross loses; the hour, a short stay under the line and chop before the cross mark the worse ones in both halves; the video's ADX and volume filters don't. **The EMA filter** (§18.1): a cross is **weak** when its candle opened before 07:00 New York, the EMA had been under the line for fewer than 5 candles, or the two crossed more than 2 times in the 20 candles before. Every cross is still sent, with `| under N | flips N`, and `| weak` when weak; a weak one takes no `cross N`, gets a gray `ema` mark, and the server stores it quietly (`why` weak). Four inputs and two plots last: nothing shifts. Dashboard: weak crosses never take a 📐 row; History lists them with "weak". Replica: `_EmaLine` under / ran / flips, `selftest_ema` compares readings and verdicts. Regression 442 checks. **Paste, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2150,3 +2151,69 @@ without grading, as the fourth setup.
 - **Its VWAP is ours.** With "VWAP lines from: 30s bars" the session line can sit a little off
   TradingView's built-in VWAP on a 3m chart (§16.9), so a cross on the operator's own EMA + VWAP
   indicators can differ by a candle from ours.
+
+### 18.1 The filter (script v36, 2026-11-13)
+
+**The ask** (PARA on a 3m chart, 11-12 and 11-13): "is there anyway we can filter/optimize the
+false ones?", with a video whose optimized settings (ADX 36, a 60-minute window, a 1.5 ATR stop,
+a 3R target) made money on 35 trades and lost on 287.
+
+**Measured first** (`apps/api/scripts/research/ema-vwap/`, its README has the table). The v35 rule
+replayed on every Momentum row, 08-14 → 11-13: 3,768 crosses on 3m candles, split in sample
+(before 10-09) and out of sample. "False" = a candle closes back under the VWAP within 5 candles.
+
+- About half the crosses are false (49% / 47%), and the plain cross loses in both halves: −0.20R /
+  −0.22R with a stop under the cross candle's low and a 2R target. No filter makes it profitable.
+- Three things mark the worse crosses in both halves, and on 5m candles too:
+  - the hour: before 07:00 ET, 64% / 60% false and −0.42R / −0.45R;
+  - a short stay under the line: fewer than 5 candles under it before the cross, 56–62% false;
+  - chop: the more EMA / VWAP crossings in the 20 candles before, the more false (none 43%, two
+    53%, five or more 64%).
+- The video's ADX ≥ 36 does nothing here, and the cross candle's volume helps in sample only. A
+  high RSI or a 20-candle-high close cut the false rate, not the loss.
+- The three together keep 61% of the crosses. Kept: 44% / 41% false, −0.16R / −0.16R. Dropped:
+  57% / 57% false, −0.26R / −0.31R.
+
+**The rule.** A cross is **weak** when any of these holds (group "EMA cross over VWAP", the last
+four inputs):
+
+- its candle opened before `emFromHour` (7) New York time;
+- the EMA had been at or under the line for fewer than `emMinUnder` (5) candles before it;
+- the EMA and the line crossed more than `emMaxFlips` (2) times in the 20 candles before.
+
+`emFilterOn` (on) switches it off: then no cross is weak, as v35.
+
+**How.** Each `EmaLine` keeps `under` (closes in a row at or under the line) and, beside it, an
+array of its last 20 closes (1 = above). At a cross, `ran` takes `under` and `flips` counts the
+changes in the array; both are read before the cross's own close goes in. A line's restart (the
+day's first candle for the session line) clears them. The hour is the candle's own, by its open
+(`time(emTf)`), so a late sample reads the candle before.
+
+- Every cross is still sent. The message gains `| under N | flips N` after `cross N`, and
+  `| weak` after them when weak:
+  `EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 0 | under 3 | flips 4 | weak | day high +25% | vwap 30s | tf 30S`
+- A weak cross doesn't take a day's number: `cross N` counts the strong ones, and a weak message
+  carries the count so far (0 before the first). So chop can't use up `em_cap`.
+- With several lines on one bar, the message is weak only when none of its lines is strong, and
+  its numbers are the strong lines'.
+- The chart: a strong cross keeps the orange **EMA** label; a weak one gets a small gray **ema**
+  (two plots, last).
+
+**Our side.** Fields `under_n`, `flips_n`, `weak` (parsed after a `|`, stored in the row's
+`meta`). The gate keeps a weak EMA cross quiet whatever else holds; `routes/tv.ts` names the
+reason `weak`, and the log line says so. Telegram never gets it.
+
+- 📐 sidebar: a weak cross never becomes a ticker's row. It stays in the day trail of an expanded
+  row, dimmed, with "weak".
+- Setups history: listed with "weak" beside the pill, and counted in the header
+  (`12 EMA (5 weak)`), so they can be graded against the strong ones later.
+- Merging copies uses the readings too (`emaEventKey`), since two weak crosses carry one `cross N`.
+
+**Checked.** `pinesim.selftest_ema`: on the thin synthetic tape, 22 of 60 crosses are weak (17
+before 07:00, 4 short, 1 chop); the script's sampling gives the plain rule's readings and
+verdicts on the 3m and 1m charts and numbers the strong ones 1, 2, … per day; with the filter
+off it is v35. Not checked: the Pine itself on TradingView.
+
+**To grade** (after a week or two of rows): strong against weak from `tier_events`
+(`meta->>'weak'`), by the study's "false" and by B. If the weak ones aren't worse live, the filter
+goes.

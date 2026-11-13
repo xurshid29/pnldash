@@ -67,6 +67,29 @@ export function crossTfText(s: TvSetupInfo): string | null {
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
 }
 
+// v36: an EMA cross the script's filter calls weak (too early in the day, the EMA under the line
+// too briefly, or too much crossing before it). Stored and listed in the history, not announced,
+// and never a ticker's live row in the 📐 sidebar.
+export function isWeakEma(s: TvSetupInfo): boolean {
+  return s.stage === 'ema' && s.weak === true;
+}
+
+// What tells one EMA cross from the next when merging copies: a weak cross doesn't take a day's
+// number, so two of them carry the same `cross N`.
+export function emaEventKey(s: TvSetupInfo): string {
+  return `${s.cross_n ?? ''}/${s.under_n ?? ''}/${s.flips_n ?? ''}/${s.weak ? 'w' : ''}`;
+}
+
+// The number beside a stage tag: a pullback's touch, a CROSS's or an EMA cross's number today, a
+// RETEST's, a DIP's. A weak EMA cross has none (the script doesn't count it).
+export function tagNumber(s: TvSetupInfo): number | null {
+  if (s.stage === 'ema') return s.weak ? null : s.cross_n ?? null;
+  if (s.stage === 'cross') return s.cross_n ?? null;
+  if (s.stage === 'retest') return s.retest_n ?? null;
+  if (s.stage === 'dip') return s.dip_n ?? null;
+  return s.touch ?? null;
+}
+
 // Trail arrows: → while a setup advances, · when a new one starts.
 export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2, ema: 1 };
 
@@ -133,11 +156,14 @@ export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   // v32 RSI: "12h RSI 29.2 / MA 27.0 · low 22.1 · 3h 41.2 / 30.7 · at the 6h close"
   if (s.stage === 'rsi') return rsiText(s);
   if (s.stage === 'dip') return dipText(s, price);
-  // v35 EMA cross: "+1.0% vs sVWAP · EMA 9 $8.03 · at the 3m close"
+  // v35 EMA cross: "+1.0% vs sVWAP · EMA 9 $8.03 · at the 3m close · 12 candles under · 1 flip" (v36: the filter's readings)
   if (s.stage === 'ema') {
     const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));
     if (s.ema != null) parts.push(`EMA ${s.ema_len ?? '?'} $${s.ema < 1 ? s.ema.toFixed(4) : s.ema.toFixed(2)}`);
     if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
+    if (s.under_n != null) parts.push(`${s.under_n} candle${s.under_n === 1 ? '' : 's'} under`);
+    if (s.flips_n != null) parts.push(`${s.flips_n} flip${s.flips_n === 1 ? '' : 's'}`);
+    if (s.weak) parts.push('filtered as weak');
     return parts.filter((p): p is string => p != null).join(' · ');
   }
   // v28 RETEST: the stop, then where price sat against its line
