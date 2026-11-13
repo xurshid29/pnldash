@@ -260,10 +260,9 @@ week or two: grade strong against weak from `tier_events` (`meta->>'weak'`). The
 Pushed `7de1369`, live 08:08 ET; prod parses the three message shapes (weak, strong, v35) by dry run.
 **Found while verifying: TradingView has sent nothing since 07:18:02 ET** (nginx: 34 webhook POSTs 07:00–07:18, all 200, none
 after; both the 1m and the 30s alert stop there), and **no `ema` row has ever been stored**, so the v35 alerts never delivered.
-That is four minutes after the v35 deploy, when the operator updated the indicator: most likely the old alerts were deleted and
-the new ones aren't running (not recreated, stopped with an error, or no webhook URL). The operator was asked to look at the
-Alerts panel when recreating them for v36. If v36 alerts don't arrive either, suspect the script on the 30s alert (a runtime
-error stops an alert) and ask for the alert's status text.
+That is four minutes after the v35 deploy, when the operator updated the indicator. **The operator confirmed: "alerts haven't
+been created yet, I'm just checking it from tv layout"** — they deleted the old alerts and are judging v35 / v36 on the chart
+first. So the gap is theirs, not a fault, and the EMA setup has no live rows yet; nothing to grade until they recreate both alerts.
 
 **2026-11-13 (07:00–08:00 ET) — SCRIPT v35: THE EMA CROSS OVER VWAP (a fourth setup).** The operator: "I want to experiment a new
 setup - ema crosses over vwap … (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". Built as stage `ema`
