@@ -250,8 +250,10 @@ before; month / year lines as switches; from a request (`ta.ema(close, n)[1]`, l
 RSI; gainers only; no cross on the day's first candle; a late sample across the day's end is not announced (the audit's lesson).
 Server: announced like CROSS (⚙ switch **EMA — the operator's saved list doesn't have it, they must tick it**; Momentum or a +30%
 day high; `em_cap` 3 per line a day; `tv_ema`). Replica `ema_rule_direct` / `simulate_ema`; six names' real 1m bars agree (about 1.4
-crosses per stock per day in regular hours). Not graded. Built inside the 07:00–11:00 ET window, so the push waited for the
-operator's word or 11:00 ET. The audit's VB items are still open.
+crosses per stock per day in regular hours). Not graded. Built inside the 07:00–11:00 ET window; the operator said "deploy it
+please", so it was pushed at 07:12 ET (`5a8d40b`, live 07:14; alerts resumed 07:15:02 after a gap from 07:13:31). That deploy
+also recreated the **postgres** container: the compose file's `postgres:18` is a floating tag, so `docker compose pull` took a newer
+image (data on the volume, healthy in seconds). The audit's VB items are still open.
 
 **2026-11-12 (15:25–17:00 ET) — SCRIPT v34: THE RSI DIP.** The operator runs the RSI cross as a 15m RSI checked at the 1h close and
 looks for the RSI's drop under its MA afterwards on a 15m chart (OMH 11-11 / 11-12): "add a signal when RSI cross signal fires and rsi
