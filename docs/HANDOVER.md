@@ -257,6 +257,8 @@ rides the EMA ⚙ switch (label **EMA + BOUNCE**), `tv_bounce` on Telegram, lime
 plots last: **paste, Save (37), recreate both alerts.** Replica (`ema_bounce_direct` against `simulate_ema(full=True)`) and 493
 checks agree. Built without an explicit "add it" (the question was whether it helps), as v36 was; the script switch `emBncOn`
 turns it off. **The operator still has no alerts running** (deleted for v35, testing on the chart), so no live rows yet.
+Pushed `8ffe386`, deployed and checked on prod: the bundle serves v37, and dry runs parse a BOUNCE, a weak late BOUNCE and a v36
+EMA message. Not checked: v37's Pine on TradingView (v36 compiled; v37 adds two methods, a tuple function and four plots).
 
 **2026-11-13 (later) — SCRIPT v36: THE EMA CROSS FILTER.** The operator, on PARA's 3m chart: "is there anyway we can
 filter/optimize the false ones?", with a video whose optimized ADX / time-window / ATR settings overfit (profitable on 35 trades,
