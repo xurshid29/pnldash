@@ -14,7 +14,7 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
 
 // The RSI switch also covers its v34 DIP (the server lists no switch for 'dip').
 const STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI + DIP', dip: 'DIP',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI + DIP', dip: 'DIP', ema: 'EMA',
 };
 
 // Click-to-open switches for which opportunity alerts make a sound and a

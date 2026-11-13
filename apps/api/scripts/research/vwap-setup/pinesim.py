@@ -1412,5 +1412,166 @@ def selftest_rsi():
     print(f'…12h RSI at the 6h close, 2m chart vs 6h chart: {len(a)} / {len(b)} marks', '→', 'OK' if ok2 else 'UNEXPECTED')
     return ok and ok2 and ok3 and ok4
 
+
+# ── EMA cross over VWAP (script v35) ───────────────────────────────────────────
+# The EMA of a timeframe's closes (3m, length 9) against the session VWAP, judged at each close of
+# that timeframe's candles: above the line now, at or under it at the close before. As the RSI, the
+# script reads the EMA after the last finished candle (request.security, lookahead on + [1]) and
+# adds the chart bar's close; a candle whose closing bar had no trades is sampled on the next bar,
+# but not announced across the day's end. The day's first candle can't fire (the line restarts).
+EMA_DEFAULTS = dict(tf_min=3, n=9)
+
+
+def ema_series(closes, n):
+    """TradingView's ta.ema per close: seeded with the SMA of the first n closes; None before."""
+    out, e, alpha = [], None, 2.0 / (n + 1)
+    for i, c in enumerate(closes):
+        if e is None:
+            if i + 1 >= n:
+                e = sum(closes[i + 1 - n:i + 1]) / n
+        else:
+            e = alpha * c + (1 - alpha) * e
+        out.append(e)
+    return out
+
+
+def with_session_vwap(bars):
+    """Bars plus 'vw': the session VWAP after each bar (hlc3 × volume from the day's first bar)."""
+    out, day, pv, v = [], None, 0.0, 0.0
+    for b in bars:
+        if b['t'].date() != day:
+            day, pv, v = b['t'].date(), 0.0, 0.0
+        pv += (b['h'] + b['l'] + b['c']) / 3 * b['v']
+        v += b['v']
+        out.append({**b, 'vw': pv / v if v > 0 else None})
+    return out
+
+
+def resample_vw(bars, minutes):
+    """resample_session that keeps each candle's last 'vw': the line as it stands at the candle's close."""
+    out = []
+    for b in bars:
+        start = _candle_start(b['t'], minutes)
+        if out and out[-1]['t'] == start:
+            o = out[-1]
+            o['h'] = max(o['h'], b['h']); o['l'] = min(o['l'], b['l']); o['c'] = b['c']; o['v'] += b['v']; o['vw'] = b['vw']
+        else:
+            out.append({**b, 't': start})
+    return out
+
+
+class _EmaLine:
+    """The script's `EmaLine` type: one line's state, stepped once per sampled candle close."""
+    def __init__(self):
+        self.prevE = self.prevL = None
+        self.n = 0
+
+    def cross_up(self, e, ln):
+        up = self.prevE is not None and e is not None and ln is not None and self.prevE <= self.prevL and e > ln
+        if e is not None and ln is not None:
+            self.prevE, self.prevL = e, ln
+        return up
+
+    def restart(self):
+        self.prevE = self.prevL = None
+
+
+def ema_rule_direct(bars, p=None):
+    """The plain rule on the EMA timeframe's own candles (`bars` carry 'vw'): the EMA closes above
+    the session VWAP after closing at or under it, the day's first candle excluded.
+    → [(candle start, the day's cross number, the candle is its day's last)]."""
+    p = dict(EMA_DEFAULTS, **(p or {}))
+    c = resample_vw(bars, p['tf_min'])
+    e = ema_series([x['c'] for x in c], p['n'])
+    line, out, day = _EmaLine(), [], None
+    for i, x in enumerate(c):
+        if x['t'].date() != day:
+            day = x['t'].date()
+            line.restart()
+            line.n = 0
+        if line.cross_up(e[i], x['vw']):
+            line.n += 1
+            last = i + 1 == len(c) or c[i + 1]['t'].date() != day
+            out.append((x['t'], line.n, last))
+    return out
+
+
+def simulate_ema(bars, chart_min, p=None, fine=None):
+    """The script's EMA section (v35) on chart bars of `chart_min` minutes carrying 'vw' →
+    [(candle start, late, the day's cross number)]. `fine`: the bars the EMA's candles are really
+    made of, for a chart of the EMA's own timeframe built from smaller bars."""
+    p = dict(EMA_DEFAULTS, **(p or {}))
+    if not (chart_min <= p['tf_min'] and p['tf_min'] % chart_min == 0):
+        return []
+    c = resample_vw(fine or bars, p['tf_min'])
+    e_after = ema_series([x['c'] for x in c], p['n'])
+    starts = [x['t'] for x in c]
+    alpha = 2.0 / (p['n'] + 1)
+    line, out, done = _EmaLine(), [], None
+    prev_live = prev_vw = prev_t = prev_day = None
+    step = datetime.timedelta(minutes=chart_min)
+    j = 0   # finished EMA candles before the current chart bar's candle
+    for b in bars:
+        t = b['t']
+        ct = _candle_start(t, p['tf_min'])
+        while j < len(starts) and starts[j] < ct:
+            j += 1
+        live = alpha * b['c'] + (1 - alpha) * e_after[j - 1] if j >= 1 and e_after[j - 1] is not None else None
+        new_day = prev_day is not None and t.date() != prev_day
+        if prev_t is not None and ct != prev_t and done != prev_t:      # the candle before, from the bar before
+            fired = line.cross_up(prev_live, prev_vw)
+            done = prev_t
+            if fired and not new_day:
+                line.n += 1
+                out.append((prev_t, True, line.n))
+        if new_day:
+            line.restart()
+            line.n = 0
+        ends = _candle_start(t + step, p['tf_min']) != ct or chart_min >= p['tf_min']
+        if ends and done != ct:
+            fired = line.cross_up(live, b['vw'])
+            done = ct
+            if fired:
+                line.n += 1
+                out.append((ct, False, line.n))
+        prev_live, prev_vw, prev_t, prev_day = live, b['vw'], ct, t.date()
+    return out
+
+
+def selftest_ema():
+    """v35 EMA cross: the replica of the script's sampling gives the plain rule's crosses — the EMA 9
+    of 3m closes over the session VWAP — on a 3m chart and on a 1m chart with missing minutes (late
+    ones on the same candle; a cross on a day's last candle with no closing bar is not announced)."""
+    import datetime as dt, math, random
+    rnd = random.Random(21)
+    t0 = dt.datetime(2026, 9, 1, 4, 0, tzinfo=ET)
+    bars, px = [], 10.0
+    for day in range(20):
+        for m in range(240, 1200):
+            drift = 0.0006 * math.sin((m - 240) / 55.0 + day)          # swings around the day's VWAP
+            px *= math.exp(drift + rnd.gauss(0, 0.003))
+            if rnd.random() < 0.25:                                    # thin tape: some minutes have no trades,
+                continue                                                # a candle's last minute included
+            bars.append({'t': t0 + dt.timedelta(days=day, minutes=m - 240), 'o': px, 'h': px * 1.001, 'l': px * 0.999,
+                         'c': px, 'v': 100 + rnd.randrange(400)})
+    fine = with_session_vwap(bars)
+    want = ema_rule_direct(fine)
+    on3 = simulate_ema(resample_vw(fine, 3), 3, fine=fine)
+    on1 = simulate_ema(fine, 1)
+    key = lambda got: [(t, n) for t, _, n in got]
+    all_w = [(t, n) for t, n, _ in want]
+    dropped = [x for x in all_w if x not in key(on1)]
+    day_end = {(t, n) for t, n, last in want if last}
+    late1 = sum(1 for _, late, _ in on1 if late)
+    ok = (len(want) >= 20 and key(on3) == all_w and not any(l for _, l, _ in on3)
+          and [x for x in all_w if x not in dropped] == key(on1) and all(x in day_end for x in dropped) and late1 > 0
+          and simulate_ema(resample_vw(fine, 2), 2, fine=fine) == [] and simulate_ema(resample_vw(fine, 5), 5, fine=fine) == [])
+    first_of_day = sum(1 for t, _, _ in want if t.hour == 4 and t.minute < 3)
+    print(f'EMA cross (v35), EMA 9 of 3m closes over the session VWAP: {len(want)} crosses by the plain rule; the script on a 3m chart '
+          f'{len(on3)}, on a 1m chart {len(on1)} ({late1} a bar late, {len(dropped)} on a day\'s last candle not announced); '
+          f'2m and 5m charts none; none on a day\'s first candle ({first_of_day})', '→', 'OK' if ok and first_of_day == 0 else 'UNEXPECTED')
+    return ok and first_of_day == 0
+
+
 if __name__ == '__main__':
-    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb() & selftest_rsi()) else 1)
+    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb() & selftest_rsi() & selftest_ema()) else 1)

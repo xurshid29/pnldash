@@ -340,8 +340,10 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // RSI (script v32, for longer trades): the 12h RSI crossed above its MA after being oversold,
 // judged at a 6h candle's close. DIP (script v34): after an RSI cross, the RSI closed back under
 // its MA on its own timeframe and turned up — the pullback entry. It rides the RSI's ⚙ switch.
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip'];
+// EMA (script v35): the EMA of a timeframe's closes (3m, length 9) crossed above a VWAP line,
+// judged at that timeframe's candle close.
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'ema';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'ema'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'dip' ? 'rsi' : stage;
@@ -400,6 +402,9 @@ export interface TvSetupInfo {
   // RSI dip (script v34): rsi / rsi_ma at the turn, stop = under the dip's lowest price
   dip_n?: number | null;      // the signal's number in this dip
   since_n?: number | null;    // the RSI's candles since the RSI cross
+  // EMA cross (script v35): candle_tf = the EMA's timeframe, cross_n = the day's crosses on the line
+  ema_len?: number | null;    // the EMA's length (9)
+  ema?: number | null;        // its value at the candle's close
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

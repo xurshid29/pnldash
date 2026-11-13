@@ -1,10 +1,10 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v34 (2026-11-12). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v35 (2026-11-13). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
-// Three setups in one script, so the same two watchlist alerts carry them all (the VWAP +
-// BB cross and the RSI cross only send from the 30s alert). Each has its own "… setup on" switch: off
+// Four setups in one script, so the same two watchlist alerts carry them all (the VWAP +
+// BB cross, the RSI cross and the EMA cross only send from the 30s alert). Each has its own "… setup on" switch: off
 // = no markers and no alerts from it, and a VWAP line no setup uses isn't drawn.
 // v27 removed the RECLAIM setup (FORMING / READY / GO, v1–v26) and the BB breakout
 // (TOUCH / BREAKOUT / TRIGGERED, v17–v26): the operator tested all four and kept these
@@ -37,6 +37,10 @@
 //   RSI   the cross up while oversold, at a check candle's close
 //   DIP   (v34) after an RSI cross, the RSI closes back under its MA on its own timeframe and
 //         then turns up — the pullback entry, with a stop under the dip's low
+// 4) EMA CROSS OVER VWAP (v35): the EMA of a timeframe's closes (3m, length 9) crosses above a
+// VWAP line (session; month and year are switches), judged at each close of that timeframe's
+// candles. Built from a request like the RSI, so it works on the 3m chart or a smaller one.
+//   EMA   above the line at this close, at or under it at the one before
 // VB lanes (v29): up to three more candle timeframes in the same alert (1h / 4h / 1D on the
 // month and year lines by default), each with its own band and lines, for longer trades.
 // VWAP lines (v28): from 30s bars by default, so the session line is the same on every
@@ -1174,3 +1178,171 @@ plotshape(rsFire and rsLate, "RSI cross, late close (v32)", shape.labelup, locat
 plotshape(rsDipGo and not rsDipLate, "RSI dip (v34)", shape.labelup, location.belowbar, color.fuchsia, text = "DIP", textcolor = color.white, size = size.small)
 plotshape(rsDipGo and rsDipLate, "RSI dip, late close (v34)", shape.labelup, location.belowbar, color.fuchsia, text = "DIP", textcolor = color.white, size = size.small, offset = -1)
 plotshape(rsDipFrom, "RSI dip starts (v34)", shape.triangledown, location.abovebar, color.purple, size = size.tiny)
+
+// ── 4) EMA CROSS OVER VWAP (v35) ──────────────────────────────────────────────
+// Operator, 2026-11-13: "I want to be notified when ema crosses up the vwap (for example, 9 ema
+// crosses up the session vwap in 3 min chart timeframe)". The EMA of a timeframe's closes against
+// a VWAP line, judged at each close of that timeframe's candles: above the line now, at or under
+// it at the close before. As the RSI: a request returns the EMA after the last finished candle
+// (lookahead on + [1]) and the bar's close makes it live, so it works on any chart whose bars
+// divide the timeframe and sends from the 30s alert. The lines are the script's own (the session
+// line from 30s bars by default), the ones it draws.
+// A candle whose closing bar had no trades is judged on the next bar (`| late`), except across the
+// day's end: yesterday's last candle is not announced this morning (the 11-10 audit: such RETESTs
+// arrived hours late). A line's first candle after its anchor restarts (the session line's first
+// of the day) can't fire: the "cross" there is the line starting over.
+// Gainers only by default; `cross N` counts the day's crosses sent on the line, and the server
+// announces the first few on Momentum names (TV_SETUP.em_cap), like the VB.
+// v35 inputs go last.
+emOn      = input.bool(true,     "EMA cross setup on (v35): an EMA crosses above a VWAP line, judged at a candle's close", group = "EMA cross over VWAP (v35)")
+emTf      = input.timeframe("3", "EMA: candle timeframe (the EMA of its closes; judged at each close)", group = "EMA cross over VWAP (v35)")
+emLen     = input.int(9,         "EMA: length", minval = 1, group = "EMA cross over VWAP (v35)")
+emSession = input.bool(true,     "EMA lines: session VWAP", inline = "eml", group = "EMA cross over VWAP (v35)")
+emMonth   = input.bool(false,    "month VWAP", inline = "eml", group = "EMA cross over VWAP (v35)")
+emYear    = input.bool(false,    "year VWAP", inline = "eml", group = "EMA cross over VWAP (v35)")
+emGainOn  = input.bool(true,     "EMA: gainers only (the gainer filter at the top)", group = "EMA cross over VWAP (v35)")
+emShow    = input.bool(true,     "EMA: draw the EMA line and the markers", group = "EMA cross over VWAP (v35)")
+
+// The EMA after the last finished candle of its timeframe, and live at this bar (that EMA's
+// chart value now: the finished candles + this bar's close as the open one's).
+emPrevE = request.security(rsSym, emTf, ta.ema(close, emLen)[1], lookahead = barmerge.lookahead_on)
+emAlpha = 2.0 / (emLen + 1)
+emLive  = emAlpha * close + (1 - emAlpha) * emPrevE
+// Where the samples are right: a chart no bigger than the EMA's timeframe whose bars divide it.
+emTfSec = timeframe.in_seconds(emTf)
+emOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0
+
+// One line's state, stepped once per sampled candle close.
+type EmaLine
+    float prevE = na    // the EMA and the line at the candle close before
+    float prevL = na
+    int   n     = 0     // the day's crosses sent on this line
+
+// A candle close → true when the EMA crossed above the line.
+method crossUp(EmaLine s, float e, float ln) =>
+    bool up = not na(s.prevE) and not na(e) and not na(ln) and s.prevE <= s.prevL and e > ln
+    if not na(e) and not na(ln)
+        s.prevE := e
+        s.prevL := ln
+    up
+
+// The line's anchor restarted: its next candle has no close before it.
+method restart(EmaLine s) =>
+    s.prevE := na
+    s.prevL := na
+    true
+
+// The lowest of the fired lines' counts (as the VB's `cross N`).
+emCount(EmaLine s, EmaLine m, EmaLine y, bool fS, bool fM, bool fY) =>
+    int n = 999
+    if fS
+        n := math.min(n, s.n)
+    if fM
+        n := math.min(n, m.n)
+    if fY
+        n := math.min(n, y.n)
+    n
+
+var EmaLine emS = EmaLine.new()
+var EmaLine emM = EmaLine.new()
+var EmaLine emY = EmaLine.new()
+emT   = time(emTf)
+emEnd = time_close == time_close(emTf)
+var int emDone = na
+bool emLateS = not na(emT[1]) and emT != emT[1] and (na(emDone) or emDone != emT[1])
+bool emNewM  = timeframe.change("M")
+bool emNewY  = timeframe.change("12M")
+// A late sample's crosses (the candle before, from the bar before) and this bar's own.
+bool emLS = false
+bool emLM = false
+bool emLY = false
+int  emLN = 0
+bool emCS = false
+bool emCM = false
+bool emCY = false
+int  emCN = 0
+if emOk
+    if emLateS
+        bool emX1 = emSession and emS.crossUp(emLive[1], svwap[1])
+        bool emX2 = emMonth and emM.crossUp(emLive[1], mvwap[1])
+        bool emX3 = emYear and emY.crossUp(emLive[1], yvwap[1])
+        emDone := emT[1]
+        bool emOkL = inWindow and not newDay and (not emGainOn or gainer[1])
+        emLS := emX1 and emOkL
+        emLM := emX2 and emOkL
+        emLY := emX3 and emOkL
+        if emLS
+            emS.n := emS.n + 1
+        if emLM
+            emM.n := emM.n + 1
+        if emLY
+            emY.n := emY.n + 1
+        emLN := emCount(emS, emM, emY, emLS, emLM, emLY)
+    // The anchors: a new day restarts the session line and the day's counts.
+    if newDay
+        emS.restart()
+        emS.n := 0
+        emM.n := 0
+        emY.n := 0
+    if emNewM
+        emM.restart()
+    if emNewY
+        emY.restart()
+    if emEnd and (na(emDone) or emDone != emT)
+        bool emX4 = emSession and emS.crossUp(emLive, svwap)
+        bool emX5 = emMonth and emM.crossUp(emLive, mvwap)
+        bool emX6 = emYear and emY.crossUp(emLive, yvwap)
+        emDone := emT
+        bool emOkC = inWindow and (not emGainOn or gainer)
+        emCS := emX4 and emOkC
+        emCM := emX5 and emOkC
+        emCY := emX6 and emOkC
+        if emCS
+            emS.n := emS.n + 1
+        if emCM
+            emM.n := emM.n + 1
+        if emCY
+            emY.n := emY.n + 1
+        emCN := emCount(emS, emM, emY, emCS, emCM, emCY)
+
+// The message — a contract with services/tv-setups.ts parseTvMessage. Every value is the sampled
+// candle's (a late one's from the bar before):
+//   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | day high +25% | vwap 30s | tf 30S
+emPct(float px, float ln) => (px >= ln ? "+" : "") + str.tostring((px / ln - 1) * 100, "#.0")
+emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late) =>
+    string names = ""
+    if fS
+        names := pbJoin(names, "session")
+    if fM
+        names := pbJoin(names, "month")
+    if fY
+        names := pbJoin(names, "year")
+    string msg = "EMA " + syminfo.ticker + " " + str.tostring(px, format.mintick)
+    if not na(sv)
+        msg += " | sVWAP " + str.tostring(sv, format.mintick) + " (" + emPct(px, sv) + "%)"
+    if not na(mv)
+        msg += " | mVWAP " + str.tostring(mv, format.mintick) + " (" + emPct(px, mv) + "%)"
+    if not na(yv)
+        msg += " | yVWAP " + str.tostring(yv, format.mintick) + " (" + emPct(px, yv) + "%)"
+    msg += " | ema " + str.tostring(emLen) + " " + str.tostring(e, format.mintick)
+    msg += " | line " + names + " | candle " + emTf + " | cross " + str.tostring(n)
+    if not na(dayHighGain)
+        msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
+    if not na(ahGain)
+        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
+    if late
+        msg += " | late"
+    msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
+
+// From the 30s alert alone (the VB's alert timeframe), like the VB and the RSI.
+if (emLS or emLM or emLY) and timeframe.period == vbTf
+    alert(emMsg(emLS, emLM, emLY, emLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true), alert.freq_once_per_bar_close)
+if (emCS or emCM or emCY) and timeframe.period == vbTf
+    alert(emMsg(emCS, emCM, emCY, emCN, close, emLive, svwap, mvwap, yvwap, false), alert.freq_once_per_bar_close)
+// v35 plots go last: the EMA line, the markers, and a VWAP line this setup uses that no other draws.
+plot(emOk and emShow ? emLive : na, "EMA (EMA cross, v35)", color.aqua)
+plotshape(emShow and (emCS or emCM or emCY), "EMA cross (v35)", shape.labelup, location.belowbar, color.orange, text = "EMA", textcolor = color.black, size = size.small)
+plotshape(emShow and (emLS or emLM or emLY), "EMA cross, late close (v35)", shape.labelup, location.belowbar, color.orange, text = "EMA", textcolor = color.black, size = size.small, offset = -1)
+plot(emOn and emSession and not ((pbOn and pbSession) or (vbOn and vbSession)) ? svwap : na, "sVWAP (EMA cross, v35)", color.purple)
+plot(emOn and emMonth and not ((pbOn and pbMonth) or (vbOn and vbMonth)) ? mvwap : na, "mVWAP (EMA cross, v35)", color.yellow)
+plot(emOn and emYear and not ((pbOn and pbYear) or (vbOn and vbYear)) ? yvwap : na, "yVWAP (EMA cross, v35)", color.blue)

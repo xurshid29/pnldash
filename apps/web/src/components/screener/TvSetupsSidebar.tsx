@@ -22,8 +22,9 @@ const LOCAL_TZ = 'Asia/Tashkent'; // UTC+5, the operator's clock
 
 // What counts as live (operator, 2026-10-05): a fresh CROSS (v21) or RETEST (v28),
 // or a pullback still waiting at its line; a v32 RSI cross until the next 6h check
-// (its dip may still come), its v34 DIP for an hour. Everything else is "earlier".
-const LIVE_MIN = { pullback: 60, cross: 15, retest: 15, rsi: 360, dip: 60 } as const;
+// (its dip may still come), its v34 DIP for an hour, a v35 EMA cross like a CROSS.
+// Everything else is "earlier".
+const LIVE_MIN = { pullback: 60, cross: 15, retest: 15, rsi: 360, dip: 60, ema: 15 } as const;
 // The 1m and 2m alerts report the same stage separately; within this window
 // they are one event.
 const MERGE_MS = 5 * 60_000;
@@ -54,6 +55,7 @@ interface TickerCard {
 // and its v34 DIP share one.
 function threadOf(s: TvSetupInfo): string {
   if (s.stage === 'rsi' || s.stage === 'dip') return 'rsi';
+  if (s.stage === 'ema') return `em:${lineTokens(s.stage, s.line).join('+')}`;   // v35: its own thread per line
   if (isVbStage(s.stage)) return `vb:${lineTokens(s.stage, s.line).join('+')}`;
   return `pb:${lineTokens(s.stage, s.line).join('+') || 'none'}`;
 }
@@ -73,7 +75,7 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
     // A VB CROSS / RETEST comes from one alert: only a copy of the same one merges, not the next.
     const dup = list.find((e) => e.setup.stage === s.stage && threadOf(e.setup) === threadOf(s) && at - e.at <= MERGE_MS
       && (s.stage !== 'cross' || e.setup.cross_n === s.cross_n) && (s.stage !== 'retest' || e.setup.retest_n === s.retest_n)
-      && (s.stage !== 'dip' || e.setup.dip_n === s.dip_n));
+      && (s.stage !== 'dip' || e.setup.dip_n === s.dip_n) && (s.stage !== 'ema' || e.setup.cross_n === s.cross_n));
     if (dup) {
       if (s.tf && !dup.tfs.includes(s.tf)) dup.tfs.push(s.tf);
       dup.notified ||= s.notified;
@@ -107,7 +109,7 @@ function buildCards(alerts: OpportunityAlert[], now: number, shown: (stage: TvSt
     const closer = latest.get(threadOf(current.setup));
     const closed = st === 'pullback' && closer != null && closer !== current
       && (closer.setup.stage === 'broken' || closer.setup.stage === 'held');
-    const resolved = st === 'cross' || st === 'retest' || st === 'rsi' || st === 'dip' || st === 'held' || st === 'broken' || closed;
+    const resolved = st === 'cross' || st === 'retest' || st === 'rsi' || st === 'dip' || st === 'ema' || st === 'held' || st === 'broken' || closed;
     const outcome = closed ? { stage: closer!.setup.stage as 'broken' | 'held', at: closer!.at } : null;
     cards.push({ ticker, events, current, live: live != null, resolved, outcome });
   }
@@ -155,14 +157,14 @@ const HOW_TO = (
     <div><b>1.</b> <b>Copy Pine script</b> → TradingView Pine Editor → paste → Add to chart. Its yellow line is the month VWAP, the purple one the session VWAP. With “VWAP lines from: chart bars” they sit exactly on TradingView's own “VWAP Month” and “VWAP Session”; with the default, 30s bars, they can differ a little on a 5m chart (see <b>VWAP lines</b> below). Its blue line is this year's VWAP built from hourly bars (v14). On liquid names it can differ from TradingView's own “VWAP Year” on an intraday chart, which only reaches back as far as the chart has loaded. Trust the blue one.</div>
     <div><b>2.</b> <b>Download .txt</b> → watchlist menu → Import list (or paste <b>Copy list</b>). Refresh it each morning. During the day the sidebar flags new names missing from it — <b>Copy</b> and add them to the watchlist (the alerts pick up added symbols by themselves).</div>
     <div><b>3.</b> Create <b>two</b> alerts → Symbols: that watchlist → Condition: <i>mVWAP-BB</i> → “Any alert() function call” · session Extended · once per bar close — one on <b>1 minute</b>, one on <b>30 seconds</b>.</div>
-    <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts. For <b>v28</b>: after pasting it, open the indicator's Settings → Defaults → <b>Reset settings</b> once more. The defaults are your settings (gainer filter 10%, VB candle 5m, band 45s, tolerance 0), and the reset also restores the chart markers (BROKEN / HELD hidden, RETEST shown). Then recreate both alerts, and tick <b>RETEST</b> in ⚙ → 📐 Stages that alert if it isn't. For <b>v32</b> no reset is needed (its inputs come last); recreate both alerts and tick <b>RSI</b> in ⚙ → 📐 Stages that alert. For <b>v33</b>: open Inputs → “RSI cross” once and set length, MA length, oversold and the lookback again (removing the second RSI shifted them), then recreate both alerts. For <b>v34</b> nothing shifts (its three “RSI dip” settings come last): paste, Save, recreate both alerts. DIP alerts follow the <b>RSI + DIP</b> switch in ⚙.</div>
+    <div><b>↻</b> After a script update: paste the new version, Save, then delete and recreate both alerts. For <b>v28</b>: after pasting it, open the indicator's Settings → Defaults → <b>Reset settings</b> once more. The defaults are your settings (gainer filter 10%, VB candle 5m, band 45s, tolerance 0), and the reset also restores the chart markers (BROKEN / HELD hidden, RETEST shown). Then recreate both alerts, and tick <b>RETEST</b> in ⚙ → 📐 Stages that alert if it isn't. For <b>v32</b> no reset is needed (its inputs come last); recreate both alerts and tick <b>RSI</b> in ⚙ → 📐 Stages that alert. For <b>v33</b>: open Inputs → “RSI cross” once and set length, MA length, oversold and the lookback again (removing the second RSI shifted them), then recreate both alerts. For <b>v34</b> nothing shifts (its three “RSI dip” settings come last): paste, Save, recreate both alerts. DIP alerts follow the <b>RSI + DIP</b> switch in ⚙. For <b>v35</b> nothing shifts either (the “EMA cross over VWAP” settings come last): paste, Save, recreate both alerts, and tick <b>EMA</b> in ⚙ → 📐 Stages that alert.</div>
     <div><b>On / off</b>: each setup has a switch in the script's Inputs — “Pullback setup on”, “VWAP + BB cross setup on”. Off = no markers and no alerts from it; a VWAP line no setup uses isn't drawn. The alerts copy the switches when you create them.</div>
     <div><b>VWAP lines</b> (v28): the Inputs' “VWAP lines from” picks how the script builds its VWAPs, for the lines it draws and for every setup. <b>30s bars</b> (ours, the default): built from 30-second bars, so the line is the same on your 5m and 30s charts and closer to the true VWAP. <b>Chart bars</b>: TradingView's built-in way, from each chart's own bars, so it differs by timeframe (on your alerts, a 5m chart's line sat a median 0.4% from the 30s chart's, a 10m chart's 1.6%). The alerts copy the choice when you create them. The month line has its own switch (v31), “Month VWAP from”: <b>30s bars</b> (the default) builds it from this month's hourly bars plus today's 30-second bars — the yellow line you see is then the one PULLBACK and the VB use, on every chart (on a name whose one day dwarfs the month, TradingView's own month VWAP can sit several % away: ROMA 10-28, ~6%); <b>chart bars</b> = TradingView's anchored VWAP, as before.</div>
     <div><b>VB lanes</b> (v29): the Inputs' “VB lanes” add up to three more candle timeframes to the same 30s alert, for longer trades — by default <b>1h</b> (10m band), <b>4h</b> (30m band) and <b>1D</b> (1h band), each on the <b>month and year</b> lines only. Each lane has its own candle, band and lines; the rest (BB length, tolerance, gainers, the retest) is shared. Their CROSS / RETEST rows show the lane's timeframes (<b>1h/10m</b>, <b>4h/30m</b>, <b>1D/1h</b>) and ping even off Momentum (a longer trade needn't be on today's screen; the daily cap still applies). On a 4h or daily lane a month / year retest carries over to the next day. A lane's markers draw on a chart of its candle timeframe (a 1h chart for the 1h lane). Untested on our data, which can't follow a trade past the day.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
     <div><b>RVol</b> (optional): ⋯ → <b>Copy RVol script</b> → a new Pine Editor tab → Add to chart. It shows the Momentum table's RVol 1m / 5m / Day in its own pane, in the same units; set the pane's scale to Logarithmic. No alert needed.</div>
     <div style={{ marginTop: 8, color: '#8c8c8c' }}>
-      <b>Reading the list.</b> Three setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD), the <b>VWAP + BB cross</b> (CROSS, then RETEST) and (v32) the <b>RSI cross</b> for longer trades, with (v34) its <b>DIP</b>. A CROSS or a RETEST pings only when the name is on Momentum (⭐) or its day high is +30% or more; off-list ones show dimmed. <b>Show only Momentum tickers</b> (the checkbox under the title) hides the rows without a ⭐ and silences their toasts and sounds on this dashboard (Telegram is unchanged; RSI and DIP rows stay — they're rarely on today's screen); the browser remembers it.
+      <b>Reading the list.</b> Four setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD), the <b>VWAP + BB cross</b> (CROSS, then RETEST), (v32) the <b>RSI cross</b> for longer trades, with (v34) its <b>DIP</b>, and (v35) the <b>EMA cross</b> over VWAP. A CROSS, a RETEST or an EMA cross pings only when the name is on Momentum (⭐) or its day high is +30% or more; off-list ones show dimmed. <b>Show only Momentum tickers</b> (the checkbox under the title) hides the rows without a ⭐ and silences their toasts and sounds on this dashboard (Telegram is unchanged; RSI and DIP rows stay — they're rarely on today's screen); the browser remembers it.
       <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
       <div style={{ marginTop: 6 }}>
         <b>CROSS</b> (v21, the 30s alert only): a candle of the timeframe you set (default <b>5m</b>) crosses a VWAP line and the upper BB of the other timeframe you set (default <b>45s</b>): at a 30s close inside it, its open is under both as they stand then (with the tolerance setting above 0, an open up to that % over the lower line also counts; default 0) and the close is above both — the body crosses the lines the chart draws for that candle (v23; the day's first candle counts). The lines (v22): session (<b>S</b>), month (<b>M</b>) and year (<b>Y</b>), each with its own count. It rings while the candle is still open, and on the candle timeframe's chart that candle gets a marker: teal <b>VB</b> (session), yellow <b>VB M</b> (month), blue <b>VB Y</b> (year). The tag shows the line, the timeframes and the day's cross number on that line (#1 = first); after a line's 3rd cross of the day, its crosses stay quiet, and so do crosses on names off our Momentum list unless the day high is +30% or more (a runner the screen hasn't caught yet). ⚙ → 📐 Stages that alert → CROSS turns it on or off.
@@ -175,6 +177,9 @@ const HOW_TO = (
       </div>
       <div style={{ marginTop: 6 }}>
         <b>DIP</b> (v34, the 30s alert only): the pullback after an RSI cross. The script follows the RSI at each close of <b>its own timeframe's</b> candles (a 15m RSI: every 15 minutes, whatever the check timeframe). When the RSI closes back <b>under its MA</b>, the dip starts (a small purple ▼ over the bar). The <b>DIP</b> is the first candle that closes with the RSI <b>higher than the candle before</b> — the dip's low was one candle ago. If the RSI then makes a lower low and rises again you get DIP <b>#2</b> (at most 2 per dip, an input); if it climbs back over its MA without a turn, that close is the DIP. The dip is over when the RSI closes back over its MA; the next RSI cross arms the next one. The dip must start within 16 of the RSI's candles after the RSI cross (an input). Its row shows <b>dip · stop $X</b>: a tick under the dip's lowest price. The magenta <b>DIP</b> marker needs a chart whose bars divide the RSI's timeframe — with a 15m RSI: a 15m, 5m, 3m or 1m chart, <b>not 10m</b>. It rides the RSI's switch in ⚙ and pings off Momentum too. Not graded.
+      </div>
+      <div style={{ marginTop: 6 }}>
+        <b>EMA</b> (v35, the 30s alert only): the EMA of a timeframe's closes (default <b>EMA 9</b> of <b>3m</b> candles) crosses above a VWAP line — the <b>session</b> line by default; month and year are switches in the Inputs. It is judged when each 3m candle closes: the EMA above the line at that close, at or under it at the close before. The day's first candle can't fire (the session line starts over there), and a cross on a day's last candle is not sent the next morning. The script draws the EMA (aqua) and an orange <b>EMA</b> marker on a chart whose bars divide the EMA's timeframe: a 3m, 1m or 30s chart for a 3m EMA. The tag shows the line, the timeframe and length (<b>3m/9</b>) and the day's cross number on that line; after a line's 3rd cross of the day it stays quiet. Gainers only by default, and like CROSS it pings only on Momentum names (or a day high of +30% or more). The line is the script's own VWAP (from 30s bars by default), so it can sit a little off TradingView's built-in VWAP on a 3m chart. Not graded. ⚙ → EMA turns it on or off.
       </div>
     </div>
   </div>
@@ -376,7 +381,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           <TickerLinks ticker={c.ticker} />
           <TickerLink ticker={c.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
           {r && <span style={{ color: '#fadb14', fontSize: 11 }}>⭐</span>}
-          <TvStageTag stage={s.stage} dim={!e.notified} line={s.line} touch={s.stage === 'cross' ? s.cross_n : s.stage === 'retest' ? s.retest_n : s.stage === 'dip' ? s.dip_n : s.touch} tfs={crossTfText(s)} />
+          <TvStageTag stage={s.stage} dim={!e.notified} line={s.line} touch={s.stage === 'cross' || s.stage === 'ema' ? s.cross_n : s.stage === 'retest' ? s.retest_n : s.stage === 'dip' ? s.dip_n : s.touch} tfs={crossTfText(s)} />
           {/* v16: past the day's cap — pings only for a B+-or-better Momentum name */}
           {s.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
           {proven && <span style={{ fontSize: 10, color: '#95de64', whiteSpace: 'nowrap' }}>{proven}</span>}
@@ -409,7 +414,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, alignItems: 'center' }}>
               {c.events.map((x) => (
                 <span key={x.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                  <TvStageTag stage={x.setup.stage} dim={!x.notified} line={x.setup.line} touch={x.setup.stage === 'cross' ? x.setup.cross_n : x.setup.stage === 'retest' ? x.setup.retest_n : x.setup.stage === 'dip' ? x.setup.dip_n : x.setup.touch} />
+                  <TvStageTag stage={x.setup.stage} dim={!x.notified} line={x.setup.line} touch={x.setup.stage === 'cross' || x.setup.stage === 'ema' ? x.setup.cross_n : x.setup.stage === 'retest' ? x.setup.retest_n : x.setup.stage === 'dip' ? x.setup.dip_n : x.setup.touch} />
                   <Text type="secondary" style={{ fontSize: 10 }}>{hhmm(x.at)}</Text>
                 </span>
               ))}

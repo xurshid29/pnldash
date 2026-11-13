@@ -35,7 +35,7 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip';
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'ema';
 // The PULLBACK setup's stages (script v10).
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
 // The VWAP + BB cross (script v21): one stage, CROSS, on the candle timeframe's
@@ -55,6 +55,10 @@ export const VB_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['cross', 'retes
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'dip' ? 'rsi' : stage;
 }
+// v35 EMA cross (operator, 2026-11-13): the EMA of a timeframe's closes (3m, length 9) crosses
+// above a VWAP line (session; month / year are script switches), judged at that timeframe's
+// candle close, from the 30s alert alone. Announced like CROSS: its own ⚙ switch, Momentum names
+// (or a day high ≥ vb_fresh_gain), TV_SETUP.em_cap on the day's `cross N` per line.
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
 // e.g. "session+month". The legacy 'both' (v10–v13) meant session + month.
@@ -117,6 +121,9 @@ export interface TvSetupSignal {
   // stop = a tick under the dip's lowest price, candle_tf = the RSI's timeframe
   dip_n?: number | null;      // the signal's number in this dip (a lower low and another rise → 2)
   since_n?: number | null;    // the RSI's candles since the RSI cross
+  // EMA cross (script v35): candle_tf = the EMA's timeframe, cross_n = the day's crosses on the line
+  ema_len?: number | null;    // the EMA's length (9)
+  ema?: number | null;        // its value at the candle's close
 }
 
 export const TV_SETUP = {
@@ -161,6 +168,9 @@ export const TV_SETUP = {
   vb_long_min: 60,
   // A v28 RETEST follows the same rules (its own ⚙ switch, Momentum or fresh, vb_cap on
   // its own `retest N`).
+  // v35 EMA cross: past this many crosses on a line in a day (the message's `cross N`), an EMA
+  // cross is stored and shown, not announced — an EMA weaving around VWAP. Untested.
+  em_cap: 3,
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
@@ -168,13 +178,14 @@ export const TV_SETUP = {
 } as const;
 
 const STAGES: Record<string, TvStage> = {
-  pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest', rsi: 'rsi', dip: 'dip',
+  pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest', rsi: 'rsi', dip: 'dip', ema: 'ema',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
 // (no `fails`) capped themselves, so they're never capped here.
-// v21: a CROSS past the day's TV_SETUP.vb_cap crosses on its ticker.
+// v21: a CROSS past the day's TV_SETUP.vb_cap crosses on its ticker. v35: an EMA cross past em_cap.
 export function pastCap(sig: TvSetupSignal): boolean {
+  if (sig.stage === 'ema') return sig.cross_n != null && sig.cross_n > TV_SETUP.em_cap;
   if (sig.stage === 'cross') return sig.cross_n != null && sig.cross_n > TV_SETUP.vb_cap;
   if (sig.stage === 'retest') return sig.retest_n != null && sig.retest_n > TV_SETUP.vb_cap;
   return sig.stage === 'pullback' && sig.fails != null && sig.fails >= TV_SETUP.pb_cap;
@@ -220,6 +231,17 @@ export function rsiFields(sig: TvSetupSignal): {
   };
 }
 
+// The v35 EMA cross's fields for the alert's setup info and its tier_events row; none on other stages.
+export function emaFields(sig: TvSetupSignal): {
+  candle_tf?: string | null; cross_n?: number | null; ema_len?: number | null; ema?: number | null; late?: boolean;
+} {
+  if (sig.stage !== 'ema') return {};
+  return {
+    candle_tf: sig.candle_tf ?? null, cross_n: sig.cross_n ?? null, ema_len: sig.ema_len ?? null, ema: sig.ema ?? null,
+    late: sig.late === true,
+  };
+}
+
 const GRADE_LADDER = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'];
 // "B+" or better, by the Momentum grade ladder.
 export function gradeAtLeast(grade: string | null | undefined, min: string): boolean {
@@ -229,7 +251,7 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
@@ -301,6 +323,8 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     late: o.late === true,
     dip_n: toNum(o.dip_n ?? o.dip),
     since_n: toNum(o.since_n ?? o.since),
+    ema_len: toNum(o.ema_len),
+    ema: toNum(o.ema),
   };
 }
 
@@ -333,6 +357,7 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 //   RETEST AIOK 17.28 | stop 17.09 | sVWAP 17.1 (+1.1%) | mVWAP 14.2 (+21.7%) | line session | candle 5 | bb 45S | retest 1 | day high +46% | vwap 30s | tf 30S   (v28)
 //   RSI XTND 1.07 | rsi 720 29.2 ma 27.0 | rsi 180 41.2 ma 30.7 | low 22.1 | candle 360 | tf 30S   (v32; the signal RSI first, `| late` when judged a bar late)
 //   DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | tf 30S   (v34; `low` the dip's lowest RSI, `candle` the RSI's timeframe)
+//   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | day high +25% | vwap 30s | tf 30S   (v35; `ema` its length and value, `candle` its timeframe)
 // (v28 adds `vwap 30s|chart` to every message.)
 // (a negative day high is written "-2%"; scripts before v3 wrote "+-2%"), or a JSON
 // object with the TvSetupSignal field names. Express hands us the raw text for
@@ -349,7 +374,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
       return null;
     }
   }
-  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST|RSI|DIP)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST|RSI|DIP|EMA)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
@@ -380,6 +405,7 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const rsiLow = /\|\s*low\s+(\d*\.?\d+)/i.exec(text);
   const dipN = /\|\s*dip\s+(\d+)\b/i.exec(text);       // v34
   const sinceN = /\|\s*since\s+(\d+)\b/i.exec(text);
+  const ema = /\|\s*ema\s+(\d+)\s+\$?(\d*\.?\d+)/i.exec(text);   // v35: "| ema 9 8.03"
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -418,6 +444,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     late: /\|\s*late\b/i.test(text),
     dip_n: toNum(dipN?.[1]),
     since_n: toNum(sinceN?.[1]),
+    ema_len: toNum(ema?.[1]),
+    ema: toNum(ema?.[2]),
   };
 }
 
@@ -467,14 +495,22 @@ export class TvSetupGate {
     // v29: the VB lanes share the 30s alert, so the candle timeframe is part of a VB event's key
     // (and of a v32 RSI cross's or a v34 DIP's: the timeframe it is judged at).
     const rsi = sig.stage === 'rsi' || sig.stage === 'dip';
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi ? `|${sig.candle_tf ?? ''}` : ''}`;
+    const ema = sig.stage === 'ema';
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi || ema ? `|${sig.candle_tf ?? ''}` : ''}`;
     const prev = this.lastExact.get(exact);
-    const dupSec = vb ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
+    const dupSec = vb || ema ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
     // v32 RSI cross: one per check candle from the 30s alert alone; a longer trade, so it
     // announces off Momentum too — only its ⚙ switch makes it quiet. Its v34 DIP rides that switch.
     if (rsi) return this.announced.has('rsi') ? 'notify' : 'quiet';
+    // v35 EMA cross: one per candle and line from the 30s alert alone, limited like a CROSS —
+    // its ⚙ switch, the day's cap, and Momentum names only (or a day high ≥ vb_fresh_gain).
+    if (ema) {
+      const fresh = sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
+      const quiet = !this.announced.has('ema') || pastCap(sig) || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
+      return quiet ? 'quiet' : 'notify';
+    }
     // v21 CROSS and v28 RETEST: one per candle / VB candle from the 30s alert alone — no
     // copy to merge, and no 5-min spacing (the next one is a new event); the cap and
     // the Momentum-only rule limit them.
@@ -515,10 +551,10 @@ export class TvSetupGate {
 }
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
 };
 const STAGE_ICON: Record<TvStage, string> = {
-  pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', rsi: '📈', dip: '🎯',
+  pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', rsi: '📈', dip: '🎯', ema: '〽️',
 };
 const STAGE_HINT: Record<TvStage, string> = {
   pullback: 'back near VWAP after the run — be ready',
@@ -528,6 +564,7 @@ const STAGE_HINT: Record<TvStage, string> = {
   retest: 'back at the VWAP line after the VB candle, and bounced',
   rsi: 'the RSI crossed above its MA after being oversold',
   dip: 'after the RSI cross, the RSI dipped under its MA and turned up',
+  ema: 'the EMA crossed above the VWAP line',
 };
 // A TradingView interval, short: "5" → "5m", "60" → "1h", "30S" → "30s".
 export function fmtTf(tf: string | null | undefined): string {
@@ -568,6 +605,7 @@ export function formatTvSetupAlert(
   if (sig.stage === 'retest') return formatRetest(sig, tvSym, row);
   if (sig.stage === 'rsi') return formatRsi(sig, tvSym, row);
   if (sig.stage === 'dip') return formatDip(sig, tvSym, row);
+  if (sig.stage === 'ema') return formatEma(sig, tvSym, row);
   // PULLBACK / BROKEN / HELD. PULLBACK and BROKEN name the line: "back near the
   // session VWAP after the run — be ready".
   const tokens = lineTokens(sig.stage, sig.line);
@@ -714,6 +752,39 @@ function formatDip(
   if (sig.dip_n != null) what.push(sig.dip_n === 1 ? 'first turn of this dip' : `turn ${sig.dip_n} of this dip (a lower low since)`);
   if (sig.since_n != null) what.push(`${sig.since_n} candle${sig.since_n === 1 ? '' : 's'} after the RSI cross`);
   if (what.length > 0) lines.push(what.join(' · '));
+  lines.push(momentumLine(row));
+  const ctx = contextParts(sig);
+  if (ctx.length > 0) lines.push(ctx.join(' · '));
+  lines.push(linksLine(sig, tvSym));
+  return lines.join('\n');
+}
+
+// v35 EMA cross: "the 3m EMA 9 crossed above the session VWAP (at the 3m close)".
+function formatEma(
+  sig: TvSetupSignal,
+  tvSym: string,
+  row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
+): string {
+  const tokens = lineTokens(sig.stage, sig.line);
+  const tf = fmtTf(sig.candle_tf);
+  const lines = [
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.ema} <b>${TV_STAGE_LABEL.ema}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `<i>the ${tf} EMA ${sig.ema_len ?? '?'} crossed above the ${(tokens.length > 0 ? tokens : ['session']).join(' + ')} VWAP (at the ${tf} close${sig.late ? ', a bar late' : ''})</i>`,
+  ];
+  const what: string[] = [];
+  if (sig.ema != null) what.push(`EMA ${fmtPx(sig.ema)}`);
+  if (sig.cross_n != null) {
+    what.push(`cross ${sig.cross_n} today${sig.cross_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
+  }
+  if (what.length > 0) lines.push(what.join(' · '));
+  // Levels: the crossed line(s) first, then the others the message carries.
+  const lvlOf: Record<TvLineName, string | null> = {
+    session: sig.svwap != null ? `sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})` : null,
+    month: sig.mvwap != null ? `mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})` : null,
+    year: sig.yvwap != null ? `yVWAP ${fmtPx(sig.yvwap)} (${fmtSigned(sig.ypx_pct ?? null)})` : null,
+  };
+  const lvl = [...tokens, ...LINE_ORDER.filter((t) => !tokens.includes(t))].map((t) => lvlOf[t]).filter((x): x is string => x != null);
+  if (lvl.length > 0) lines.push(lvl.join(' · '));
   lines.push(momentumLine(row));
   const ctx = contextParts(sig);
   if (ctx.length > 0) lines.push(ctx.join(' · '));

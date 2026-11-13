@@ -197,7 +197,7 @@ function fmtAlertPrice(p: number | null): string {
 }
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -238,6 +238,11 @@ export function opportunityTitle(a: OpportunityAlert): string {
         + ` (${one(s.rsi)} / ${one(s.rsi_ma)}${s.rsi_low != null ? `, dip low ${one(s.rsi_low)}` : ''})`
         + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.dip_n != null ? ` · #${s.dip_n}` : ''}`;
     }
+    // v35: "📐 EMA OMH — 3m EMA 9 over sVWAP · #1"
+    if (s.stage === 'ema') {
+      const ln = lineTokens(s.stage, s.line).map((t) => SHORT_LINE[t]).join(' + ') || 'VWAP';
+      return `${s.on_screen ? '⭐ ' : ''}📐 EMA ${a.ticker} — ${shortTf(s.candle_tf)} EMA ${s.ema_len ?? '?'} over ${ln}${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
+    }
     // PULLBACK / BROKEN / HELD (the reclaim setup's stages went with script v27)
     const tokens = lineTokens(s.stage, s.line);
     const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
@@ -272,6 +277,7 @@ export function opportunityBody(a: OpportunityAlert): string {
       return db.filter(Boolean).join(' · ');
     }
     const bits = [fmtAlertPrice(a.price)];
+    if (s.stage === 'ema' && s.ema != null) bits.push(`EMA ${fmtAlertPrice(s.ema)}`);
     if (s.svwap != null) bits.push(`sVWAP ${fmtAlertPrice(s.svwap)}`);
     if (s.upper != null) bits.push(`${shortTf(s.bb_tf)} BB upper ${fmtAlertPrice(s.upper)}`);
     if (s.mvwap != null) bits.push(`mVWAP ${fmtAlertPrice(s.mvwap)}`);
@@ -372,8 +378,8 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        // (a v34 DIP is an entry signal: the bright pair, on or off Momentum)
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest')
+        // (a v34 DIP is an entry signal: the bright pair, on or off Momentum; a v35 EMA cross sounds like a CROSS)
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema')
           || audible.some((a) => a.setup?.stage === 'dip')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('pullback') || audible.some((a) => a.setup?.stage === 'rsi')) setupReadyPing();   // v32 RSI, on or off Momentum

@@ -243,6 +243,16 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-13 (07:00–08:00 ET) — SCRIPT v35: THE EMA CROSS OVER VWAP (a fourth setup).** The operator: "I want to experiment a new
+setup - ema crosses over vwap … (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". Built as stage `ema`
+(`docs/vwap-setup.md` §18): the EMA 9 of 3m closes above the session VWAP at a 3m close after being at or under it at the close
+before; month / year lines as switches; from a request (`ta.ema(close, n)[1]`, lookahead on) plus the live close, sampled like the
+RSI; gainers only; no cross on the day's first candle; a late sample across the day's end is not announced (the audit's lesson).
+Server: announced like CROSS (⚙ switch **EMA — the operator's saved list doesn't have it, they must tick it**; Momentum or a +30%
+day high; `em_cap` 3 per line a day; `tv_ema`). Replica `ema_rule_direct` / `simulate_ema`; six names' real 1m bars agree (about 1.4
+crosses per stock per day in regular hours). Not graded. Built inside the 07:00–11:00 ET window, so the push waited for the
+operator's word or 11:00 ET. The audit's VB items are still open.
+
 **2026-11-12 (15:25–17:00 ET) — SCRIPT v34: THE RSI DIP.** The operator runs the RSI cross as a 15m RSI checked at the 1h close and
 looks for the RSI's drop under its MA afterwards on a 15m chart (OMH 11-11 / 11-12): "add a signal when RSI cross signal fires and rsi
 purple line crosses down the smoothing line (and find the deepest part of it somehow)". Built as **DIP** (`docs/vwap-setup.md` §17.2):

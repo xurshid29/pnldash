@@ -7,7 +7,8 @@
 // TRIGGERED) were removed, and their messages are rejected. v28 replaced the VB break
 // (LEVEL / BREAK) with RETEST and added `vwap 30s|chart` to every message. v32 added a
 // third setup, the RSI cross (stage RSI), for longer trades; v33 kept one RSI; v34 added its
-// DIP (the pullback after the cross), which rides the RSI's ⚙ switch.
+// DIP (the pullback after the cross), which rides the RSI's ⚙ switch. v35 added a fourth setup,
+// the EMA cross over VWAP (stage EMA).
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -203,12 +204,12 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'pullback', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, day_gain: 25, ah_gain: null,
     tf: '1', vol_x: null, run_pct: null, svwap: 1.95, spx_pct: 2.6, line: 'session', touch: 1, fails: 0, ...over,
   });
-  check('default switches: PULLBACK, CROSS, RETEST, RSI on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi"]');
+  check('default switches: PULLBACK, CROSS, RETEST, RSI, EMA on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi","ema"]');
   check('parseStageList keeps known stages in menu order, drops the rest (v27: a saved go / ready / forming too)',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 'ready', 7])) === '["pullback","held"]'
       && parseStageList('pullback') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists the six stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST)',
-    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","broken","held"]'
+  check('menu order lists the seven stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST; v35 EMA after it)',
+    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","ema","broken","held"]'
       && JSON.stringify(parseStageList(['pullback', 'cross', 'break'])) === '["pullback","cross"]');
   const g = new TvSetupGate();
   g.setAnnounced(['cross']);
@@ -485,6 +486,45 @@ console.log('RSI dip (v34, 2026-11-12)');
     && formatTvSetupAlert(late!, 'NASDAQ:OMH', null).includes('turn 2 of this dip (a lower low since)'));
 }
 
+console.log('EMA cross over VWAP (v35, 2026-11-13)');
+{
+  const T0 = 1_794_570_000;
+  const msg = 'EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | day high +25% | vwap 30s | tf 30S';
+  const e = parseTvMessage(msg);
+  check('EMA parses', e?.stage === 'ema' && e.ticker === 'OMH' && e.price === 8.09 && e.svwap === 8.01 && e.spx_pct === 1 && e.mvwap === 7.5
+    && e.px_pct === 7.9 && e.ema_len === 9 && e.ema === 8.03 && e.line === 'session' && e.candle_tf === '3' && e.cross_n === 1 && e.day_gain === 25
+    && e.vwap_src === '30s' && e.tf === '30S' && e.late === false, JSON.stringify(e));
+  check('…no VB band, retest, pullback or RSI fields', e?.upper === null && e?.bb_tf === null && e?.retest_n === null && e?.touch === null
+    && e?.rsi === null && e?.dip_n === null && e?.stop === null, JSON.stringify(e));
+  const late = parseTvMessage('EMA NCPL 0.4412 | sVWAP 0.4391 (+.5%) | ema 20 0.4402 | line session+month | candle 5 | cross 4 | late | vwap chart | tf 30S');
+  check('…a late one on two lines, sub-dollar, another length and timeframe', late?.late === true && late.ema_len === 20 && late.ema === 0.4402
+    && late.line === 'session+month' && late.candle_tf === '5' && late.cross_n === 4 && late.spx_pct === 0.5 && late.vwap_src === 'chart', JSON.stringify(late));
+  check('…JSON', parseTvMessage({ stage: 'ema', ticker: 'OMH', ema_len: 9, ema: 8.03, line: 'session', candle: '3', cross: 2 })?.ema === 8.03);
+  check('…a CROSS has no EMA fields, and "EMA" as a ticker still parses as one',
+    parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S')?.ema === null
+      && parseTvMessage('PULLBACK EMA 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.ticker === 'EMA');
+  const g = new TvSetupGate();
+  check('EMA on Momentum announces', g.admit(e!, T0, false, true) === 'notify');
+  check('…the same candle again is a re-delivery; the next cross is a new event', g.admit(e!, T0 + 5, false, true) === 'drop'
+    && g.admit({ ...e!, cross_n: 2 }, T0 + 200, false, true) === 'notify');
+  check('…off Momentum quiet, unless the day high is +30% or more', new TvSetupGate().admit(e!, T0, false, false) === 'quiet'
+    && new TvSetupGate().admit({ ...e!, day_gain: 31 }, T0, false, false) === 'notify');
+  check(`…past the cap (cross ${TV_SETUP.em_cap + 1}) quiet`, pastCap({ ...e!, cross_n: TV_SETUP.em_cap + 1 }) && !pastCap(e!)
+    && new TvSetupGate().admit({ ...e!, cross_n: TV_SETUP.em_cap + 1 }, T0, false, true) === 'quiet');
+  const off = new TvSetupGate();
+  off.setAnnounced(['pullback', 'cross', 'rsi']);
+  check('…switched off in ⚙ (the operator\'s saved list has no EMA yet) → quiet', off.admit(e!, T0, false, true) === 'quiet' && !off.announces('ema'));
+  check('…two EMA timeframes crossing on one 30s bar are two events (the candle is in the key)',
+    (() => { const g2 = new TvSetupGate(); return g2.admit(e!, T0, false, true) === 'notify' && g2.admit({ ...e!, candle_tf: '5' }, T0, false, true) === 'notify'; })());
+  const html = formatTvSetupAlert(e!, 'NASDAQ:OMH', { change_pct: 24.1, grade: 'B+', float_m: 3.2 });
+  check('Telegram: EMA headline and what happened', html.includes('〽️ <b>EMA</b>') && html.includes('<b>OMH</b>') && html.includes('$8.09')
+    && html.includes('the 3m EMA 9 crossed above the session VWAP (at the 3m close)'), html);
+  check('Telegram: the EMA, the count, the levels, Momentum', html.includes('EMA $8.03 · cross 1 today (first)')
+    && html.includes('sVWAP $8.01 (+1.0%) · mVWAP $7.50 (+7.9%)') && html.includes('on Momentum') && html.includes('grade B+') && !html.includes('null'), html);
+  check('Telegram: a late one on two lines says so', formatTvSetupAlert(late!, 'NASDAQ:NCPL', null).includes('crossed above the session + month VWAP (at the 5m close, a bar late)')
+    && formatTvSetupAlert(late!, 'NASDAQ:NCPL', null).includes('cross 4 today — past the cap'));
+}
+
 console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -519,7 +559,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v34', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v35', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -563,7 +603,19 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'rsCrossOk  = rsOn and rsChartSec <= rsTfSec and rsCheckSec % rsChartSec == 0', 'rsDipOk    = rsCrossOk and rsDipOn and rsTfSec % rsChartSec == 0',
     'int rsE1 = rs.stepDip(rsA[1], rsMaA[1], rsCLowP)', 'int rsE2 = rs.stepDip(rsA, rsMaA, rsCLow)', 'rsDStop   := rs.lowPx - syminfo.mintick',
     'rsDipGo := rsDipGo and inWindow', 'if rsDipGo and timeframe.period == vbTf', 'alert(rsDipMsg(), alert.freq_once_per_bar_close)',
-    '"RSI dip (v34)"', '"RSI dip, late close (v34)"', '"RSI dip starts (v34)"']) {
+    '"RSI dip (v34)"', '"RSI dip, late close (v34)"', '"RSI dip starts (v34)"',
+    // v35: the EMA cross over VWAP — the EMA of a timeframe's closes from a request (lookahead on + [1]) plus the live
+    // close, judged at that timeframe's candle closes (late ones first, never announced across the day's end), per line
+    '"EMA "', '" | ema " + str.tostring(emLen) + " " + str.tostring(e, format.mintick)', '" | candle " + emTf + " | cross " + str.tostring(n)',
+    'emPrevE = request.security(rsSym, emTf, ta.ema(close, emLen)[1], lookahead = barmerge.lookahead_on)',
+    'emLive  = emAlpha * close + (1 - emAlpha) * emPrevE', 'emOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0',
+    'type EmaLine', 'method crossUp(EmaLine s, float e, float ln) =>', 's.prevE <= s.prevL and e > ln',
+    'emEnd = time_close == time_close(emTf)', 'bool emOkL = inWindow and not newDay and (not emGainOn or gainer[1])',
+    'bool emOkC = inWindow and (not emGainOn or gainer)', 'emS.restart()',
+    'input.timeframe("3", "EMA: candle timeframe', 'input.int(9,         "EMA: length"',
+    'alert(emMsg(emLS, emLM, emLY, emLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true), alert.freq_once_per_bar_close)',
+    'alert(emMsg(emCS, emCM, emCY, emCN, close, emLive, svwap, mvwap, yvwap, false), alert.freq_once_per_bar_close)',
+    '"EMA (EMA cross, v35)"', '"EMA cross (v35)"', '"EMA cross, late close (v35)"', '"sVWAP (EMA cross, v35)"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
@@ -582,9 +634,16 @@ console.log('Contract — the Pine script still emits what the parser reads');
   check('v32: the RSI inputs come after the last v31 one, in order', at('mvSrc      = input.string') > 0
     && at('mvSrc      = input.string') < at('rsOn    = input.bool') && at('rsOn    = input.bool') < at('rsCheck = input.timeframe')
     && at('rsCheck = input.timeframe') < at('rsOsN   = input.int'));
-  check('v34: the three RSI dip inputs come last, in order', at('rsOsN   = input.int') < at('rsDipOn   = input.bool')
-    && at('rsDipOn   = input.bool') < at('rsDipWait = input.int') && at('rsDipWait = input.int') < at('rsDipMax  = input.int')
-    && (pine.slice(at('rsDipMax  = input.int') + 'rsDipMax  = input.int'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
+  check('v34: the three RSI dip inputs come after the RSI ones, in order', at('rsOsN   = input.int') < at('rsDipOn   = input.bool')
+    && at('rsDipOn   = input.bool') < at('rsDipWait = input.int') && at('rsDipWait = input.int') < at('rsDipMax  = input.int'));
+  check('v35: the EMA inputs come last, in order', at('rsDipMax  = input.int') < at('emOn      = input.bool')
+    && at('emOn      = input.bool') < at('emTf      = input.timeframe') && at('emTf      = input.timeframe') < at('emLen     = input.int')
+    && at('emLen     = input.int') < at('emSession = input.bool') && at('emSession = input.bool') < at('emGainOn  = input.bool')
+    && at('emGainOn  = input.bool') < at('emShow    = input.bool')
+    && (pine.slice(at('emShow    = input.bool') + 'emShow    = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
+  // v35: the late sample first, then the anchors' restarts, then this bar's own close
+  check('v35: late sample, then the day\'s restart, then the on-time sample', at('if emLateS') > 0 && at('if emLateS') < at('emS.restart()')
+    && at('emS.restart()') < at('if emEnd and (na(emDone) or emDone != emT)'));
   // v34: the late sample comes before the bar's own closes (v33's else-if skipped it), for the dip and the cross alike
   check('v34: late samples are taken before the on-time ones', at('if rsDipOk and rsLateA') > 0 && at('if rsDipOk and rsLateA') < at('if rsLateC')
     && at('if rsLateC') < at('if rsDipOk and rsEndA and') && at('if rsDipOk and rsEndA and') < at('if rsEndC and (na(rsDoneC)'));

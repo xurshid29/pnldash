@@ -37,7 +37,7 @@ interface SetupEvent {
   outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
-type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'retest' | 'rsi';
+type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'retest' | 'rsi' | 'ema';
 
 function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const sorted = alerts
@@ -49,7 +49,7 @@ function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   for (const { a, at } of sorted) {
     const s = a.setup!;
     // A v21 CROSS / v28 RETEST comes from one alert: only a copy of the same one merges, not the next.
-    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'dip' ? `|${s.dip_n ?? ''}` : ''}`;
+    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' || s.stage === 'ema' ? `|${s.cross_n ?? ''}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'dip' ? `|${s.dip_n ?? ''}` : ''}`;
     const prev = last.get(k);
     if (prev && at - prev.at <= MERGE_MS) {
       if (s.tf && !prev.tfs.includes(s.tf)) prev.tfs.push(s.tf);
@@ -107,6 +107,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       if (stageFilter === 'cross' && st !== 'cross') return false;
       if (stageFilter === 'retest' && st !== 'retest') return false;
       if (stageFilter === 'rsi' && stageSwitch(st) !== 'rsi') return false;
+      if (stageFilter === 'ema' && st !== 'ema') return false;
       return !momentumOnly || e.setup.on_screen;
     });
   }, [events, settings, stageFilter, momentumOnly]);
@@ -118,6 +119,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const retests = visible.filter((e) => e.setup.stage === 'retest').length;
   const rsis = visible.filter((e) => e.setup.stage === 'rsi').length;
   const dips = visible.filter((e) => e.setup.stage === 'dip').length;
+  const emas = visible.filter((e) => e.setup.stage === 'ema').length;
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -143,7 +145,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       render: (_v, e) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <TvStageTag stage={e.setup.stage} dim={!e.notified} line={e.setup.line}
-            touch={e.setup.stage === 'cross' ? e.setup.cross_n : e.setup.stage === 'retest' ? e.setup.retest_n : e.setup.stage === 'dip' ? e.setup.dip_n : e.setup.touch} tfs={crossTfText(e.setup)} />
+            touch={e.setup.stage === 'cross' || e.setup.stage === 'ema' ? e.setup.cross_n : e.setup.stage === 'retest' ? e.setup.retest_n : e.setup.stage === 'dip' ? e.setup.dip_n : e.setup.touch} tfs={crossTfText(e.setup)} />
           {e.setup.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
         </span>
       ),
@@ -191,6 +193,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             { label: 'CROSS', value: 'cross' },
             { label: 'RETEST', value: 'retest' },
             { label: 'RSI + DIP', value: 'rsi' },
+            { label: 'EMA', value: 'ema' },
           ]}
         />
         <Checkbox checked={momentumOnly} onChange={(e) => setMomentumOnly(e.target.checked)}>
@@ -205,6 +208,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
               {retests > 0 && <> · {retests} RETEST</>}
               {rsis > 0 && <> · {rsis} RSI</>}
               {dips > 0 && <> · {dips} DIP</>}
+              {emas > 0 && <> · {emas} EMA</>}
             </>
           )}
         </Text>

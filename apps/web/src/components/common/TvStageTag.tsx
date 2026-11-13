@@ -11,6 +11,7 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   retest: { label: 'RETEST', color: '#ffffff', bg: '#08979c' },
   rsi: { label: 'RSI', color: '#efdbff', bg: '#391085' },   // v32, purple like its chart marker
   dip: { label: 'DIP', color: '#ffffff', bg: '#c41d7f' },   // v34, magenta like its chart marker
+  ema: { label: 'EMA', color: '#1f1f1f', bg: '#fa8c16' },   // v35, orange like its chart marker
 };
 
 // The VWAP + BB cross's stages: CROSS (v21) and RETEST (v28).
@@ -61,11 +62,13 @@ export function fmtTf(tf: string | null | undefined): string {
 // signal RSI's timeframe ("12h"); its v34 DIP the same.
 export function crossTfText(s: TvSetupInfo): string | null {
   if (s.stage === 'rsi' || s.stage === 'dip') return s.rsi_tf ? fmtTf(s.rsi_tf) : null;
+  // v35 EMA cross: "3m/9" — the EMA's timeframe over its length
+  if (s.stage === 'ema') return s.candle_tf ? `${fmtTf(s.candle_tf)}/${s.ema_len ?? '?'}` : null;
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2, ema: 1 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -130,6 +133,13 @@ export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   // v32 RSI: "12h RSI 29.2 / MA 27.0 · low 22.1 · 3h 41.2 / 30.7 · at the 6h close"
   if (s.stage === 'rsi') return rsiText(s);
   if (s.stage === 'dip') return dipText(s, price);
+  // v35 EMA cross: "+1.0% vs sVWAP · EMA 9 $8.03 · at the 3m close"
+  if (s.stage === 'ema') {
+    const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));
+    if (s.ema != null) parts.push(`EMA ${s.ema_len ?? '?'} $${s.ema < 1 ? s.ema.toFixed(4) : s.ema.toFixed(2)}`);
+    if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
+    return parts.filter((p): p is string => p != null).join(' · ');
+  }
   // v28 RETEST: the stop, then where price sat against its line
   if (s.stage === 'retest') {
     const parts = [retestStopText(s, price), ...lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t))];

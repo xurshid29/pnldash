@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, rsiFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
+import { emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, rsiFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3946,7 +3946,7 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
-  // tv_cross / tv_retest / tv_rsi / tv_dip, and tv_year for a message about the year line alone).
+  // tv_cross / tv_retest / tv_rsi / tv_dip / tv_ema, and tv_year for a message about the year line alone).
   // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
   // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
@@ -3989,6 +3989,7 @@ class PollerService {
         fails: sig.fails ?? null, capped: pastCap(sig),
         ...vbFields(sig),
         ...rsiFields(sig),
+        ...emaFields(sig),
         vwap_src: sig.vwap_src ?? null,
         on_screen: row != null, notified: mode === 'notify',
       },
@@ -4005,9 +4006,17 @@ class PollerService {
       fails: sig.fails ?? null, capped: pastCap(sig), cap_exempt: capExempt,
       ...vbFields(sig),
       ...rsiFields(sig),
+      ...emaFields(sig),
       vwap_src: sig.vwap_src ?? null,
     });
-    if (sig.stage === 'dip') {
+    if (sig.stage === 'ema') {
+      console.log(`[tv-setup] EMA ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · ${sig.candle_tf ?? '?'} candle · EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}` +
+        ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%) · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
+        `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +
+        `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
+        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: cross ${sig.cross_n} today)`
+          : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
+    } else if (sig.stage === 'dip') {
       console.log(`[tv-setup] DIP ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +
         ` · dip low ${sig.rsi_low ?? '?'} · stop ${sig.stop ?? '?'} · dip ${sig.dip_n ?? '?'} · ${sig.since_n ?? '?'} candles after the RSI cross` +
         `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +

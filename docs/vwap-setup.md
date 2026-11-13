@@ -1132,7 +1132,8 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-10-30 | v31 | `a9c46f3` | Operator (ROMA 4h / 1h, 10-28): markers that didn't fit the drawn month line. Since v28 the VB built its month line from this month's hourly bars + today's 30s bars, while the chart drew — and PULLBACK used — TradingView's anchored VWAP on the chart's bars; ROMA 10-28 ~12:00 ET: the 1h chart drew ~5.94, the 30s / 1m alerts reported ~6.35. **"Month VWAP from: 30s bars | Chart bars"** (`mvSrc`, default 30s bars; the operator: "make it configurable as we did for session vwap"): 30s bars builds the drawn line, PULLBACK's and the VB's from the same sums (`anchorsBefore()` returns the month's with the year's); Chart bars = as before. Also: a RETEST judged on the next bar (its candle's closing 30s bar had no trades) is flagged and drawn one bar back on its own plot ("VB retest, late close (v31)"; restyle it like the RT if you restyled that). New input and plot last: no Reset. Deployed 07:14 ET, inside the trading window (an oversight; webhooks kept arriving). Replica: `mv`, the late flag; regression 298 checks. **Paste, recreate both alerts.** |
 | 2026-11-08 | v32 | `8c2079c` | Operator (XTND, DKI on a 6h chart with a 12h and a 3h RSI): a third setup for longer trades, the **RSI cross** (§17): at each 6h close the 12h RSI crosses above its SMA-14 while at or under 30 (now or within its last 6 candles); the 3h RSI in the message, optionally a gate. Built from requests so it works on the 2m chart ("I don't want to switch chart timeframe from 2min to 6h"), sent from the 30s alert, purple RSI marker. New inputs and plots last: no Reset. Server stage `rsi` (announced off Momentum, its own ⚙ switch, `tv_rsi`); sidebar, History, toasts. Untested; no replica. Regression 335 checks. **Paste, recreate both alerts, tick RSI in ⚙.** |
 | 2026-11-10 | v33 | `b4babf3` | Operator: the two-RSI experiment failed; one RSI, no "also require" (§17.1). Removed the second RSI's input, request and message field; the RSI group's later inputs shift one place (set them once after the paste; no Reset). Replica `simulate_rsi` + `selftest_rsi`: a 30m RSI checked at the 30m close marks the plain rule's crosses on 30m / 2m / 1m charts (and on five names' real 2m bars, 52 of 52). Regression 340 checks. **Paste, set the RSI group, recreate both alerts.** |
-| 2026-11-12 | v34 | (this commit) | Operator (OMH, a 15m RSI checked at the 1h close): a signal for the pullback after an RSI cross, at "the deepest part". **DIP** (§17.2): armed by an RSI cross, sampled at the RSI's own candles' closes — the dip starts when the RSI closes under its MA, DIP when it then closes higher than the candle before (a lower low and another rise → #2; max 2). Message `DIP … | stop … | dip N | since N`, stop under the dip's low. Three inputs and three plots last: nothing shifts. Server stage `dip` rides the RSI ⚙ switch (`tv_dip` on Telegram); sidebar, History, toasts, the entry sound. Two audit fixes in the RSI section: late samples before on-time ones, and marks only on charts whose bars line up (RSI marks no longer drawn on 1h / 4h charts; DIP marks need bars dividing the RSI's timeframe). Replica `rsi_rule_direct` / `simulate_rsi(full)`; six names' real 5m bars agree (113 DIP). Regression 377 checks. **Paste, recreate both alerts.** |
+| 2026-11-12 | v34 | `de282ef` | Operator (OMH, a 15m RSI checked at the 1h close): a signal for the pullback after an RSI cross, at "the deepest part". **DIP** (§17.2): armed by an RSI cross, sampled at the RSI's own candles' closes — the dip starts when the RSI closes under its MA, DIP when it then closes higher than the candle before (a lower low and another rise → #2; max 2). Message `DIP … | stop … | dip N | since N`, stop under the dip's low. Three inputs and three plots last: nothing shifts. Server stage `dip` rides the RSI ⚙ switch (`tv_dip` on Telegram); sidebar, History, toasts, the entry sound. Two audit fixes in the RSI section: late samples before on-time ones, and marks only on charts whose bars line up (RSI marks no longer drawn on 1h / 4h charts; DIP marks need bars dividing the RSI's timeframe). Replica `rsi_rule_direct` / `simulate_rsi(full)`; six names' real 5m bars agree (113 DIP). Regression 377 checks. **Paste, recreate both alerts.** |
+| 2026-11-13 | v35 | (this commit) | Operator: "notified when ema crosses up the vwap (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". A fourth setup, the **EMA cross over VWAP** (§18): the EMA 9 of 3m closes above the session VWAP at a 3m close after being at or under it at the close before (month / year lines as switches), from a request like the RSI, sent from the 30s alert; gainers only; the day's first candle can't fire; a late sample across the day's end isn't announced. Message `EMA … | ema 9 x | line … | candle 3 | cross N`. Eight inputs and six plots last: nothing shifts. Server stage `ema`: announced like CROSS (⚙ switch EMA, Momentum or a +30% day high, `em_cap` 3 per line a day, `tv_ema`); sidebar, History, toasts. Replica `ema_rule_direct` / `simulate_ema`: the plain rule's crosses on 3m and 1m charts and on six names' real 1m bars. Regression 414 checks. **Paste, recreate both alerts, tick EMA in ⚙.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2102,3 +2103,50 @@ timeframe and seeking the RSI drop in 15min chart". Built without grading.
     The operator had marked 01:20–02:00 by eye.
   - Not checked: the Pine itself, which can't be compiled here, and whether a DIP is worth
     taking.
+
+## 18. The EMA cross over VWAP (script v35, 2026-11-13)
+
+**The ask:** "I want to experiment a new setup - ema crosses over vwap … notified when ema crosses
+up the vwap (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". Built
+without grading, as the fourth setup.
+
+- **The rule.** The EMA (`emLen`, 9) of a timeframe's closes (`emTf`, 3m) against a VWAP line, at
+  each close of that timeframe's candles: **above the line now, at or under it at the close
+  before**. The lines are the script's own: session by default (`emSession`), month and year as
+  switches (`emMonth`, `emYear`), each with its own state.
+  - A line's first candle after its anchor restarts can't fire. For the session line that is
+    the day's first candle: the "cross" there is the line starting over.
+  - Gainers only by default (`emGainOn`, the filter at the top), inside the alert window.
+  - `cross N` counts the day's crosses sent on the line.
+- **How.** Like the RSI: `request.security(…, emTf, ta.ema(close, emLen)[1], lookahead_on)`
+  returns the EMA after the last finished candle, and `emLive` adds the bar's close. Each line
+  is an `EmaLine` object stepped by `crossUp()`. The sampler takes a candle on the bar that
+  closes it, or late on the next bar from `[1]` (`| late`).
+  - A late sample across the day's end is **not announced** (state only): the 11-10 audit found
+    RETESTs for yesterday's candle arriving the next morning.
+  - Order on one bar: the late sample, then the anchors' restarts, then the bar's own close.
+- **The message**, from the 30s alert only. Every value is the sampled candle's:
+  `EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | day high +25% | vwap 30s | tf 30S`
+- **The chart.** The EMA line (aqua) and an orange **EMA** marker on a chart no bigger than the
+  EMA's timeframe whose bars divide it (`emOk`): 3m, 1m or 30s for a 3m EMA. A VWAP line only
+  this setup uses gets its own plot. Inputs and plots are last, so nothing shifts.
+- **Our side** (stage `ema`, fields `candle_tf` / `cross_n` / `ema_len` / `ema` / `late` and the
+  VWAP levels):
+  - Announced like CROSS: its own ⚙ switch **EMA** (the operator's saved list predates it, so
+    they tick it), Momentum names only unless the day high is ≥ +30%, and quiet past
+    `TV_SETUP.em_cap` (3) crosses on a line in a day. Telegram mute slug `tv_ema`.
+  - The duplicate key includes the EMA's timeframe; re-deliveries inside 20 s drop.
+  - Dashboard: an orange EMA pill with `3m/9` and the day's number, live for 15 minutes, its
+    own thread per line, History filter "EMA", the CROSS sound on Momentum names.
+- **Checked** (`pinesim.selftest_ema`; `ema_rule_direct` is the plain rule on the EMA's own
+  candles, `simulate_ema` the script's sampling):
+  - Thin synthetic tape: 60 crosses by the plain rule; the script gives the same 60 on a 3m
+    chart and on a 1m chart (10 of them a bar late); nothing on 2m and 5m charts; none on a
+    day's first candle.
+  - Yahoo 1m bars, 7 days, for OMH, NCPL, SDEV, USDE, VIVK and CLRO: 60 crosses, each name the
+    same as the plain rule, about 1.4 per stock per day in regular hours (that data has no
+    pre- or post-market volume, so no VWAP there).
+  - Not checked: the Pine itself, and whether the cross is worth trading.
+- **Its VWAP is ours.** With "VWAP lines from: 30s bars" the session line can sit a little off
+  TradingView's built-in VWAP on a 3m chart (§16.9), so a cross on the operator's own EMA + VWAP
+  indicators can differ by a candle from ours.
