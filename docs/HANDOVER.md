@@ -257,6 +257,8 @@ own ⚙ switch after DIP (`SPLIT_FROM` lift ← dip: the operator's saved switch
 `simulate_rsi(full)['lifts']` on four chart timeframes; 542 checks. **Paste, Save (38), recreate both alerts.** To grade in two or
 three weeks: what followed the LIFT rows against the DIPs that never got one (the operator's picks are a subset).
 - Their saved ⚙ switches on 11-14: PULLBACK and DIP only (CROSS, RETEST, RSI, EMA off).
+- Pushed `7c7b4b9`, deployed (a Saturday: no alerts running) and checked on prod: the bundle serves v38; dry runs parse a LIFT, a
+  DIP with `| lift` and an old DIP; `GET /api/tv/settings` answers PULLBACK, DIP, LIFT on. Not checked: v38's Pine on TradingView.
 
 **2026-11-14 (Sat) — THE "+8% ABOVE THE DIP" ENTRY, MEASURED; NOTHING BUILT.** The operator likes the DIP but "most of them just
 keep going lower", and paper-tested a buy stop-limit 8% above the latest DIP, cancelled if it keeps falling: "it's working very
