@@ -245,6 +245,14 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-14 (Sat, last) — RSI / CHECK TIMEFRAME GRID FOR A 15% TARGET; NOTHING CHANGED.** The operator: "can we measure what
+chart timeframe + RSI and RSI Cross timeframe+RSI can have better win rate, if we put take-profit around 15%?".
+`research/rsi-dip/rsi_tf_grid.py` (README has the table): 20 pairs (RSI 5m–1h, checked at its own timeframe up to 4h) on the same
+60 days of bars, entries at the DIP and at the LIFT, +15% target, held 3 sessions. **The timeframes barely matter**: the LIFT
+reaches +15% on 31–37% / 34–43% (in / out of sample) for every pair, wins 20–29% with a −8% stop (35% needed) and 26–36% with a
+−15% stop (50% needed); from the DIP 12–15% / 18–24%. A 1h RSI is a few points up for a third to a half of the signals; the
+operator's 10m at 1h is mid-table. Every pair's average result is negative. Told the operator; no setting changed.
+
 **2026-11-14 (Sat, later) — SCRIPT v38: THE DIP's LIFT.** After the measurement below the operator answered: they don't place
 the +8% order on every DIP ("I usually check their price actions, RSI, and previous behavior"), and "lets add the +8% level
 (better configurable) and alert to the script. I want to experiment with it." Built as stage `lift` (`docs/vwap-setup.md` §17.3):

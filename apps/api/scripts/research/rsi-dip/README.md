@@ -87,6 +87,56 @@ script. I want to experiment with it." Built as script v38's **LIFT** (`docs/vwa
 the level, drawn and named in the DIP's message, and an alert when price reaches it. From v38 each
 LIFT is its own row in `tier_events` (stage `lift`), so the live test logs itself.
 
+## Which RSI and check timeframes win most with a 15% take-profit? (2026-11-14)
+
+The operator: "can we measure what chart timeframe + RSI and RSI Cross timeframe+RSI can have better
+win rate, if we put take-profit around 15%?" The two timeframes are the script's `rsTfA` (the RSI's
+candles, where the DIP is read: the chart and its RSI) and `rsCheck` (where the RSI cross is judged).
+
+```bash
+python3 -I rsi_tf_grid.py tickers.txt --cache <folder>             # +15%, held 3 sessions
+python3 -I rsi_tf_grid.py tickers.txt --cache <folder> --hold 5    # also --tp 8, --tp 25
+```
+
+`rsi_tf_grid.py` replays the rule on the same cached bars for 20 pairs (an RSI of 5m, 10m, 15m, 30m
+or 1h, checked at its own timeframe up to 4h) and grades two entries, the DIP's close and the LIFT
+8% above it, with a +15% target, held for three sessions after the entry's.
+
+- **reach** = no stop: the price got to +15% at some point in the hold.
+- **win** = +15% came before the stop. A stop 8% under the entry needs 35% wins to break even; one
+  15% under needs 50%.
+
+| held 3 sessions, in / out of sample | DIPs a day | DIP: reach | DIP: win, stop −8% | LIFT: reach | LIFT: win, stop −8% | LIFT: win, stop −15% |
+|---|---:|---:|---:|---:|---:|---:|
+| RSI 5m checked at 5m | 205 | 20% / 27% | 14% / 20% | 34% / 37% | 21% / 24% | 29% / 31% |
+| RSI 10m checked at 10m | 125 | 19% / 25% | 13% / 19% | 33% / 37% | 22% / 24% | 28% / 31% |
+| **RSI 10m checked at 1h (the operator's)** | 77 | 19% / 27% | 13% / 19% | 35% / 39% | 22% / 25% | 30% / 33% |
+| RSI 15m checked at 1h | 63 | 20% / 27% | 14% / 20% | 33% / 41% | 21% / 25% | 29% / 34% |
+| RSI 15m checked at 4h | 24 | 21% / 29% | 14% / 22% | 35% / 40% | 23% / 27% | 31% / 33% |
+| RSI 30m checked at 1h | 45 | 22% / 31% | 15% / 21% | 37% / 40% | 21% / 26% | 29% / 34% |
+| RSI 30m checked at 4h | 26 | 19% / 30% | 14% / 20% | 35% / 43% | 21% / 29% | 28% / 36% |
+| RSI 1h checked at 1h | 39 | 21% / 31% | 14% / 23% | 37% / 41% | 25% / 26% | 32% / 34% |
+| RSI 1h checked at 4h | 25 | 20% / 32% | 15% / 24% | 32% / 43% | 23% / 26% | 29% / 36% |
+
+- **The timeframes barely move it.** Across all 20 pairs the win rates sit within a few points of
+  each other, and the order changes between the two halves. A 1h RSI is at the top for the LIFT
+  with the −8% stop (25% / 26% against 22% / 25% for the operator's 10m at 1h), for a third to a
+  half of the signals.
+- **No pair gets near break-even.** The LIFT with a −8% stop wins 20–29% (35% needed), with a −15%
+  stop 26–36% (50% needed). The average result per trade is negative for every pair, entry and
+  stop: about −0.5% to −2% from the DIP, −1% to −3% from the LIFT.
+- **The alerts' own stop** (a tick under the dip's low) is a median 1–3% from a DIP entry: 5–16%
+  wins with a 15% target, nearly everything stopped first.
+- **A longer hold** (5 sessions) adds about 6 points of reach everywhere (the LIFT reaches +15% on
+  40–42% / 43–50%) and leaves the order as it is.
+- **Other targets**, for the operator's pair with a −8% stop: +8% wins 30% / 38% from the DIP and
+  33% / 36% from the LIFT (50% needed); +25% wins 7% / 11% and 13% / 15% (24% needed). The average
+  stays negative.
+
+The same limits as above: every DIP of the rule, not the operator's picks; the rule replayed on
+consolidated prices; 60 days; this week's watchlist. The second half is better than the first for
+every pair, so a difference between two pairs smaller than that gap says little.
+
 To grade it on the real alerts later: export the `dip` rows from
 `tier_events` again as `live.csv` and read the script's last table (every DIP alert is stored with
 its price and time; the bars reach 60 days back).
