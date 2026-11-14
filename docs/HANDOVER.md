@@ -245,6 +245,13 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-15 (Sun) — "LIFT AT 10% + MACD LINE ABOVE ZERO?": MEASURED; NOTHING BUILT.** `research/rsi-dip/lift_macd.py` (README
+has the table). LIFT 10% instead of 8%: two or three points more wins (33% / 35% with a −15% stop against 30% / 33%), a fifth
+fewer signals, the same average. The MACD line on the 10m chart is already above zero at 78–89% of the LIFTs, so the filter
+removes little and what it keeps wins no more often (32% / 33%). On 30m / 1h candles it removes half and the kept half wins
+29–33%. The LIFTs with the MACD under zero reach +15% more often (the volatile, beaten-down names). Told the operator; the
+script's `rsLiftPct` input already lets them try 10%.
+
 **2026-11-14 (Sat, last) — "WHAT COULD WE DO TO RAISE IT TO 50%?": A FEATURE STUDY; NOTHING BUILT.** `research/rsi-dip/
 dip_features.py` (README has the table): 22 things known before the entry, cut in thirds in sample, on the operator's 10m / 1h
 DIPs and their LIFTs with a +15% target. **Nothing reaches 50% in both halves.** What raises the win rate is how much the name

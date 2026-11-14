@@ -189,6 +189,44 @@ entry (50% needed); `reach` = +15% with no stop.
 Limits as above, plus: 22 features and their pairs were tried on about 1,300 LIFTs, so some of the
 best rows are luck; the thirds are cut in sample and only rows that hold in both halves are quoted.
 
+## The LIFT at 10% with the MACD line above zero (2026-11-15)
+
+The operator: "what if I set LIFT % to 10%, and add MACD and enter only when LIFT fires and MACD
+line above the zero?"
+
+```bash
+python3 -I lift_macd.py tickers.txt --cache <folder>      # LIFT 8 / 10 / 12%, MACD 12 / 26 / 9 on 5m, 10m, 30m, 1h
+```
+
+`lift_macd.py` takes the LIFTs of the operator's DIPs at 8%, 10% and 12%, and the MACD as a chart
+shows it at the moment of the LIFT (the finished candles plus the fill price as the open one's
+close). Same outcome as above: +15%, held 3 sessions, `w15` with a stop 15% under the fill.
+
+| in / out of sample | LIFTs | reach | w8 | w15 | average, stop −15% |
+|---|---:|---:|---:|---:|---:|
+| LIFT +8%, all | 620 / 739 | 35% / 39% | 22% / 25% | 30% / 33% | −2.3% / −1.7% |
+| LIFT +10%, all | 483 / 612 | 40% / 42% | 24% / 27% | 33% / 35% | −2.4% / −1.4% |
+| …10m MACD line above zero (89% / 78% of them) | 432 / 478 | 38% / 38% | 24% / 27% | 32% / 33% | −2.1% / −1.5% |
+| …10m MACD line at or under zero | 51 / 134 | 57% / 54% | 22% / 27% | 35% / 43% | −4.3% / −0.8% |
+| …30m MACD line above zero (68% / 52%) | 324 / 315 | 33% / 35% | 22% / 28% | 29% / 32% | −2.4% / −1.1% |
+| …1h MACD line above zero (54% / 35%) | 251 / 214 | 33% / 36% | 24% / 29% | 29% / 33% | −2.0% / −0.6% |
+| …1h MACD line at or under zero | 212 / 393 | 46% / 45% | 25% / 25% | 34% / 37% | −3.2% / −1.8% |
+| LIFT +12%, all | 392 / 518 | 41% / 45% | 24% / 29% | 33% / 38% | −2.8% / −1.2% |
+
+- **10% instead of 8%** raises the win rate by two or three points and takes a fifth of the signals
+  away. The average result doesn't move.
+- **The MACD line on the chart's own timeframe is above zero at 78–89% of the LIFTs already**: a
+  price 10% over a recent low has pulled the fast average over the slow one. The filter removes few
+  and what it keeps wins no more often (32% / 33% against 33% / 35%).
+- **On 30m or 1h candles** it removes about half, and the half it keeps wins no more often (29–33%).
+  It loses a little less on average, out of sample more than in sample.
+- **The LIFTs with the MACD under zero reach +15% more often** (45–57%): they are the names that
+  fell hardest and move most, the volatility effect of the study above. Their average is worse in
+  sample.
+- Adding "and over its signal line" changes nothing: at a LIFT the line is almost always over it.
+
+So neither the 10% nor the MACD filter gets near 50%.
+
 To grade it on the real alerts later: export the `dip` rows from
 `tier_events` again as `live.csv` and read the script's last table (every DIP alert is stored with
 its price and time; the bars reach 60 days back).
