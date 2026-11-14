@@ -1089,7 +1089,7 @@ def selftest():
 
 
 
-# ── RSI cross (script v32; one RSI since v33) and its DIP (v34) ────────────────
+# ── RSI cross (script v32; one RSI since v33), its DIP (v34) and the MACD after a DIP (v39) ──
 # The script reads each RSI timeframe's state after its last finished candle (request.security,
 # lookahead on + [1]) and adds the chart bar's close as the open candle, then samples it when a
 # chart bar closes a "check" candle (or one bar late if that bar had no trades). A signal: above
@@ -1099,8 +1099,13 @@ RSI_DEFAULTS = dict(sig_min=720, check_min=360, n=14, ma_n=14, os=30.0, os_n=6,
                     dip_wait=16, dip_max=2,   # v34: the DIP's dials (rsDipWait, rsDipMax)
                     # v38, the LIFT: after a DIP, a level lift_pct % above its close; LIFT on the first
                     # bar after the DIP candle whose high reaches it ('touch') or that closes at or over
-                    # it ('close'); a newer DIP moves the level; it goes after lift_days sessions (0 = never)
-                    lift=True, lift_pct=8.0, lift_by='touch', lift_days=3)
+                    # it ('close'); a newer DIP moves the level; it goes after lift_days sessions (0 = never).
+                    # Script v39 removed it; it stays here for research (../rsi-dip/), as the script had it at v38.
+                    lift=True, lift_pct=8.0, lift_by='touch', lift_days=3,
+                    # v39, the MACD cross after a DIP: the MACD line (EMA macd_fast − EMA macd_slow of the closes
+                    # of macd_min candles) closes above zero after closing at or under it; a newer DIP starts the
+                    # wait over; it ends after macd_life sessions begun since the DIP's candle (0 = never)
+                    macd=True, macd_min=5, macd_fast=12, macd_slow=26, macd_life=3)
 
 
 def _rsi_value(up, dn):
@@ -1285,12 +1290,59 @@ def lift_rule_direct(bars, p=None):
     return out
 
 
+def _macd_line(candles, p):
+    """Per candle of the MACD's timeframe: the MACD line at its close (EMA fast − EMA slow of the closes) as the
+    script has it — None until both EMAs had a value after the candle before (the request's `[1]`)."""
+    closes = [c['c'] for c in candles]
+    ef, es = ema_series(closes, p['macd_fast']), ema_series(closes, p['macd_slow'])
+    return [None if i == 0 or ef[i - 1] is None or es[i - 1] is None else ef[i] - es[i] for i in range(len(candles))]
+
+
+def _macd_up(before, now):
+    """The script's mcUp: the line closed above zero after closing at or under it."""
+    return before is not None and now is not None and before <= 0 < now
+
+
+def macd_rule_direct(bars, p=None):
+    """The plain MACD rule (v39) on the bars the candles are made of, for a MACD timeframe that divides the
+    RSI's: for each DIP of rsi_rule_direct, the MACD candles that close after its candle and no later than the
+    next DIP's candle, while no more than macd_life sessions have begun since its candle; the first at whose
+    close the line is above zero after being at or under it at the candle close before.
+    → [(the MACD candle's start, the DIP's close, the DIP's number in its dip)]."""
+    p = dict(RSI_DEFAULTS, **(p or {}))
+    assert p['sig_min'] % p['macd_min'] == 0
+    candles = resample_session(bars, p['sig_min'])
+    close_of = {c['t']: c['c'] for c in candles}
+    dips = rsi_rule_direct(candles, p)['dips']
+    mc = resample_session(bars, p['macd_min'])
+    line = _macd_line(mc, p)
+    day_no = {d: i for i, d in enumerate(sorted({b['t'].date() for b in bars}))}
+    sig, mstep = datetime.timedelta(minutes=p['sig_min']), datetime.timedelta(minutes=p['macd_min'])
+    out = []
+    for j, (t0, n, _low, _age) in enumerate(dips):
+        closed = t0 + sig
+        until = dips[j + 1][0] + sig if j + 1 < len(dips) else None
+        for i, c in enumerate(mc):
+            end = c['t'] + mstep
+            if end <= closed:
+                continue
+            if until is not None and end > until:
+                break
+            if p['macd_life'] > 0 and day_no[c['t'].date()] - day_no[t0.date()] > p['macd_life']:
+                break
+            if _macd_up(line[i - 1], line[i]):
+                out.append((c['t'], close_of[t0], n))
+                break
+    return out
+
+
 def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
     """The script's RSI section (v34) on chart bars of `chart_min` minutes → [(check candle start, late)],
     or with full=True a dict: crosses, starts [(RSI candle start)], dips [(RSI candle start, late, n,
     lowest price, age)], both (bars that sampled a late and an on-time candle of one kind), late_c /
-    late_a (late samples of check / RSI candles), and (v38) lifts [(the RSI candle the bar that fired
-    is in, the level, the DIP's close)]. `fine`: the bars the RSI's candles are really made
+    late_a (late samples of check / RSI candles), (v38, removed from the script in v39) lifts [(the RSI
+    candle the bar that fired is in, the level, the DIP's close)] and (v39) macds [(the MACD candle's
+    start, late, the DIP's close, the DIP's number)]. `fine`: the bars the candles are really made
     of, for a chart whose bars don't divide the RSI's timeframe (the request reads true candles)."""
     p = dict(RSI_DEFAULTS, **(p or {}))
     cross_ok = chart_min <= p['sig_min'] and p['check_min'] % chart_min == 0
@@ -1300,18 +1352,36 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
     rsi_hist = [None if x is None else x[2] for x in st]
     starts = [c['t'] for c in sig]
     s = _RsiSetup(p)
-    out = dict(crosses=[], starts=[], dips=[], both=0, late_c=0, late_a=0, lifts=[])
+    out = dict(crosses=[], starts=[], dips=[], both=0, late_c=0, late_a=0, lifts=[], macds=[], late_m=0)
     done_c = done_a = None
     prev_live, prev_tc, prev_ta = None, None, None
     c_low = c_low_p = None
     lf_level = lf_base = None      # v38: the lift's level and its DIP's close
     lf_days, prev_day, prev_close = 0, None, None
+    # v39, the MACD after a DIP (the script's section 5): the two EMAs after each finished candle of the
+    # MACD's timeframe (the request), the line live at each bar, and the wait a DIP starts.
+    mc_ok = p['macd'] and dip_ok and chart_min <= p['macd_min'] and p['macd_min'] % chart_min == 0
+    mcs = resample_session(fine or bars, p['macd_min']) if fine or p['macd_min'] != chart_min else [dict(b) for b in bars]
+    mc_f, mc_s = ema_series([c['c'] for c in mcs], p['macd_fast']), ema_series([c['c'] for c in mcs], p['macd_slow'])
+    mc_starts = [c['t'] for c in mcs]
+    mc_af, mc_as = 2.0 / (p['macd_fast'] + 1), 2.0 / (p['macd_slow'] + 1)
+    mc_was = mc_base = mc_n = done_m = prev_tm = prev_line = None
+    mc_armed, mc_age = False, 0
+    k = 0   # finished MACD candles before the current chart bar's candle
     step = datetime.timedelta(minutes=chart_min)
     j = 0   # finished RSI candles before the current chart bar's candle
     for b in bars:
         t = b['t']
         ta = _candle_start(t, p['sig_min'])
         tc = _candle_start(t, p['check_min'])
+        tm = _candle_start(t, p['macd_min'])
+        while k < len(mc_starts) and mc_starts[k] < tm:
+            k += 1
+        line = None
+        if k >= 1 and mc_f[k - 1] is not None and mc_s[k - 1] is not None:
+            line = (mc_af * b['c'] + (1 - mc_af) * mc_f[k - 1]) - (mc_as * b['c'] + (1 - mc_as) * mc_s[k - 1])
+        end_m = _candle_start(t + step, p['macd_min']) != tm or chart_min >= p['macd_min']
+        late_m = prev_tm is not None and tm != prev_tm and done_m != prev_tm
         while j < len(starts) and starts[j] < ta:
             j += 1
         live = None
@@ -1333,8 +1403,8 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
         late_c = prev_tc is not None and tc != prev_tc and done_c != prev_tc
         late_a = prev_ta is not None and ta != prev_ta and done_a != prev_ta
         none3 = (None, None, None)
-        dip_go = dip_late = False       # this bar's DIP, as the script's rsDipGo / rsDipLate / rsDPx end up
-        dip_px = None
+        dip_go = dip_late = False       # this bar's DIP, as the script's rsDipGo / rsDipLate / rsDPx / rsDN end up
+        dip_px = dip_n = None
         if cross_ok:
             if dip_ok and late_a:
                 out['late_a'] += 1
@@ -1345,7 +1415,7 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
                     out['starts'].append(prev_ta)
                 if ev == 2:
                     out['dips'].append((prev_ta, True, s.n, s.low_px, s.age))
-                    dip_go, dip_late, dip_px = True, True, prev_close
+                    dip_go, dip_late, dip_px, dip_n = True, True, prev_close, s.n
             if late_c:
                 out['late_c'] += 1
                 r, ma, lo = prev_live or none3
@@ -1363,7 +1433,7 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
                     out['starts'].append(ta)
                 if ev == 2:
                     out['dips'].append((ta, False, s.n, s.low_px, s.age))
-                    dip_go, dip_late, dip_px = True, False, b['c']
+                    dip_go, dip_late, dip_px, dip_n = True, False, b['c'], s.n
             if end_c and done_c != tc:
                 out['both'] += 1 if late_c else 0
                 r, ma, lo = live or none3
@@ -1372,10 +1442,37 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
                 if fired:
                     out['crosses'].append((tc, False))
                     s.arm_dip()
-        # v38, the LIFT (the script's section 5). A late DIP's level takes over before this bar's
-        # check (the bar is already after its candle), an on-time DIP's after it.
+        new_day = prev_day is not None and t.date() != prev_day
+        # v39, the MACD after a DIP (the script's section 5), in the script's order: the candle that ended
+        # before this bar (it belongs to the DIP before), the sessions' count, a late DIP's wait, the candle
+        # this bar closes, an on-time DIP's wait.
+        if mc_ok:
+            if late_m:
+                out['late_m'] += 1
+                if mc_armed and _macd_up(mc_was, prev_line):
+                    out['macds'].append((prev_tm, True, mc_base, mc_n))
+                    mc_armed = False
+                if prev_line is not None:
+                    mc_was = prev_line
+                done_m = prev_tm
+            if mc_armed and new_day:
+                mc_age += 1
+            if mc_armed and p['macd_life'] > 0 and mc_age > p['macd_life']:
+                mc_armed = False
+            if dip_go and dip_late:
+                mc_armed, mc_base, mc_n, mc_age = True, dip_px, dip_n, 1 if new_day else 0
+            if end_m and done_m != tm:
+                if mc_armed and _macd_up(mc_was, line):
+                    out['macds'].append((tm, False, mc_base, mc_n))
+                    mc_armed = False
+                if line is not None:
+                    mc_was = line
+                done_m = tm
+            if dip_go and not dip_late:
+                mc_armed, mc_base, mc_n, mc_age = True, dip_px, dip_n, 0
+        # v38, the LIFT (the script's section 5 at v38; removed in v39). A late DIP's level takes over before
+        # this bar's check (the bar is already after its candle), an on-time DIP's after it.
         if p['lift'] and dip_ok:
-            new_day = prev_day is not None and t.date() != prev_day
             if dip_go and dip_late:
                 lf_level, lf_base, lf_days = dip_px * (1 + p['lift_pct'] / 100), dip_px, 0
             elif lf_level is not None and new_day:
@@ -1388,6 +1485,7 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
             if dip_go and not dip_late:
                 lf_level, lf_base, lf_days = dip_px * (1 + p['lift_pct'] / 100), dip_px, 0
         prev_live, prev_tc, prev_ta, prev_day, prev_close = live, tc, ta, t.date(), b['c']
+        prev_tm, prev_line = tm, line
     return out if full else out['crosses']
 
 
@@ -1489,6 +1587,43 @@ def selftest_rsi():
     print(f"RSI dip's LIFT (v38), 4% above the DIP: {len(want_l)} of {len(d['dips'])} DIPs reach it by the plain rule; the script: {', '.join(shown_l)}; "
           f"on a 15m close instead of a touch {len(by_close)}; off none; on a calmer tape, 5% up: {life[0]} with no limit, {life[1]} when the level "
           f"lives one session (the 15m and 1m charts agree)", '→', 'OK' if ok6 else 'UNEXPECTED')
+    # v39 MACD after a DIP: for each DIP the first MACD candle closing after its candle at whose close the
+    # line is above zero after being at or under it, until the next DIP — the plain rule on the 1m bars
+    # against the script on every chart that can show it (the same candle, DIP and number), for a 5m, a
+    # 3m and a 15m MACD; then the wait's life in sessions, a chart too big for it, off
+    ok7, shown_m, late_m = True, [], 0
+    for mm, charts in ((5, (5, 1)), (3, (3, 1)), (15, (15, 5, 3, 1))):
+        pm = dict(p3, macd_min=mm, macd_life=0)
+        want_m = macd_rule_direct(bars, pm)
+        ok7 = ok7 and 5 <= len(want_m) <= len(d['dips']) and len({t for t, _, _ in want_m}) == len(want_m)
+        got = []
+        for cm in charts:
+            g = simulate_rsi(resample_session(bars, cm) if cm > 1 else bars, cm, pm, full=True)
+            ok7 = ok7 and [(t, base, n) for t, _, base, n in g['macds']] == want_m
+            got.append(f"{cm}m {len(g['macds'])}")
+            if cm == 1:
+                late_m += sum(1 for x in g['macds'] if x[1])
+                ok7 = ok7 and g['late_m'] > 0
+            else:
+                ok7 = ok7 and (cm < mm or not any(x[1] for x in g['macds']))
+        shown_m.append(f"{mm}m MACD {len(want_m)} ({', '.join(got)})")
+    p5 = dict(p3, macd_min=5, macd_life=0)
+    on = lambda cm, q, tape=bars: simulate_rsi(resample_session(tape, cm) if cm > 1 else tape, cm, q, full=True)['macds']
+    ok7 = (ok7 and late_m > 0 and on(15, p5) == [] and on(5, dict(p5, macd=False)) == []
+           and any(n == 2 for _, _, n in macd_rule_direct(bars, p5)))
+    # the wait's life: a slow line (150 / 400 on 5m candles), which can take more than a session to cross
+    life_m = []
+    for tape, lens in ((bars, (150, 400)), (bars, (12, 26)), (calm, (12, 26))):
+        for days in (0, 1):
+            q = dict(p5, macd_fast=lens[0], macd_slow=lens[1], macd_life=days)
+            w = macd_rule_direct(tape, q)
+            ok7 = ok7 and all([(t, base, n) for t, _, base, n in on(cm, q, tape)] == w for cm in (5, 1))
+            life_m.append(len(w))
+    ok7 = ok7 and 0 < life_m[1] < life_m[0] and life_m[3] <= life_m[2] and life_m[5] <= life_m[4]
+    print(f"RSI dip's MACD (v39), the line over zero after a DIP, of {len(d['dips'])} DIPs by the plain rule and the script: {'; '.join(shown_m)}; "
+          f"{late_m} of the 1m charts' marks a bar late; none on a 15m chart with a 5m MACD, none when off; a wait of one session "
+          f"after the DIP's own: a slow line (150 / 400) {life_m[1]} of {life_m[0]}, 12 / 26 {life_m[3]} of {life_m[2]}, on the calmer tape "
+          f"{life_m[5]} of {life_m[4]} (the 5m and 1m charts agree)", '→', 'OK' if ok7 else 'UNEXPECTED')
     # v32's default, a 12h RSI checked at the 6h close: the 2m chart marks what the 6h chart marks
     # (four months of the same kind of tape, so the 12h RSI has room to swing)
     rnd2 = random.Random(11)
@@ -1503,7 +1638,7 @@ def selftest_rsi():
     a, b = simulate_rsi(long, 2, p2), simulate_rsi(resample_session(long, 360), 360, p2)
     ok2 = len(a) >= 2 and [t for t, _ in a] == [t for t, _ in b]
     print(f'…12h RSI at the 6h close, 2m chart vs 6h chart: {len(a)} / {len(b)} marks', '→', 'OK' if ok2 else 'UNEXPECTED')
-    return ok and ok2 and ok3 and ok4 and ok6
+    return ok and ok2 and ok3 and ok4 and ok6 and ok7
 
 
 # ── EMA cross over VWAP (script v35) ───────────────────────────────────────────

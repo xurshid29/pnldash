@@ -86,6 +86,8 @@ RSI, and previous behavior"), and "lets add the +8% level (better configurable) 
 script. I want to experiment with it." Built as script v38's **LIFT** (`docs/vwap-setup.md` §17.3):
 the level, drawn and named in the DIP's message, and an alert when price reaches it. From v38 each
 LIFT is its own row in `tier_events` (stage `lift`), so the live test logs itself.
+**Script v39 (2026-11-15) removed the LIFT** at the operator's request, a day later; its rows stay
+in `tier_events`, and `pinesim.lift_rule_direct` stays for these studies.
 
 ## Which RSI and check timeframes win most with a 15% take-profit? (2026-11-14)
 
@@ -264,3 +266,10 @@ crosses up on 70% of the DIPs, a median 3.3 hours later and 1.0% over the DIP's 
 To grade it on the real alerts later: export the `dip` rows from
 `tier_events` again as `live.csv` and read the script's last table (every DIP alert is stored with
 its price and time; the bars reach 60 days back).
+
+The operator's answer the same day: "entering alone on the DIP is not easy, chart can keep going lower,
+that's why lets add macd line cross over zero line after the latest DIP, I want to experiment with
+it." Built as script v39's **MACD** (`docs/vwap-setup.md` §17.4): after a DIP, an alert at the first
+5m close where the MACD line is above zero after being at or under it. Each MACD is its own row in
+`tier_events` (stage `macd`, with the DIP's price and stop and the minutes since it), so the live
+test logs itself. To grade it: the `macd` rows against the `dip` rows that never got one.

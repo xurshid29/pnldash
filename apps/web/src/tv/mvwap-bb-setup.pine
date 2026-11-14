@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v38 (2026-11-14). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v39 (2026-11-15). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -9,6 +9,9 @@
 // v27 removed the RECLAIM setup (FORMING / READY / GO, v1–v26) and the BB breakout
 // (TOUCH / BREAKOUT / TRIGGERED, v17–v26): the operator tested all four and kept these
 // two (10-28 ET). Both are in git history (v26, e38c06b) and docs/vwap-setup.md.
+// v39 removed two experiments (operator, 11-15): the DIP's LIFT (v38) and the VB lanes (v29).
+// They are in git history (v38, 7c7b4b9) and docs/vwap-setup.md. The EMA cross over VWAP stays
+// ("I want to improve it later").
 // 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
@@ -31,14 +34,14 @@
 // Built from the 30s alert's bars; drawn on the candle's own chart.
 // 3) RSI CROSS (v32): one RSI (14) crosses above its MA (SMA 14, the "RSI-based MA") while
 // oversold, judged at the close of a "check" candle — the RSI's own timeframe for the plain cross
-// (30m and 30m), or a shorter one (v32's default: a 12h RSI at each 6h close). Built from requests,
-// so it works on the 2m chart and sends from the 30s alert; the chart marks the bar that closed the
-// check candle. v33 dropped v32's second RSI (3h) and its "also require" switch.
+// (30m and 30m), or a longer one (the operator's: a 10m RSI at each 1h close, the default since
+// v39). Built from requests, so it works on any smaller chart and sends from the 30s alert; the
+// chart marks the bar that closed the check candle. v33 dropped v32's second RSI.
 //   RSI   the cross up while oversold, at a check candle's close
 //   DIP   (v34) after an RSI cross, the RSI closes back under its MA on its own timeframe and
-//         then turns up — the pullback entry, with a stop under the dip's low
-//   LIFT  (v38) after a DIP, price reaches a level some % above the DIP's price (8% by default,
-//         where the operator rests a buy stop); the level is drawn until then (section 5)
+//         then turns up — the pullback, with a stop under the dip's low
+//   MACD  (v39) after a DIP, the MACD line of a timeframe (5m, 12 / 26) crosses above zero —
+//         the operator's entry, since a DIP alone can keep going lower (section 5)
 // 4) EMA CROSS OVER VWAP (v35): the EMA of a timeframe's closes (3m, length 9) crosses above a
 // VWAP line (session; month and year are switches), judged at each close of that timeframe's
 // candles. Built from a request like the RSI, so it works on the 3m chart or a smaller one.
@@ -49,8 +52,6 @@
 //   BOUNCE (v37) after an EMA cross, a candle's low comes down to the EMA or the VWAP and that
 //         candle or a later one closes green above the EMA — the pullback entry, with a stop
 //         under the pullback's low; a close under the VWAP first ends the wait
-// VB lanes (v29): up to three more candle timeframes in the same alert (1h / 4h / 1D on the
-// month and year lines by default), each with its own band and lines, for longer trades.
 // VWAP lines (v28): from 30s bars by default, so the session line is the same on every
 // chart (TradingView's built-in VWAP is built from the chart's own bars and differs by
 // timeframe), or from the chart's bars ("VWAP lines from" in Inputs).
@@ -67,6 +68,9 @@ indicator("mVWAP x BB basis setup", shorttitle = "mVWAP-BB", overlay = true)
 // after the paste: Settings → Defaults → Reset settings). The defaults are the
 // operator's own settings on 10-28: gainer filter 10%, VB candle 5m, band 45s.
 // From here on, new inputs go last again.
+// v39 took inputs out of the middle (the VB lanes) and the end (the LIFT), so it needs the same
+// Reset settings once. The RSI's defaults became the operator's (a 10m RSI checked at 1h), so
+// the reset lands on their setup.
 // Gainer filter: computed per ticker from its own bars — no screener, no ranking.
 // A ticker that doesn't pass stays silent; -100 switches the filter off.
 minDayGain = input.float(10.0, "Up at least % (day high vs prior close; -100 = filter off)", group = "Gainer filter (this ticker's own move)")
@@ -104,28 +108,7 @@ vbShow     = input.bool(true,         "VB: draw the band and markers (on the can
 vwSrc      = input.string("30s bars", "VWAP lines from (v28): 30s bars — the same line on every chart — or the chart's bars (TradingView's built-in)", options = ["30s bars", "Chart bars"], group = "Alerts")
 vbRtNear   = input.float(1.0,         "VB retest: price back within % above the line (0 = to the line or under it)", minval = 0, group = "VWAP + BB cross (v21)")
 vbRtWait   = input.int(6,             "VB retest: within N candles of the VB candle's close (0 = until cancelled)", minval = 0, group = "VWAP + BB cross (v21)")
-// v29 inputs go last: three more VB timeframes ("lanes") inside the same alert, for longer trades on
-// the month and year lines (operator, 10-29: "for longer terms (1h, 4h, 1D), I'd like to use VB only
-// with monthly vwap (plus, yearly)"). Each lane has its own candle, band and lines; the rest (BB
-// length and StdDev, tolerance, gainers, the retest, the alert timeframe) is shared with the main VB.
-vb2On      = input.bool(true,         "Lane 2", inline = "vb2", group = "VB lanes (v29)")
-vb2Cndl    = input.timeframe("60",    "candle", inline = "vb2", group = "VB lanes (v29)")
-vb2Bb      = input.timeframe("10",    "band", inline = "vb2", group = "VB lanes (v29)")
-vb2S       = input.bool(false,        "Lane 2 lines: session", inline = "vb2l", group = "VB lanes (v29)")
-vb2M       = input.bool(true,         "month", inline = "vb2l", group = "VB lanes (v29)")
-vb2Y       = input.bool(true,         "year", inline = "vb2l", group = "VB lanes (v29)")
-vb3On      = input.bool(true,         "Lane 3", inline = "vb3", group = "VB lanes (v29)")
-vb3Cndl    = input.timeframe("240",   "candle", inline = "vb3", group = "VB lanes (v29)")
-vb3Bb      = input.timeframe("30",    "band", inline = "vb3", group = "VB lanes (v29)")
-vb3S       = input.bool(false,        "Lane 3 lines: session", inline = "vb3l", group = "VB lanes (v29)")
-vb3M       = input.bool(true,         "month", inline = "vb3l", group = "VB lanes (v29)")
-vb3Y       = input.bool(true,         "year", inline = "vb3l", group = "VB lanes (v29)")
-vb4On      = input.bool(true,         "Lane 4", inline = "vb4", group = "VB lanes (v29)")
-vb4Cndl    = input.timeframe("1D",    "candle", inline = "vb4", group = "VB lanes (v29)")
-vb4Bb      = input.timeframe("60",    "band", inline = "vb4", group = "VB lanes (v29)")
-vb4S       = input.bool(false,        "Lane 4 lines: session", inline = "vb4l", group = "VB lanes (v29)")
-vb4M       = input.bool(true,         "month", inline = "vb4l", group = "VB lanes (v29)")
-vb4Y       = input.bool(true,         "year", inline = "vb4l", group = "VB lanes (v29)")
+// (v29's eighteen "VB lanes" inputs sat here until v39 removed the lanes.)
 // v30 inputs go last.
 vbRtWhen   = input.string("Candle close", "VB retest fires (v30): at the close of the candle that came back to the line, if it closes above it — or at the first green 30s close above it (v28)", options = ["Candle close", "30s bounce"], group = "VWAP + BB cross (v21)")
 rtAtClose  = vbRtWhen == "Candle close"
@@ -480,10 +463,6 @@ plotshape(evS == 3 or evM == 3 or evY == 3, "Held", shape.flag, location.aboveba
 // (the lowest of the lines named), and the server announces the first few
 // (TV_SETUP.vb_cap).
 vbOk  = vbOn and timeframe.in_seconds(vbCandleTf) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vbBbTf) >= timeframe.in_seconds(vbTf)
-// v29: the lanes, on with the main switch.
-vb2Ok = vbOn and vb2On and timeframe.in_seconds(vb2Cndl) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vb2Bb) >= timeframe.in_seconds(vbTf)
-vb3Ok = vbOn and vb3On and timeframe.in_seconds(vb3Cndl) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vb3Bb) >= timeframe.in_seconds(vbTf)
-vb4Ok = vbOn and vb4On and timeframe.in_seconds(vb4Cndl) >= timeframe.in_seconds(vbTf) and timeframe.in_seconds(vb4Bb) >= timeframe.in_seconds(vbTf)
 
 // The month's and the year's Σ hlc3 × volume and Σ volume up to the start of the
 // current day, on hourly bars (extended hours). They don't depend on the current
@@ -549,8 +528,9 @@ vbHighest(bool onS, bool onM, bool onY, float lnS, float lnM, float lnY) =>
         hiLn := na(hiLn) ? lnY : math.max(hiLn, lnY)
     hiLn
 
-// v29: one call per lane (its own state): the candle and band timeframes, its lines, and whether
-// it is on (and valid against the alert timeframe).
+// The VB's state machine: the candle and band timeframes, its lines, and whether it is on (and
+// valid against the alert timeframe). Each call has its own state: one for the alert, one inside
+// the chart's replay. (v29–v38 also called it once per "lane", three more candle timeframes.)
 vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool laneOk) =>
     // Called on every bar: and/or are lazy in v6, so the timeframe tests and the
     // request come first.
@@ -771,28 +751,14 @@ vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool 
 
 // On the alert's own chart (30s): the alert, and its markers there (the main VB's).
 [vbFireS, vbFireM, vbFireY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbNS, vbNM, vbNY, vbRt, vbRtStop, vbRtS, vbRtM, vbRtY, vbRtN, vbRtPx, vbRtLate] = vbStep(vbCandleTf, vbBbTf, vbSession, vbMonth, vbYear, vbOk)
-// v29: the lanes, each its own state.
-[v2FireS, v2FireM, v2FireY, v2Vw, v2Mw, v2Yw, v2Band, v2Open, v2DayG, v2AhG, v2VolX, v2NS, v2NM, v2NY, v2Rt, v2RtStop, v2RtS, v2RtM, v2RtY, v2RtN, v2RtPx, v2RtLate] = vbStep(vb2Cndl, vb2Bb, vb2S, vb2M, vb2Y, vb2Ok)
-[v3FireS, v3FireM, v3FireY, v3Vw, v3Mw, v3Yw, v3Band, v3Open, v3DayG, v3AhG, v3VolX, v3NS, v3NM, v3NY, v3Rt, v3RtStop, v3RtS, v3RtM, v3RtY, v3RtN, v3RtPx, v3RtLate] = vbStep(vb3Cndl, vb3Bb, vb3S, vb3M, vb3Y, vb3Ok)
-[v4FireS, v4FireM, v4FireY, v4Vw, v4Mw, v4Yw, v4Band, v4Open, v4DayG, v4AhG, v4VolX, v4NS, v4NM, v4NY, v4Rt, v4RtStop, v4RtS, v4RtM, v4RtY, v4RtN, v4RtPx, v4RtLate] = vbStep(vb4Cndl, vb4Bb, vb4S, vb4M, vb4Y, vb4Ok)
-// On a candle timeframe's chart: the same 30s bars inside each candle, for the lane whose candle
-// timeframe the chart is (the main VB first) — one replay, whichever chart it is.
-// v30: the choice reads timeframe.main_period, the chart's timeframe even inside the replay's request.
-// v29 read timeframe.period, which inside request.security_lower_tf is the requested 30S, so a
-// lane's chart (CLPT 1h, 10-29) replayed the main 5m VB — its session crosses and retests — instead.
-vlN    = timeframe.main_period == vbCandleTf ? 1 : vb2On and timeframe.main_period == vb2Cndl ? 2 : vb3On and timeframe.main_period == vb3Cndl ? 3 : vb4On and timeframe.main_period == vb4Cndl ? 4 : 1
-vlCndl = vlN == 2 ? vb2Cndl : vlN == 3 ? vb3Cndl : vlN == 4 ? vb4Cndl : vbCandleTf
-vlBb   = vlN == 2 ? vb2Bb : vlN == 3 ? vb3Bb : vlN == 4 ? vb4Bb : vbBbTf
-vlS    = vlN == 2 ? vb2S : vlN == 3 ? vb3S : vlN == 4 ? vb4S : vbSession
-vlM    = vlN == 2 ? vb2M : vlN == 3 ? vb3M : vlN == 4 ? vb4M : vbMonth
-vlY    = vlN == 2 ? vb2Y : vlN == 3 ? vb3Y : vlN == 4 ? vb4Y : vbYear
-vlOk   = vlN == 2 ? vb2Ok : vlN == 3 ? vb3Ok : vlN == 4 ? vb4Ok : vbOk
+// On the candle timeframe's chart: the same 30s bars inside each candle, replayed, so its markers
+// are the alerts. (v29–v38 chose here which lane's candle timeframe the chart was.)
 vbView() =>
-    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY, vwRt, vwRtStop, vwRtS, vwRtM, vwRtY, vwRtN, vwRtPx, vwRtLate] = vbStep(vlCndl, vlBb, vlS, vlM, vlY, vlOk)
+    [vwS, vwM, vwY, vwVw, vwMw, vwYw, vwBand, vwOpen, vwDayG, vwAhG, vwVolX, vwNS, vwNM, vwNY, vwRt, vwRtStop, vwRtS, vwRtM, vwRtY, vwRtN, vwRtPx, vwRtLate] = vbStep(vbCandleTf, vbBbTf, vbSession, vbMonth, vbYear, vbOk)
     [vwS, vwM, vwY, vwBand, vwRt and not vwRtLate, vwRt and vwRtLate]
 vbBaseSec  = timeframe.in_seconds(vbTf)
 vbChartSec = timeframe.in_seconds(timeframe.period)
-vbLower    = vlOk and vbShow and timeframe.period == vlCndl and vbChartSec > vbBaseSec
+vbLower    = vbOk and vbShow and timeframe.period == vbCandleTf and vbChartSec > vbBaseSec
 [vbInS, vbInM, vbInY, vbInUp, vbInRt, vbInRtL] = request.security_lower_tf(syminfo.tickerid, vbLower ? vbTf : timeframe.period, vbView())
 bool  vbMarkS = false
 bool  vbMarkM = false
@@ -828,10 +794,7 @@ else if vbOk and vbShow and vbChartSec == vbBaseSec
 // and year VWAPs), upper the BB timeframe's band, open the candle's:
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S
 vbSend  = vbOk and timeframe.period == vbTf
-vb2Send = vb2Ok and timeframe.period == vbTf
-vb3Send = vb3Ok and timeframe.period == vbTf
-vb4Send = vb4Ok and timeframe.period == vbTf
-// v29: one message builder for every lane (the lane's own values passed in).
+// The message builder takes the VB's values as arguments (v29 wrote it so for its lanes).
 vbMsg(bool lFS, bool lFM, bool lFY, int lNS, int lNM, int lNY, float lVw, float lMw, float lYw, float lBand, float lOpen, float lDayG, float lAhG, float lVolX, string lCTf, string lBTf) =>
     string names = ""
     int    n     = 999
@@ -864,17 +827,11 @@ vbMsg(bool lFS, bool lFM, bool lFY, int lNS, int lNM, int lNY, float lVw, float 
 
 if vbSend and (vbFireS or vbFireM or vbFireY)
     alert(vbMsg(vbFireS, vbFireM, vbFireY, vbNS, vbNM, vbNY, vbVw, vbMw, vbYw, vbBand, vbOpen, vbDayG, vbAhG, vbVolX, vbCandleTf, vbBbTf), alert.freq_once_per_bar_close)
-if vb2Send and (v2FireS or v2FireM or v2FireY)
-    alert(vbMsg(v2FireS, v2FireM, v2FireY, v2NS, v2NM, v2NY, v2Vw, v2Mw, v2Yw, v2Band, v2Open, v2DayG, v2AhG, v2VolX, vb2Cndl, vb2Bb), alert.freq_once_per_bar_close)
-if vb3Send and (v3FireS or v3FireM or v3FireY)
-    alert(vbMsg(v3FireS, v3FireM, v3FireY, v3NS, v3NM, v3NY, v3Vw, v3Mw, v3Yw, v3Band, v3Open, v3DayG, v3AhG, v3VolX, vb3Cndl, vb3Bb), alert.freq_once_per_bar_close)
-if vb4Send and (v4FireS or v4FireM or v4FireY)
-    alert(vbMsg(v4FireS, v4FireM, v4FireY, v4NS, v4NM, v4NY, v4Vw, v4Mw, v4Yw, v4Band, v4Open, v4DayG, v4AhG, v4VolX, vb4Cndl, vb4Bb), alert.freq_once_per_bar_close)
 
 // v28 RETEST (operator, AIOK 10-28/29: "I'm not using BREAKs for enter (because they can be very
 // extended by the moment entering), but waiting 1st 5min candle closes with VB and pulls back to
 // vwap line and bounces, I'm entering right at that moment"). It replaces v25–v27's LEVEL / BREAK;
-// `retest N` counts the day's retests on the ticker (per lane since v29), and the server caps them.
+// `retest N` counts the day's retests on the ticker, and the server caps them.
 //   RETEST AIOK 17.28 | stop 17.09 | sVWAP 17.1 (+1.1%) | mVWAP 14.2 (+21.7%) | line session | candle 5 | bb 45S | retest 1 | day high +46% | vwap 30s | tf 30S
 vbRtMsg(bool lRS, bool lRM, bool lRY, float lStop, float lVw, float lMw, float lYw, int lRN, float lDayG, float lAhG, string lCTf, string lBTf, float lPx) =>
     string names = ""
@@ -901,12 +858,6 @@ vbRtMsg(bool lRS, bool lRM, bool lRY, float lStop, float lVw, float lMw, float l
 
 if vbSend and vbRt
     alert(vbRtMsg(vbRtS, vbRtM, vbRtY, vbRtStop, vbVw, vbMw, vbYw, vbRtN, vbDayG, vbAhG, vbCandleTf, vbBbTf, vbRtPx), alert.freq_once_per_bar_close)
-if vb2Send and v2Rt
-    alert(vbRtMsg(v2RtS, v2RtM, v2RtY, v2RtStop, v2Vw, v2Mw, v2Yw, v2RtN, v2DayG, v2AhG, vb2Cndl, vb2Bb, v2RtPx), alert.freq_once_per_bar_close)
-if vb3Send and v3Rt
-    alert(vbRtMsg(v3RtS, v3RtM, v3RtY, v3RtStop, v3Vw, v3Mw, v3Yw, v3RtN, v3DayG, v3AhG, vb3Cndl, vb3Bb, v3RtPx), alert.freq_once_per_bar_close)
-if vb4Send and v4Rt
-    alert(vbRtMsg(v4RtS, v4RtM, v4RtY, v4RtStop, v4Vw, v4Mw, v4Yw, v4RtN, v4DayG, v4AhG, vb4Cndl, vb4Bb, v4RtPx), alert.freq_once_per_bar_close)
 plot(vbShow and (vbLower or (vbOk and vbChartSec == vbBaseSec)) ? vbUp : na, "BB upper (VWAP + BB cross)", color.new(color.orange, 20))
 // v22: the marker says which line crossed (the year's, then the month's, first): teal
 // for the session line, yellow "VB M" for the month line, blue "VB Y" for the year line.
@@ -953,8 +904,8 @@ plotshape(vbMarkRL, "VB retest, late close (v31)", shape.labelup, location.below
 // timeframe too (a 15m RSI: 15m, 5m, 3m, 1m — not 10m).
 // v32 inputs go last.
 rsOn    = input.bool(true,       "RSI setup on (v32): the RSI crosses above its MA while oversold — marks on charts up to the RSI's timeframe", group = "RSI cross (v32)")
-rsCheck = input.timeframe("360", "RSI: checked at the close of these candles (6h; the RSI's own timeframe = the plain cross)", group = "RSI cross (v32)")
-rsTfA   = input.timeframe("720", "RSI: the RSI's timeframe (12h)", group = "RSI cross (v32)")
+rsCheck = input.timeframe("60",  "RSI: checked at the close of these candles (1h; the RSI's own timeframe = the plain cross)", group = "RSI cross (v32)")
+rsTfA   = input.timeframe("10",  "RSI: the RSI's timeframe (10m)", group = "RSI cross (v32)")
 rsLen   = input.int(14,          "RSI: length", minval = 2, group = "RSI cross (v32)")
 rsMaLen = input.int(14,          "RSI: MA length (SMA — TradingView's “RSI-based MA”)", minval = 2, group = "RSI cross (v32)")
 rsOs    = input.float(30.0,      "RSI: oversold — the RSI at or under this…", group = "RSI cross (v32)")
@@ -1156,10 +1107,10 @@ rsDipGo := rsDipGo and inWindow
 // The messages — a contract with services/tv-setups.ts parseTvMessage (v32 also sent a second
 // "| rsi 180 … ma …", which the server still reads on old rows):
 //   RSI XTND 1.07 | rsi 30 29.2 ma 27.0 | low 22.1 | candle 30 | tf 30S
-//   DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | lift 8.66 | tf 30S
+//   DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | tf 30S
 // (DIP: `low` the dip's lowest RSI, `stop` a tick under its lowest price, `dip` the signal's number
-// in this dip, `since` the RSI's candles since the RSI cross, `candle` the RSI's timeframe, and
-// since v38 `lift` = the level section 5 now watches, when the lift is on.)
+// in this dip, `since` the RSI's candles since the RSI cross, `candle` the RSI's timeframe. v38's
+// `| lift` went with the LIFT in v39.)
 rsMsg() =>
     string msg = "RSI " + syminfo.ticker + " " + str.tostring(rsSPx, format.mintick)
     msg += " | rsi " + rsTfA + " " + str.tostring(rsSA, "#.0") + " ma " + str.tostring(rsSMa, "#.0")
@@ -1167,21 +1118,20 @@ rsMsg() =>
     if rsLate
         msg += " | late"
     msg + " | tf " + timeframe.period
-rsDipMsg(float liftLvl) =>
+rsDipMsg() =>
     string msg = "DIP " + syminfo.ticker + " " + str.tostring(rsDPx, format.mintick)
     msg += " | rsi " + rsTfA + " " + str.tostring(rsDR, "#.0") + " ma " + str.tostring(rsDMa, "#.0")
     msg += " | low " + str.tostring(rsDLo, "#.0") + " | stop " + str.tostring(rsDStop, format.mintick)
     msg += " | dip " + str.tostring(rsDN) + " | since " + str.tostring(rsDAge) + " | candle " + rsTfA
-    if not na(liftLvl)
-        msg += " | lift " + str.tostring(liftLvl, format.mintick)
     if rsDipLate
         msg += " | late"
     msg + " | tf " + timeframe.period
 
-// From the 30s alert alone (the VB's alert timeframe), like the VB. (The DIP's alert() is in
-// section 5 since v38: its message names the lift level, whose inputs come last.)
+// From the 30s alert alone (the VB's alert timeframe), like the VB.
 if rsFire and timeframe.period == vbTf
     alert(rsMsg(), alert.freq_once_per_bar_close)
+if rsDipGo and timeframe.period == vbTf
+    alert(rsDipMsg(), alert.freq_once_per_bar_close)
 plotshape(rsFire and not rsLate, "RSI cross (v32)", shape.labelup, location.belowbar, color.purple, text = "RSI", textcolor = color.white, size = size.small)
 plotshape(rsFire and rsLate, "RSI cross, late close (v32)", shape.labelup, location.belowbar, color.purple, text = "RSI", textcolor = color.white, size = size.small, offset = -1)
 // v34 plots go last: the DIP, and a small mark where the dip started (the RSI closed under its MA).
@@ -1677,94 +1627,144 @@ plotshape(emShow and (emBLS or emBLM or emBLY) and not emBLW, "EMA bounce, late 
 plotshape(emShow and (emBCS or emBCM or emBCY) and emBCW, "EMA bounce, filtered (v37)", shape.labelup, location.belowbar, color.gray, text = "bnc", textcolor = color.white, size = size.tiny)
 plotshape(emShow and (emBLS or emBLM or emBLY) and emBLW, "EMA bounce, filtered, late close (v37)", shape.labelup, location.belowbar, color.gray, text = "bnc", textcolor = color.white, size = size.tiny, offset = -1)
 
-// ── 5) DIP LIFT (v38) ─────────────────────────────────────────────────────────
-// Operator, 2026-11-14: "most of them just keep going lower after the DIP candle … I tested the
-// trades with entering >=8% from the latest DIP setup … placing the buy order with StopLimit at 8%
-// from dip and waiting, and if it keeps going down I just cancel them", then: "lets add the +8%
-// level (better configurable) and alert to the script. I want to experiment with it." They don't
-// take every DIP: they look at its price action, the RSI and how the name behaved before.
-// After a DIP alert the script holds a level some % above the DIP's price (the DIP candle's close)
-// and draws it. LIFT fires on the first bar after the DIP candle whose high reaches the level
-// ("Touch", where a buy stop triggers) or that closes at or over it ("Close above"). A newer DIP
-// moves the level to its own price (the latest DIP), and the level goes after N sessions without
-// a LIFT. One LIFT per DIP. It sits here, after the EMA section, because its inputs must be the
-// script's last; it belongs to the RSI setup (section 3) and needs that section's DIP.
-// Measured before building (research/rsi-dip, 60 days of Yahoo 5m bars, 4,591 replayed DIPs): the
-// +8% level is reached on 30% of the DIPs, and after it the price was lower on average an hour
-// later and at the session's end, in both halves of the data — no better than a +8% move from any
-// other close of the same names. Built for the operator's own selection, not as an edge.
-// v38 inputs go last.
-rsLiftOn   = input.bool(true,      "DIP lift on (v38): after a DIP, a level some % above its price — drawn, and LIFT when price reaches it", group = "RSI cross (v32)")
-rsLiftPct  = input.float(8.0,      "DIP lift: the level, % above the DIP's price", minval = 0.1, step = 0.5, group = "RSI cross (v32)")
-rsLiftBy   = input.string("Touch", "DIP lift fires on", options = ["Touch", "Close above"], group = "RSI cross (v32)")
-rsLiftDays = input.int(3,          "DIP lift: the level stays for N sessions after the DIP's own (0 = until the next DIP)", minval = 0, group = "RSI cross (v32)")
-rsLiftShow = input.bool(true,      "DIP lift: draw the level and the marker", group = "RSI cross (v32)")
+// ── 5) MACD CROSS AFTER A DIP (v39) ───────────────────────────────────────────
+// Operator, 2026-11-15: "entering alone on the DIP is not easy, chart can keep going lower, that's
+// why lets add macd line cross over zero line after the latest DIP, I want to experiment with it."
+// Their layout: a 5m chart with TradingView's standard MACD under it, the RSI cross checked at 1h
+// with a 10m RSI.
+// After a DIP alert the script waits for the MACD line (the EMA 12 minus the EMA 26 of a
+// timeframe's closes, 5m by default) to close above zero after closing at or under it. That close
+// is MACD. Like the RSI, the two EMAs come from a request (their values after the last finished
+// candle: lookahead on + [1]) and the bar's close makes them live, so it works on any chart whose
+// bars divide the MACD's timeframe and sends from the 30s alert.
+// A newer DIP starts the wait over (the latest DIP), and it ends after N sessions without a
+// cross. One MACD per DIP. A MACD candle that closed with or before the DIP's candle doesn't count.
+// A candle whose closing bar had no trades is judged on the next bar (`| late`, drawn one bar
+// back), the day's last one on the next morning's first bar, like a late RSI or DIP. The marks
+// are the same on every chart when the MACD's timeframe divides the RSI's (5m and 10m).
+// Measured before building (research/rsi-dip/dip_macd_cross.py, 60 days of Yahoo 5m bars, 4,591
+// replayed DIPs): the line crosses up on 70% of the DIPs, a median 3.3 hours later and 1% over the
+// DIP's price, and what follows is no better than buying the DIP itself (+10% within three
+// sessions on 29% / 40% of them in the two halves of the data; 51% in the week of 11-02). Built
+// for the operator's own selection, not as an edge.
+// v39 inputs go last.
+mcOn   = input.bool(true,     "MACD after a DIP on (v39): after a DIP, the MACD line closes above zero — the entry", group = "RSI cross (v32)")
+mcTf   = input.timeframe("5", "MACD: its timeframe (the chart you read the MACD on)", group = "RSI cross (v32)")
+mcFast = input.int(12,        "MACD: fast length", minval = 1, group = "RSI cross (v32)")
+mcSlow = input.int(26,        "MACD: slow length", minval = 2, group = "RSI cross (v32)")
+mcLife = input.int(3,         "MACD: wait for the cross for N sessions after the DIP's own (0 = until the next DIP)", minval = 0, group = "RSI cross (v32)")
+mcShow = input.bool(true,     "MACD: draw the marker", group = "RSI cross (v32)")
 
-var float lfLevel = na    // the level waiting to be reached (na = none)
-var float lfBase  = na    // its DIP's price…
-var float lfStop  = na    // …the DIP's stop (a tick under the dip's low)…
-var int   lfDipN  = 0     // …its number in the dip…
-var int   lfT0    = na    // …and when its candle closed
-var int   lfDays  = 0     // sessions begun since
-bool  lfGo     = false    // LIFT on this bar, and what it reached
-float lfGoLvl  = na
-float lfGoBase = na
-float lfGoStop = na
-int   lfGoDipN = 0
-int   lfGoMin  = 0
-bool  lfOn     = rsLiftOn and rsDipOk
-float lfNew    = rsDPx * (1 + rsLiftPct / 100)   // the level a DIP on this bar sets
-if lfOn
-    // A DIP judged late belongs to the candle before, so this bar is already after it: its level
-    // takes over before the check. A DIP on the bar that closes its candle takes over after it.
+// The two EMAs after the last finished candle of the MACD's timeframe, and the line live at this
+// bar (that MACD's chart value now: the finished candles + this bar's close as the open one's).
+mcState(simple int fast, simple int slow) =>
+    float f = ta.ema(close, fast)
+    float s = ta.ema(close, slow)
+    [f[1], s[1]]
+[mcPrevF, mcPrevS] = request.security(rsSym, mcTf, mcState(mcFast, mcSlow), lookahead = barmerge.lookahead_on)
+mcAF   = 2.0 / (mcFast + 1)
+mcAS   = 2.0 / (mcSlow + 1)
+mcLine = (mcAF * close + (1 - mcAF) * mcPrevF) - (mcAS * close + (1 - mcAS) * mcPrevS)
+// Where the samples are right: a chart that shows the DIP, no bigger than the MACD's timeframe,
+// whose bars divide it.
+mcTfSec = timeframe.in_seconds(mcTf)
+mcOk    = mcOn and rsDipOk and rsChartSec <= mcTfSec and mcTfSec % rsChartSec == 0
+
+// The line closed above zero after closing at or under it.
+mcUp(float before, float now) => not na(before) and not na(now) and before <= 0 and now > 0
+
+mcT   = time(mcTf)
+mcEnd = time_close == time_close(mcTf)
+var int   mcDone  = na
+bool mcLateS = not na(mcT[1]) and mcT != mcT[1] and (na(mcDone) or mcDone != mcT[1])
+var float mcWas   = na      // the line at the candle close before
+var bool  mcArmed = false   // a DIP is waiting for its cross
+var float mcBase  = na      // that DIP's price…
+var float mcStop  = na      // …its stop (a tick under the dip's low)…
+var int   mcDipN  = 0       // …its number in the dip…
+var int   mcT0    = na      // …and when its candle closed
+var int   mcAge   = 0       // sessions begun since
+bool  mcGo     = false      // MACD on this bar, and what it carries
+bool  mcLate   = false
+float mcGoPx   = na
+float mcGoBase = na
+float mcGoStop = na
+int   mcGoDipN = 0
+int   mcGoMin  = 0
+if mcOk
+    // 1) A candle that ended before this bar, unsampled. It closed with or before a DIP judged
+    //    late on this bar, so it belongs to the wait of the DIP before. Like a late RSI or DIP it
+    //    is sent on a new day's first bar too (`| late`, with the price it closed at).
+    if mcLateS
+        float mcL1 = mcLine[1]
+        if mcArmed and mcUp(mcWas, mcL1)
+            mcGo     := true
+            mcLate   := true
+            mcGoPx   := close[1]
+            mcGoBase := mcBase
+            mcGoStop := mcStop
+            mcGoDipN := mcDipN
+            mcGoMin  := math.round((time - mcT0) / 60000.0)
+            mcArmed  := false
+        if not na(mcL1)
+            mcWas := mcL1
+        mcDone := mcT[1]
+    // The sessions begun since the DIP (after the late sample, which belongs to the bar before).
+    if mcArmed and newDay
+        mcAge := mcAge + 1
+    if mcArmed and mcLife > 0 and mcAge > mcLife
+        mcArmed := false
+    // 2) A DIP judged late belongs to the candle before: its wait starts here.
     if rsDipGo and rsDipLate
-        lfLevel := lfNew
-        lfBase  := rsDPx
-        lfStop  := rsDStop
-        lfDipN  := rsDN
-        lfT0    := time
-        lfDays  := 0
-    else if not na(lfLevel) and newDay
-        lfDays := lfDays + 1
-    if not na(lfLevel) and rsLiftDays > 0 and lfDays > rsLiftDays
-        lfLevel := na
-    if not na(lfLevel) and (rsLiftBy == "Touch" ? high >= lfLevel : close >= lfLevel)
-        lfGo     := true
-        lfGoLvl  := lfLevel
-        lfGoBase := lfBase
-        lfGoStop := lfStop
-        lfGoDipN := lfDipN
-        lfGoMin  := math.round((time_close - lfT0) / 60000.0)
-        lfLevel  := na
+        mcArmed := true
+        mcBase  := rsDPx
+        mcStop  := rsDStop
+        mcDipN  := rsDN
+        mcT0    := time
+        mcAge   := newDay ? 1 : 0
+    // 3) The candle this bar closes.
+    if mcEnd and (na(mcDone) or mcDone != mcT)
+        if mcArmed and mcUp(mcWas, mcLine)
+            mcGo     := true
+            mcLate   := false
+            mcGoPx   := close
+            mcGoBase := mcBase
+            mcGoStop := mcStop
+            mcGoDipN := mcDipN
+            mcGoMin  := math.round((time_close - mcT0) / 60000.0)
+            mcArmed  := false
+        if not na(mcLine)
+            mcWas := mcLine
+        mcDone := mcT
+    // 4) A DIP on the bar that closes its candle: its wait starts after this bar.
     if rsDipGo and not rsDipLate
-        lfLevel := lfNew
-        lfBase  := rsDPx
-        lfStop  := rsDStop
-        lfDipN  := rsDN
-        lfT0    := time_close
-        lfDays  := 0
-// Announced inside the alert window only (the level is used up either way).
-lfGo := lfGo and inWindow
+        mcArmed := true
+        mcBase  := rsDPx
+        mcStop  := rsDStop
+        mcDipN  := rsDN
+        mcT0    := time_close
+        mcAge   := 0
+// Announced inside the alert window only (the wait is over either way).
+mcGo := mcGo and inWindow
 
 // The message — a contract with services/tv-setups.ts parseTvMessage:
-//   LIFT KRMN 40.55 | lift 40.53 | base 37.53 | up 8 | stop 37.2 | dip 1 | after 290m | by touch | candle 10 | tf 30S
-// (`lift` the level reached, `base` the DIP's price, `up` the setting in %, `stop` the DIP's stop,
-// `dip` the DIP's number in its dip, `after` minutes since the DIP candle closed, `by` touch or
-// close, `candle` the RSI's timeframe.)
-rsLiftMsg() =>
-    string msg = "LIFT " + syminfo.ticker + " " + str.tostring(close, format.mintick)
-    msg += " | lift " + str.tostring(lfGoLvl, format.mintick) + " | base " + str.tostring(lfGoBase, format.mintick)
-    msg += " | up " + str.tostring(rsLiftPct, "#.##") + " | stop " + str.tostring(lfGoStop, format.mintick)
-    msg += " | dip " + str.tostring(lfGoDipN) + " | after " + str.tostring(lfGoMin) + "m"
-    msg += " | by " + (rsLiftBy == "Touch" ? "touch" : "close") + " | candle " + rsTfA
+//   MACD KRMN 38.12 | macd 5 12 26 | base 37.53 | stop 37.2 | dip 1 | after 200m | candle 10 | tf 30S
+// (`macd` its timeframe and the two lengths, `base` the DIP's price, `stop` the DIP's stop, `dip`
+// the DIP's number in its dip, `after` minutes since the DIP candle closed, `candle` the RSI's
+// timeframe, `| late` when the MACD candle's closing bar had no trades.)
+mcMsg() =>
+    string msg = "MACD " + syminfo.ticker + " " + str.tostring(mcGoPx, format.mintick)
+    msg += " | macd " + mcTf + " " + str.tostring(mcFast) + " " + str.tostring(mcSlow)
+    msg += " | base " + str.tostring(mcGoBase, format.mintick) + " | stop " + str.tostring(mcGoStop, format.mintick)
+    msg += " | dip " + str.tostring(mcGoDipN) + " | after " + str.tostring(mcGoMin) + "m" + " | candle " + rsTfA
+    if mcLate
+        msg += " | late"
     msg + " | tf " + timeframe.period
 
-// From the 30s alert alone, like the rest of the RSI setup: the DIP (its message names the level
-// it sets), then a LIFT.
-if rsDipGo and timeframe.period == vbTf
-    alert(rsDipMsg(lfOn ? lfNew : na), alert.freq_once_per_bar_close)
-if lfGo and timeframe.period == vbTf
-    alert(rsLiftMsg(), alert.freq_once_per_bar_close)
-// v38 plots go last: the level while it waits (through the bar that reaches it), and the LIFT.
-plot(rsLiftShow and lfOn ? (not na(lfLevel) ? lfLevel : lfGo ? lfGoLvl : na) : na, "DIP lift level (v38)", color.new(color.fuchsia, 20), 1, plot.style_linebr)
-plotshape(rsLiftShow and lfGo, "DIP lift (v38)", shape.labeldown, location.abovebar, color.fuchsia, text = "LIFT", textcolor = color.white, size = size.small)
+// From the 30s alert alone, like the rest of the RSI setup.
+if mcGo and timeframe.period == vbTf
+    alert(mcMsg(), alert.freq_once_per_bar_close)
+// v39 plots go last.
+plotshape(mcShow and mcGo and not mcLate, "MACD after a DIP (v39)", shape.labelup, location.belowbar, color.aqua, text = "MACD", textcolor = color.black, size = size.small)
+plotshape(mcShow and mcGo and mcLate, "MACD after a DIP, late close (v39)", shape.labelup, location.belowbar, color.aqua, text = "MACD", textcolor = color.black, size = size.small, offset = -1)
+

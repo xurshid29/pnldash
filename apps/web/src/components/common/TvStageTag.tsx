@@ -11,7 +11,7 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   retest: { label: 'RETEST', color: '#ffffff', bg: '#08979c' },
   rsi: { label: 'RSI', color: '#efdbff', bg: '#391085' },   // v32, purple like its chart marker
   dip: { label: 'DIP', color: '#ffffff', bg: '#c41d7f' },   // v34, magenta like its chart marker
-  lift: { label: 'LIFT', color: '#1f1f1f', bg: '#ff85c0' }, // v38, the DIP's family, lighter
+  macd: { label: 'MACD', color: '#1f1f1f', bg: '#36cfc9' }, // v39, aqua like its chart marker
   ema: { label: 'EMA', color: '#1f1f1f', bg: '#fa8c16' },   // v35, orange like its chart marker
   bounce: { label: 'BOUNCE', color: '#1f1f1f', bg: '#a0d911' },   // v37, lime like its chart marker
 };
@@ -64,8 +64,8 @@ export function fmtTf(tf: string | null | undefined): string {
 // signal RSI's timeframe ("12h"); its v34 DIP the same.
 export function crossTfText(s: TvSetupInfo): string | null {
   if (s.stage === 'rsi' || s.stage === 'dip') return s.rsi_tf ? fmtTf(s.rsi_tf) : null;
-  // v38 LIFT: "+8%" — how far above the DIP the level sat
-  if (s.stage === 'lift') return s.lift_pct != null ? `+${s.lift_pct}%` : null;
+  // v39 MACD: "5m" — the MACD's timeframe
+  if (s.stage === 'macd') return s.macd_tf ? fmtTf(s.macd_tf) : null;
   // v35 EMA cross: "3m/9" — the EMA's timeframe over its length (its v37 BOUNCE the same)
   if (s.stage === 'ema' || s.stage === 'bounce') return s.candle_tf ? `${fmtTf(s.candle_tf)}/${s.ema_len ?? '?'}` : null;
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
@@ -93,12 +93,12 @@ export function tagNumber(s: TvSetupInfo): number | null {
   if (s.stage === 'cross') return s.cross_n ?? null;
   if (s.stage === 'retest') return s.retest_n ?? null;
   if (s.stage === 'dip') return s.dip_n ?? null;
-  if (s.stage === 'lift') return null;   // one per DIP
+  if (s.stage === 'macd') return null;   // one per DIP
   return s.touch ?? null;
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2, lift: 3, ema: 1, bounce: 2 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2, macd: 3, ema: 1, bounce: 2 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -130,13 +130,13 @@ export function TvStageTag({ stage, dim, line, touch, tfs }: {
 
 // v28 RETEST: "retest · stop $17.09 (−1.1%)" — the stop under the pullback's low,
 // against the RETEST price. v34 DIP: "dip · stop $7.89 (−2.5%)", under the dip's low. v37 BOUNCE:
-// "bounce · stop $0.0985 (−3.5%)", under the pullback's low. v38 LIFT: "DIP stop $37.20 (−8.2%)" —
-// its DIP's stop, against the LIFT price.
+// "bounce · stop $0.0985 (−3.5%)", under the pullback's low. v39 MACD: "DIP stop $37.20 (−2.4%)" —
+// its DIP's stop, against the MACD signal's price.
 export function retestStopText(s: TvSetupInfo, price: number | null | undefined): string | null {
   if (s.stop == null) return null;
   const px = (p: number) => `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
   const pct = price != null && price > 0 ? ` (${fmtSignedPct((s.stop / price - 1) * 100).replace('-', '−')})` : '';
-  if (s.stage === 'lift') return `DIP stop ${px(s.stop)}${pct}`;
+  if (s.stage === 'macd') return `DIP stop ${px(s.stop)}${pct}`;
   return `${s.stage === 'dip' ? 'dip' : s.stage === 'bounce' ? 'bounce' : 'retest'} · stop ${px(s.stop)}${pct}`;
 }
 
@@ -151,23 +151,23 @@ export function fmtMinutes(min: number | null | undefined): string {
 
 const pxText = (p: number) => `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
 
-// v38: a DIP's lift level, "lift $8.66 (+8.0%)" — where a buy stop goes. Null when the script's lift is off.
-export function liftLevelText(s: TvSetupInfo, price: number | null | undefined): string | null {
-  if (s.lift_level == null) return null;
-  const pct = price != null && price > 0 ? ` (${fmtSignedPct((s.lift_level / price - 1) * 100)})` : '';
-  return `lift ${pxText(s.lift_level)}${pct}`;
+// v39 MACD: "+1.6% from the DIP at $37.53" — where the signal sits against its DIP's price.
+export function macdFromDipText(s: TvSetupInfo, price: number | null | undefined): string | null {
+  if (s.dip_px == null) return null;
+  const pct = price != null && s.dip_px > 0 ? `${fmtSignedPct((price / s.dip_px - 1) * 100).replace('-', '−')} from ` : '';
+  return `${pct}the DIP at ${pxText(s.dip_px)}`;
 }
 
-// v38 LIFT: the level reached and the DIP it came from, the DIP's stop, how long it took.
-export function liftText(s: TvSetupInfo, price?: number | null): string {
-  const parts: Array<string | null> = [];
-  const how = s.lift_by === 'close' ? 'closed over' : 'reached';
-  if (s.lift_level != null) {
-    parts.push(`${how} ${pxText(s.lift_level)}${s.lift_pct != null ? `, +${s.lift_pct}%` : ''}${s.lift_base != null ? ` over the DIP at ${pxText(s.lift_base)}` : ''}`);
-  }
-  parts.push(retestStopText(s, price));
+// v39 MACD: the MACD that crossed, the DIP it follows, the DIP's stop, how long it took.
+export function macdText(s: TvSetupInfo, price?: number | null): string {
+  const parts: Array<string | null> = [
+    `${fmtTf(s.macd_tf ?? null) || '?'} MACD line over zero${s.macd_fast != null && s.macd_slow != null ? ` (${s.macd_fast} / ${s.macd_slow})` : ''}`,
+    macdFromDipText(s, price),
+    retestStopText(s, price),
+  ];
   if (s.after_min != null) parts.push(`${fmtMinutes(s.after_min)} after the DIP`);
   if (s.candle_tf) parts.push(`${fmtTf(s.candle_tf)} RSI`);
+  if (s.late) parts.push('late');
   return parts.filter((p): p is string => p != null).join(' · ');
 }
 
@@ -189,7 +189,6 @@ export function dipText(s: TvSetupInfo, price?: number | null): string {
   const parts = [retestStopText(s, price), `${fmtTf(s.rsi_tf ?? null) || '?'} RSI ${one(s.rsi)} / MA ${one(s.rsi_ma)}`];
   if (s.rsi_low != null) parts.push(`dip low ${one(s.rsi_low)}`);
   if (s.since_n != null) parts.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the RSI cross`);
-  parts.push(liftLevelText(s, price));   // v38: the level the script watches for a LIFT
   if (s.late) parts.push('late');
   return parts.filter((p): p is string => p != null).join(' · ');
 }
@@ -210,7 +209,7 @@ export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   // v32 RSI: "12h RSI 29.2 / MA 27.0 · low 22.1 · 3h 41.2 / 30.7 · at the 6h close"
   if (s.stage === 'rsi') return rsiText(s);
   if (s.stage === 'dip') return dipText(s, price);
-  if (s.stage === 'lift') return liftText(s, price);
+  if (s.stage === 'macd') return macdText(s, price);
   if (s.stage === 'bounce') return bounceText(s, price);
   // v35 EMA cross: "+1.0% vs sVWAP · EMA 9 $8.03 · at the 3m close · 12 candles under · 1 flip" (v36: the filter's readings)
   if (s.stage === 'ema') {

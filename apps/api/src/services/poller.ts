@@ -3946,7 +3946,7 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
-  // tv_cross / tv_retest / tv_rsi / tv_dip / tv_lift / tv_ema / tv_bounce, and tv_year for a message about the year line alone).
+  // tv_cross / tv_retest / tv_rsi / tv_dip / tv_macd / tv_ema / tv_bounce, and tv_year for a message about the year line alone).
   // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
   // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
@@ -4032,15 +4032,15 @@ class PollerService {
     } else if (sig.stage === 'dip') {
       console.log(`[tv-setup] DIP ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +
         ` · dip low ${sig.rsi_low ?? '?'} · stop ${sig.stop ?? '?'} · dip ${sig.dip_n ?? '?'} · ${sig.since_n ?? '?'} candles after the RSI cross` +
-        `${sig.lift_level != null ? ` · lift level ${sig.lift_level}` : ''}` +
         `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
         (mode === 'quiet' ? ' · quiet (DIP switched off)' : ''));
-    } else if (sig.stage === 'lift') {
-      console.log(`[tv-setup] LIFT ${sig.ticker} $${sig.price ?? '?'} · level ${sig.lift_level ?? '?'} (+${sig.lift_pct ?? '?'}% over the DIP at ${sig.lift_base ?? '?'})` +
-        ` · by ${sig.lift_by ?? '?'} · ${sig.after_min ?? '?'} min after the DIP · the DIP's stop ${sig.stop ?? '?'} · ${sig.candle_tf ?? '?'} RSI · tf ${sig.tf ?? '?'}` +
+    } else if (sig.stage === 'macd') {
+      console.log(`[tv-setup] MACD ${sig.ticker} $${sig.price ?? '?'} · the ${sig.macd_tf ?? '?'} MACD line (${sig.macd_fast ?? '?'} / ${sig.macd_slow ?? '?'}) crossed zero` +
+        ` · ${sig.after_min ?? '?'} min after the DIP at ${sig.dip_px ?? '?'} · the DIP's stop ${sig.stop ?? '?'} · ${sig.candle_tf ?? '?'} RSI` +
+        `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? ' · quiet (LIFT switched off)' : ''));
+        (mode === 'quiet' ? ' · quiet (MACD switched off)' : ''));
     } else if (sig.stage === 'rsi') {
       console.log(`[tv-setup] RSI ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +
         ` · low ${sig.rsi_low ?? '?'} · ${sig.rsi2_tf ?? '?'} RSI ${sig.rsi2 ?? '?'} / MA ${sig.rsi2_ma ?? '?'}` +

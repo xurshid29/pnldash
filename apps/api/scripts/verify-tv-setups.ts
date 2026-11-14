@@ -9,7 +9,8 @@
 // third setup, the RSI cross (stage RSI), for longer trades; v33 kept one RSI; v34 added its
 // DIP (the pullback after the cross), which rode the RSI's ⚙ switch until it got its own (11-13).
 // v35 added a fourth setup, the EMA cross over VWAP (stage EMA); v36 its filter; v37 its BOUNCE,
-// which rides the EMA's switch.
+// which rides the EMA's switch. v39 added the MACD cross after a DIP (stage MACD, its own switch)
+// and removed v38's LIFT (its messages are rejected) and v29's VB lanes.
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -206,32 +207,38 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'pullback', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, day_gain: 25, ah_gain: null,
     tf: '1', vol_x: null, run_pct: null, svwap: 1.95, spx_pct: 2.6, line: 'session', touch: 1, fails: 0, ...over,
   });
-  check('default switches: PULLBACK, CROSS, RETEST, RSI, DIP, LIFT, EMA on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi","dip","lift","ema"]');
+  check('default switches: PULLBACK, CROSS, RETEST, RSI, DIP, MACD, EMA on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi","dip","macd","ema"]');
   check('parseStageList keeps known stages in menu order, drops the rest (v27: a saved go / ready / forming too)',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 'ready', 7])) === '["pullback","held"]'
       && parseStageList('pullback') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists the nine stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST; 11-13 DIP after it; v38 LIFT after DIP; v35 EMA)',
-    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","dip","lift","ema","broken","held"]'
-      && JSON.stringify(parseStageList(['pullback', 'cross', 'break'])) === '["pullback","cross"]');
+  check('menu order lists the nine stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST; 11-13 DIP after it; v39 MACD after DIP, in LIFT\'s place; v35 EMA)',
+    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","dip","macd","ema","broken","held"]'
+      && JSON.stringify(parseStageList(['pullback', 'cross', 'break'])) === '["pullback","cross"]'
+      && JSON.stringify(parseStageList(['dip', 'lift', 'macd'])) === '["dip","macd"]');
   // 2026-11-13: DIP got its own switch. A list saved before that (a plain array) gives DIP the RSI's value;
-  // one saved since ({ announced, known }) is read as saved. v38: LIFT starts with the DIP's value.
+  // one saved since ({ announced, known }) is read as saved. v39: MACD starts with the DIP's value (v38's LIFT did).
   const legacy = readStoredStages(['pullback', 'cross', 'rsi', 'ema']);
-  check('an old saved list with RSI on → DIP on too, and LIFT with it; the rest as saved',
-    JSON.stringify(legacy) === '["pullback","cross","rsi","dip","lift","ema"]', JSON.stringify(legacy));
-  check('…with RSI off → DIP and LIFT off; an empty old list stays empty',
+  check('an old saved list with RSI on → DIP on too, and MACD with it; the rest as saved',
+    JSON.stringify(legacy) === '["pullback","cross","rsi","dip","macd","ema"]', JSON.stringify(legacy));
+  check('…with RSI off → DIP and MACD off; an empty old list stays empty',
     JSON.stringify(readStoredStages(['pullback', 'cross', 'ema'])) === '["pullback","cross","ema"]' && JSON.stringify(readStoredStages([])) === '[]');
-  check('a new saved list is read as saved: RSI on and DIP off stays off; DIP on with LIFT off stays so',
+  check('a new saved list is read as saved: RSI on and DIP off stays off; DIP on with MACD off stays so',
     JSON.stringify(readStoredStages(storedStages(['pullback', 'rsi']))) === '["pullback","rsi"]'
       && JSON.stringify(readStoredStages(storedStages(['dip', 'ema']))) === '["dip","ema"]'
-      && JSON.stringify(readStoredStages(storedStages(['lift']))) === '["lift"]');
-  check('…a stage the saved list didn\'t know takes the switch it follows (DIP ← RSI, LIFT ← DIP), any other its default',
-    JSON.stringify(readStoredStages({ announced: ['rsi'], known: ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'] })) === '["rsi","dip","lift"]'
-      && JSON.stringify(readStoredStages({ announced: [], known: ['pullback'] })) === '["cross","retest","rsi","dip","lift","ema"]');
-  // the operator's switches as saved on 11-13 (before LIFT existed): PULLBACK and DIP on
+      && JSON.stringify(readStoredStages(storedStages(['macd']))) === '["macd"]');
+  check('…a stage the saved list didn\'t know takes the switch it follows (DIP ← RSI, MACD ← DIP), any other its default',
+    JSON.stringify(readStoredStages({ announced: ['rsi'], known: ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'] })) === '["rsi","dip","macd"]'
+      && JSON.stringify(readStoredStages({ announced: [], known: ['pullback'] })) === '["cross","retest","rsi","dip","macd","ema"]');
+  // the operator's switches as saved on 11-13 (before LIFT or MACD existed): PULLBACK and DIP on
   const saved = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'ema', 'broken', 'held'], announced: ['pullback', 'dip'] };
-  check('…a list saved before v38 with DIP on → LIFT on; with DIP off → LIFT off',
-    JSON.stringify(readStoredStages(saved)) === '["pullback","dip","lift"]'
+  check('…a list saved before v39 with DIP on → MACD on; with DIP off → MACD off',
+    JSON.stringify(readStoredStages(saved)) === '["pullback","dip","macd"]'
       && JSON.stringify(readStoredStages({ ...saved, announced: ['pullback', 'rsi'] })) === '["pullback","rsi"]');
+  // …and one saved under v38, which knew LIFT: the saved LIFT is dropped, MACD follows the DIP
+  const v38 = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'lift', 'ema', 'broken', 'held'], announced: ['pullback', 'dip', 'lift'] };
+  check('…a list saved under v38 (with LIFT) → the LIFT is dropped, MACD takes the DIP\'s value',
+    JSON.stringify(readStoredStages(v38)) === '["pullback","dip","macd"]'
+      && JSON.stringify(readStoredStages({ ...v38, announced: ['pullback', 'lift'] })) === '["pullback"]');
   check('…stored as { announced, known }; anything else is no list',
     JSON.stringify(storedStages(['rsi'])) === `{"announced":["rsi"],"known":${JSON.stringify(TV_STAGE_ORDER)}}`
       && readStoredStages('pullback') === null && readStoredStages({ announced: ['rsi'] }) === null && readStoredStages(null) === null);
@@ -409,31 +416,36 @@ console.log('VB retest (v28, 2026-10-29)');
     && html.includes('sVWAP $17.10 (+1.1%)') && html.includes('⭐ <b>on Momentum</b>') && !html.includes('null') && !html.includes('undefined'), html);
 }
 
-console.log('VB lanes (v29, 2026-10-30)');
+// v39 removed the script's three extra VB lanes (v29: 1h / 4h / 1D on month + year). The VB's one
+// candle timeframe is still an input, so a longer one still parses; off Momentum it now follows
+// the same rule as any other VB (v29–v38 announced 60m+ candles there, `vb_long_min`).
+console.log('VB on a longer candle (the v29 lanes were removed in v39)');
 {
   const h1 = parseTvMessage('CROSS AIOK 18.2 | mVWAP 17.6 (+3.4%) | yVWAP 15.1 (+20.5%) | upper 18.1 (+0.6%) | open 17.5 | line month+year | candle 60 | bb 10 | cross 1 | day high +46% | vwap 30s | tf 30S');
-  check('a 1h lane CROSS parses', h1?.stage === 'cross' && h1.candle_tf === '60' && h1.bb_tf === '10' && h1.line === 'month+year', JSON.stringify(h1));
+  check('a 1h-candle CROSS parses', h1?.stage === 'cross' && h1.candle_tf === '60' && h1.bb_tf === '10' && h1.line === 'month+year', JSON.stringify(h1));
   const d1 = parseTvMessage('CROSS AIOK 18.2 | mVWAP 17.6 (+3.4%) | upper 18.0 (+1.1%) | open 17.4 | line month | candle 1D | bb 60 | cross 1 | vwap 30s | tf 30S');
-  check('…a daily lane ("1D"), and a bare "D" reads as "1D"', d1?.candle_tf === '1D' && d1.bb_tf === '60'
+  check('…a daily candle ("1D"), and a bare "D" reads as "1D"', d1?.candle_tf === '1D' && d1.bb_tf === '60'
     && parseTvMessage('CROSS X 1.0 | candle D | bb 60 | cross 1 | tf 30S')?.candle_tf === '1D'
     && parseTvMessage({ stage: 'cross', ticker: 'X', candle_tf: 'd' })?.candle_tf === '1D', JSON.stringify(d1));
   check('tfMinutes', tfMinutes('5') === 5 && tfMinutes('240') === 240 && tfMinutes('1D') === 1440 && tfMinutes('30S') === 0.5
     && tfMinutes('1W') === 10080 && tfMinutes(null) === null && tfMinutes('x') === null);
   const T0 = 1_792_166_400;
-  check(`off Momentum: a lane of ${TV_SETUP.vb_long_min}m+ candles announces, a 5m one stays quiet (under +30%)`,
-    new TvSetupGate().admit({ ...h1!, day_gain: 8 }, T0, false, false) === 'notify'
-      && new TvSetupGate().admit({ ...d1!, day_gain: 3 }, T0, false, false) === 'notify'
+  check('v39: off Momentum a 1h or daily candle is quiet like a 5m one (under +30%); the long-candle exception is gone',
+    new TvSetupGate().admit({ ...h1!, day_gain: 8 }, T0, false, false) === 'quiet'
+      && new TvSetupGate().admit({ ...d1!, day_gain: 3 }, T0, false, false) === 'quiet'
       && new TvSetupGate().admit({ ...h1!, candle_tf: '5', bb_tf: '45S', day_gain: 8 }, T0, false, false) === 'quiet'
-      && new TvSetupGate().admit({ ...h1!, candle_tf: '30', day_gain: 8 }, T0, false, false) === 'quiet');
-  check('…the cap still applies to a lane', new TvSetupGate().admit({ ...h1!, cross_n: TV_SETUP.vb_cap + 1 }, T0, false, false) === 'quiet');
+      && !('vb_long_min' in TV_SETUP));
+  check('…on Momentum, or with a day high of +30% or more, it announces', new TvSetupGate().admit({ ...h1!, day_gain: 8 }, T0, false, true) === 'notify'
+    && new TvSetupGate().admit(h1!, T0, false, false) === 'notify');
+  check('…the cap applies', new TvSetupGate().admit({ ...h1!, cross_n: TV_SETUP.vb_cap + 1 }, T0, false, true) === 'quiet');
   const r1 = parseTvMessage('RETEST AIOK 17.7 | stop 17.5 | mVWAP 17.6 (+0.6%) | line month | candle 240 | bb 30 | retest 1 | vwap 30s | tf 30S');
-  check('…a 4h lane RETEST off Momentum announces', new TvSetupGate().admit(r1!, T0, false, false) === 'notify', JSON.stringify(r1));
+  check('…a 4h-candle RETEST off Momentum is quiet too', new TvSetupGate().admit(r1!, T0, false, false) === 'quiet', JSON.stringify(r1));
   const g = new TvSetupGate();
-  check('two lanes crossing the same line on one 30s bar are two events (the candle is in the key)',
+  check('a changed VB candle is another event (the candle is in the key)',
     g.admit(h1!, T0, false, true) === 'notify' && g.admit({ ...h1!, candle_tf: '240', bb_tf: '30' }, T0, false, true) === 'notify'
       && g.admit(h1!, T0 + 5, false, true) === 'drop');
   const html = formatTvSetupAlert(d1!, 'NASDAQ:AIOK', null);
-  check('Telegram: the daily lane', html.includes('the 1D candle crossed over the month VWAP and the 1h BB upper band') && !html.includes('null'), html);
+  check('Telegram: a daily candle', html.includes('the 1D candle crossed over the month VWAP and the 1h BB upper band') && !html.includes('null'), html);
 }
 
 console.log('RSI cross (v32, 2026-11-08)');
@@ -510,56 +522,60 @@ console.log('RSI dip (v34, 2026-11-12)');
     && html.includes('not on our Momentum list') && !html.includes('null'), html);
   check('Telegram: a late second turn says so', formatTvSetupAlert(late!, 'NASDAQ:OMH', null).includes('(at the 30m close, a bar late)')
     && formatTvSetupAlert(late!, 'NASDAQ:OMH', null).includes('turn 2 of this dip (a lower low since)'));
-  // v38: the DIP names the level its LIFT waits at
+  // v39: the LIFT is gone. A v38 DIP still parses (an alert not recreated yet), its `| lift` field ignored.
   const dl = parseTvMessage('DIP KRMN 37.53 | rsi 10 19.3 ma 25.0 | low 14.7 | stop 37.2 | dip 1 | since 12 | candle 10 | lift 40.53 | late | tf 30S');
-  check('v38: a DIP with its lift level parses; one without (v34–v37, or the lift off) has none', dl?.stage === 'dip' && dl.lift_level === 40.53
-    && dl.price === 37.53 && dl.stop === 37.2 && dl.late === true && dl.candle_tf === '10' && d?.lift_level === null
-    && dl.lift_base === null && dl.lift_pct === null, JSON.stringify(dl));
-  check('Telegram: the DIP shows the lift level and how far it is', formatTvSetupAlert(dl!, 'NYSE:KRMN', null).includes('lift level <b>$40.53</b> (+8.0%)')
-    && !html.includes('lift level'), formatTvSetupAlert(dl!, 'NYSE:KRMN', null));
+  check('v39: a v38 DIP (with `| lift`) still parses, and the lift level is not read', dl?.stage === 'dip' && dl.price === 37.53 && dl.stop === 37.2
+    && dl.late === true && dl.candle_tf === '10' && !('lift_level' in dl) && dl.dip_px === null && dl.macd_tf === null, JSON.stringify(dl));
+  check('Telegram: a DIP has no lift line', !formatTvSetupAlert(dl!, 'NYSE:KRMN', null).toLowerCase().includes('lift') && !html.toLowerCase().includes('lift'),
+    formatTvSetupAlert(dl!, 'NYSE:KRMN', null));
 }
 
-console.log('DIP lift (v38, 2026-11-14)');
+console.log('MACD cross after a DIP (v39, 2026-11-15)');
 {
-  const T0 = 1_794_660_000;
-  const msg = 'LIFT KRMN 40.55 | lift 40.53 | base 37.53 | up 8 | stop 37.2 | dip 1 | after 290m | by touch | candle 10 | tf 30S';
-  const l = parseTvMessage(msg);
-  check('LIFT parses', l?.stage === 'lift' && l.ticker === 'KRMN' && l.price === 40.55 && l.lift_level === 40.53 && l.lift_base === 37.53
-    && l.lift_pct === 8 && l.stop === 37.2 && l.dip_n === 1 && l.after_min === 290 && l.lift_by === 'touch' && l.candle_tf === '10' && l.tf === '30S',
-    JSON.stringify(l));
-  check('…no RSI values, line, touch number or VB / EMA fields', l?.rsi === null && l?.rsi_tf === null && l?.line === null && l?.touch === null
-    && l?.cross_n === null && l?.retest_n === null && l?.bounce_from === null && l?.since_n === null && l?.late === false, JSON.stringify(l));
-  const lc = parseTvMessage('LIFT AKAN 0.7481 | lift 0.7409 | base 0.686 | up 7.5 | stop 0.6612 | dip 2 | after 134m | by close | candle 15 | tf 30S');
-  check('…sub-dollar, a 7.5% setting, on a close, the second DIP of its dip', lc?.lift_level === 0.7409 && lc.lift_base === 0.686 && lc.lift_pct === 7.5
-    && lc.lift_by === 'close' && lc.dip_n === 2 && lc.after_min === 134 && lc.candle_tf === '15', JSON.stringify(lc));
-  check('…JSON', parseTvMessage({ stage: 'lift', ticker: 'KRMN', lift: 40.53, base: 37.53, up: 8, after: 290, by: 'touch', stop: 37.2 })?.lift_base === 37.53
-    && parseTvMessage({ stage: 'lift', ticker: 'KRMN', lift_level: 40.53, lift_pct: 8, after_min: 5, lift_by: 'close' })?.lift_by === 'close');
-  check('…other stages carry no lift fields, and "LIFT" as a ticker still parses as one',
-    parseTvMessage('RSI XTND 1.07 | rsi 30 29.2 ma 27.0 | low 22.1 | candle 30 | tf 30S')?.lift_level === null
-      && parseTvMessage('PULLBACK X 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.lift_by === null
-      && parseTvMessage('PULLBACK LIFT 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.ticker === 'LIFT');
-  check('LIFT has its own switch, after DIP in the menu', stageSwitch('lift') === 'lift'
-    && TV_STAGE_ORDER.indexOf('lift') === TV_STAGE_ORDER.indexOf('dip') + 1);
+  const T0 = 1_794_750_000;
+  const msg = 'MACD KRMN 38.12 | macd 5 12 26 | base 37.53 | stop 37.2 | dip 1 | after 200m | candle 10 | tf 30S';
+  const m = parseTvMessage(msg);
+  check('MACD parses', m?.stage === 'macd' && m.ticker === 'KRMN' && m.price === 38.12 && m.macd_tf === '5' && m.macd_fast === 12 && m.macd_slow === 26
+    && m.dip_px === 37.53 && m.stop === 37.2 && m.dip_n === 1 && m.after_min === 200 && m.candle_tf === '10' && m.tf === '30S' && m.late === false,
+    JSON.stringify(m));
+  check('…no RSI values, line, touch number or VB / EMA fields', m?.rsi === null && m?.rsi_tf === null && m?.line === null && m?.touch === null
+    && m?.cross_n === null && m?.retest_n === null && m?.bounce_from === null && m?.since_n === null && m?.ema === null, JSON.stringify(m));
+  const ml = parseTvMessage('MACD AKAN 0.6921 | macd 15 8 21 | base 0.686 | stop 0.6612 | dip 2 | after 1575m | candle 15 | late | tf 30S');
+  check('…sub-dollar, a 15m MACD with 8 / 21, the second DIP of its dip, a late close', ml?.macd_tf === '15' && ml.macd_fast === 8 && ml.macd_slow === 21
+    && ml.dip_px === 0.686 && ml.stop === 0.6612 && ml.dip_n === 2 && ml.after_min === 1575 && ml.candle_tf === '15' && ml.late === true, JSON.stringify(ml));
+  check('…JSON', parseTvMessage({ stage: 'macd', ticker: 'KRMN', macd_tf: '5', macd_fast: 12, macd_slow: 26, base: 37.53, after: 200, stop: 37.2 })?.dip_px === 37.53
+    && parseTvMessage({ stage: 'macd', ticker: 'KRMN', macd_tf: 5, dip_px: 37.53, after_min: 5 })?.after_min === 5);
+  check('…other stages carry no MACD fields, and "MACD" as a ticker still parses as one',
+    parseTvMessage('RSI XTND 1.07 | rsi 30 29.2 ma 27.0 | low 22.1 | candle 30 | tf 30S')?.macd_tf === null
+      && parseTvMessage('PULLBACK X 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.dip_px === null
+      && parseTvMessage('PULLBACK MACD 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.ticker === 'MACD');
+  check('…"| macd" needs a timeframe and two lengths', parseTvMessage('MACD X 1.0 | macd 5 | base 0.9 | tf 30S')?.macd_tf === null);
+  check('MACD has its own switch, after DIP in the menu', stageSwitch('macd') === 'macd'
+    && TV_STAGE_ORDER.indexOf('macd') === TV_STAGE_ORDER.indexOf('dip') + 1);
   const g = new TvSetupGate();
-  check('LIFT announces off Momentum (the default list has it on), with no cap', g.admit(l!, T0, false, false) === 'notify' && g.announces('lift') && !pastCap(l!));
-  check('…the same one again is a re-delivery; another DIP\'s LIFT later is a new event', g.admit(l!, T0 + 5, false, false) === 'drop'
-    && g.admit({ ...l!, lift_base: 38.1, lift_level: 41.15 }, T0 + 900, false, false) === 'notify');
+  check('MACD announces off Momentum (the default list has it on), with no cap', g.admit(m!, T0, false, false) === 'notify' && g.announces('macd') && !pastCap(m!));
+  check('…the same one again is a re-delivery; the next DIP\'s MACD later is a new event', g.admit(m!, T0 + 5, false, false) === 'drop'
+    && g.admit({ ...m!, dip_px: 38.1, price: 38.6 }, T0 + 900, false, false) === 'notify');
   const off = new TvSetupGate();
   off.setAnnounced(['pullback', 'dip']);
-  check('…LIFT switched off, DIP on → LIFT quiet, the DIP still announces', off.admit(l!, T0, false, true) === 'quiet' && !off.announces('lift') && off.announces('dip'));
+  check('…MACD switched off, DIP on → MACD quiet, the DIP still announces', off.admit(m!, T0, false, true) === 'quiet' && !off.announces('macd') && off.announces('dip'));
   const on = new TvSetupGate();
-  on.setAnnounced(['lift']);
-  check('…LIFT on, DIP off → LIFT announces', on.admit(l!, T0, false, false) === 'notify' && !on.announces('dip'));
-  const html = formatTvSetupAlert(l!, 'NYSE:KRMN', null);
-  check('Telegram: LIFT headline and what happened', html.includes('<b>LIFT</b>') && html.includes('<b>KRMN</b>') && html.includes('$40.55')
-    && html.includes('price reached $40.53, 8% above the DIP at $37.53 (4h 50m after it)'), html);
-  check('Telegram: the DIP\'s stop, the RSI timeframe, Momentum', html.includes("the DIP's stop $37.20 (-8.3%, under the dip's low)") && html.includes('10m RSI')
-    && html.includes('not on our Momentum list') && !html.includes('null'), html);
-  const cHtml = formatTvSetupAlert(lc!, 'NASDAQ:AKAN', { change_pct: 12, grade: 'B', float_m: 4 });
-  check('Telegram: on a close, a second DIP, on Momentum', cHtml.includes('price closed over $0.7409, 7.5% above the DIP at $0.6860 (2h 14m after it)')
-    && cHtml.includes('DIP 2 of its dip') && cHtml.includes('on Momentum'), cHtml);
+  on.setAnnounced(['macd']);
+  check('…MACD on, DIP off → MACD announces', on.admit(m!, T0, false, false) === 'notify' && !on.announces('dip'));
+  const html = formatTvSetupAlert(m!, 'NYSE:KRMN', null);
+  check('Telegram: MACD headline and what happened', html.includes('🟢 <b>MACD</b>') && html.includes('<b>KRMN</b>') && html.includes('$38.12')
+    && html.includes('after the DIP at $37.53, the 5m MACD line crossed above zero (3h 20m after it)'), html);
+  check('Telegram: the move from the DIP, its stop, the lengths, the RSI timeframe, Momentum', html.includes('+1.6% from the DIP')
+    && html.includes("the DIP's stop $37.20 (-2.4%, under the dip's low)") && html.includes('MACD 12 / 26') && html.includes('10m RSI')
+    && html.includes('not on our Momentum list') && !html.includes('null') && !html.includes('DIP 1 of'), html);
+  const lHtml = formatTvSetupAlert(ml!, 'NASDAQ:AKAN', { change_pct: 12, grade: 'B', float_m: 4 });
+  check('Telegram: a late one, a second DIP, the day after, on Momentum', lHtml.includes('after the DIP at $0.6860, the 15m MACD line crossed above zero (1d 2h after it, a bar late)')
+    && lHtml.includes('DIP 2 of its dip') && lHtml.includes('MACD 8 / 21') && lHtml.includes('on Momentum'), lHtml);
   check('minutes read as 45m / 4h 50m / 3h / 2d 3h', fmtMinutes(45) === '45m' && fmtMinutes(290) === '4h 50m' && fmtMinutes(180) === '3h'
     && fmtMinutes(3060) === '2d 3h' && fmtMinutes(null) === '?');
+  // v38's LIFT was removed with the script's level: its messages are rejected (400), like the other removed stages'.
+  check('v39: a LIFT message is no longer read', parseTvMessage('LIFT KRMN 40.55 | lift 40.53 | base 37.53 | up 8 | stop 37.2 | dip 1 | after 290m | by touch | candle 10 | tf 30S') === null
+    && parseTvMessage({ stage: 'lift', ticker: 'KRMN', lift: 40.53, base: 37.53 }) === null);
 }
 
 console.log('EMA cross over VWAP (v35, 2026-11-13)');
@@ -708,14 +724,12 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v38', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v39', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
     'if rtAtClose and vRtArmed and vRtTouch and not vEndSeen and not na(vOpen)', 'options = ["Candle close", "30s bounce"]',
-    'str.tostring(na(lPx) ? close : lPx, format.mintick)', 'vb4Bb, v4RtPx), alert.freq_once_per_bar_close)',
-    // v30: the chart's lane is chosen by timeframe.main_period (timeframe.period is 30S inside the replay)
-    'vlN    = timeframe.main_period == vbCandleTf ? 1 : vb2On and timeframe.main_period == vb2Cndl ? 2',
+    'str.tostring(na(lPx) ? close : lPx, format.mintick)', 'vbCandleTf, vbBbTf, vbRtPx), alert.freq_once_per_bar_close)',
     // v31: the month line's own switch — this month's hourly bars + today's 30s bars, drawn, used by PULLBACK and the VB;
     // a late RETEST is drawn on its own candle (one bar back)
     'mvSrc      = input.string("30s bars", "Month VWAP from (v31)', '[yPrevPV, yPrevV, mPrevPV, mPrevV] = request.security(',
@@ -727,17 +741,18 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'request.security_lower_tf(syminfo.tickerid, need30 ? "30S" : timeframe.period, [hlc3 * volume, volume])',
     'float vTPV    = use30 ? vPV30 :', 'svwap = lower30 ?', 'input.float(0.0,         "VB: the candle may open up to %',
     'size = size.tiny, display = display.none',
-    // v29: three more VB lanes in the same alert (1h / 4h / 1D on month + year by default), one replay per chart,
-    // a 4h+ lane's month / year retest carried over the day's end
+    // v29's vbStep() (the VB as a function of its candle and band timeframes) stays; v39 removed the three extra lanes
+    // that called it, so the one VB is the only caller: on the 30s alert and in the chart's replay
     'vbStep(simple string cTf, simple string bTf, bool onS, bool onM, bool onY, bool laneOk) =>',
-    'vbStep(vb2Cndl, vb2Bb, vb2S, vb2M, vb2Y, vb2Ok)', 'vbStep(vb3Cndl, vb3Bb, vb3S, vb3M, vb3Y, vb3Ok)', 'vbStep(vb4Cndl, vb4Bb, vb4S, vb4M, vb4Y, vb4Ok)',
-    'vbStep(vlCndl, vlBb, vlS, vlM, vlY, vlOk)', 'input.timeframe("60",    "candle"', 'input.timeframe("240",   "candle"', 'input.timeframe("1D",    "candle"',
+    '= vbStep(vbCandleTf, vbBbTf, vbSession, vbMonth, vbYear, vbOk)',
     'bool vCarry    = timeframe.in_seconds(cTf) >= 14400',
     'if vRtArmed and (vRtS or not vCarry)', 'not (gNewDay and (vSFired or not vCarry))',
-    'alert(vbMsg(v2FireS, v2FireM, v2FireY', 'alert(vbMsg(v4FireS', 'alert(vbRtMsg(v3RtS', 'vbLower    = vlOk and vbShow and timeframe.period == vlCndl',
-    // v32: the RSI cross — 12h RSI over its SMA-14 while oversold, judged at the 6h close from requests (any chart), the 30s alert
+    'alert(vbMsg(vbFireS, vbFireM, vbFireY', 'alert(vbRtMsg(vbRtS, vbRtM, vbRtY',
+    'vbLower    = vbOk and vbShow and timeframe.period == vbCandleTf and vbChartSec > vbBaseSec',
+    // v32: the RSI cross — the RSI over its SMA-14 while oversold, judged at the check candle's close from requests (any
+    // chart), the 30s alert. v39: the defaults are the operator's (a 10m RSI checked at the 1h close; v32's were 12h at 6h)
     '"RSI "', '" | rsi " + rsTfA', '" ma "', '" | low "', '" | candle " + rsCheck', '" | late"',
-    'input.timeframe("360", "RSI: checked at the close', 'input.timeframe("720", "RSI: the RSI\'s timeframe',
+    'input.timeframe("60",  "RSI: checked at the close', 'input.timeframe("10",  "RSI: the RSI\'s timeframe',
     'float up = ta.rma(math.max(ch, 0), len)', 'float dn = ta.rma(-math.min(ch, 0), len)', '[close[1], up[1], dn[1], sm[1], lo[1]]',
     'request.security(rsSym, rsTfA, rsState(rsLen, rsMaLen, rsOsN), lookahead = barmerge.lookahead_on)',
     '[r, (sm + r) / rsMaLen]', 'rsEndC  = time_close == time_close(rsCheck)',
@@ -751,7 +766,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if ((rose and s.lowNew) or (r > ma and s.n == 0)) and s.n < rsDipMax', 'else if rsDipWait > 0 and s.age >= rsDipWait',
     'rsCrossOk  = rsOn and rsChartSec <= rsTfSec and rsCheckSec % rsChartSec == 0', 'rsDipOk    = rsCrossOk and rsDipOn and rsTfSec % rsChartSec == 0',
     'int rsE1 = rs.stepDip(rsA[1], rsMaA[1], rsCLowP)', 'int rsE2 = rs.stepDip(rsA, rsMaA, rsCLow)', 'rsDStop   := rs.lowPx - syminfo.mintick',
-    'rsDipGo := rsDipGo and inWindow', 'if rsDipGo and timeframe.period == vbTf', 'alert(rsDipMsg(lfOn ? lfNew : na), alert.freq_once_per_bar_close)',
+    'rsDipGo := rsDipGo and inWindow', 'if rsDipGo and timeframe.period == vbTf', 'alert(rsDipMsg(), alert.freq_once_per_bar_close)',
     '"RSI dip (v34)"', '"RSI dip, late close (v34)"', '"RSI dip starts (v34)"',
     // v35: the EMA cross over VWAP — the EMA of a timeframe's closes from a request (lookahead on + [1]) plus the live
     // close, judged at that timeframe's candle closes (late ones first, never announced across the day's end), per line
@@ -793,24 +808,35 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'alert(emBncMsg(emBLS, emBLM, emBLY, emBLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true, emBLStop, emBLAge, emBLE, emBLV, emBLW), alert.freq_once_per_bar_close)',
     'alert(emBncMsg(emBCS, emBCM, emBCY, emBCN, close, emLive, svwap, mvwap, yvwap, false, emBCStop, emBCAge, emBCE, emBCV, emBCW), alert.freq_once_per_bar_close)',
     '"EMA bounce (v37)"', '"EMA bounce, late close (v37)"', '"EMA bounce, filtered (v37)"', '"EMA bounce, filtered, late close (v37)"',
-    // v38: the LIFT — after a DIP a level some % above its close, drawn; LIFT when a later bar's high (or close) reaches it;
-    // a newer DIP moves it, N sessions end it; the DIP's message names the level
-    '"LIFT "', 'rsDipMsg(float liftLvl) =>', 'msg += " | lift " + str.tostring(liftLvl, format.mintick)',
-    '" | lift " + str.tostring(lfGoLvl, format.mintick) + " | base " + str.tostring(lfGoBase, format.mintick)',
-    '" | up " + str.tostring(rsLiftPct, "#.##") + " | stop " + str.tostring(lfGoStop, format.mintick)',
-    '" | dip " + str.tostring(lfGoDipN) + " | after " + str.tostring(lfGoMin) + "m"', '" | by " + (rsLiftBy == "Touch" ? "touch" : "close") + " | candle " + rsTfA',
-    'input.float(8.0,      "DIP lift: the level, % above the DIP\'s price"', 'input.string("Touch", "DIP lift fires on", options = ["Touch", "Close above"]',
-    'input.int(3,          "DIP lift: the level stays for N sessions', 'bool  lfOn     = rsLiftOn and rsDipOk',
-    'float lfNew    = rsDPx * (1 + rsLiftPct / 100)', 'if rsDipGo and rsDipLate', 'else if not na(lfLevel) and newDay',
-    'if not na(lfLevel) and rsLiftDays > 0 and lfDays > rsLiftDays', 'if not na(lfLevel) and (rsLiftBy == "Touch" ? high >= lfLevel : close >= lfLevel)',
-    'lfGoMin  := math.round((time_close - lfT0) / 60000.0)', 'if rsDipGo and not rsDipLate', 'lfGo := lfGo and inWindow',
-    'if lfGo and timeframe.period == vbTf', 'alert(rsLiftMsg(), alert.freq_once_per_bar_close)',
-    '"DIP lift level (v38)"', '"DIP lift (v38)"', 'text = "LIFT"']) {
+    // v39: the MACD cross after a DIP — a DIP arms a wait; the MACD line (EMA fast − EMA slow of a timeframe's closes, from
+    // a request with lookahead on + [1], plus the live close) closes above zero after closing at or under it; sampled at
+    // that timeframe's closes (late ones first), a newer DIP starts the wait over, N sessions end it
+    '"MACD "', '" | macd " + mcTf + " " + str.tostring(mcFast) + " " + str.tostring(mcSlow)',
+    '" | base " + str.tostring(mcGoBase, format.mintick) + " | stop " + str.tostring(mcGoStop, format.mintick)',
+    '" | dip " + str.tostring(mcGoDipN) + " | after " + str.tostring(mcGoMin) + "m" + " | candle " + rsTfA',
+    'input.timeframe("5", "MACD: its timeframe', 'input.int(12,        "MACD: fast length"', 'input.int(26,        "MACD: slow length"',
+    'input.int(3,         "MACD: wait for the cross for N sessions',
+    'mcState(simple int fast, simple int slow) =>', '[f[1], s[1]]',
+    '[mcPrevF, mcPrevS] = request.security(rsSym, mcTf, mcState(mcFast, mcSlow), lookahead = barmerge.lookahead_on)',
+    'mcLine = (mcAF * close + (1 - mcAF) * mcPrevF) - (mcAS * close + (1 - mcAS) * mcPrevS)',
+    'mcOk    = mcOn and rsDipOk and rsChartSec <= mcTfSec and mcTfSec % rsChartSec == 0',
+    'mcUp(float before, float now) => not na(before) and not na(now) and before <= 0 and now > 0',
+    'mcEnd = time_close == time_close(mcTf)', 'if mcArmed and mcLife > 0 and mcAge > mcLife',
+    'if mcArmed and mcUp(mcWas, mcL1)', 'if mcArmed and mcUp(mcWas, mcLine)', 'mcAge   := newDay ? 1 : 0',
+    'mcGoMin  := math.round((time - mcT0) / 60000.0)', 'mcGoMin  := math.round((time_close - mcT0) / 60000.0)',
+    'if rsDipGo and rsDipLate', 'if rsDipGo and not rsDipLate', 'mcBase  := rsDPx', 'mcStop  := rsDStop', 'mcDipN  := rsDN',
+    'mcGo := mcGo and inWindow', 'if mcGo and timeframe.period == vbTf', 'alert(mcMsg(), alert.freq_once_per_bar_close)',
+    '"MACD after a DIP (v39)"', '"MACD after a DIP, late close (v39)"', 'text = "MACD"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
-  check('v30: the lane choice never reads timeframe.period (it is the requested 30S inside the replay)',
-    !/^vl\w*\s*=.*timeframe\.period/m.test(pine));
+  // v39 removed the DIP's LIFT (v38) and the three extra VB lanes (v29): none of their inputs, state, messages or plots are left.
+  for (const gone of ['"LIFT "', 'rsLift', 'lfLevel', 'lfGo', 'rsLiftMsg', '" | lift "', '" | up "', '" | by "', '"DIP lift', 'text = "LIFT"',
+    'vb2On', 'vb3On', 'vb4On', 'vb2Cndl', 'vb4Bb', 'vb2Ok', 'vlN', 'vlCndl', 'vlOk', 'v2FireS', 'v4RtPx', '"Lane ', 'timeframe.main_period']) {
+    check(`v39: script no longer has ${gone}`, !pine.includes(gone));
+  }
+  check('v39: 12 alert() calls — three PULLBACK, the VB and its RETEST, RSI, DIP, four EMA / BOUNCE, MACD',
+    (pine.match(/^\s*alert\(/gm) ?? []).length === 12, String((pine.match(/^\s*alert\(/gm) ?? []).length));
   // v28: the VB break (LEVEL / BREAK) is gone; the new inputs went last (after vbShow).
   for (const gone of ['"LEVEL"', '"BREAK"', 'vbLvMsg', '" | level "', '" | break "', 'text = "BRK"']) {
     check(`v28: script no longer has ${gone}`, !pine.includes(gone));
@@ -836,24 +862,27 @@ console.log('Contract — the Pine script still emits what the parser reads');
   check('v37: the five EMA bounce inputs come after the filter ones, in order', at('emFromHour = input.int') < at('emBncOn   = input.bool')
     && at('emBncOn   = input.bool') < at('emBncFrom = input.string') && at('emBncFrom = input.string') < at('emBncWait = input.int')
     && at('emBncWait = input.int') < at('emBncTolE = input.float') && at('emBncTolE = input.float') < at('emBncTolV = input.float'));
-  check('v38: the five DIP lift inputs come last, in order (after the EMA section, though the lift belongs to the RSI setup)',
-    at('emBncTolV = input.float') < at('rsLiftOn   = input.bool')
-    && at('rsLiftOn   = input.bool') < at('rsLiftPct  = input.float') && at('rsLiftPct  = input.float') < at('rsLiftBy   = input.string')
-    && at('rsLiftBy   = input.string') < at('rsLiftDays = input.int') && at('rsLiftDays = input.int') < at('rsLiftShow = input.bool')
-    && (pine.slice(at('rsLiftShow = input.bool') + 'rsLiftShow = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
+  check('v39: the six MACD inputs come last, in order (after the EMA section, though the MACD belongs to the RSI setup)',
+    at('emBncTolV = input.float') < at('mcOn   = input.bool')
+    && at('mcOn   = input.bool') < at('mcTf   = input.timeframe') && at('mcTf   = input.timeframe') < at('mcFast = input.int')
+    && at('mcFast = input.int') < at('mcSlow = input.int') && at('mcSlow = input.int') < at('mcLife = input.int')
+    && at('mcLife = input.int') < at('mcShow = input.bool')
+    && (pine.slice(at('mcShow = input.bool') + 'mcShow = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0);
   // New plots go last (TradingView keeps a plot's style by position too)
-  check('v36 / v37 / v38: the gray "filtered" marks, the four bounce marks, then the lift\'s level and mark are the script\'s last plots',
+  check('v36 / v37 / v39: the gray "filtered" marks, the four bounce marks, then the MACD\'s two marks are the script\'s last plots',
     at('"yVWAP (EMA cross, v35)"') < at('"EMA cross, filtered (v36)"')
     && at('"EMA cross, filtered (v36)"') < at('"EMA cross, filtered, late close (v36)"')
     && at('"EMA cross, filtered, late close (v36)"') < at('"EMA bounce (v37)"') && at('"EMA bounce (v37)"') < at('"EMA bounce, late close (v37)"')
     && at('"EMA bounce, late close (v37)"') < at('"EMA bounce, filtered (v37)"') && at('"EMA bounce, filtered (v37)"') < at('"EMA bounce, filtered, late close (v37)"')
-    && at('"EMA bounce, filtered, late close (v37)"') < at('"DIP lift level (v38)"') && at('"DIP lift level (v38)"') < at('"DIP lift (v38)"')
-    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"DIP lift (v38)"'))));
-  // v38: a late DIP's level takes over before the bar's check, an on-time one's after it; the DIP's alert is sent before a LIFT's
-  check('v38: a late DIP arms, then the check, then an on-time DIP arms; the DIP\'s alert before the LIFT\'s',
-    at('if rsDipGo and rsDipLate') > 0 && at('if rsDipGo and rsDipLate') < at('if not na(lfLevel) and (rsLiftBy == "Touch"')
-    && at('if not na(lfLevel) and (rsLiftBy == "Touch"') < at('if rsDipGo and not rsDipLate')
-    && at('alert(rsDipMsg(lfOn ? lfNew : na)') < at('alert(rsLiftMsg()')
+    && at('"EMA bounce, filtered, late close (v37)"') < at('"MACD after a DIP (v39)"') && at('"MACD after a DIP (v39)"') < at('"MACD after a DIP, late close (v39)"')
+    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"MACD after a DIP, late close (v39)"'))));
+  // v39: a MACD candle that closed with or before the DIP's candle doesn't count — the late sample, then a late DIP's
+  // wait starts, then the bar's own sample, then an on-time DIP's wait; the DIP's alert is sent before a MACD's
+  check('v39: the late MACD sample, the sessions\' count, a late DIP arms, the on-time sample, an on-time DIP arms; the DIP\'s alert before the MACD\'s',
+    at('if mcLateS') > 0 && at('if mcLateS') < at('if mcArmed and newDay') && at('if mcArmed and newDay') < at('if rsDipGo and rsDipLate')
+    && at('if rsDipGo and rsDipLate') < at('if mcEnd and (na(mcDone) or mcDone != mcT)')
+    && at('if mcEnd and (na(mcDone) or mcDone != mcT)') < at('if rsDipGo and not rsDipLate')
+    && at('alert(rsDipMsg()') > 0 && at('alert(rsDipMsg()') < at('alert(mcMsg()')
     && (pine.match(/alert\(rsDipMsg\(/g) ?? []).length === 1);
   check('v38: the script has no "| level" (v25–v27\'s LEVEL field, which the parser no longer reads)', !pine.includes('" | level "'));
   // v37: on one sample the bounce of an earlier cross is judged before the cross (which re-arms), and read before the arm resets it

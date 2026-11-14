@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v31** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). Since v29 up to three more VB timeframes (lanes: 1h / 4h / 1D on the month and year lines by default) ride the same alert (§16.10). Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v39** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the RSI cross with its DIP and (v39) the MACD cross after a DIP (§17), and the EMA cross over VWAP with its filter and BOUNCE (§18); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1137,6 +1137,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-13 | v36 | `7de1369` | Operator (PARA, 3m): "is there anyway we can filter/optimize the false ones?". Measured first (`research/ema-vwap`, 3,768 crosses, in / out of sample): about half close back under the VWAP within 5 candles and the plain cross loses; the hour, a short stay under the line and chop before the cross mark the worse ones in both halves; the video's ADX and volume filters don't. **The EMA filter** (§18.1): a cross is **weak** when its candle opened before 07:00 New York, the EMA had been under the line for fewer than 5 candles, or the two crossed more than 2 times in the 20 candles before. Every cross is still sent, with `| under N | flips N`, and `| weak` when weak; a weak one takes no `cross N`, gets a gray `ema` mark, and the server stores it quietly (`why` weak). Four inputs and two plots last: nothing shifts. Dashboard: weak crosses never take a 📐 row; History lists them with "weak". Replica: `_EmaLine` under / ran / flips, `selftest_ema` compares readings and verdicts. Regression 442 checks. **Paste, recreate both alerts.** |
 | 2026-11-13 | v37 | `8ffe386` | Operator (PARA with v36's marks): "maybe, pullback or bounce from ema and/or vwap can help?". Measured first (`research/ema-vwap/ema_pullback_study.py`): a bounce comes on about 44% of the crosses; those entries are false 35–37% of the time (the cross: 47–49%) and lose −0.06R to −0.10R (the cross: −0.20R to −0.22R), in both halves, on 5m candles and with other waits; still not positive. **BOUNCE** (§18.2, stage `bounce`): a sent cross arms a 10-candle wait; a candle's low comes down to the EMA or the VWAP (within 1%), then that candle or a later one closes green above the EMA; a close under the VWAP, a newer cross or the day's end stops it. Message `BOUNCE … | stop … | from ema+vwap | bounce N | since N`, stop a tick under the pullback's low; `| weak` and a gray mark after a weak cross. Five inputs and four plots last: nothing shifts. Server: rides the EMA ⚙ switch (`tv_bounce` on Telegram), limited like the cross. Dashboard: lime BOUNCE pill, `bounce · stop`, History "EMA + BOUNCE". Replica `ema_bounce_direct` / `simulate_ema(full)`. Regression 493 checks. **Paste, recreate both alerts.** |
 | 2026-11-14 | v38 | `7c7b4b9` | Operator: a buy stop 8% above the latest DIP, for the DIPs they pick; "lets add the +8% level (better configurable) and alert to the script. I want to experiment with it". Measured first (`research/rsi-dip`): the level is reached on 30% of DIPs and the price is lower on average afterwards, so it marks their level, not an edge. **LIFT** (§17.3, stage `lift`): a DIP sets a level `rsLiftPct` % (8) above its close, drawn as a magenta line; LIFT on the first later bar whose high reaches it (or that closes over it); a newer DIP moves it; it goes after 3 sessions. The DIP's message gains `| lift <level>`; `LIFT … | lift … | base … | up 8 | stop … | after 290m | by touch`. Five inputs and two plots last (section 5, after the EMA section); the DIP's `alert()` moved there. Server: its own ⚙ switch after DIP (a list saved before starts it at the DIP's value), `tv_lift`, announced like the DIP. Dashboard: LIFT pill, the DIP row shows `lift $X`. Replica `lift_rule_direct` / `simulate_rsi(full)['lifts']`. Regression 542 checks. **Paste, recreate both alerts.** |
+| 2026-11-15 | v39 | `pending` | Operator: "entering alone on the DIP is not easy, chart can keep going lower, that's why lets add macd line cross over zero line after the latest DIP, I want to experiment with it. Also, lets refactor some of our experimental features, such as EMA CROSS OVER VWAP, LIFT, VB LANES"; asked what refactor meant: remove them; then "can we keep it [the EMA cross]? I want to improve it later". **MACD** (§17.4, stage `macd`): after a DIP, the MACD line (EMA 12 − EMA 26 of 5m closes, from a request like the RSI) closes above zero after closing at or under it; a newer DIP starts the wait over; it ends after 3 sessions. Message `MACD … | macd 5 12 26 | base … | stop … | dip N | after 200m | candle 10`. Measured before (`research/rsi-dip/dip_macd_cross.py`): no better than the DIP itself. **Removed:** the DIP's LIFT (v38, §17.3) and the three extra VB lanes (v29, §16.10), in git at v38 `7c7b4b9`; `LIFT …` messages now get 400 and `vb_long_min` is gone. **Kept:** the EMA cross over VWAP with its filter and BOUNCE, unchanged. The RSI's defaults became the operator's (a 10m RSI checked at 1h). Inputs left the middle (18 lane inputs) and the end (5 LIFT inputs), and six MACD inputs and two plots went last: 68 inputs, 32 plots, 12 `alert()` calls. Server: ⚙ switch MACD after DIP (starts at the DIP's value), `tv_macd`, announced like the DIP. Dashboard: MACD pill, History filter "RSI + DIP + MACD". Replica `macd_rule_direct` / `simulate_rsi(full)['macds']`. Regression 569 checks. **Paste, Settings → Defaults → Reset settings, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1942,7 +1943,15 @@ crossed one); a close under the lowest crossed line still cancels it. On the sam
 The candle-close entry can have a very tight stop (a candle closing just above its low): ~13% of
 them had the stop under 0.5% away, which is why R is shown without those.
 
-### 16.10 VB lanes for longer trades (script v29, 2026-10-29)
+### 16.10 VB lanes for longer trades (script v29, 2026-10-29; removed in v39)
+
+> **Removed in script v39 (2026-11-15).** The operator: "lets refactor some of our experimental
+> features, such as EMA CROSS OVER VWAP, LIFT, VB LANES", then chose to remove them and to keep
+> the EMA cross. The lanes' eighteen inputs, their three `vbStep()` calls and alerts, and the
+> server's `TV_SETUP.vb_long_min` exception are gone; the code is in git at v38 (`7c7b4b9`).
+> `vbStep()` itself stays, called once for the one VB. The VB's candle timeframe is still an
+> input, so a 1h VB can be run by changing it; off Momentum it follows the same rule as a 5m one.
+> What follows is the record of the lanes as they were.
 
 **The ask:** "for longer terms (1h, 4h, 1D), I'd like to use VB only with monthly vwap (plus,
 yearly), how could I configure alarms only for them?" One alert carries one set of inputs, and
@@ -2110,7 +2119,15 @@ timeframe and seeking the RSI drop in 15min chart". Built without grading.
   - Not checked: the Pine itself, which can't be compiled here, and whether a DIP is worth
     taking.
 
-### 17.3 The LIFT above a DIP (script v38, 2026-11-14)
+### 17.3 The LIFT above a DIP (script v38, 2026-11-14; removed in v39)
+
+> **Removed in script v39 (2026-11-15)**, a day after it was built, in the same request that
+> added the MACD cross after a DIP (§17.4). The level, its two plots, its five inputs, the
+> `LIFT` message and the DIP's `| lift` field are gone from the script; the server no longer has
+> stage `lift` (a `LIFT …` message gets 400, a saved LIFT switch is dropped, stored `lift` rows
+> aren't listed) and the dashboard has no LIFT pill. The DIP's `alert()` is back in section 3.
+> The code is in git at v38 (`7c7b4b9`); `pinesim.lift_rule_direct` and the `lifts` of
+> `simulate_rsi` stay for research. What follows is the record of the LIFT as it was.
 
 **The ask.** The operator likes the DIP, but "most of them just keep going lower after the DIP
 candle". In their paper account they rest a buy stop-limit 8% above the latest DIP and cancel it
@@ -2178,6 +2195,93 @@ itself on TradingView.
 **To grade.** Every LIFT row has the price, the level and its DIP's price, and the operator's own
 picks are a subset of them. Compare what followed a LIFT with what followed the DIPs that never
 got one, on the live rows, after two or three weeks.
+
+### 17.4 The MACD cross after a DIP (script v39, 2026-11-15)
+
+**The ask.** "entering alone on the DIP is not easy, chart can keep going lower, that's why lets
+add macd line cross over zero line after the latest DIP, I want to experiment with it." The
+operator's layout: a 5m chart with TradingView's standard MACD under it, and the RSI cross set to a
+10m RSI checked at 1h. They read it by hand first: "get the latest DIP … and wait for the MACD line
+cross the zero, and most of them could reach 10-15% change".
+
+**Measured first** (`apps/api/scripts/research/rsi-dip/dip_macd_cross.py`, 60 days of Yahoo 5m
+bars, 4,591 replayed DIPs). The 5m MACD line crosses above zero after 70% of the DIPs, a median
+3.3 hours later and about 1% above the DIP's price. What follows that cross is no better than what
+follows the DIP itself: +10% within three sessions on 29% of them in the first half of the data and
+40% in the second. In the week of 11-02 it was 51%, which is the stretch a 5m chart shows. So MACD
+is the operator's confirmation for the DIPs they pick, built to be tried; it is not a measured
+edge.
+
+**The rule** (script section 5, after the EMA section because new inputs go last):
+
+1. A DIP alert starts a wait. A newer DIP on the ticker starts it over ("the latest DIP").
+2. The **MACD line** is the EMA `mcFast` (12) minus the EMA `mcSlow` (26) of the closes of `mcTf`
+   candles (5m). That is the blue line of TradingView's MACD on that chart. The signal line and
+   the histogram are not used.
+3. **MACD** fires at the first close of an `mcTf` candle where the line is **above zero after
+   being at or under it at the close before**. A line already above zero at the DIP has to come
+   back under it first.
+4. A MACD candle that closed with or before the DIP's own candle doesn't count.
+5. The wait ends after `mcLife` (3) sessions have begun since the DIP's candle without a cross
+   (0 = it lasts until the next DIP).
+
+One MACD per DIP.
+
+**How, on any chart.** Like the RSI and the EMA cross, one `request.security` (extended session,
+lookahead on, `[1]`) returns the two EMAs after the last finished `mcTf` candle, and the bar's
+close makes them live: `mcLine = (αf·close + (1−αf)·prevFast) − (αs·close + (1−αs)·prevSlow)`. The
+line is sampled on the bar that closes an `mcTf` candle, or on the next bar if that one had no
+trades (`| late`, drawn one bar back). A late sample is announced on a new day's first bar too,
+like a late RSI or DIP, with the price the candle closed at. Each bar runs in this order: the late
+sample, the sessions' count, a late DIP's wait, the bar's own sample, an on-time DIP's wait. So a
+candle that closed with the DIP's candle is judged under the DIP before it.
+
+`mcOk` is where it runs: the chart shows the DIP (`rsDipOk`), its bars are no longer than `mcTf`
+and they divide it. With the operator's settings that is a 5m, 1m or 30s chart; a 10m chart shows
+the DIP and no MACD mark. The marks are the same on every such chart when `mcTf` divides the RSI's
+timeframe (5m and 10m do).
+
+**Inputs** (the last six, shown in the "RSI cross" group): `mcOn` (on), `mcTf` (5), `mcFast` (12),
+`mcSlow` (26), `mcLife` (3), `mcShow` (on).
+
+**The message**, from the 30s alert only:
+
+`MACD KRMN 38.12 | macd 5 12 26 | base 37.53 | stop 37.2 | dip 1 | after 200m | candle 10 | tf 30S`
+
+- `macd` its timeframe and the two lengths;
+- `base` the DIP's price, `stop` the DIP's stop (a tick under the dip's low), `dip` the DIP's
+  number in its dip;
+- `after` minutes since the DIP candle closed, `candle` the RSI's timeframe;
+- `| late` when the MACD candle's closing bar had no trades.
+
+**The chart.** An aqua **MACD** label under the bar that closed the crossing candle. Two plots,
+the script's last.
+
+**Our side** (stage `macd`; fields `macd_tf`, `macd_fast`, `macd_slow`, `dip_px`, `after_min`,
+`stop`, `dip_n`, `candle_tf`, `late`):
+
+- **Its own ⚙ switch, MACD**, listed after DIP, in LIFT's place. A list saved before v39 gives it
+  the DIP's value (`SPLIT_FROM` in `readStoredStages`), so with the operator's switches (PULLBACK
+  and DIP on) it starts on. A saved LIFT is dropped. Telegram mute slug `tv_macd`.
+- Announced like the DIP: off Momentum too, no cap. One per DIP, so nothing to merge.
+- Telegram: "after the DIP at $37.53, the 5m MACD line crossed above zero (3h 20m after it)", then
+  the move from the DIP, the DIP's stop and how far it is, the two lengths, the RSI's timeframe.
+- Dashboard: a teal MACD pill in the RSI's thread, live for an hour. Its row leads with the move
+  from the DIP's price. The entry sound plays on or off Momentum, and "Show only Momentum tickers"
+  keeps it. History's filter is "RSI + DIP + MACD".
+
+**Checked** (`pinesim.selftest_rsi`; `macd_rule_direct` is the plain rule on the fine bars,
+`simulate_rsi(..., full=True)['macds']` the script's sampling). On the thin synthetic tape, with a
+15m RSI: a 5m MACD gives 7 marks on the 5m and 1m charts, a 3m MACD 8 on the 3m and 1m charts, a
+15m MACD 7 on the 15m, 5m, 3m and 1m charts, each the plain rule's candle, DIP and number; 5 of the
+1m charts' marks come a bar late. A 15m chart with a 5m MACD gives none, as does the switch off. A
+slow line (150 / 400) with a one-session wait gives 2 of 4, the same on the 5m and 1m charts. The
+message contract is in `verify-tv-setups.ts`. Not checked: the Pine itself on TradingView, which
+can't be compiled here.
+
+**To grade.** Each MACD row has its price, its DIP's price and stop, and the minutes between them.
+After two or three weeks of live rows, compare what followed a MACD with what followed the DIPs
+that never got one, and with the DIP's own price as the entry.
 
 ## 18. The EMA cross over VWAP (script v35, 2026-11-13)
 

@@ -101,8 +101,8 @@ router.get('/ema-debug', authMiddleware, (req, res) => {
 // cycle's inserts land milliseconds apart. 📐 tv_setup rows (TradingView VWAP
 // setups: PULLBACK since script v10, the VWAP + BB cross since v21) carry their
 // own id and the stage + levels in `setup`. Rows of the stages scripts removed
-// (v27: RECLAIM's FORMING / READY / GO; v28: the VB break's LEVEL / BREAK) stay in the
-// table but aren't listed.
+// (v27: RECLAIM's FORMING / READY / GO; v28: the VB break's LEVEL / BREAK; v39: the DIP's
+// LIFT) stay in the table but aren't listed.
 router.get('/alerts', authMiddleware, async (req, res) => {
   const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
   if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
@@ -116,7 +116,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     .select(['event', 'ticker', 'at', 'meta'])
     .where('tier', '=', 'alert')
     .where('event', '!=', 'tv_breakout')   // v17–v26 BB breakouts (removed in v27; thousands a day)
-    .where(sql<boolean>`NOT (event = 'tv_setup' AND meta->>'stage' IN ('forming', 'ready', 'go', 'level', 'break'))`)
+    .where(sql<boolean>`NOT (event = 'tv_setup' AND meta->>'stage' IN ('forming', 'ready', 'go', 'level', 'break', 'lift'))`)
     .where(dayExpr)
     .orderBy('ticker').orderBy('at')
     .limit(3000)

@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-11-01
+# Session Handover — updated 2026-11-15
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -9,6 +9,24 @@ detection chain** (📰/🤫/📈/👀/🛰️ — how each layer works, knobs, 
 Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
+
+**⚠ Newer than this snapshot — the script is at v39 (2026-11-15).** The snapshot below describes
+v31; the session log has each step since. What the script carries now:
+- **PULLBACK** and the **VWAP + BB cross with its RETEST**, as below. **The VB lanes (v29) were
+  removed in v39**, with the server's `vb_long_min` exception: every line below about lanes is
+  history. The VB's one candle timeframe is still an input.
+- **RSI cross** (v32–v33) → **DIP** (v34) → **MACD** (v39: after a DIP, the 5m MACD line closes
+  above zero; the operator's entry, because "entering alone on the DIP is not easy, chart can keep
+  going lower"). Script defaults since v39: a 10m RSI checked at 1h, the operator's own. Each of
+  RSI / DIP / MACD has a ⚙ switch; MACD starts at the DIP's value. **v38's LIFT (a level 8%
+  above the DIP) was removed in v39**; `LIFT …` messages get 400.
+- **EMA cross over VWAP** (v35) with its filter (v36) and **BOUNCE** (v37): kept unchanged in v39.
+  The operator: "can we keep it? I want to improve it later".
+- **v39 needs Settings → Defaults → Reset settings once** after the paste (inputs left the middle
+  and the end), then both alerts recreated.
+- The operator is experimenting, not trading for real (11-13): deploy at any hour.
+- Measured so far on the RSI family (`apps/api/scripts/research/rsi-dip/README.md`): no entry
+  rule reaches a 50% win rate at +15%; the MACD cross is no better than the DIP itself.
 
 Later commits are docs and research only. Research-only commits under `apps/**`
 are pushed with `[skip ci]` so they don't redeploy. Weekend: no session until Mon 11-02 04:00 ET.
@@ -244,6 +262,29 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-15 (Sun, later) — SCRIPT v39: THE MACD CROSS AFTER A DIP; LIFT AND THE VB LANES REMOVED; THE EMA CROSS KEPT.** The
+operator, after the measurement below: "entering alone on the DIP is not easy, chart can keep going lower, that's why lets add
+macd line cross over zero line after the latest DIP, I want to experiment with it. Also, lets refactor some of our experimental
+features, such as EMA CROSS OVER VWAP, LIFT, VB LANES. And, we will keep PULLBACK TO VWAP, VWAP + BB CROSS and RSI CROSS". Asked
+what "refactor" meant: **remove them**. Mid-build: "did you already remove EMA CROSS? If not, can we keep it? I want to improve
+it later" → the EMA section, its filter and BOUNCE were restored from git and are unchanged.
+- **MACD** (`docs/vwap-setup.md` §17.4, stage `macd`, script section 5): a DIP starts a wait; the MACD line (EMA 12 − EMA 26 of
+  5m closes, from a request with lookahead on + `[1]` plus the bar's close) closes above zero after closing at or under it →
+  `MACD KRMN 38.12 | macd 5 12 26 | base 37.53 | stop 37.2 | dip 1 | after 200m | candle 10 | tf 30S`. A newer DIP starts the
+  wait over; it ends after 3 sessions; one per DIP; a late sample (`| late`) is announced across the day's end like a late DIP.
+  Six inputs (`mcOn`, `mcTf`, `mcFast`, `mcSlow`, `mcLife`, `mcShow`) and two plots, last. It needs a chart of 5m or less whose
+  bars divide the RSI's timeframe (5m, 1m, 30s; not 10m).
+- **Removed:** the LIFT (v38: level, plots, 5 inputs, message, the DIP's `| lift`) and the three extra VB lanes (v29: 18
+  inputs, three `vbStep()` calls and their alerts, `timeframe.main_period`). Server: stage `lift` gone (400), `vb_long_min`
+  gone (a VB on 60m+ candles off Momentum is quiet again), stored `lift` rows unlisted. Code in git at v38 `7c7b4b9`.
+- **RSI defaults** are the operator's now (10m RSI, checked at 1h), so **Reset settings** (needed once, since inputs left the
+  middle) lands on their setup.
+- Server / dashboard: ⚙ switch MACD after DIP (`SPLIT_FROM` macd ← dip), `tv_macd`, announced like the DIP (off Momentum, no
+  cap); teal MACD pill in the RSI thread, History "RSI + DIP + MACD", entry sound.
+- Checks: `verify-tv-setups.ts` 569; `pinesim.py` — `macd_rule_direct` against `simulate_rsi(full)['macds']` on 5m / 3m / 15m
+  MACDs across the charts that can show them. The Pine was not compiled on TradingView.
+- To grade after 2–3 weeks: MACD rows against the DIPs that never got one, and against the DIP's own price as the entry.
 
 **2026-11-15 (Sun) — "AFTER THE DIP, ENTER WHEN THE 5m MACD LINE CROSSES ZERO": MEASURED; NOTHING BUILT.** The operator checked
 5m charts by hand (standard MACD, RSI 10m at 1h, LIFT off): "most of them could reach 10-15% change". `research/rsi-dip/
