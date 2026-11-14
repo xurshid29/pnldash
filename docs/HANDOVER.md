@@ -245,6 +245,15 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-14 (Sat, last) — "WHAT COULD WE DO TO RAISE IT TO 50%?": A FEATURE STUDY; NOTHING BUILT.** `research/rsi-dip/
+dip_features.py` (README has the table): 22 things known before the entry, cut in thirds in sample, on the operator's 10m / 1h
+DIPs and their LIFTs with a +15% target. **Nothing reaches 50% in both halves.** What raises the win rate is how much the name
+moves (a daily range over 17%, a +28% day or three +15% days in the last 10 sessions, far under the 5-session high): the LIFT
+goes from about 31% to 37–40% (with a −15% stop), and with "the LIFT within 16 hours of the DIP" to 43% / 46%. The average
+result does not improve (−3% to 0%): the same names stop out more. RSI depth, the DIP's number and age, and the day's change make
+no difference. Told the operator, with the caveat that a win rate at a fixed +15% mostly measures the name's volatility; offered
+to put the two readings (recent big days, hours since the DIP) on the LIFT alert or to make them script filters. Not answered yet.
+
 **2026-11-14 (Sat, last) — RSI / CHECK TIMEFRAME GRID FOR A 15% TARGET; NOTHING CHANGED.** The operator: "can we measure what
 chart timeframe + RSI and RSI Cross timeframe+RSI can have better win rate, if we put take-profit around 15%?".
 `research/rsi-dip/rsi_tf_grid.py` (README has the table): 20 pairs (RSI 5m–1h, checked at its own timeframe up to 4h) on the same

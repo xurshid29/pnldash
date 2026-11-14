@@ -137,6 +137,58 @@ The same limits as above: every DIP of the rule, not the operator's picks; the r
 consolidated prices; 60 days; this week's watchlist. The second half is better than the first for
 every pair, so a difference between two pairs smaller than that gap says little.
 
+## What would raise the win rate to 50%? (2026-11-14)
+
+The operator, after the grid: "what could we do to raise it to 50%?"
+
+```bash
+python3 -I dip_features.py tickers.txt --cache <folder>      # the operator's 10m RSI checked at 1h, +15%, 3 sessions
+```
+
+`dip_features.py` takes the same DIPs and LIFTs and, for each, 22 things known before the entry (the
+time of day, the price, the day's and the week's change, how far under the 5-session high, the
+average daily range, the best day and the number of +15% days in the last 10 sessions, volume
+against the days before, the RSI at the DIP and its low, the 1h RSI, the drop into the dip, the
+DIP's number and age, the hours from the DIP to the LIFT). Each is cut in thirds on the in-sample
+trades; a third counts when it wins in both halves. `w15` = +15% before a stop 15% under the
+entry (50% needed); `reach` = +15% with no stop.
+
+| LIFT entries, in / out of sample | trades | reach | w15 | average, stop −15% |
+|---|---:|---:|---:|---:|
+| all | 551 / 727 | 35% / 39% | 30% / 33% | −2.2% / −1.7% |
+| average daily range over 17% | 183 / 279 | 48% / 49% | 40% / 37% | −2.0% / −2.5% |
+| …under 9% | 184 / 182 | 24% / 29% | 22% / 27% | −1.8% / −0.1% |
+| a +28% day in the last 10 sessions | 183 / 259 | 46% / 46% | 40% / 37% | −1.5% / −1.6% |
+| …no day over +11% | 184 / 234 | 23% / 35% | 21% / 34% | −2.7% / −0.2% |
+| 3+ days of +15% in the last 10 sessions | 118 / 139 | 42% / 57% | 37% / 46% | −3.1% / +0.0% |
+| 18%+ under the 5-session high | 184 / 371 | 47% / 47% | 39% / 37% | −1.7% / −2.0% |
+| the LIFT within 16 hours of the DIP | 184 / 316 | 43% / 48% | 36% / 38% | −1.6% / −1.2% |
+| …later than 16 hours | 367 / 411 | 30% / 32% | 27% / 29% | −2.4% / −2.1% |
+| **a +28% day in the last 10 + within 16 hours** | 90 / 157 | 51% / 57% | **43% / 46%** | −1.2% / −0.0% |
+| 3+ days of +15% + within 16 hours | 68 / 95 | 46% / 63% | 40% / 52% | −2.2% / +1.5% |
+
+- **Nothing reaches 50% in both halves.** The best single conditions take the LIFT from about 31% to
+  37–40%, the best pair to 43% / 46%. One pair is 52% out of sample and 40% in sample.
+- **What raises it is how much the name moves**, in several forms that are one thing: a large daily
+  range, big days in the last two weeks, a low price, a deep drop, far under the recent high. A
+  name that moves 17% a day gets to +15% twice as often as one that moves 9%.
+- **It doesn't raise the result.** The same names hit the stop more often and harder: the average
+  per trade stays between about −3% and 0% for every one of them. A fixed +15% is a small move for
+  a wild name and a large one for a calm name, so the win rate at +15% mostly measures the name.
+- **A quick LIFT is the one separate thing:** reached within 16 hours of the DIP it wins 36% / 38%,
+  later 27% / 29%.
+- **What makes no difference:** how oversold the RSI was (its value at the DIP, its low, the 1h
+  RSI), the DIP's number and its age, the day's or the week's change, the volume of the day before.
+- **From the DIP itself** (4,297 entries, 17% / 23% overall) the same things lead: a daily range over
+  12% gives 29% / 32%. The best pair, a DIP more than 2% under the day's average price with little
+  regular-hours volume yet, gives 43% / 39% with an average of +1.0% / +0.1% on 127 / 148 trades —
+  one pair out of many tried, so a lead to watch, not a finding.
+- **The target and the stop move the win rate by themselves**, without a better trade: with a +8%
+  target and a −15% stop the LIFT wins 42% / 47%, and then needs 65% to break even.
+
+Limits as above, plus: 22 features and their pairs were tried on about 1,300 LIFTs, so some of the
+best rows are luck; the thirds are cut in sample and only rows that hold in both halves are quoted.
+
 To grade it on the real alerts later: export the `dip` rows from
 `tier_events` again as `live.csv` and read the script's last table (every DIP alert is stored with
 its price and time; the bars reach 60 days back).
