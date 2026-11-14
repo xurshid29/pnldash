@@ -263,6 +263,19 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-15 (Sun, later still) — "THE EMA CROSS WITH THE MACD POSITIVE?": MEASURED; NOTHING BUILT.** The operator, after v39:
+"can we measure the EMA Cross setup with MACD … 1 or 5 min chart, 9 ema must cross the session vwap and macd line must be above
+the signal line and zero line and its histogram must be green". `research/ema-vwap/ema_macd_study.py` (README has the table),
+our Momentum rows 08-14 → 11-14, the split at 10-09. The MACD is already positive at about 7 crosses in 10. Those fail fast a
+little less often (3 points fewer false on 1m; 1–3 on 5m), and **the result is no better**: 1m −0.38R / −0.40R with the rule
+against −0.39R / −0.39R for all; 5m −0.10R / −0.21R against −0.12R / −0.14R, and out of sample the dropped crosses did better.
+No stricter version (signal above zero, histogram rising, with the v36 filter, by the hour) is positive in both halves. **The
+timeframe matters more: the plain cross loses −0.38R on 1m candles, −0.21R on 3m, −0.14R on 5m.** Checked against the chart's
+own MACD (Yahoo's continuous 5m bars, 198 cached tickers): our run-seeded MACD gives the same verdict on 89% of the warm
+crosses, and the chart's MACD tells the same story. Told the operator.
+- Data note: the rows export for this is in the session scratchpad only (99 MB, `export-rows.sql` with 08-14 → 11-15); the
+  study needs duckdb (a scratch venv).
+
 **2026-11-15 (Sun, later) — SCRIPT v39: THE MACD CROSS AFTER A DIP; LIFT AND THE VB LANES REMOVED; THE EMA CROSS KEPT.** The
 operator, after the measurement below: "entering alone on the DIP is not easy, chart can keep going lower, that's why lets add
 macd line cross over zero line after the latest DIP, I want to experiment with it. Also, lets refactor some of our experimental

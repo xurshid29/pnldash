@@ -113,3 +113,69 @@ Limits: bars exist only while a name is on our screen, and each run warms up 15 
 cross in a name's first 45 minutes on the screen isn't counted (TradingView's EMA carries over from
 the day before); our VWAP starts when the name reaches the screen; 1m bars from 20s snapshots; ideal
 fills; the session line only.
+
+## Is the cross better with the MACD positive? (2026-11-15)
+
+The operator: "can we measure the EMA Cross setup with MACD, so, for example, 1 or 5 min chart, 9
+ema must cross the session vwap and macd line must be above the signal line and zero line and its
+histogram must be green, so macd must be positive when ema crosses the vwap".
+
+```bash
+python ema_macd_study.py rows.csv.gz --tf 5 --cut 2026-10-09 --yahoo <folder of cached Yahoo 5m JSON>
+python ema_macd_study.py rows.csv.gz --tf 1 --cut 2026-10-09          # also --tf 3, --macd-warm 80
+```
+
+`ema_macd_study.py` takes the same crosses (08-14 → 11-14, 17,415 ticker-days) on 1m and 5m candles
+and reads the MACD (12 / 26 / 9) of those candles at the cross candle's close. **BOTH** is the
+operator's rule: the line above zero and above the signal (the histogram green). Our MACD starts
+with a name's run on the screen, so it is read only for crosses with 35 candles of run behind them
+("warm": 72% of the 1m crosses, 43% of the 5m ones). Same outcomes and the same split as above.
+
+| in / out of sample | crosses | false | A | B |
+|---|---:|---:|---:|---:|
+| **1m candles**, all warm crosses | 3,895 / 3,338 | 47% / 44% | −1.07% / −1.29% | −0.39R / −0.39R |
+| MACD line above zero (79% / 75% of them) | 3,075 / 2,491 | 45% / 42% | −1.08% / −1.39% | −0.39R / −0.40R |
+| histogram green (85% / 85%) | 3,322 / 2,834 | 45% / 42% | −1.08% / −1.30% | −0.38R / −0.40R |
+| **BOTH** (71% / 67%) | 2,766 / 2,248 | 44% / 41% | −1.08% / −1.38% | −0.38R / −0.40R |
+| BOTH and the signal above zero (55% / 51%) | 2,141 / 1,700 | 44% / 41% | −1.05% / −1.35% | −0.35R / −0.40R |
+| BOTH and the histogram rising (57% / 52%) | 2,203 / 1,734 | 41% / 40% | −1.08% / −1.45% | −0.35R / −0.39R |
+| not both, what the rule drops | 1,129 / 1,090 | 55% / 50% | −1.06% / −1.11% | −0.40R / −0.37R |
+| the v36 filter's crosses | 2,515 / 2,198 | 43% / 39% | −1.04% / −1.19% | −0.36R / −0.37R |
+| the v36 filter and BOTH | 2,064 / 1,751 | 41% / 38% | −1.08% / −1.28% | −0.38R / −0.38R |
+| 09:30–11:00 ET and BOTH | 505 / 413 | 43% / 40% | −0.45% / −1.29% | −0.22R / −0.19R |
+| **5m candles**, all warm crosses | 532 / 418 | 47% / 44% | +0.10% / −1.31% | −0.12R / −0.14R |
+| MACD line above zero (91% / 82%) | 484 / 341 | 46% / 45% | +0.18% / −1.45% | −0.11R / −0.20R |
+| histogram green (83% / 80%) | 444 / 335 | 44% / 44% | +0.41% / −1.32% | −0.12R / −0.17R |
+| **BOTH** (78% / 70%) | 415 / 291 | 44% / 43% | +0.51% / −1.42% | −0.10R / −0.21R |
+| BOTH and the signal above zero (66% / 57%) | 353 / 239 | 43% / 43% | +0.78% / −1.19% | −0.08R / −0.15R |
+| BOTH and the histogram rising (64% / 59%) | 341 / 247 | 43% / 40% | +0.77% / −1.48% | −0.13R / −0.25R |
+| not both, what the rule drops | 117 / 127 | 57% / 47% | −1.37% / −1.04% | −0.16R / +0.01R |
+| the v36 filter and BOTH | 359 / 239 | 42% / 39% | −0.35% / −1.11% | −0.09R / −0.17R |
+| **5m, the chart's MACD** (Yahoo, 198 tickers), all crosses | 277 / 330 | 47% / 45% | −0.62% / −1.64% | −0.20R / −0.00R |
+| BOTH by the chart's MACD (66% / 61%) | 183 / 201 | 40% / 43% | −0.44% / −2.11% | −0.08R / −0.02R |
+| not both | 94 / 129 | 61% / 49% | −0.96% / −0.90% | −0.43R / +0.03R |
+
+- **The MACD is already positive at about 7 crosses in 10** (66–78% by timeframe and half; 61–66% by
+  the chart's own MACD on 5m). The EMA 9 can only cross up through the VWAP after price has been
+  rising, which is what lifts the MACD.
+- **Those crosses fail fast a little less often:** 3 points fewer false ones on 1m and 3m, 1–3 on
+  5m, 2–7 with the chart's MACD. The ones the rule drops are false 50–55% of the time on 1m.
+- **They don't pay better.** On 1m the result is the same with or without the rule (−0.38R / −0.40R
+  against −0.39R / −0.39R). On 5m it is a little better in sample and worse out of sample (−0.10R /
+  −0.21R against −0.12R / −0.14R), and out of sample the dropped crosses did better than the kept
+  ones. Fewer quick failures, a later and higher entry: the same trade-off as the RSI ≥ 65 and
+  20-candle-high filters above.
+- **No stricter version is positive in both halves** (the signal above zero too, the histogram
+  rising, with the v36 filter, by the hour). By bucket nothing moves steadily with the size of the
+  line or the histogram, apart from the false rate.
+- **The timeframe matters more than the MACD:** the plain cross on 1m candles loses −0.38R in both
+  halves (154 crosses a day), on 3m about −0.21R (59 a day), on 5m about −0.14R (34 a day).
+- **The check against the chart:** for the 198 tickers with cached Yahoo 5m bars (the continuous
+  series a TradingView chart has, pre- and after-market included), our run-seeded MACD gives the
+  same BOTH verdict on 89% of the warm crosses and 75% of the others, and the chart's MACD tells the
+  same story (rows above).
+
+Nothing built. Limits as above, plus: our MACD starts with the run, so the first 35 candles of a
+name's time on the screen are left out of the main rows (on 5m that is its first three hours); the
+Yahoo check covers the names of one week's RSI / DIP alerts, not every Momentum name, and its last
+60 days only; no 1m Yahoo check (Yahoo keeps 1m bars for 30 days).
