@@ -245,6 +245,19 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-14 (Sat, later) — SCRIPT v38: THE DIP's LIFT.** After the measurement below the operator answered: they don't place
+the +8% order on every DIP ("I usually check their price actions, RSI, and previous behavior"), and "lets add the +8% level
+(better configurable) and alert to the script. I want to experiment with it." Built as stage `lift` (`docs/vwap-setup.md` §17.3):
+a DIP sets a level `rsLiftPct` % (8) above its close, drawn as a magenta line and named in the DIP's message (`| lift 40.53`, so
+the DIP row and Telegram show the buy-stop price); **LIFT** on the first later bar whose high reaches it (or that closes over it:
+"DIP lift fires on"); a newer DIP moves the level; it goes after 3 sessions. The lift's code is the script's new **section 5**,
+after the EMA section, because its five inputs and two plots must be last; the DIP's `alert()` moved there with it. Server: its
+own ⚙ switch after DIP (`SPLIT_FROM` lift ← dip: the operator's saved switches were PULLBACK + DIP, so LIFT starts on),
+`tv_lift`, announced like the DIP. Dashboard: LIFT pill, History "RSI + DIP + LIFT". Replica `lift_rule_direct` against
+`simulate_rsi(full)['lifts']` on four chart timeframes; 542 checks. **Paste, Save (38), recreate both alerts.** To grade in two or
+three weeks: what followed the LIFT rows against the DIPs that never got one (the operator's picks are a subset).
+- Their saved ⚙ switches on 11-14: PULLBACK and DIP only (CROSS, RETEST, RSI, EMA off).
+
 **2026-11-14 (Sat) — THE "+8% ABOVE THE DIP" ENTRY, MEASURED; NOTHING BUILT.** The operator likes the DIP but "most of them just
 keep going lower", and paper-tested a buy stop-limit 8% above the latest DIP, cancelled if it keeps falling: "it's working very
 well" (KRMN, AKAN on 11-13). Measured on Yahoo 5m bars, 60 days, the 342 tickers of this week's RSI / DIP alerts, the rule

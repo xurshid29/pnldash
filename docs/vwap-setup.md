@@ -1136,6 +1136,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-13 | v35 | `5a8d40b` | Operator: "notified when ema crosses up the vwap (for example, 9 ema crosses up the session vwap in 3 min chart timeframe)". A fourth setup, the **EMA cross over VWAP** (§18): the EMA 9 of 3m closes above the session VWAP at a 3m close after being at or under it at the close before (month / year lines as switches), from a request like the RSI, sent from the 30s alert; gainers only; the day's first candle can't fire; a late sample across the day's end isn't announced. Message `EMA … | ema 9 x | line … | candle 3 | cross N`. Eight inputs and six plots last: nothing shifts. Server stage `ema`: announced like CROSS (⚙ switch EMA, Momentum or a +30% day high, `em_cap` 3 per line a day, `tv_ema`); sidebar, History, toasts. Replica `ema_rule_direct` / `simulate_ema`: the plain rule's crosses on 3m and 1m charts and on six names' real 1m bars. Regression 414 checks. **Paste, recreate both alerts, tick EMA in ⚙.** |
 | 2026-11-13 | v36 | `7de1369` | Operator (PARA, 3m): "is there anyway we can filter/optimize the false ones?". Measured first (`research/ema-vwap`, 3,768 crosses, in / out of sample): about half close back under the VWAP within 5 candles and the plain cross loses; the hour, a short stay under the line and chop before the cross mark the worse ones in both halves; the video's ADX and volume filters don't. **The EMA filter** (§18.1): a cross is **weak** when its candle opened before 07:00 New York, the EMA had been under the line for fewer than 5 candles, or the two crossed more than 2 times in the 20 candles before. Every cross is still sent, with `| under N | flips N`, and `| weak` when weak; a weak one takes no `cross N`, gets a gray `ema` mark, and the server stores it quietly (`why` weak). Four inputs and two plots last: nothing shifts. Dashboard: weak crosses never take a 📐 row; History lists them with "weak". Replica: `_EmaLine` under / ran / flips, `selftest_ema` compares readings and verdicts. Regression 442 checks. **Paste, recreate both alerts.** |
 | 2026-11-13 | v37 | `8ffe386` | Operator (PARA with v36's marks): "maybe, pullback or bounce from ema and/or vwap can help?". Measured first (`research/ema-vwap/ema_pullback_study.py`): a bounce comes on about 44% of the crosses; those entries are false 35–37% of the time (the cross: 47–49%) and lose −0.06R to −0.10R (the cross: −0.20R to −0.22R), in both halves, on 5m candles and with other waits; still not positive. **BOUNCE** (§18.2, stage `bounce`): a sent cross arms a 10-candle wait; a candle's low comes down to the EMA or the VWAP (within 1%), then that candle or a later one closes green above the EMA; a close under the VWAP, a newer cross or the day's end stops it. Message `BOUNCE … | stop … | from ema+vwap | bounce N | since N`, stop a tick under the pullback's low; `| weak` and a gray mark after a weak cross. Five inputs and four plots last: nothing shifts. Server: rides the EMA ⚙ switch (`tv_bounce` on Telegram), limited like the cross. Dashboard: lime BOUNCE pill, `bounce · stop`, History "EMA + BOUNCE". Replica `ema_bounce_direct` / `simulate_ema(full)`. Regression 493 checks. **Paste, recreate both alerts.** |
+| 2026-11-14 | v38 | (this commit) | Operator: a buy stop 8% above the latest DIP, for the DIPs they pick; "lets add the +8% level (better configurable) and alert to the script. I want to experiment with it". Measured first (`research/rsi-dip`): the level is reached on 30% of DIPs and the price is lower on average afterwards, so it marks their level, not an edge. **LIFT** (§17.3, stage `lift`): a DIP sets a level `rsLiftPct` % (8) above its close, drawn as a magenta line; LIFT on the first later bar whose high reaches it (or that closes over it); a newer DIP moves it; it goes after 3 sessions. The DIP's message gains `| lift <level>`; `LIFT … | lift … | base … | up 8 | stop … | after 290m | by touch`. Five inputs and two plots last (section 5, after the EMA section); the DIP's `alert()` moved there. Server: its own ⚙ switch after DIP (a list saved before starts it at the DIP's value), `tv_lift`, announced like the DIP. Dashboard: LIFT pill, the DIP row shows `lift $X`. Replica `lift_rule_direct` / `simulate_rsi(full)['lifts']`. Regression 542 checks. **Paste, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2108,6 +2109,75 @@ timeframe and seeking the RSI drop in 15min chart". Built without grading.
     The operator had marked 01:20–02:00 by eye.
   - Not checked: the Pine itself, which can't be compiled here, and whether a DIP is worth
     taking.
+
+### 17.3 The LIFT above a DIP (script v38, 2026-11-14)
+
+**The ask.** The operator likes the DIP, but "most of them just keep going lower after the DIP
+candle". In their paper account they rest a buy stop-limit 8% above the latest DIP and cancel it
+if the price keeps falling. They don't do it on every DIP: "I usually check their price actions,
+RSI, and previous behavior". After the measurement below: "lets add the +8% level (better
+configurable) and alert to the script. I want to experiment with it."
+
+**Measured first** (`apps/api/scripts/research/rsi-dip/`, 60 days of Yahoo 5m bars, the 342 tickers
+of that week's alerts, 4,591 replayed DIPs). The +8% level is reached on 30% of the DIPs. After
+it the price is lower on average an hour later and at the session's end, in both halves of the
+data, and about one fill in three ends the session higher. A +8% move from any other close of the
+same names does the same. So LIFT marks the operator's level for their own selection; it is not
+a signal to take blind.
+
+**The rule** (script section 5, after the EMA section because its inputs must be last):
+
+1. A DIP alert sets a level at the DIP's price × (1 + `rsLiftPct` %). The DIP's price is its
+   candle's close, the price in the alert.
+2. **LIFT** fires on the first bar after the DIP candle that reaches the level:
+   - "Touch" (the default): the bar's high is at or over it, where a buy stop triggers;
+   - "Close above": the bar closes at or over it.
+3. A newer DIP on the ticker moves the level to its own price ("the latest DIP").
+4. The level goes after `rsLiftDays` sessions have begun since the DIP without a LIFT (0 = it
+   stays until the next DIP).
+
+One LIFT per DIP. A DIP judged a bar late already belongs to the candle before, so its level takes
+over before that bar is checked; a DIP on the bar that closes its candle takes over after it.
+
+**Inputs** (the last five, shown in the "RSI cross" group): `rsLiftOn` (on), `rsLiftPct` (8),
+`rsLiftBy` ("Touch" | "Close above"), `rsLiftDays` (3), `rsLiftShow` (on).
+
+**The messages:**
+
+- The DIP gains `| lift 40.53`, the level it sets, when the lift is on.
+- `LIFT KRMN 40.55 | lift 40.53 | base 37.53 | up 8 | stop 37.2 | dip 1 | after 290m | by touch | candle 10 | tf 30S`
+  - `lift` the level reached, `base` the DIP's price, `up` the setting in %;
+  - `stop` and `dip` the DIP's stop and its number in the dip;
+  - `after` minutes since the DIP candle closed, `by` touch or close, `candle` the RSI's timeframe.
+- The DIP's `alert()` moved to section 5, since its message needs the lift's input.
+
+**The chart.** A magenta line at the level from the DIP until it is reached or goes, and a magenta
+**LIFT** label above the bar that reached it. Both need a chart that shows the DIP (`rsDipOk`). With
+"Close above" the mark uses the chart's own bars, so on a 10m chart it can sit a bar later than
+the 30s alert.
+
+**Our side** (stage `lift`; fields `lift_level`, `lift_base`, `lift_pct`, `after_min`, `lift_by`,
+`stop`, `dip_n`, `candle_tf`; a DIP row carries `lift_level` too):
+
+- **Its own ⚙ switch, LIFT**, listed after DIP. A list saved before v38 gives it the DIP's value
+  (`SPLIT_FROM` in `readStoredStages`); the operator's had DIP on, so LIFT started on. Telegram
+  mute slug `tv_lift`.
+- Announced like the DIP: off Momentum too, no cap. One per DIP, so nothing to merge.
+- Dashboard: a pink LIFT pill with `+8%` beside it, in the RSI's thread, live for an hour. Its
+  row leads with `reached $X (+8%)`; the expanded row adds the DIP's price, the DIP's stop and
+  how long it took. A DIP's row now shows `lift $X (+8.0%)`, the price for the buy stop.
+- The entry sound, on or off Momentum. "Show only Momentum tickers" keeps it. History's filter
+  is "RSI + DIP + LIFT".
+
+**Checked** (`pinesim.selftest_rsi`; `lift_rule_direct` is the plain rule on the fine bars,
+`simulate_rsi(..., full=True)['lifts']` the script's sampling): on the thin synthetic tape, 8 of 20
+DIPs reach a 4% level, the same on 15m, 5m, 3m and 1m charts. On a calmer tape a level that lives
+one session gives 6 LIFTs against 7 without a limit, and the charts agree. Not checked: the Pine
+itself on TradingView.
+
+**To grade.** Every LIFT row has the price, the level and its DIP's price, and the operator's own
+picks are a subset of them. Compare what followed a LIFT with what followed the DIPs that never
+got one, on the live rows, after two or three weeks.
 
 ## 18. The EMA cross over VWAP (script v35, 2026-11-13)
 

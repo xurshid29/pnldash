@@ -198,7 +198,7 @@ function fmtAlertPrice(p: number | null): string {
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
-  bounce: 'BOUNCE',
+  bounce: 'BOUNCE', lift: 'LIFT',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -237,7 +237,13 @@ export function opportunityTitle(a: OpportunityAlert): string {
       const over = s.rsi != null && s.rsi_ma != null && s.rsi > s.rsi_ma;
       return `${s.on_screen ? '⭐ ' : ''}📐 DIP ${a.ticker} — ${shortTf(s.rsi_tf)} RSI turned up ${over ? 'and is back over' : 'under'} its MA`
         + ` (${one(s.rsi)} / ${one(s.rsi_ma)}${s.rsi_low != null ? `, dip low ${one(s.rsi_low)}` : ''})`
-        + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.dip_n != null ? ` · #${s.dip_n}` : ''}`;
+        + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.dip_n != null ? ` · #${s.dip_n}` : ''}`
+        + `${s.lift_level != null ? ` · lift ${fmtAlertPrice(s.lift_level)}` : ''}`;
+    }
+    // v38: "📐 LIFT KRMN — reached $40.53, +8% over the DIP at $37.53"
+    if (s.stage === 'lift') {
+      return `${s.on_screen ? '⭐ ' : ''}📐 LIFT ${a.ticker} — ${s.lift_by === 'close' ? 'closed over' : 'reached'} ${fmtAlertPrice(s.lift_level ?? null) || 'the level'}`
+        + `${s.lift_pct != null ? `, +${s.lift_pct}%` : ''} over the DIP${s.lift_base != null ? ` at ${fmtAlertPrice(s.lift_base)}` : ''}`;
     }
     // v35: "📐 EMA OMH — 3m EMA 9 over sVWAP · #1"
     if (s.stage === 'ema') {
@@ -282,6 +288,13 @@ export function opportunityBody(a: OpportunityAlert): string {
       if (s.candle_tf) db.push(`at the ${shortTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
       if (a.grade) db.push(`grade ${a.grade}`);
       return db.filter(Boolean).join(' · ');
+    }
+    if (s.stage === 'lift') {
+      const lb = [fmtAlertPrice(a.price)];
+      if (s.stop != null && a.price != null && a.price > 0) lb.push(`the DIP's stop ${fmtAlertPrice(s.stop)} (${fmtSignedPct((s.stop / a.price - 1) * 100)})`);
+      if (s.after_min != null) lb.push(`${s.after_min < 60 ? `${s.after_min}m` : `${Math.floor(s.after_min / 60)}h ${s.after_min % 60}m`} after the DIP`);
+      if (a.grade) lb.push(`grade ${a.grade}`);
+      return lb.filter(Boolean).join(' · ');
     }
     const bits = [fmtAlertPrice(a.price)];
     if (s.stage === 'bounce' && s.stop != null && a.price != null && a.price > 0) bits.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the pullback's low`);
@@ -387,9 +400,9 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        // (a v34 DIP is an entry signal: the bright pair, on or off Momentum; a v35 EMA cross and its v37 BOUNCE sound like a CROSS)
+        // (a v34 DIP and its v38 LIFT are entry signals: the bright pair, on or off Momentum; a v35 EMA cross and its v37 BOUNCE sound like a CROSS)
         if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce')
-          || audible.some((a) => a.setup?.stage === 'dip')) crossConfirmPing();
+          || audible.some((a) => a.setup?.stage === 'dip' || a.setup?.stage === 'lift')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('pullback') || audible.some((a) => a.setup?.stage === 'rsi')) setupReadyPing();   // v32 RSI, on or off Momentum
         else if (audible.some((a) => a.kinds.includes('news'))) chime();

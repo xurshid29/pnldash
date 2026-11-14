@@ -1096,7 +1096,11 @@ def selftest():
 # its MA now, at or under it at the previous check, and the RSI at or under `os` now or within
 # its last `os_n` finished candles. TradingView's RSI: ta.rma seeded with the SMA of the first n.
 RSI_DEFAULTS = dict(sig_min=720, check_min=360, n=14, ma_n=14, os=30.0, os_n=6,
-                    dip_wait=16, dip_max=2)   # v34: the DIP's dials (rsDipWait, rsDipMax)
+                    dip_wait=16, dip_max=2,   # v34: the DIP's dials (rsDipWait, rsDipMax)
+                    # v38, the LIFT: after a DIP, a level lift_pct % above its close; LIFT on the first
+                    # bar after the DIP candle whose high reaches it ('touch') or that closes at or over
+                    # it ('close'); a newer DIP moves the level; it goes after lift_days sessions (0 = never)
+                    lift=True, lift_pct=8.0, lift_by='touch', lift_days=3)
 
 
 def _rsi_value(up, dn):
@@ -1250,11 +1254,43 @@ def rsi_rule_direct(candles, p=None):
     return out
 
 
+def lift_rule_direct(bars, p=None):
+    """The plain LIFT rule (v38, 'touch') on the bars the RSI's candles are made of: for each DIP of
+    rsi_rule_direct, the bars from its candle's close to the next DIP's candle's close, while no more
+    than lift_days new sessions have begun; the first whose high reaches the DIP's close × (1 + lift_pct %).
+    → [(the RSI candle that bar is in, the level, the DIP's close)]."""
+    p = dict(RSI_DEFAULTS, **(p or {}))
+    candles = resample_session(bars, p['sig_min'])
+    close_of = {c['t']: c['c'] for c in candles}
+    dips = rsi_rule_direct(candles, p)['dips']
+    step = datetime.timedelta(minutes=p['sig_min'])
+    out = []
+    for j, (t0, _n, _low, _age) in enumerate(dips):
+        base = close_of[t0]
+        level = base * (1 + p['lift_pct'] / 100)
+        until = dips[j + 1][0] + step if j + 1 < len(dips) else None
+        days, day = 0, t0.date()
+        for b in bars:
+            if b['t'] < t0 + step:
+                continue
+            if until is not None and b['t'] >= until:
+                break
+            if b['t'].date() != day:
+                day, days = b['t'].date(), days + 1
+            if p['lift_days'] > 0 and days > p['lift_days']:
+                break
+            if b['h'] >= level:
+                out.append((_candle_start(b['t'], p['sig_min']), level, base))
+                break
+    return out
+
+
 def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
     """The script's RSI section (v34) on chart bars of `chart_min` minutes → [(check candle start, late)],
     or with full=True a dict: crosses, starts [(RSI candle start)], dips [(RSI candle start, late, n,
     lowest price, age)], both (bars that sampled a late and an on-time candle of one kind), late_c /
-    late_a (late samples of check / RSI candles). `fine`: the bars the RSI's candles are really made
+    late_a (late samples of check / RSI candles), and (v38) lifts [(the RSI candle the bar that fired
+    is in, the level, the DIP's close)]. `fine`: the bars the RSI's candles are really made
     of, for a chart whose bars don't divide the RSI's timeframe (the request reads true candles)."""
     p = dict(RSI_DEFAULTS, **(p or {}))
     cross_ok = chart_min <= p['sig_min'] and p['check_min'] % chart_min == 0
@@ -1264,10 +1300,12 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
     rsi_hist = [None if x is None else x[2] for x in st]
     starts = [c['t'] for c in sig]
     s = _RsiSetup(p)
-    out = dict(crosses=[], starts=[], dips=[], both=0, late_c=0, late_a=0)
+    out = dict(crosses=[], starts=[], dips=[], both=0, late_c=0, late_a=0, lifts=[])
     done_c = done_a = None
     prev_live, prev_tc, prev_ta = None, None, None
     c_low = c_low_p = None
+    lf_level = lf_base = None      # v38: the lift's level and its DIP's close
+    lf_days, prev_day, prev_close = 0, None, None
     step = datetime.timedelta(minutes=chart_min)
     j = 0   # finished RSI candles before the current chart bar's candle
     for b in bars:
@@ -1295,6 +1333,8 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
         late_c = prev_tc is not None and tc != prev_tc and done_c != prev_tc
         late_a = prev_ta is not None and ta != prev_ta and done_a != prev_ta
         none3 = (None, None, None)
+        dip_go = dip_late = False       # this bar's DIP, as the script's rsDipGo / rsDipLate / rsDPx end up
+        dip_px = None
         if cross_ok:
             if dip_ok and late_a:
                 out['late_a'] += 1
@@ -1305,6 +1345,7 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
                     out['starts'].append(prev_ta)
                 if ev == 2:
                     out['dips'].append((prev_ta, True, s.n, s.low_px, s.age))
+                    dip_go, dip_late, dip_px = True, True, prev_close
             if late_c:
                 out['late_c'] += 1
                 r, ma, lo = prev_live or none3
@@ -1322,6 +1363,7 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
                     out['starts'].append(ta)
                 if ev == 2:
                     out['dips'].append((ta, False, s.n, s.low_px, s.age))
+                    dip_go, dip_late, dip_px = True, False, b['c']
             if end_c and done_c != tc:
                 out['both'] += 1 if late_c else 0
                 r, ma, lo = live or none3
@@ -1330,7 +1372,22 @@ def simulate_rsi(bars, chart_min, p=None, full=False, fine=None):
                 if fired:
                     out['crosses'].append((tc, False))
                     s.arm_dip()
-        prev_live, prev_tc, prev_ta = live, tc, ta
+        # v38, the LIFT (the script's section 5). A late DIP's level takes over before this bar's
+        # check (the bar is already after its candle), an on-time DIP's after it.
+        if p['lift'] and dip_ok:
+            new_day = prev_day is not None and t.date() != prev_day
+            if dip_go and dip_late:
+                lf_level, lf_base, lf_days = dip_px * (1 + p['lift_pct'] / 100), dip_px, 0
+            elif lf_level is not None and new_day:
+                lf_days += 1
+            if lf_level is not None and p['lift_days'] > 0 and lf_days > p['lift_days']:
+                lf_level = None
+            if lf_level is not None and (b['h'] if p['lift_by'] == 'touch' else b['c']) >= lf_level:
+                out['lifts'].append((ta, lf_level, lf_base))
+                lf_level = None
+            if dip_go and not dip_late:
+                lf_level, lf_base, lf_days = dip_px * (1 + p['lift_pct'] / 100), dip_px, 0
+        prev_live, prev_tc, prev_ta, prev_day, prev_close = live, tc, ta, t.date(), b['c']
     return out if full else out['crosses']
 
 
@@ -1396,6 +1453,42 @@ def selftest_rsi():
            and all(n == 1 for _, _, n, _, _ in cap['dips']) and len(cap['dips']) < len(one['dips']))
     print(f"…dials: at most 1 per dip → {len(cap['dips'])} DIP (of {len(one['dips'])}); must start on the next candle → {len(off['starts'])} dips (of {len(one['starts'])})",
           '→', 'OK' if ok4 else 'UNEXPECTED')
+    # v38 LIFT: for each DIP the first bar after its candle whose high reaches the level, until the next
+    # DIP — the plain rule on the 1m bars against the script on the 15m, 5m, 3m and 1m charts (the same
+    # RSI candle, level and DIP); then the level's life in sessions, the close instead of a touch, off
+    pl = dict(p3, lift_pct=4.0, lift_days=0)
+    want_l = lift_rule_direct(bars, pl)
+    ok6, shown_l = len(want_l) >= 5 and len(want_l) < len(d['dips']), []
+    for cm in (15, 5, 3, 1):
+        g = simulate_rsi(resample_session(bars, cm) if cm > 1 else bars, cm, pl, full=True)
+        ok6 = ok6 and g['lifts'] == want_l
+        shown_l.append(f"{cm}m {len(g['lifts'])}")
+    on15 = lambda q: simulate_rsi(resample_session(bars, 15), 15, q, full=True)['lifts']
+    by_close = on15(dict(pl, lift_by='close'))
+    ok6 = (ok6 and 0 < len(by_close) <= len(want_l) and on15(dict(pl, lift=False)) == []
+           and all(abs(lv / base - 1.04) < 1e-9 for _, lv, base in want_l))
+    # the level's life: a calmer tape (40 days), where a level 5% up can take more than a session to reach
+    rnd3 = random.Random(3)
+    calm, px = [], 10.0
+    for day in range(40):
+        if day % 4 == 0:
+            drift = rnd3.choice([-0.00012, -0.00008, 0.00008, 0.00012])
+        for m in range(240, 1200):
+            px *= math.exp(drift + rnd3.gauss(0, 0.002))
+            if rnd3.random() < 0.2 and not (day == 39 and m == 1199):
+                continue
+            calm.append({'t': t0 + dt.timedelta(days=day, minutes=m - 240), 'o': px, 'h': px * 1.0005, 'l': px * 0.9995, 'c': px, 'v': 100})
+    life = []
+    for days in (0, 1):
+        q = dict(p3, lift_pct=5.0, lift_days=days)
+        w = lift_rule_direct(calm, q)
+        ok6 = (ok6 and simulate_rsi(resample_session(calm, 15), 15, q, full=True)['lifts'] == w
+               and simulate_rsi(calm, 1, q, full=True)['lifts'] == w)
+        life.append(len(w))
+    ok6 = ok6 and 0 < life[1] < life[0]
+    print(f"RSI dip's LIFT (v38), 4% above the DIP: {len(want_l)} of {len(d['dips'])} DIPs reach it by the plain rule; the script: {', '.join(shown_l)}; "
+          f"on a 15m close instead of a touch {len(by_close)}; off none; on a calmer tape, 5% up: {life[0]} with no limit, {life[1]} when the level "
+          f"lives one session (the 15m and 1m charts agree)", '→', 'OK' if ok6 else 'UNEXPECTED')
     # v32's default, a 12h RSI checked at the 6h close: the 2m chart marks what the 6h chart marks
     # (four months of the same kind of tape, so the 12h RSI has room to swing)
     rnd2 = random.Random(11)
@@ -1410,7 +1503,7 @@ def selftest_rsi():
     a, b = simulate_rsi(long, 2, p2), simulate_rsi(resample_session(long, 360), 360, p2)
     ok2 = len(a) >= 2 and [t for t, _ in a] == [t for t, _ in b]
     print(f'…12h RSI at the 6h close, 2m chart vs 6h chart: {len(a)} / {len(b)} marks', '→', 'OK' if ok2 else 'UNEXPECTED')
-    return ok and ok2 and ok3 and ok4
+    return ok and ok2 and ok3 and ok4 and ok6
 
 
 # ── EMA cross over VWAP (script v35) ───────────────────────────────────────────

@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v37 (2026-11-13). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v38 (2026-11-14). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -37,6 +37,8 @@
 //   RSI   the cross up while oversold, at a check candle's close
 //   DIP   (v34) after an RSI cross, the RSI closes back under its MA on its own timeframe and
 //         then turns up — the pullback entry, with a stop under the dip's low
+//   LIFT  (v38) after a DIP, price reaches a level some % above the DIP's price (8% by default,
+//         where the operator rests a buy stop); the level is drawn until then (section 5)
 // 4) EMA CROSS OVER VWAP (v35): the EMA of a timeframe's closes (3m, length 9) crosses above a
 // VWAP line (session; month and year are switches), judged at each close of that timeframe's
 // candles. Built from a request like the RSI, so it works on the 3m chart or a smaller one.
@@ -1154,9 +1156,10 @@ rsDipGo := rsDipGo and inWindow
 // The messages — a contract with services/tv-setups.ts parseTvMessage (v32 also sent a second
 // "| rsi 180 … ma …", which the server still reads on old rows):
 //   RSI XTND 1.07 | rsi 30 29.2 ma 27.0 | low 22.1 | candle 30 | tf 30S
-//   DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | tf 30S
+//   DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | lift 8.66 | tf 30S
 // (DIP: `low` the dip's lowest RSI, `stop` a tick under its lowest price, `dip` the signal's number
-// in this dip, `since` the RSI's candles since the RSI cross, `candle` the RSI's timeframe.)
+// in this dip, `since` the RSI's candles since the RSI cross, `candle` the RSI's timeframe, and
+// since v38 `lift` = the level section 5 now watches, when the lift is on.)
 rsMsg() =>
     string msg = "RSI " + syminfo.ticker + " " + str.tostring(rsSPx, format.mintick)
     msg += " | rsi " + rsTfA + " " + str.tostring(rsSA, "#.0") + " ma " + str.tostring(rsSMa, "#.0")
@@ -1164,20 +1167,21 @@ rsMsg() =>
     if rsLate
         msg += " | late"
     msg + " | tf " + timeframe.period
-rsDipMsg() =>
+rsDipMsg(float liftLvl) =>
     string msg = "DIP " + syminfo.ticker + " " + str.tostring(rsDPx, format.mintick)
     msg += " | rsi " + rsTfA + " " + str.tostring(rsDR, "#.0") + " ma " + str.tostring(rsDMa, "#.0")
     msg += " | low " + str.tostring(rsDLo, "#.0") + " | stop " + str.tostring(rsDStop, format.mintick)
     msg += " | dip " + str.tostring(rsDN) + " | since " + str.tostring(rsDAge) + " | candle " + rsTfA
+    if not na(liftLvl)
+        msg += " | lift " + str.tostring(liftLvl, format.mintick)
     if rsDipLate
         msg += " | late"
     msg + " | tf " + timeframe.period
 
-// From the 30s alert alone (the VB's alert timeframe), like the VB.
+// From the 30s alert alone (the VB's alert timeframe), like the VB. (The DIP's alert() is in
+// section 5 since v38: its message names the lift level, whose inputs come last.)
 if rsFire and timeframe.period == vbTf
     alert(rsMsg(), alert.freq_once_per_bar_close)
-if rsDipGo and timeframe.period == vbTf
-    alert(rsDipMsg(), alert.freq_once_per_bar_close)
 plotshape(rsFire and not rsLate, "RSI cross (v32)", shape.labelup, location.belowbar, color.purple, text = "RSI", textcolor = color.white, size = size.small)
 plotshape(rsFire and rsLate, "RSI cross, late close (v32)", shape.labelup, location.belowbar, color.purple, text = "RSI", textcolor = color.white, size = size.small, offset = -1)
 // v34 plots go last: the DIP, and a small mark where the dip started (the RSI closed under its MA).
@@ -1672,3 +1676,95 @@ plotshape(emShow and (emBCS or emBCM or emBCY) and not emBCW, "EMA bounce (v37)"
 plotshape(emShow and (emBLS or emBLM or emBLY) and not emBLW, "EMA bounce, late close (v37)", shape.labelup, location.belowbar, color.lime, text = "BNC", textcolor = color.black, size = size.small, offset = -1)
 plotshape(emShow and (emBCS or emBCM or emBCY) and emBCW, "EMA bounce, filtered (v37)", shape.labelup, location.belowbar, color.gray, text = "bnc", textcolor = color.white, size = size.tiny)
 plotshape(emShow and (emBLS or emBLM or emBLY) and emBLW, "EMA bounce, filtered, late close (v37)", shape.labelup, location.belowbar, color.gray, text = "bnc", textcolor = color.white, size = size.tiny, offset = -1)
+
+// ── 5) DIP LIFT (v38) ─────────────────────────────────────────────────────────
+// Operator, 2026-11-14: "most of them just keep going lower after the DIP candle … I tested the
+// trades with entering >=8% from the latest DIP setup … placing the buy order with StopLimit at 8%
+// from dip and waiting, and if it keeps going down I just cancel them", then: "lets add the +8%
+// level (better configurable) and alert to the script. I want to experiment with it." They don't
+// take every DIP: they look at its price action, the RSI and how the name behaved before.
+// After a DIP alert the script holds a level some % above the DIP's price (the DIP candle's close)
+// and draws it. LIFT fires on the first bar after the DIP candle whose high reaches the level
+// ("Touch", where a buy stop triggers) or that closes at or over it ("Close above"). A newer DIP
+// moves the level to its own price (the latest DIP), and the level goes after N sessions without
+// a LIFT. One LIFT per DIP. It sits here, after the EMA section, because its inputs must be the
+// script's last; it belongs to the RSI setup (section 3) and needs that section's DIP.
+// Measured before building (research/rsi-dip, 60 days of Yahoo 5m bars, 4,591 replayed DIPs): the
+// +8% level is reached on 30% of the DIPs, and after it the price was lower on average an hour
+// later and at the session's end, in both halves of the data — no better than a +8% move from any
+// other close of the same names. Built for the operator's own selection, not as an edge.
+// v38 inputs go last.
+rsLiftOn   = input.bool(true,      "DIP lift on (v38): after a DIP, a level some % above its price — drawn, and LIFT when price reaches it", group = "RSI cross (v32)")
+rsLiftPct  = input.float(8.0,      "DIP lift: the level, % above the DIP's price", minval = 0.1, step = 0.5, group = "RSI cross (v32)")
+rsLiftBy   = input.string("Touch", "DIP lift fires on", options = ["Touch", "Close above"], group = "RSI cross (v32)")
+rsLiftDays = input.int(3,          "DIP lift: the level stays for N sessions after the DIP's own (0 = until the next DIP)", minval = 0, group = "RSI cross (v32)")
+rsLiftShow = input.bool(true,      "DIP lift: draw the level and the marker", group = "RSI cross (v32)")
+
+var float lfLevel = na    // the level waiting to be reached (na = none)
+var float lfBase  = na    // its DIP's price…
+var float lfStop  = na    // …the DIP's stop (a tick under the dip's low)…
+var int   lfDipN  = 0     // …its number in the dip…
+var int   lfT0    = na    // …and when its candle closed
+var int   lfDays  = 0     // sessions begun since
+bool  lfGo     = false    // LIFT on this bar, and what it reached
+float lfGoLvl  = na
+float lfGoBase = na
+float lfGoStop = na
+int   lfGoDipN = 0
+int   lfGoMin  = 0
+bool  lfOn     = rsLiftOn and rsDipOk
+float lfNew    = rsDPx * (1 + rsLiftPct / 100)   // the level a DIP on this bar sets
+if lfOn
+    // A DIP judged late belongs to the candle before, so this bar is already after it: its level
+    // takes over before the check. A DIP on the bar that closes its candle takes over after it.
+    if rsDipGo and rsDipLate
+        lfLevel := lfNew
+        lfBase  := rsDPx
+        lfStop  := rsDStop
+        lfDipN  := rsDN
+        lfT0    := time
+        lfDays  := 0
+    else if not na(lfLevel) and newDay
+        lfDays := lfDays + 1
+    if not na(lfLevel) and rsLiftDays > 0 and lfDays > rsLiftDays
+        lfLevel := na
+    if not na(lfLevel) and (rsLiftBy == "Touch" ? high >= lfLevel : close >= lfLevel)
+        lfGo     := true
+        lfGoLvl  := lfLevel
+        lfGoBase := lfBase
+        lfGoStop := lfStop
+        lfGoDipN := lfDipN
+        lfGoMin  := math.round((time_close - lfT0) / 60000.0)
+        lfLevel  := na
+    if rsDipGo and not rsDipLate
+        lfLevel := lfNew
+        lfBase  := rsDPx
+        lfStop  := rsDStop
+        lfDipN  := rsDN
+        lfT0    := time_close
+        lfDays  := 0
+// Announced inside the alert window only (the level is used up either way).
+lfGo := lfGo and inWindow
+
+// The message — a contract with services/tv-setups.ts parseTvMessage:
+//   LIFT KRMN 40.55 | lift 40.53 | base 37.53 | up 8 | stop 37.2 | dip 1 | after 290m | by touch | candle 10 | tf 30S
+// (`lift` the level reached, `base` the DIP's price, `up` the setting in %, `stop` the DIP's stop,
+// `dip` the DIP's number in its dip, `after` minutes since the DIP candle closed, `by` touch or
+// close, `candle` the RSI's timeframe.)
+rsLiftMsg() =>
+    string msg = "LIFT " + syminfo.ticker + " " + str.tostring(close, format.mintick)
+    msg += " | lift " + str.tostring(lfGoLvl, format.mintick) + " | base " + str.tostring(lfGoBase, format.mintick)
+    msg += " | up " + str.tostring(rsLiftPct, "#.##") + " | stop " + str.tostring(lfGoStop, format.mintick)
+    msg += " | dip " + str.tostring(lfGoDipN) + " | after " + str.tostring(lfGoMin) + "m"
+    msg += " | by " + (rsLiftBy == "Touch" ? "touch" : "close") + " | candle " + rsTfA
+    msg + " | tf " + timeframe.period
+
+// From the 30s alert alone, like the rest of the RSI setup: the DIP (its message names the level
+// it sets), then a LIFT.
+if rsDipGo and timeframe.period == vbTf
+    alert(rsDipMsg(lfOn ? lfNew : na), alert.freq_once_per_bar_close)
+if lfGo and timeframe.period == vbTf
+    alert(rsLiftMsg(), alert.freq_once_per_bar_close)
+// v38 plots go last: the level while it waits (through the bar that reaches it), and the LIFT.
+plot(rsLiftShow and lfOn ? (not na(lfLevel) ? lfLevel : lfGo ? lfGoLvl : na) : na, "DIP lift level (v38)", color.new(color.fuchsia, 20), 1, plot.style_linebr)
+plotshape(rsLiftShow and lfGo, "DIP lift (v38)", shape.labeldown, location.abovebar, color.fuchsia, text = "LIFT", textcolor = color.white, size = size.small)

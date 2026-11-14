@@ -343,8 +343,10 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // EMA (script v35): the EMA of a timeframe's closes (3m, length 9) crossed above a VWAP line,
 // judged at that timeframe's candle close. BOUNCE (script v37): after an EMA cross, a pullback to
 // the EMA or the VWAP and a green close above the EMA — the pullback entry. It rides the EMA's ⚙ switch.
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'ema' | 'bounce';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'ema', 'bounce'];
+// LIFT (script v38): after a DIP, price reached the level some % above the DIP's price (8% by
+// default). Its own ⚙ switch.
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'lift' | 'ema' | 'bounce';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'lift', 'ema', 'bounce'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'bounce' ? 'ema' : stage;
@@ -413,6 +415,13 @@ export interface TvSetupInfo {
   // EMA bounce (script v37): stop = under the pullback's low, since_n = candles after the cross, weak = its cross was
   bounce_n?: number | null;   // the day's bounces on the line
   bounce_from?: 'ema' | 'vwap' | 'ema+vwap' | null;   // what the pullback came down to
+  // DIP lift (script v38). On a DIP: lift_level = the level the script now watches. On a LIFT: the
+  // level reached, stop / dip_n = its DIP's, candle_tf = the RSI's timeframe
+  lift_level?: number | null;
+  lift_base?: number | null;  // LIFT: the DIP's price
+  lift_pct?: number | null;   // LIFT: the setting, % above the DIP
+  after_min?: number | null;  // LIFT: minutes since the DIP candle closed
+  lift_by?: 'touch' | 'close' | null;
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

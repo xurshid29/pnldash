@@ -81,6 +81,12 @@ Limits:
   DIPs on days the ticker was already on the runners list by our own rule; it reads the same.
 - The exits are fixed ones. The operator's own exit isn't known.
 
-Nothing was built from this. To grade it on the real alerts later: export the `dip` rows from
+The operator's answer the same day: they don't take every DIP ("I usually check their price actions,
+RSI, and previous behavior"), and "lets add the +8% level (better configurable) and alert to the
+script. I want to experiment with it." Built as script v38's **LIFT** (`docs/vwap-setup.md` §17.3):
+the level, drawn and named in the DIP's message, and an alert when price reaches it. From v38 each
+LIFT is its own row in `tier_events` (stage `lift`), so the live test logs itself.
+
+To grade it on the real alerts later: export the `dip` rows from
 `tier_events` again as `live.csv` and read the script's last table (every DIP alert is stored with
 its price and time; the bars reach 60 days back).

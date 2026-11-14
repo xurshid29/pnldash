@@ -13,9 +13,9 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
 ].filter((k) => DASHBOARD_KINDS.includes(k.kind as AlertKind)) as Array<{ kind: AlertKind; label: string; hint: string }>;
 
 // The EMA switch also covers its v37 BOUNCE (the server lists no switch for 'bounce'). RSI and its
-// DIP have one each since 2026-11-13.
+// DIP have one each since 2026-11-13, and the DIP's LIFT (v38) its own.
 const STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', lift: 'LIFT',
   ema: 'EMA + BOUNCE', bounce: 'BOUNCE',
 };
 

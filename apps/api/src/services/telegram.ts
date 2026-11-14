@@ -44,6 +44,7 @@ export type AlertComponent =
   | 'tv_retest'     // 📐 VB retest (script v28): back at the VWAP line after the VB candle, and bounced
   | 'tv_rsi'        // 📐 RSI cross (script v32): the 12h RSI crossed above its MA after being oversold
   | 'tv_dip'        // 📐 RSI dip (script v34): after an RSI cross, the RSI dipped under its MA and turned up
+  | 'tv_lift'       // 📐 DIP lift (script v38): after a DIP, price reached the level some % above it
   | 'tv_ema'        // 📐 EMA cross (script v35): the EMA of a timeframe's closes crossed above a VWAP line
   | 'tv_bounce'     // 📐 EMA bounce (script v37): after an EMA cross, a pullback to the EMA or the VWAP, then a green close above the EMA
   | 'tv_year';      // 📐 any setup message about the year VWAP alone (PULLBACK v14, VB v22)
