@@ -245,6 +245,24 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-14 (Sat) — THE "+8% ABOVE THE DIP" ENTRY, MEASURED; NOTHING BUILT.** The operator likes the DIP but "most of them just
+keep going lower", and paper-tested a buy stop-limit 8% above the latest DIP, cancelled if it keeps falling: "it's working very
+well" (KRMN, AKAN on 11-13). Measured on Yahoo 5m bars, 60 days, the 342 tickers of this week's RSI / DIP alerts, the rule
+replayed with their settings (`apps/api/scripts/research/rsi-dip/`, README has the table): 4,591 DIPs; the +8% order fills on
+30%; after it the price is −1.6% / −0.7% an hour later and −2.2% / −3.0% at the session's end (in / out of sample), 30–34% are
+higher at the session's end, a 5% stop held to the session's end loses −2.2% / −1.5%. A +8% move on any other close of the same
+names does the same or better, and +3% … +15%, a 5m close over the level, stop-limit fills and Momentum-screen fills are no
+better. Regular-hours fills are the least bad (−0.4%). Why paper looked good: the level picks the DIPs that worked after the
+part that worked (buying those DIPs at the DIP: +2% the same session, +6% in three), and on 11-13's live alerts 6 of 24 fills
+ended higher, AKAN +151% carrying the average (+1.2% with it, −5.3% without). **Told the operator plainly; offered a +8% level /
+alert in the script only if they still want to log it live.** Limits: the replay matches 28 of 132 live alerts within 15 minutes
+(TradingView's partial feed), Yahoo's thin extended-hours prints, fixed exits.
+- **The operator's settings now** (from the live rows): alerts recreated 11-13 11:00 ET with a **10m RSI checked at 1h**
+  (oversold 30, dip wait 16, max 2: the defaults); 137 DIP alerts on 115 names that afternoon, 3 of 4 judged a bar late.
+- **No EMA or BOUNCE row since 11-13 10:55 ET**: the new alerts seem to have the EMA setup switched off (`emOn`), or the stage
+  is quiet; not asked about.
+- To re-grade on real alerts: export the `dip` rows again as `live.csv` and read the script's last table.
+
 **2026-11-13 (later) — DIP GETS ITS OWN ⚙ SWITCH.** The operator: "please, separate RSI+DIP alert settings". `dip` is now in
 `TV_STAGE_ORDER` (after `rsi`; the ⚙ menu shows RSI and DIP apart) and `stageSwitch('dip')` is `dip`; BOUNCE still rides EMA.
 The saved switches are now stored as `{ announced, known }` (`storedStages`); `readStoredStages` reads the old plain list (the
