@@ -245,6 +245,16 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-15 (Sun) — "AFTER THE DIP, ENTER WHEN THE 5m MACD LINE CROSSES ZERO": MEASURED; NOTHING BUILT.** The operator checked
+5m charts by hand (standard MACD, RSI 10m at 1h, LIFT off): "most of them could reach 10-15% change". `research/rsi-dip/
+dip_macd_cross.py` (README has the table): the line crosses up on 70% of DIPs, a median 3.3 h later and +1.0% from the DIP's
+price. After it +10% comes within 3 sessions on 29% / 40% (in / out of sample) and +15% on 19% / 28%, no stop; the typical entry
+is 8–10% under water at its worst. **Buying the DIP itself does the same or a little better**, so the cross adds nothing. **By
+week it explains what they saw:** 22–34% from late August to mid October, then 37%, 41%, **51% in the week of 11-02** and 43% in
+the week of 11-09 — a 5m chart shows those weeks, and in them the DIP alone did as well. Told the operator: a good stretch for
+these names, not a rule; offered to log the cross as an alert if they want to keep watching it live.
+- Their layout now: a 5m chart with the standard MACD; RSI 10m checked at 1h; LIFT switched off in the script for this test.
+
 **2026-11-15 (Sun) — "LIFT AT 10% + MACD LINE ABOVE ZERO?": MEASURED; NOTHING BUILT.** `research/rsi-dip/lift_macd.py` (README
 has the table). LIFT 10% instead of 8%: two or three points more wins (33% / 35% with a −15% stop against 30% / 33%), a fifth
 fewer signals, the same average. The MACD line on the 10m chart is already above zero at 78–89% of the LIFTs, so the filter

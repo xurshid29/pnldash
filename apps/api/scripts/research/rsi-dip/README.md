@@ -227,6 +227,40 @@ close). Same outcome as above: +15%, held 3 sessions, `w15` with a stop 15% unde
 
 So neither the 10% nor the MACD filter gets near 50%.
 
+## Enter when the MACD line crosses zero after the DIP (2026-11-15)
+
+The operator, from 5m charts by hand (TradingView's standard MACD, the RSI cross checked at 1h with
+a 10m RSI, the LIFT off): "get the latest DIP (from DIP, not from LIFT) and wait for the MACD line
+cross the zero, and most of them could reach 10-15% change".
+
+```bash
+python3 -I dip_macd_cross.py tickers.txt --cache <folder>      # MACD 12 / 26 on 5m bars
+```
+
+`dip_macd_cross.py` buys the close of the first 5m bar, after the DIP candle, whose MACD line is
+above zero after being at or under it; the wait ends with a newer DIP or three sessions. The line
+crosses up on 70% of the DIPs, a median 3.3 hours later and 1.0% over the DIP's price.
+
+| in / out of sample | entries | +10% within 3 sessions | …within 5 | +15% within 3 | …within 5 | +10% before −8% | the worst in 3 sessions (median) |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| the MACD line crosses zero | 1,651 / 1,570 | 29% / 40% | 37% / 49% | 19% / 28% | 25% / 36% | 22% / 29% | −8.2% / −10.1% |
+| buy the DIP | 2,282 / 2,309 | 31% / 43% | 39% / 53% | 19% / 30% | 26% / 39% | 23% / 33% | −8.0% / −9.4% |
+| LIFT +8% | 620 / 739 | 42% / 50% | 49% / 56% | 35% / 40% | 41% / 47% | 28% / 33% | −13.1% / −13.8% |
+| LIFT +10% | 483 / 612 | 48% / 53% | 54% / 58% | 40% / 43% | 46% / 48% | 29% / 35% | −14.6% / −14.2% |
+
+- **Over the 12 weeks it is not "most":** after the cross, +10% comes within three sessions on 29% /
+  40% of the entries and +15% on 19% / 28%, with no stop. The typical entry is 8–10% under water
+  at its worst in those sessions; the ones that reached +10% went a median 4% under first.
+- **The cross adds nothing to the DIP.** Buying the DIP's close reaches the same targets as often or
+  a little more, a few hours earlier and 1% lower.
+- **What the operator saw is the last two weeks.** By the week of the entry, +10% within 3 / 5
+  sessions: 22–34% / 34–45% from late August to mid October; 37% / 50% and 41% / 51% in the weeks of
+  10-19 and 10-26; **51% / 59% in the week of 11-02**; 43% in the week of 11-09 (its five sessions
+  aren't over). A 5m chart holds about those weeks. In them the DIP alone did as well, so the
+  charts show a good stretch for these names, not a rule.
+- The LIFTs reach the targets more often than either (they are the DIPs that already moved) and
+  fall further at their worst.
+
 To grade it on the real alerts later: export the `dip` rows from
 `tier_events` again as `live.csv` and read the script's last table (every DIP alert is stored with
 its price and time; the bars reach 60 days back).
