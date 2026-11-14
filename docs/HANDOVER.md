@@ -285,6 +285,11 @@ it later" → the EMA section, its filter and BOUNCE were restored from git and 
 - Checks: `verify-tv-setups.ts` 569; `pinesim.py` — `macd_rule_direct` against `simulate_rsi(full)['macds']` on 5m / 3m / 15m
   MACDs across the charts that can show them. The Pine was not compiled on TradingView.
 - To grade after 2–3 weeks: MACD rows against the DIPs that never got one, and against the DIP's own price as the entry.
+- Pushed `16c9512`, deployed (a Sunday: no alerts running) and checked on prod: the bundle serves v39 (MACD inputs in, LIFT and
+  lane inputs out, EMA bounce inputs still there); dry runs parse a MACD, a late MACD, a DIP, a v38 DIP with `| lift` (the field
+  ignored), an EMA, a BOUNCE and a 1h-candle CROSS, and answer 400 to a LIFT; `GET /api/tv/settings` answers PULLBACK, DIP, MACD
+  on. Not checked: v39's Pine on TradingView. **Ask whether it compiled, and whether they did Reset settings and recreated both
+  alerts.**
 
 **2026-11-15 (Sun) — "AFTER THE DIP, ENTER WHEN THE 5m MACD LINE CROSSES ZERO": MEASURED; NOTHING BUILT.** The operator checked
 5m charts by hand (standard MACD, RSI 10m at 1h, LIFT off): "most of them could reach 10-15% change". `research/rsi-dip/
