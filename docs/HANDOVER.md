@@ -277,6 +277,9 @@ for it: "yes, please, also, make it configurable if possible". `docs/vwap-setup.
   VB's rule). `GET /api/tv/settings` returns `ema_momo_only`; `PUT` takes `announced` and / or `ema_momo_only`; stored in
   `app_settings` `tv_alert_rules` (no row = the default, so nothing was written to prod's settings by me).
 - Checks: `verify-tv-setups.ts` 622.
+- Pushed `04f438e`, deployed and checked on prod: `GET /api/tv/settings` answers `ema_momo_only: true` with the switches
+  unchanged (PULLBACK, DIP, MACD); the boot log says "Momentum names only (default)"; an empty `PUT` gets 400. Not checked in a
+  browser: the new checkbox in the ⚙ menu.
 
 **2026-11-15 (Sun, night) — SCRIPT v40: THE BB UPPER BAND AS THE LINE THAT CROSSES THE VWAP (EMA, BB UPPER OR BOTH).** The
 operator: "can we make EMA Cross use BollingerBands upper row instead of EMA? So, add this to settings so I can switch between
