@@ -18,12 +18,21 @@ export interface TvAlertSettings {
   announced: TvStage[];
   stages: TvStage[];     // every stage, in menu order
   defaults: TvStage[];
+  // 2026-11-15, the menu's rule: an EMA cross, a band cross or a BOUNCE announces on Momentum
+  // names only (true, the default) — false also lets a +30% day high announce off the list.
+  ema_momo_only: boolean;
 }
+
+// What a save may change: the stage switches, the rule, or both.
+export type TvAlertSettingsPatch = { announced?: TvStage[]; ema_momo_only?: boolean };
 
 // Only the stages this build knows (script v27 removed RECLAIM's FORMING / READY / GO,
 // v28 the VB break's LEVEL / BREAK).
 function knownStages(s: TvAlertSettings): TvAlertSettings {
-  return { announced: s.announced.filter(isTvStage), stages: s.stages.filter(isTvStage), defaults: s.defaults.filter(isTvStage) };
+  return {
+    announced: s.announced.filter(isTvStage), stages: s.stages.filter(isTvStage), defaults: s.defaults.filter(isTvStage),
+    ema_momo_only: s.ema_momo_only !== false,
+  };
 }
 
 // The 📐 VWAP setup's TradingView side (server: routes/tv.ts).
@@ -36,8 +45,8 @@ export const tvApi = {
     const res = await apiClient.get<TvAlertSettings>('/api/tv/settings');
     return knownStages(res.data);
   },
-  async saveSettings(announced: TvStage[]): Promise<TvAlertSettings> {
-    const res = await apiClient.put<TvAlertSettings>('/api/tv/settings', { announced });
+  async saveSettings(patch: TvAlertSettingsPatch): Promise<TvAlertSettings> {
+    const res = await apiClient.put<TvAlertSettings>('/api/tv/settings', patch);
     return knownStages(res.data);
   },
 };

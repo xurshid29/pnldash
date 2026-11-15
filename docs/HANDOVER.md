@@ -23,9 +23,10 @@ v31; the session log has each step since. What the script carries now:
 - **EMA cross over VWAP** (v35) with its filter (v36) and **BOUNCE** (v37): kept unchanged in v39.
   The operator: "can we keep it? I want to improve it later". **v40: the line that crosses can be
   the VB's BB upper band, or both run side by side (the default)**; a band cross is stage `ema`
-  shown as BAND, with no BOUNCE. The operator also said the EMA cross "must be checked only with
-  momentum list" (the studies already are; the live alert has the +30% day-high exception, and my
-  offer to drop it for the EMA is unanswered).
+  shown as BAND, with no BOUNCE. **Since 11-15 EMA / BAND / BOUNCE announce on Momentum names
+  only** (the operator: "ema cross must be checked only with momentum list"); the VB's +30%
+  day-high exception is back for them only if ⚙ → "EMA / BAND / BOUNCE: Momentum list only" is
+  unticked.
 - **v39 needs Settings → Defaults → Reset settings once** after the paste (inputs left the middle
   and the end), then both alerts recreated. v40 needs no reset (one input, last).
 - The operator is experimenting, not trading for real (11-13): deploy at any hour.
@@ -266,6 +267,16 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-15 (Sun, night) — EMA / BAND / BOUNCE: MOMENTUM LIST ONLY, A ⚙ RULE (server + dashboard, no script change).** The
+operator had said "btw, ema cross must be checked only with momentum list"; asked whether to drop the +30% day-high exception
+for it: "yes, please, also, make it configurable if possible". `docs/vwap-setup.md` §18.4.
+- Gate: an EMA cross, a band cross or a BOUNCE off our Momentum list is quiet whatever its day high
+  (`TV_SETUP.em_momentum_only`, the default). CROSS / RETEST keep the +30% exception.
+- Configurable: ⚙ → 📐 Stages that alert → **EMA / BAND / BOUNCE: Momentum list only** (ticked by default; unticked = the
+  VB's rule). `GET /api/tv/settings` returns `ema_momo_only`; `PUT` takes `announced` and / or `ema_momo_only`; stored in
+  `app_settings` `tv_alert_rules` (no row = the default, so nothing was written to prod's settings by me).
+- Checks: `verify-tv-setups.ts` 622.
 
 **2026-11-15 (Sun, night) — SCRIPT v40: THE BB UPPER BAND AS THE LINE THAT CROSSES THE VWAP (EMA, BB UPPER OR BOTH).** The
 operator: "can we make EMA Cross use BollingerBands upper row instead of EMA? So, add this to settings so I can switch between

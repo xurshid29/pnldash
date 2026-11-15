@@ -18,7 +18,7 @@ import { fileURLToPath } from 'url';
 import {
   parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, lineTokens,
   parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, stageSwitch, readStoredStages, storedStages,
-  fmtMinutes, emaByBand, emaFields, EMA_BAND_LABEL, type TvSetupSignal,
+  fmtMinutes, emaByBand, emaFields, EMA_BAND_LABEL, readStoredRules, type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -599,8 +599,23 @@ console.log('EMA cross over VWAP (v35, 2026-11-13)');
   check('EMA on Momentum announces', g.admit(e!, T0, false, true) === 'notify');
   check('…the same candle again is a re-delivery; the next cross is a new event', g.admit(e!, T0 + 5, false, true) === 'drop'
     && g.admit({ ...e!, cross_n: 2 }, T0 + 200, false, true) === 'notify');
-  check('…off Momentum quiet, unless the day high is +30% or more', new TvSetupGate().admit(e!, T0, false, false) === 'quiet'
-    && new TvSetupGate().admit({ ...e!, day_gain: 31 }, T0, false, false) === 'notify');
+  // 2026-11-15 (operator: "ema cross must be checked only with momentum list … make it configurable"): Momentum names
+  // only is the default; the ⚙ rule switched off brings back the VB's +30% day-high exception.
+  const lax = () => { const x = new TvSetupGate(); x.setEmaMomentumOnly(false); return x; };
+  check('…off Momentum quiet, with a +30% day high too (the ⚙ rule, on by default)', TV_SETUP.em_momentum_only === true
+    && new TvSetupGate().emaMomentumOnly() && new TvSetupGate().admit(e!, T0, false, false) === 'quiet'
+    && new TvSetupGate().admit({ ...e!, day_gain: 31 }, T0, false, false) === 'quiet'
+    && new TvSetupGate().admit({ ...e!, day_gain: 300 }, T0, false, false) === 'quiet');
+  check('…the rule switched off: a day high of +30% or more announces off the list, under it stays quiet; on the list either way',
+    lax().admit({ ...e!, day_gain: 31 }, T0, false, false) === 'notify' && lax().admit(e!, T0, false, false) === 'quiet'
+      && !lax().emaMomentumOnly() && lax().admit(e!, T0, false, true) === 'notify' && new TvSetupGate().admit(e!, T0, false, true) === 'notify');
+  check('…a CROSS keeps its own rule whatever the EMA\'s: +30% off the list announces',
+    new TvSetupGate().admit(parseTvMessage('CROSS OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.0 (+1.1%) | open 7.9 | line session | candle 5 | bb 45S | cross 1 | day high +31% | tf 30S')!, T0, false, false) === 'notify');
+  check('the stored rules read back: true / false as saved; a missing row, a missing field or junk is the default',
+    readStoredRules({ ema_momo_only: false }).ema_momo_only === false && readStoredRules({ ema_momo_only: true }).ema_momo_only === true
+      && readStoredRules(undefined).ema_momo_only === true && readStoredRules(null).ema_momo_only === true
+      && readStoredRules({}).ema_momo_only === true && readStoredRules({ ema_momo_only: 'no' }).ema_momo_only === true
+      && readStoredRules([false]).ema_momo_only === true);
   check(`…past the cap (cross ${TV_SETUP.em_cap + 1}) quiet`, pastCap({ ...e!, cross_n: TV_SETUP.em_cap + 1 }) && !pastCap(e!)
     && new TvSetupGate().admit({ ...e!, cross_n: TV_SETUP.em_cap + 1 }, T0, false, true) === 'quiet');
   const off = new TvSetupGate();
@@ -667,8 +682,9 @@ console.log('The band as the line that crosses (v40, 2026-11-15)');
   check('"Both": the EMA cross and the band cross of one candle are two events, each announced', g.admit(ema!, T0, false, true) === 'notify'
     && g.admit(b!, T0, false, true) === 'notify');
   check('…each again is a re-delivery', g.admit(ema!, T0 + 5, false, true) === 'drop' && g.admit(b!, T0 + 5, false, true) === 'drop');
-  check('the band cross is limited like the EMA cross: Momentum or a +30% day high, the cap, the EMA switch, weak ones quiet',
-    new TvSetupGate().admit(b!, T0, false, false) === 'quiet' && new TvSetupGate().admit({ ...b!, day_gain: 31 }, T0, false, false) === 'notify'
+  check('the band cross is limited like the EMA cross: Momentum names only (a +30% day high only with the ⚙ rule off), the cap, the EMA switch, weak ones quiet',
+    new TvSetupGate().admit(b!, T0, false, false) === 'quiet' && new TvSetupGate().admit({ ...b!, day_gain: 31 }, T0, false, false) === 'quiet'
+      && (() => { const x = new TvSetupGate(); x.setEmaMomentumOnly(false); return x.admit({ ...b!, day_gain: 31 }, T0, false, false) === 'notify'; })()
       && new TvSetupGate().admit({ ...b!, cross_n: TV_SETUP.em_cap + 1 }, T0, false, true) === 'quiet'
       && (() => { const off = new TvSetupGate(); off.setAnnounced(['pullback', 'dip', 'macd']); return off.admit(b!, T0, false, true) === 'quiet'; })()
       && new TvSetupGate().admit(bl!, T0, false, true) === 'quiet' && stageSwitch('ema') === 'ema');
@@ -712,8 +728,9 @@ console.log('EMA bounce (v37, 2026-11-13)');
     g.admit(b!, T0, false, true) === 'notify' && g.admit(b!, T0 + 5, false, true) === 'drop'
       && g.admit({ ...b!, bounce_n: 2 }, T0 + 400, false, true) === 'notify'
       && g.admit(parseTvMessage('EMA PARA 0.1021 | sVWAP 0.0975 (+4.7%) | ema 9 0.099 | line session | candle 3 | cross 2 | under 6 | flips 1 | tf 30S')!, T0 + 400, false, true) === 'notify');
-  check('…off Momentum quiet, unless the day high is +30% or more', new TvSetupGate().admit(b!, T0, false, false) === 'quiet'
-    && new TvSetupGate().admit({ ...b!, day_gain: 31 }, T0, false, false) === 'notify');
+  check('…off Momentum quiet, with a +30% day high too; with the ⚙ rule off that one announces', new TvSetupGate().admit(b!, T0, false, false) === 'quiet'
+    && new TvSetupGate().admit({ ...b!, day_gain: 31 }, T0, false, false) === 'quiet'
+    && (() => { const x = new TvSetupGate(); x.setEmaMomentumOnly(false); return x.admit({ ...b!, day_gain: 31 }, T0, false, false) === 'notify'; })());
   check(`…past the cap (bounce ${TV_SETUP.em_cap + 1}) quiet`, pastCap({ ...b!, bounce_n: TV_SETUP.em_cap + 1 }) && !pastCap(b!)
     && new TvSetupGate().admit({ ...b!, bounce_n: TV_SETUP.em_cap + 1 }, T0, false, true) === 'quiet');
   check('…after a weak cross quiet, on Momentum too', new TvSetupGate().admit(wk!, T0, false, true) === 'quiet' && !pastCap(wk!));

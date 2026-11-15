@@ -25,7 +25,7 @@ const STAGE_LABEL: Record<TvStage, string> = {
 // the phone too, for everyone, and hide the stage from the 📐 sidebar list.
 export function AlertKindsMenu() {
   const kinds = useAlertKinds();
-  const { settings, save } = useTvAlertStages();
+  const { settings, save, saveEmaMomoOnly } = useTvAlertStages();
   const content = (
     <Space direction="vertical" size={8} style={{ minWidth: 260 }}>
       {KINDS.map(({ kind, label, hint }) => (
@@ -50,6 +50,16 @@ export function AlertKindsMenu() {
         />
       ) : (
         <Text type="secondary" style={{ fontSize: 11 }}>loading…</Text>
+      )}
+      {/* 2026-11-15 (operator: "ema cross must be checked only with momentum list … make it configurable"):
+          server-side like the switches above. Off = the VWAP + BB cross's rule (a +30% day high pings off the list too). */}
+      {settings && (
+        <Checkbox checked={settings.ema_momo_only} onChange={(e) => saveEmaMomoOnly(e.target.checked)}>
+          <span style={{ fontWeight: 600 }}>EMA / BAND / BOUNCE: Momentum list only</span>
+          <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+            off = also pings off the list when the day high is +30% or more
+          </Text>
+        </Checkbox>
       )}
     </Space>
   );

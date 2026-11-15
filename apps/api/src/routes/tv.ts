@@ -7,7 +7,8 @@ import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
 import {
-  DEFAULT_ANNOUNCED, EMA_STAGES, parseStageList, parseTvMessage, pastCap, readStoredStages, storedStages, TV_STAGE_ORDER, TvSetupGate,
+  DEFAULT_ANNOUNCED, EMA_STAGES, parseStageList, parseTvMessage, pastCap, readStoredRules, readStoredStages, storedStages, TV_STAGE_ORDER,
+  TvSetupGate, type TvAlertRules,
 } from '../services/tv-setups.js';
 
 // TradingView ↔ dashboard bridge for the 📐 VWAP setup (services/tv-setups.ts).
@@ -20,16 +21,23 @@ const gate = new TvSetupGate();
 // before the first webhook or settings read; never rejects (defaults stay).
 // Stored as { announced, known } since 2026-11-13 (DIP got its own switch); an older plain list
 // is read with DIP following RSI (readStoredStages).
+// 2026-11-15: a second row, `tv_alert_rules` — the menu's rules beside the switches (so far one:
+// EMA / BAND / BOUNCE on Momentum names only, on by default). Missing = the defaults.
 const STAGES_KEY = 'tv_alert_stages';
+const RULES_KEY = 'tv_alert_rules';
 let settingsLoad: Promise<void> | null = null;
 function loadSettings(): Promise<void> {
   settingsLoad ??= getDb()
-    .selectFrom('app_settings').select('value').where('key', '=', STAGES_KEY)
-    .executeTakeFirst()
-    .then((row) => {
+    .selectFrom('app_settings').select(['key', 'value']).where('key', 'in', [STAGES_KEY, RULES_KEY])
+    .execute()
+    .then((rows) => {
+      const row = rows.find((r) => r.key === STAGES_KEY);
       const stages = row ? readStoredStages(row.value) : null;
       if (stages) gate.setAnnounced(stages);
       console.log(`[tv-setup] announced stages: ${gate.announcedStages().join(', ') || 'none'}${stages ? '' : ' (default)'}`);
+      const rulesRow = rows.find((r) => r.key === RULES_KEY);
+      gate.setEmaMomentumOnly(readStoredRules(rulesRow?.value).ema_momo_only);
+      console.log(`[tv-setup] EMA / BAND / BOUNCE: ${gate.emaMomentumOnly() ? 'Momentum names only' : 'Momentum names, or a +30% day high'}${rulesRow ? '' : ' (default)'}`);
     })
     .catch((err) => {
       console.error('[tv-setup] stage settings load failed (defaults in use):', err instanceof Error ? err.message : err);
@@ -71,7 +79,8 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     // (a v21 CROSS past its cap doesn't).
     const capped = pastCap(sig);
     const capExempt = capped && sig.stage === 'pullback' && poller.tvCapExempt(sig.ticker);
-    // A CROSS / RETEST pings only for a ticker on our Momentum list (or a fresh runner).
+    // A CROSS / RETEST pings only for a ticker on our Momentum list (or a fresh runner); an EMA
+    // cross, a band cross or a BOUNCE only for one on the list (the ⚙ rule, 2026-11-15).
     const onMomentum = poller.tvOnMomentum(sig.ticker);
     const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt, onMomentum);
     if (verdict === 'flood') {
@@ -96,33 +105,53 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
 // GET /api/tv/settings — the 📐 stage switches: which stages are announced
 // (Telegram + dashboard toast/sound/notification). Off = quiet: still stored,
 // graded and shown in the 📐 sidebar.
+// `ema_momo_only` (2026-11-15): the menu's rule — an EMA cross, a band cross or a BOUNCE announces
+// on Momentum names only (true, the default), or also off the list with a +30% day high (false).
+const settingsBody = () => ({
+  announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED, ema_momo_only: gate.emaMomentumOnly(),
+});
 router.get('/settings', authMiddleware, async (_req, res) => {
   await loadSettings();
-  res.json({ data: { announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED } });
+  res.json({ data: settingsBody() });
 });
 
-// PUT /api/tv/settings { announced: ["pullback", "cross", …] } — global, like the
-// screener config. Takes effect on the next webhook; persisted for restarts.
-const settingsSchema = z.object({ announced: z.array(z.enum(TV_STAGE_ORDER as [string, ...string[]])) });
+async function saveSetting(key: string, value: string): Promise<void> {
+  await getDb()
+    .insertInto('app_settings')
+    .values({ key, value, updated_at: new Date() })
+    .onConflict((oc) => oc.column('key').doUpdateSet({ value, updated_at: new Date() }))
+    .execute();
+}
+
+// PUT /api/tv/settings { announced?: ["pullback", "cross", …], ema_momo_only?: boolean } — global,
+// like the screener config; either field alone changes only that one. Takes effect on the next
+// webhook; persisted for restarts.
+const settingsSchema = z.object({
+  announced: z.array(z.enum(TV_STAGE_ORDER as [string, ...string[]])).optional(),
+  ema_momo_only: z.boolean().optional(),
+}).refine((b) => b.announced !== undefined || b.ema_momo_only !== undefined);
 router.put('/settings', authMiddleware, async (req, res) => {
   const parsed = settingsSchema.safeParse(req.body);
-  if (!parsed.success) return res.status(400).json({ error: 'announced must be a list of stages' });
+  if (!parsed.success) return res.status(400).json({ error: 'send announced (a list of stages) and / or ema_momo_only (true or false)' });
   await loadSettings();   // so a late first load can't overwrite this change
-  const stages = parseStageList(parsed.data.announced) ?? [];
-  const value = JSON.stringify(storedStages(stages));
   try {
-    await getDb()
-      .insertInto('app_settings')
-      .values({ key: STAGES_KEY, value, updated_at: new Date() })
-      .onConflict((oc) => oc.column('key').doUpdateSet({ value, updated_at: new Date() }))
-      .execute();
+    if (parsed.data.announced !== undefined) {
+      const stages = parseStageList(parsed.data.announced) ?? [];
+      await saveSetting(STAGES_KEY, JSON.stringify(storedStages(stages)));
+      gate.setAnnounced(stages);
+      console.log(`[tv-setup] announced stages set to: ${stages.join(', ') || 'none'}`);
+    }
+    if (parsed.data.ema_momo_only !== undefined) {
+      const rules: TvAlertRules = { ema_momo_only: parsed.data.ema_momo_only };
+      await saveSetting(RULES_KEY, JSON.stringify(rules));
+      gate.setEmaMomentumOnly(rules.ema_momo_only);
+      console.log(`[tv-setup] EMA / BAND / BOUNCE set to: ${rules.ema_momo_only ? 'Momentum names only' : 'Momentum names, or a +30% day high'}`);
+    }
   } catch (err) {
-    console.error('[tv-setup] stage settings save failed:', err instanceof Error ? err.message : err);
-    return res.status(500).json({ error: 'Could not save the stage settings' });
+    console.error('[tv-setup] alert settings save failed:', err instanceof Error ? err.message : err);
+    return res.status(500).json({ error: 'Could not save the alert settings' });
   }
-  gate.setAnnounced(stages);
-  console.log(`[tv-setup] announced stages set to: ${stages.join(', ') || 'none'}`);
-  res.json({ data: { announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED } });
+  res.json({ data: settingsBody() });
 });
 
 // GET /api/tv/watchlist[?days=90&min_chg=30&recent_days=5&recent_min_chg=20] —

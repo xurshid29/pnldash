@@ -2540,3 +2540,31 @@ no counterpart there.
 
 **To grade** after a few weeks of rows: band crosses against EMA crosses on the same names and
 days (false within 5 candles, and the result with a stop under the line), strong and weak apart.
+
+### 18.4 Momentum list only, a ⚙ rule (server, 2026-11-15)
+
+**The ask.** After the MACD measurement: "btw, ema cross must be checked only with momentum list".
+The studies already were (their bars are Momentum rows). The live alert had one exception, shared
+with the VB: off our Momentum list, a message whose day high was +30% or more still announced
+(`vb_fresh_gain`). Asked whether to drop it for the EMA: "yes, please, also, make it configurable
+if possible".
+
+**The rule.** An EMA cross, a band cross (§18.3) or a BOUNCE announces only when the ticker is in
+the latest cycle's Momentum rows. Off the list it is stored quietly (`why` offlist) whatever its day
+high. It is the default (`TV_SETUP.em_momentum_only`).
+
+**The setting.** ⚙ → 📐 Stages that alert → **EMA / BAND / BOUNCE: Momentum list only**, a
+checkbox under the stage switches, ticked by default. Unticked, those three follow the VB's rule
+again: off the list, a day high of +30% or more announces.
+
+- It is global and server-side like the switches: `GET /api/tv/settings` returns `ema_momo_only`,
+  and `PUT /api/tv/settings` takes `announced` and / or `ema_momo_only` (either alone changes only
+  that one).
+- It is stored in `app_settings` under `tv_alert_rules` as `{ ema_momo_only }`
+  (`readStoredRules`); no row means the default. The gate reads it once on boot
+  (`TvSetupGate.setEmaMomentumOnly`) and on each save.
+- CROSS and RETEST keep their own rule (Momentum names, or a +30% day high). RSI, DIP and MACD
+  announce off the list as before.
+
+The script side is unchanged: it can't see our list, so it keeps its own gainer filter (`emGainOn`)
+and sends every cross; the server decides what pings.

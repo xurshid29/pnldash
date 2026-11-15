@@ -214,6 +214,13 @@ export const TV_SETUP = {
   // v35 EMA cross: past this many crosses on a line in a day (the message's `cross N`), an EMA
   // cross is stored and shown, not announced — an EMA weaving around VWAP. Untested.
   em_cap: 3,
+  // 2026-11-15 (operator: "ema cross must be checked only with momentum list"; asked whether to
+  // drop the fresh-runner exception for it: "yes, please, also, make it configurable if
+  // possible"): an EMA cross, a band cross (v40) or a BOUNCE off our Momentum list is quiet
+  // whatever its day high. This is the default of the ⚙ menu's "EMA / BAND / BOUNCE: Momentum
+  // list only" (app_settings `tv_alert_rules`, TvSetupGate.setEmaMomentumOnly); switched off,
+  // they follow the VB's rule again (a day high ≥ vb_fresh_gain still announces).
+  em_momentum_only: true,
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
@@ -360,6 +367,16 @@ export function readStoredStages(v: unknown): TvStage[] | null {
     if (from ? on.has(from) : DEFAULT_ANNOUNCED.includes(s)) on.add(s);
   }
   return TV_STAGE_ORDER.filter((s) => on.has(s));
+}
+
+// The ⚙ menu's alert rules beside the stage switches (app_settings `tv_alert_rules`), as stored →
+// each rule's value, a missing or malformed one at its default.
+export interface TvAlertRules {
+  ema_momo_only: boolean;   // EMA / BAND / BOUNCE announce on Momentum names only (TV_SETUP.em_momentum_only)
+}
+export function readStoredRules(v: unknown): TvAlertRules {
+  const o = v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  return { ema_momo_only: typeof o.ema_momo_only === 'boolean' ? o.ema_momo_only : TV_SETUP.em_momentum_only };
 }
 
 // What PUT /api/tv/settings stores: the switches and the stages the menu had.
@@ -604,7 +621,18 @@ export class TvSetupGate {
   private lastEvent = new Map<string, number>();   // ticker|stage|line → epoch sec of the event's first copy
   private lastNotify = new Map<string, number>();  // ticker|stage (PULLBACK: ticker|pullback|line) → last announcement
   private announced = new Set<TvStage>(DEFAULT_ANNOUNCED);  // the ⚙ stage switches
+  private emaMomoOnly: boolean = TV_SETUP.em_momentum_only;  // the ⚙ rule: EMA / BAND / BOUNCE on Momentum names only
   private recent: number[] = [];
+
+  // The ⚙ menu's "EMA / BAND / BOUNCE: Momentum list only". Off = a day high ≥ vb_fresh_gain
+  // announces off the list too, as for a CROSS.
+  setEmaMomentumOnly(on: boolean): void {
+    this.emaMomoOnly = on;
+  }
+
+  emaMomentumOnly(): boolean {
+    return this.emaMomoOnly;
+  }
 
   setAnnounced(stages: readonly TvStage[]): void {
     this.announced = new Set(stages);
@@ -650,8 +678,9 @@ export class TvSetupGate {
     // its ⚙ switch, the day's cap, and Momentum names only (or a day high ≥ vb_fresh_gain).
     // v36: a cross the script's filter calls weak is quiet. v37: its BOUNCE follows the same rules
     // (the EMA's switch, the cap on its own `bounce N`, weak after a weak cross).
+    // 2026-11-15: Momentum names only by default — the fresh-runner exception is a ⚙ rule now.
     if (ema) {
-      const fresh = sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
+      const fresh = !this.emaMomoOnly && sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
       const quiet = !this.announced.has('ema') || sig.weak === true || pastCap(sig)
         || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
       return quiet ? 'quiet' : 'notify';
