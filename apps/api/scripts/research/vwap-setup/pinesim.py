@@ -1641,7 +1641,7 @@ def selftest_rsi():
     return ok and ok2 and ok3 and ok4 and ok6 and ok7
 
 
-# ── EMA cross over VWAP (script v35) ───────────────────────────────────────────
+# ── EMA cross over VWAP (script v35), and the band in the EMA's place (v40) ────
 # The EMA of a timeframe's closes (3m, length 9) against the session VWAP, judged at each close of
 # that timeframe's candles: above the line now, at or under it at the close before. As the RSI, the
 # script reads the EMA after the last finished candle (request.security, lookahead on + [1]) and
@@ -1655,8 +1655,13 @@ def selftest_rsi():
 # (within `tol_e` % above it) or the VWAP (within `tol_v` %), and that candle or a later one closes
 # green above the EMA → BOUNCE, the stop under the lowest low since the touch. A close under the VWAP
 # first ends the wait; a newer cross starts it over. A bounce after a weak cross is weak.
+# v40, the line that crosses: `src` 'ema', or 'bb' for the upper Bollinger Band — the VB's band, built
+# from the alert timeframe's bars (`base_min`; 30s in the script, 1m here): the last bb_n − 1 finished
+# closes of bb_min candles plus the forming one. The same rule, filter and numbers on the band's own
+# state; no bounce (it is the EMA's). The script's "Both" runs the two side by side, each on its own.
 EMA_DEFAULTS = dict(tf_min=3, n=9, filter=True, min_under=5, max_flips=2, from_hour=7,
-                    bounce=True, wait=10, tol_e=0.0, tol_v=1.0, from_ema=True, from_vwap=True)
+                    bounce=True, wait=10, tol_e=0.0, tol_v=1.0, from_ema=True, from_vwap=True,
+                    src='ema', base_min=1, bb_min=1, bb_n=20, bb_mult=2.0)
 
 
 def _ema_weak(p, hour, under, flips):
@@ -1675,6 +1680,33 @@ def ema_series(closes, n):
             e = alpha * c + (1 - alpha) * e
         out.append(e)
     return out
+
+
+def bb_upper_series(base_bars, p):
+    """The script's emBand per bar of the alert timeframe: the BB timeframe's last bb_n − 1 finished
+    closes plus this bar's close → mean + bb_mult × their (population) standard deviation; None until
+    it has them. A BB candle is finished when a bar starts a new one (timeframe.change)."""
+    out, closes, last_c, prev_bt = [], [], None, None
+    for b in base_bars:
+        bt = _candle_start(b['t'], p['bb_min'])
+        if prev_bt is not None and bt != prev_bt and last_c is not None:
+            closes.append(last_c)
+            if len(closes) > p['bb_n'] - 1:
+                closes.pop(0)
+        last_c, prev_bt = b['c'], bt
+        band = None
+        if len(closes) == p['bb_n'] - 1:
+            vals = closes + [b['c']]
+            mean = sum(vals) / p['bb_n']
+            band = mean + p['bb_mult'] * (sum((v - mean) ** 2 for v in vals) / p['bb_n']) ** 0.5
+        out.append(band)
+    return out
+
+
+def _band_at(base_bars, p, minutes):
+    """{start of each `minutes` bar: the band at its last bar of the alert timeframe} — what a bigger
+    chart reads from its replay of those bars (the band at the chart bar's close)."""
+    return {_candle_start(b['t'], minutes): v for b, v in zip(base_bars, bb_upper_series(base_bars, p))}
 
 
 def with_session_vwap(bars):
@@ -1761,10 +1793,16 @@ def ema_rule_direct(bars, p=None):
     """The plain rule on the EMA timeframe's own candles (`bars` carry 'vw'): the EMA closes above
     the session VWAP after closing at or under it, the day's first candle excluded. The filter's
     readings are taken from the day's candles directly, as the study does (ema_vwap_study.py).
+    With src 'bb' (v40) the line that crosses is the band as it stands at each candle's close; `bars`
+    are then the alert timeframe's.
     → [(candle start, the day's number, the candle is its day's last, under, flips, weak)]."""
     p = dict(EMA_DEFAULTS, **(p or {}))
     c = resample_vw(bars, p['tf_min'])
-    e = ema_series([x['c'] for x in c], p['n'])
+    if p['src'] == 'bb':
+        band = _band_at(bars, p, p['tf_min'])
+        e = [band.get(x['t']) for x in c]
+    else:
+        e = ema_series([x['c'] for x in c], p['n'])
     out, day, n = [], None, 0
     seen = []          # the day's candles with an EMA and a line: (EMA, line)
     for i, x in enumerate(c):
@@ -1794,8 +1832,10 @@ def ema_bounce_direct(bars, p=None):
     """The plain bounce rule (v37) on the EMA timeframe's own candles: for each cross, the candles
     after it until a bounce, a close under the VWAP, `wait` candles, a newer cross or the day's end.
     → [(candle start, the day's number, the candle is its day's last, the pullback's low, candles
-    after the cross, 'ema' | 'vwap' | 'ema+vwap', weak)]."""
+    after the cross, 'ema' | 'vwap' | 'ema+vwap', weak)]. None after a band's cross (v40)."""
     p = dict(EMA_DEFAULTS, **(p or {}))
+    if p['src'] == 'bb':
+        return []
     c = resample_vw(bars, p['tf_min'])
     e = ema_series([x['c'] for x in c], p['n'])
     idx = {x['t']: i for i, x in enumerate(c)}
@@ -1837,10 +1877,19 @@ def simulate_ema(bars, chart_min, p=None, fine=None, full=False):
     [(candle start, late, the day's number, under, flips, weak)]. `fine`: the bars the EMA's candles
     are really made of, for a chart of the EMA's own timeframe built from smaller bars.
     `full`: → (those crosses, the v37 bounces [(candle start, late, the day's number, the pullback's
-    low, candles after the cross, what it came down to, weak)])."""
+    low, candles after the cross, what it came down to, weak)]).
+    With src 'bb' (v40, the script's section 4b) the sampled line is the band at each chart bar's
+    close: the chart's own bars on a chart of the alert timeframe, `fine` (the alert timeframe's
+    bars, replayed) on a bigger one; no bounces."""
     p = dict(EMA_DEFAULTS, **(p or {}))
     if not (chart_min <= p['tf_min'] and p['tf_min'] % chart_min == 0):
         return ([], []) if full else []
+    by_band = p['src'] == 'bb'
+    if by_band:
+        # the script's emBbOk: a chart of the alert timeframe or a multiple of it, a band timeframe no smaller
+        if not (chart_min >= p['base_min'] and chart_min % p['base_min'] == 0 and p['bb_min'] >= p['base_min']):
+            return ([], []) if full else []
+        band_at = _band_at(fine if chart_min > p['base_min'] else bars, p, chart_min)
     c = resample_vw(fine or bars, p['tf_min'])
     e_after = ema_series([x['c'] for x in c], p['n'])
     starts = [x['t'] for x in c]
@@ -1856,6 +1905,8 @@ def simulate_ema(bars, chart_min, p=None, fine=None, full=False):
         while j < len(starts) and starts[j] < ct:
             j += 1
         live = alpha * b['c'] + (1 - alpha) * e_after[j - 1] if j >= 1 and e_after[j - 1] is not None else None
+        if by_band:
+            live = band_at.get(_candle_start(t, chart_min))      # the line that crosses is the band
         new_day = prev_day is not None and t.date() != prev_day
         if prev_t is None or ct != prev_t:
             cop, clp, co, cl = co, cl, b['o'], b['l']
@@ -1863,7 +1914,7 @@ def simulate_ema(bars, chart_min, p=None, fine=None, full=False):
             cl = min(cl, b['l'])
         if prev_t is not None and ct != prev_t and done != prev_t:      # the candle before, from the bar before
             # v37: an earlier cross's bounce first (a cross candle can't be its own bounce)
-            if p['bounce'] and line.step_bounce(prev_live, prev_vw, cop, clp, prev_c, p) and not new_day:
+            if p['bounce'] and not by_band and line.step_bounce(prev_live, prev_vw, cop, clp, prev_c, p) and not new_day:
                 if not line.weakX:
                     line.bn += 1
                 bounces.append((prev_t, True, line.bn, line.lowP, line.age, line.came_from(), line.weakX))
@@ -1880,7 +1931,7 @@ def simulate_ema(bars, chart_min, p=None, fine=None, full=False):
             line.n = line.bn = 0
         ends = _candle_start(t + step, p['tf_min']) != ct or chart_min >= p['tf_min']
         if ends and done != ct:
-            if p['bounce'] and line.step_bounce(live, b['vw'], co, cl, b['c'], p):
+            if p['bounce'] and not by_band and line.step_bounce(live, b['vw'], co, cl, b['c'], p):
                 if not line.weakX:
                     line.bn += 1
                 bounces.append((ct, False, line.bn, line.lowP, line.age, line.came_from(), line.weakX))
@@ -1985,7 +2036,35 @@ def selftest_ema():
           f'EMA only {len(only_e)}, VWAP only {len(only_v)}, a 1-candle wait {len(short)}); the script gives the same ones, lows and counts on the 3m chart '
           f'and on the 1m chart ({late_b} a bar late, {len(drop_b)} on a day\'s last candle not announced; {on_cross} on a newer cross\'s candle)',
           '→', 'OK' if ok6 else 'UNEXPECTED')
-    return ok and first_of_day == 0 and ok5 and ok6
+    # v40, the band as the line that crosses: the plain rule on the 1m bars (the alert timeframe here)
+    # against the script on a 3m chart (replaying them) and on the 1m chart — the same crosses, numbers,
+    # readings and verdicts, with a 1m band and with a 2m band built from the 1m bars; never a bounce;
+    # no marks on a chart the band isn't right on
+    ok7, shown_b = True, []
+    ema_t = {t for t, *_ in wantf}
+    for bb_min in (1, 2):
+        q = dict(src='bb', bb_min=bb_min)
+        wantq = ema_rule_direct(fine, q)
+        q3, bq3 = simulate_ema(resample_vw(fine, 3), 3, q, fine=fine, full=True)
+        q1, bq1 = simulate_ema(fine, 1, q, full=True)
+        all_q = [(t, n, u, f, w) for t, n, _, u, f, w in wantq]
+        end_q = {(t, n, u, f, w) for t, n, last, u, f, w in wantq if last}
+        drop_q = [x for x in all_q if x not in full(q1)]
+        weak_q = sum(1 for x in all_q if x[4])
+        late_q = sum(1 for _, late, *_ in q1 if late)
+        ok7 = (ok7 and len(all_q) >= 20 and full(q3) == all_q and not any(late for _, late, *_ in q3)
+               and [x for x in all_q if x not in drop_q] == full(q1) and all(x in end_q for x in drop_q) and late_q > 0
+               and bq3 == [] and bq1 == [] and ema_bounce_direct(fine, q) == []
+               and 0 < weak_q < len(all_q) and {t for t, *_ in all_q} != ema_t
+               and all(w == (t.hour < 7 or u < 5 or f > 2) for t, _, u, f, w in all_q))
+        shown_b.append(f"a {bb_min}m band {len(all_q)} crosses ({weak_q} weak; 3m chart {len(q3)}, 1m chart {len(q1)}, {late_q} a bar late, "
+                       f"{len(drop_q)} on a day's last candle not announced)")
+    ok7 = (ok7 and simulate_ema(fine, 1, dict(src='bb', base_min=3, bb_min=3)) == []                      # a chart under the alert timeframe
+           and simulate_ema(resample_vw(fine, 3), 3, dict(src='bb', base_min=3, bb_min=1), fine=fine) == []   # a band timeframe under it
+           and simulate_ema(resample_vw(fine, 5), 5, dict(src='bb'), fine=fine) == [])                    # a chart that doesn't divide the candle
+    print(f"…the band as the line (v40), 20 closes and 2 st. dev. from the 1m bars, judged at the 3m close: {'; '.join(shown_b)}; "
+          f"the script gives the plain rule's crosses, numbers and verdicts on both charts, and no bounce", '→', 'OK' if ok7 else 'UNEXPECTED')
+    return ok and first_of_day == 0 and ok5 and ok6 and ok7
 
 
 if __name__ == '__main__':

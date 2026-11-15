@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v39** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the RSI cross with its DIP and (v39) the MACD cross after a DIP (§17), and the EMA cross over VWAP with its filter and BOUNCE (§18); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v40** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the RSI cross with its DIP and (v39) the MACD cross after a DIP (§17), and the EMA cross over VWAP with its filter and BOUNCE (§18); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1138,6 +1138,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-13 | v37 | `8ffe386` | Operator (PARA with v36's marks): "maybe, pullback or bounce from ema and/or vwap can help?". Measured first (`research/ema-vwap/ema_pullback_study.py`): a bounce comes on about 44% of the crosses; those entries are false 35–37% of the time (the cross: 47–49%) and lose −0.06R to −0.10R (the cross: −0.20R to −0.22R), in both halves, on 5m candles and with other waits; still not positive. **BOUNCE** (§18.2, stage `bounce`): a sent cross arms a 10-candle wait; a candle's low comes down to the EMA or the VWAP (within 1%), then that candle or a later one closes green above the EMA; a close under the VWAP, a newer cross or the day's end stops it. Message `BOUNCE … | stop … | from ema+vwap | bounce N | since N`, stop a tick under the pullback's low; `| weak` and a gray mark after a weak cross. Five inputs and four plots last: nothing shifts. Server: rides the EMA ⚙ switch (`tv_bounce` on Telegram), limited like the cross. Dashboard: lime BOUNCE pill, `bounce · stop`, History "EMA + BOUNCE". Replica `ema_bounce_direct` / `simulate_ema(full)`. Regression 493 checks. **Paste, recreate both alerts.** |
 | 2026-11-14 | v38 | `7c7b4b9` | Operator: a buy stop 8% above the latest DIP, for the DIPs they pick; "lets add the +8% level (better configurable) and alert to the script. I want to experiment with it". Measured first (`research/rsi-dip`): the level is reached on 30% of DIPs and the price is lower on average afterwards, so it marks their level, not an edge. **LIFT** (§17.3, stage `lift`): a DIP sets a level `rsLiftPct` % (8) above its close, drawn as a magenta line; LIFT on the first later bar whose high reaches it (or that closes over it); a newer DIP moves it; it goes after 3 sessions. The DIP's message gains `| lift <level>`; `LIFT … | lift … | base … | up 8 | stop … | after 290m | by touch`. Five inputs and two plots last (section 5, after the EMA section); the DIP's `alert()` moved there. Server: its own ⚙ switch after DIP (a list saved before starts it at the DIP's value), `tv_lift`, announced like the DIP. Dashboard: LIFT pill, the DIP row shows `lift $X`. Replica `lift_rule_direct` / `simulate_rsi(full)['lifts']`. Regression 542 checks. **Paste, recreate both alerts.** |
 | 2026-11-15 | v39 | `16c9512` | Operator: "entering alone on the DIP is not easy, chart can keep going lower, that's why lets add macd line cross over zero line after the latest DIP, I want to experiment with it. Also, lets refactor some of our experimental features, such as EMA CROSS OVER VWAP, LIFT, VB LANES"; asked what refactor meant: remove them; then "can we keep it [the EMA cross]? I want to improve it later". **MACD** (§17.4, stage `macd`): after a DIP, the MACD line (EMA 12 − EMA 26 of 5m closes, from a request like the RSI) closes above zero after closing at or under it; a newer DIP starts the wait over; it ends after 3 sessions. Message `MACD … | macd 5 12 26 | base … | stop … | dip N | after 200m | candle 10`. Measured before (`research/rsi-dip/dip_macd_cross.py`): no better than the DIP itself. **Removed:** the DIP's LIFT (v38, §17.3) and the three extra VB lanes (v29, §16.10), in git at v38 `7c7b4b9`; `LIFT …` messages now get 400 and `vb_long_min` is gone. **Kept:** the EMA cross over VWAP with its filter and BOUNCE, unchanged. The RSI's defaults became the operator's (a 10m RSI checked at 1h). Inputs left the middle (18 lane inputs) and the end (5 LIFT inputs), and six MACD inputs and two plots went last: 68 inputs, 32 plots, 12 `alert()` calls. Server: ⚙ switch MACD after DIP (starts at the DIP's value), `tv_macd`, announced like the DIP. Dashboard: MACD pill, History filter "RSI + DIP + MACD". Replica `macd_rule_direct` / `simulate_rsi(full)['macds']`. Regression 569 checks. **Paste, Settings → Defaults → Reset settings, recreate both alerts.** |
+| 2026-11-15 | v40 | `pending` | Operator: "can we make EMA Cross use BollingerBands upper row instead of EMA? So, add this to settings so I can switch between EMA and BB Upper row? We have a bb upper row already which we use for VWAP+BB Cross (btw, that bb appears only if VWAP+BB Cross enabled)", then "or, could we do both?". **The band as the line that crosses** (§18.3): one input, last, "EMA cross: the line that crosses the VWAP" = EMA / BB upper / Both (default Both). The band is the VB's (its BB timeframe, length, StdDev), rebuilt from the 30s bars by `emBand()` and replayed on bigger charts, so the alert and every chart read one line; drawn wherever its crosses run, with the VB off too. Its crosses follow the EMA's rule, settings and filter on their own state and day's numbers (script section 4b); no BOUNCE after them. Message: the EMA's with `| upper 8.13 (-0.5%) | bb 45S` in the place of `| ema 9 8.03`. v39's six MACD inputs are declared with the EMA section's now (same order), so the new one can come after them: nothing shifts. 69 inputs, 37 plots (five new, last), 14 `alert()` calls. Server: stage `ema`, `emaByBand()`, the gate's key carries `|bb` (an EMA cross and a band cross of one candle are two events), Telegram headline BAND; rows carry `upper` / `bb_tf`. Dashboard: BAND pill, its own thread. Replica `bb_upper_series` / `simulate_ema(src='bb')`. Not measured. Regression 619 checks. **Paste, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2459,3 +2460,83 @@ counts and weak flags on the 3m chart and on the 1m chart with missing minutes (
 checked: the Pine itself on TradingView.
 
 **To grade** with the filter: bounces against crosses from `tier_events`, strong and weak apart.
+
+### 18.3 The band as the line that crosses (script v40, 2026-11-15)
+
+**The ask.** "can we make EMA Cross use BollingerBands upper row instead of EMA? So, add this to
+settings so I can switch between EMA and BB Upper row? We have a bb upper row already which we use
+for VWAP+BB Cross (btw, that bb appears only if VWAP+BB Cross enabled)". While it was being built:
+"or, could we do both?" Built without measuring, as an experiment on a setup the operator wants to
+improve.
+
+**The input** (the script's last): "EMA cross: the line that crosses the VWAP" = **EMA**, **BB
+upper** or **Both** (`emSrc`; the default is Both). With Both the two lines run side by side, each
+with its own state, day's numbers, alerts and marks.
+
+**The band** is the VB's: `vbBbTf` (45S), `vbLen` (20) and `vbMult` (2). `emBand()` builds it the
+way `vbStep()` does, from the alert timeframe's bars (`vbTf`, 30s): the BB timeframe's last
+`vbLen − 1` finished closes plus the forming one, mean + `vbMult` × their standard deviation. On a
+chart bigger than the alert timeframe, `request.security_lower_tf` replays those 30s bars inside
+each chart bar and the script takes the band at the last one. So the alert and every chart read
+one line. `emBbOk` is where that holds: a chart of the alert timeframe or a multiple of it, with a
+band timeframe no smaller.
+
+**The rule** is the EMA cross's, with the band in the EMA's place (script section 4b):
+
+- It is sampled at each close of the EMA's candle timeframe (`emTf`, 3m). A candle whose closing bar
+  had no trades is sampled on the next bar (`| late`), never across the day's end.
+- A cross is the band above the VWAP line at that close and at or under it at the close before. The
+  day's first candle can't fire.
+- The same lines (`emSession` / `emMonth` / `emYear`), gainer filter and alert window apply.
+- The v36 filter applies with the band's own readings: the candle's hour, the candles the band had
+  been at or under the line, and its crossings in the 20 candles before. Those thresholds were
+  measured on the EMA, not on the band.
+- Each line keeps its own `cross N` for the band, apart from the EMA's.
+- **No BOUNCE** follows a band cross. The bounce is a pullback to the EMA and stays with the EMA's
+  crosses (it runs when the EMA is a chosen line).
+
+The band usually sits above price, so it crosses the VWAP before price or the EMA does. It is an
+earlier heads-up, often with the price still under the line.
+
+**Where it runs.** `bbOk`: the setup on, the band chosen, a chart no bigger than `emTf` whose bars
+divide it, and `emBbOk`. With the defaults that is a 3m, 1m or 30s chart. `emOk` (the EMA's
+crosses, line and marks) is the same with the EMA chosen.
+
+**The message** is the EMA's with the band in the place of `| ema 9 8.03`:
+
+`EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.13 (-0.5%) | bb 45S | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S`
+
+`upper` is the band with the price against it, `bb` its timeframe, as in a CROSS.
+
+**The chart.** The band is drawn (orange, plot "BB upper (EMA cross, v40)") wherever its crosses
+run and the VB isn't already drawing it on that chart, so it shows with the VB setup switched off
+too. A cross is a maroon **BB** label under the bar; a weak one a small gray **bb**. Five plots, the
+script's last. v39's six MACD inputs are now declared with the EMA section's, so that `emSrc` can
+come after them and before the code that reads it; their order in the Inputs didn't change.
+
+**Our side.** Stage `ema`, nothing new in the parser: `upper`, `upper_pct` and `bb_tf` were already
+read for any message. `emaByBand(sig)` is true for an EMA-stage signal with a band timeframe and no
+EMA.
+
+- The same ⚙ switch (EMA + BOUNCE), cap (`em_cap` on its own `cross N`), Momentum rule and weak
+  rule as an EMA cross. Telegram slug `tv_ema`.
+- The gate's duplicate key carries `|bb`, so an EMA cross and a band cross of the same candle are
+  two events.
+- Telegram: headline **BAND**, "the 45s BB upper band crossed above the session VWAP (at the 3m
+  close)", then the band and the price against it, the count and the filter's readings.
+- Dashboard: an orange pill reading **BAND** with the timeframes (`3m/45s`), in its own thread per
+  line (`bd:`) beside the EMA's; the row shows the band where an EMA row shows the EMA.
+- `tier_events` rows carry `upper`, `upper_pct` and `bb_tf`, which is how to tell them from EMA
+  rows when grading (`meta->>'bb_tf' is not null`).
+
+**Checked.** `pinesim.selftest_ema` with `src='bb'` (`bb_upper_series`, `ema_rule_direct`,
+`simulate_ema`): with a 1m band 56 crosses and with a 2m band 45, the script's sampling giving the
+plain rule's crosses, numbers, readings and verdicts on the 3m chart (replaying the 1m bars) and on
+the 1m chart with missing minutes; no bounce; no marks on a chart under the alert timeframe, with a
+band timeframe under it, or on a chart that doesn't divide the candle. The message contract is in
+`verify-tv-setups.ts`. Not checked: the Pine itself on TradingView, and whether a band cross is
+worth anything. In the replica the alert timeframe is 1m; TradingView's 45s band from 30s bars has
+no counterpart there.
+
+**To grade** after a few weeks of rows: band crosses against EMA crosses on the same names and
+days (false within 5 candles, and the result with a stop under the line), strong and weak apart.

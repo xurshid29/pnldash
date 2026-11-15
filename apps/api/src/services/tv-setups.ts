@@ -78,6 +78,16 @@ export const EMA_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'bounce
 // cross is stored and shown, never announced; the script doesn't count it in `cross N`.
 // v37: a cross arms a BOUNCE (above). Announced like the cross (Momentum or a fresh runner,
 // em_cap on its own `bounce N`); one after a weak cross carries `| weak` and stays quiet.
+// v40 (operator, 2026-11-15: "can we make EMA Cross use BollingerBands upper row instead of EMA?
+// So, add this to settings so I can switch between EMA and BB Upper row?", then "or, could we do
+// both?"): a script input picks the line that crosses the VWAP — the EMA, the upper Bollinger Band
+// (the VB's own), or both, each with its own crosses and day's numbers. A band cross is the EMA's
+// message with `| upper 8.03 (+0.7%) | bb 45S` in the place of `| ema 9 8.03`: the same stage,
+// ⚙ switch, cap and filter, shown as BAND, and its own event beside an EMA cross of the same
+// candle (the gate's key). There is no BOUNCE after it (the bounce is the EMA's).
+export function emaByBand(sig: { stage: TvStage; bb_tf?: string | null; ema?: number | null }): boolean {
+  return sig.stage === 'ema' && sig.bb_tf != null && sig.ema == null;
+}
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
 // e.g. "session+month". The legacy 'both' (v10–v13) meant session + month.
@@ -280,6 +290,7 @@ export function emaFields(sig: TvSetupSignal): {
   candle_tf?: string | null; cross_n?: number | null; ema_len?: number | null; ema?: number | null; late?: boolean;
   under_n?: number | null; flips_n?: number | null; weak?: boolean;
   stop?: number | null; bounce_n?: number | null; since_n?: number | null; bounce_from?: TvBounceFrom | null;
+  upper?: number | null; upper_pct?: number | null; bb_tf?: string | null;
 } {
   if (sig.stage === 'bounce') {
     return {
@@ -293,6 +304,8 @@ export function emaFields(sig: TvSetupSignal): {
     candle_tf: sig.candle_tf ?? null, cross_n: sig.cross_n ?? null, ema_len: sig.ema_len ?? null, ema: sig.ema ?? null,
     late: sig.late === true,
     under_n: sig.under_n ?? null, flips_n: sig.flips_n ?? null, weak: sig.weak === true,
+    // v40: the band that crossed, when it was the band
+    ...(emaByBand(sig) ? { upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null, bb_tf: sig.bb_tf ?? null } : {}),
   };
 }
 
@@ -624,7 +637,8 @@ export class TvSetupGate {
     // of an RSI cross's, a DIP's or a MACD's: the timeframe it is judged at.
     const rsi = RSI_STAGES.has(sig.stage);   // the RSI cross, its DIP and (v39) the MACD after it
     const ema = EMA_STAGES.has(sig.stage);   // the EMA cross and (v37) its bounce
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi || ema ? `|${sig.candle_tf ?? ''}` : ''}`;
+    // v40: a band cross and an EMA cross of one candle are two events (`|bb`).
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi || ema ? `|${sig.candle_tf ?? ''}` : ''}${emaByBand(sig) ? '|bb' : ''}`;
     const prev = this.lastExact.get(exact);
     const dupSec = vb || ema ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
@@ -684,6 +698,8 @@ export const TV_STAGE_LABEL: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
   bounce: 'BOUNCE', macd: 'MACD',
 };
+// v40: an EMA-stage cross whose line is the BB upper band reads "BAND" (emaByBand).
+export const EMA_BAND_LABEL = 'BAND';
 const STAGE_ICON: Record<TvStage, string> = {
   pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', rsi: '📈', dip: '🎯', ema: '〽️', bounce: '🏀', macd: '🟢',
 };
@@ -939,12 +955,17 @@ function formatEma(
 ): string {
   const tokens = lineTokens(sig.stage, sig.line);
   const tf = fmtTf(sig.candle_tf);
+  // v40: the line that crossed — the EMA, or the BB upper band (headline "BAND")
+  const band = emaByBand(sig);
+  const crossed = band ? `the ${fmtTf(sig.bb_tf)} BB upper band` : `the ${tf} EMA ${sig.ema_len ?? '?'}`;
   const lines = [
-    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.ema} <b>${TV_STAGE_LABEL.ema}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>the ${tf} EMA ${sig.ema_len ?? '?'} crossed above the ${(tokens.length > 0 ? tokens : ['session']).join(' + ')} VWAP (at the ${tf} close${sig.late ? ', a bar late' : ''})</i>`,
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.ema} <b>${band ? EMA_BAND_LABEL : TV_STAGE_LABEL.ema}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `<i>${crossed} crossed above the ${(tokens.length > 0 ? tokens : ['session']).join(' + ')} VWAP (at the ${tf} close${sig.late ? ', a bar late' : ''})</i>`,
   ];
   const what: string[] = [];
-  if (sig.ema != null) what.push(`EMA ${fmtPx(sig.ema)}`);
+  if (band) {
+    if (sig.upper != null) what.push(`${fmtTf(sig.bb_tf)} BB upper ${fmtPx(sig.upper)} (${fmtSigned(sig.upper_pct ?? null)})`);
+  } else if (sig.ema != null) what.push(`EMA ${fmtPx(sig.ema)}`);
   if (sig.cross_n != null) {
     what.push(`cross ${sig.cross_n} today${sig.cross_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
   }

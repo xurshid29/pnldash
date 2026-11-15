@@ -10,7 +10,7 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v39 (2026-11-15).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v40 (2026-11-15).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
 - **PULLBACK** and the **VWAP + BB cross with its RETEST**, as below. **The VB lanes (v29) were
   removed in v39**, with the server's `vb_long_min` exception: every line below about lanes is
@@ -21,9 +21,13 @@ v31; the session log has each step since. What the script carries now:
   RSI / DIP / MACD has a ⚙ switch; MACD starts at the DIP's value. **v38's LIFT (a level 8%
   above the DIP) was removed in v39**; `LIFT …` messages get 400.
 - **EMA cross over VWAP** (v35) with its filter (v36) and **BOUNCE** (v37): kept unchanged in v39.
-  The operator: "can we keep it? I want to improve it later".
+  The operator: "can we keep it? I want to improve it later". **v40: the line that crosses can be
+  the VB's BB upper band, or both run side by side (the default)**; a band cross is stage `ema`
+  shown as BAND, with no BOUNCE. The operator also said the EMA cross "must be checked only with
+  momentum list" (the studies already are; the live alert has the +30% day-high exception, and my
+  offer to drop it for the EMA is unanswered).
 - **v39 needs Settings → Defaults → Reset settings once** after the paste (inputs left the middle
-  and the end), then both alerts recreated.
+  and the end), then both alerts recreated. v40 needs no reset (one input, last).
 - The operator is experimenting, not trading for real (11-13): deploy at any hour.
 - Measured so far on the RSI family (`apps/api/scripts/research/rsi-dip/README.md`): no entry
   rule reaches a 50% win rate at +15%; the MACD cross is no better than the DIP itself.
@@ -262,6 +266,26 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-15 (Sun, night) — SCRIPT v40: THE BB UPPER BAND AS THE LINE THAT CROSSES THE VWAP (EMA, BB UPPER OR BOTH).** The
+operator: "can we make EMA Cross use BollingerBands upper row instead of EMA? So, add this to settings so I can switch between
+EMA and BB Upper row? We have a bb upper row already which we use for VWAP+BB Cross (btw, that bb appears only if VWAP+BB Cross
+enabled)". Mid-build, after I had made it an either-or switch: "or, could we do both?" → a three-way input, default Both.
+Built without measuring (`docs/vwap-setup.md` §18.3).
+- **Script:** one input, last (`emSrc`: EMA / BB upper / Both). `emBand()` rebuilds the VB's band (45S, 20, 2) from the alert
+  timeframe's bars and a lower-timeframe request replays them on bigger charts, so a 3m or 1m chart reads the alert's line; the
+  band is drawn wherever its crosses run, with the VB off too. Section 4b: the band's own `EmaLine` state, sampled like the EMA
+  (`bbSample()`), the same lines, gainer filter, v36 filter and counts; maroon **BB** marks (gray **bb** when weak). No BOUNCE
+  after a band cross. The EMA's block is untouched apart from `emOk` (it needs the EMA chosen) and `emMsg()`'s new `band`
+  argument. v39's six MACD inputs moved up beside the EMA's (same order) so the new input can follow them and still precede the
+  code that reads it. 69 inputs, 37 plots, 14 `alert()` calls. **No reset needed.**
+- **Message:** `EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.13 (-0.5%) | bb 45S | line session | candle 3 | cross 1 | under 12 |
+  flips 1 | …`. Server: stage `ema`, `emaByBand()`, gate key `|bb`, Telegram headline BAND, rows carry `upper` / `bb_tf`.
+  Dashboard: BAND pill (`3m/45s`), thread `bd:` per line.
+- Checks: `verify-tv-setups.ts` 619; `pinesim.selftest_ema` with `src='bb'` (a 1m and a 2m band; 3m and 1m charts agree with
+  the plain rule). The Pine was not compiled on TradingView.
+- The operator's ⚙ EMA switch is off (PULLBACK, DIP, MACD on), so EMA and BAND rows are stored quietly until they tick it.
+- To grade later: band crosses against EMA crosses on the same names (`meta->>'bb_tf' is not null`).
 
 **2026-11-15 (Sun, later still) — "THE EMA CROSS WITH THE MACD POSITIVE?": MEASURED; NOTHING BUILT.** The operator, after v39:
 "can we measure the EMA Cross setup with MACD … 1 or 5 min chart, 9 ema must cross the session vwap and macd line must be above

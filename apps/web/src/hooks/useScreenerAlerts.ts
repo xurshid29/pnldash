@@ -1,4 +1,4 @@
-import { lineTokens } from '../components/common/TvStageTag';
+import { isBandCross, lineTokens } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { useHiddenTickers } from './useHiddenTickers';
@@ -247,6 +247,10 @@ export function opportunityTitle(a: OpportunityAlert): string {
     // v35: "📐 EMA OMH — 3m EMA 9 over sVWAP · #1"
     if (s.stage === 'ema') {
       const ln = lineTokens(s.stage, s.line).map((t) => SHORT_LINE[t]).join(' + ') || 'VWAP';
+      // v40, the band as the line: "📐 BAND OMH — 45s BB upper over sVWAP at the 3m close · #1"
+      if (isBandCross(s)) {
+        return `${s.on_screen ? '⭐ ' : ''}📐 BAND ${a.ticker} — ${shortTf(s.bb_tf)} BB upper over ${ln} at the ${shortTf(s.candle_tf)} close${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
+      }
       return `${s.on_screen ? '⭐ ' : ''}📐 EMA ${a.ticker} — ${shortTf(s.candle_tf)} EMA ${s.ema_len ?? '?'} over ${ln}${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
     }
     // v37: "📐 BOUNCE PARA — bounced off the EMA after the 3m EMA 9 cross · stop $0.0985 · #1"

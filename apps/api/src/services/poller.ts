@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, rsiFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
+import { emaByBand, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, rsiFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -4012,7 +4012,9 @@ class PollerService {
       vwap_src: sig.vwap_src ?? null,
     });
     if (sig.stage === 'ema') {
-      console.log(`[tv-setup] EMA ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · ${sig.candle_tf ?? '?'} candle · EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}` +
+      // v40: the line that crossed is the EMA or the BB upper band (`| upper … | bb …` in the EMA's place)
+      const crossed = emaByBand(sig) ? `BB upper ${sig.bb_tf} ${sig.upper ?? '?'}` : `EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}`;
+      console.log(`[tv-setup] EMA ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · ${sig.candle_tf ?? '?'} candle · ${crossed}` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%) · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
         ` · under ${sig.under_n ?? '?'} · flips ${sig.flips_n ?? '?'}` +
         `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +

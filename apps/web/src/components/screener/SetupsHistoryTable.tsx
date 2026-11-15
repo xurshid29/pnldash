@@ -16,7 +16,7 @@ import { useSelection } from '../../context/SelectionContext';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens, isWeakEma, emaEventKey, tagNumber } from '../common/TvStageTag';
+import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens, isWeakEma, emaEventKey, tagNumber, stageLabelOf } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
 import { fmtPct, fmtPrice } from '../../utils/format';
 
@@ -149,7 +149,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       render: (_v, e) => (
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <TvStageTag stage={e.setup.stage} dim={!e.notified} line={e.setup.line}
-            touch={tagNumber(e.setup)} tfs={crossTfText(e.setup)} />
+            touch={tagNumber(e.setup)} tfs={crossTfText(e.setup)} label={stageLabelOf(e.setup)} />
           {e.setup.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
           {isWeakEma(e.setup) && <Text type="secondary" style={{ fontSize: 10 }}>weak</Text>}
         </span>
