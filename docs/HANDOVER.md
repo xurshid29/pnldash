@@ -286,6 +286,10 @@ Built without measuring (`docs/vwap-setup.md` §18.3).
   the plain rule). The Pine was not compiled on TradingView.
 - The operator's ⚙ EMA switch is off (PULLBACK, DIP, MACD on), so EMA and BAND rows are stored quietly until they tick it.
 - To grade later: band crosses against EMA crosses on the same names (`meta->>'bb_tf' is not null`).
+- Pushed `16d0a28`, deployed (a Sunday: no alerts running; the deploy recreated the Postgres container too, healthy after a
+  few seconds) and checked on prod: the bundle serves v40 with the three-way input; dry runs parse a band cross (`upper` /
+  `bb_tf`, no EMA), a weak late one on two lines, an EMA cross, a BOUNCE, a CROSS and a MACD. Not checked: v40's Pine on
+  TradingView (v39's neither). **Ask whether v39 / v40 compiled and whether the band draws on their 3m / 1m chart.**
 
 **2026-11-15 (Sun, later still) — "THE EMA CROSS WITH THE MACD POSITIVE?": MEASURED; NOTHING BUILT.** The operator, after v39:
 "can we measure the EMA Cross setup with MACD … 1 or 5 min chart, 9 ema must cross the session vwap and macd line must be above
