@@ -268,6 +268,25 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-16 (Mon, 04:00 ET) — FINVIZ: `type=stocks` IN EVERY SCREENER EXPORT URL (their 07.Dec.2026 change).** The operator
+forwarded Finviz's email: "Action needed: add {type=} to your Finviz screener export URLs by 07.Dec.2026". The screener split
+into a Stock and an ETF one; a URL without `type=` keeps answering, but from that date in the new screener's layout (stocks
+only; a custom `c=` column list starts with `No.` and `Ticker`; saved custom columns dropped).
+- Probed first (17 spaced requests, token never printed): with `type=stocks`, on `/export` and on `/export/screener`, views
+  131, 110 and 152 (custom columns: quotes, after-hours) return the same headers and rows as the old URLs, with our filter and
+  `o=-change` (76 rows, same first row) and with the `ah_change` filter.
+- **What would have broken on 12-07 without a change:** the two custom-column exports (`fetchQuotes` for the 📐 sidebar's
+  off-screen change %, and the after-hours overlay) read the ticker at position 0; a leading `No.` would have keyed every quote
+  by its row number, silently.
+- Changed: all five screener URLs go through `screenerExportUrl()` (`/export/screener?type=stocks&…`), in `finviz.ts` (131,
+  110, two 152s) and `universe.ts` (110). Every parser reads its columns by header name (`csvColumns()`, the old positions as
+  the fallback, a missing name logged once): `parseScreenerExports`, `parseQuotes`, `parseAfterHoursQuotes`.
+  `scripts/verify-finviz-export.ts` (18 checks) covers today's layout and the announced one.
+- Not changed: `quote_export` and `news_export` (not screener exports). The three bash scripts keep their old URLs
+  (`docs/screener-poll-breakout.md` has the note).
+- To check on or after 12-07: the API log for `[finviz] … no "…" column in the header` lines, and that the 📐 sidebar's
+  off-screen change % and the after-hours Momentum rows still fill in.
+
 **2026-11-15 (Sun, night) — EMA / BAND / BOUNCE: MOMENTUM LIST ONLY, A ⚙ RULE (server + dashboard, no script change).** The
 operator had said "btw, ema cross must be checked only with momentum list"; asked whether to drop the +30% day-high exception
 for it: "yes, please, also, make it configurable if possible". `docs/vwap-setup.md` §18.4.

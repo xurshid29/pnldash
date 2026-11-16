@@ -44,6 +44,37 @@ function token(): string {
   return t;
 }
 
+// Finviz screener exports (2026-11-16). Finviz split its screener into a Stock and an ETF one
+// and asks every export URL to name the product: "add type= to your Finviz screener export URLs
+// by 07.Dec.2026" → /export/screener?type=stocks&…. A URL without it keeps answering, but from
+// that date in the new screener's layout. Checked on 11-16 with type=stocks, on /export and on
+// /export/screener alike: the v=131, v=110 and v=152 (custom columns) exports return the same
+// headers and rows as the old URLs, with our filter and sort. `query` is everything but the
+// product and the token ("v=131&f=…&o=-change").
+export function screenerExportUrl(query: string, authToken: string = token()): string {
+  return `${FINVIZ_BASE}/export/screener?type=stocks&${query}&auth=${authToken}`;
+}
+
+// The column each named field sits in, read from an export's header row. Finviz's notice says
+// the new screener's CSV starts a custom column list with "No." and "Ticker", which would move
+// every column of the quote exports below (they start at Ticker today); reading by name is right
+// in either layout. A name the header doesn't have keeps the position it had on 2026-11-16, and
+// is logged once.
+const warnedColumns = new Set<string>();
+export function csvColumns<K extends string>(header: readonly string[] | undefined, expected: Record<K, number>, view = 'export'): Record<K, number> {
+  const names = (header ?? []).map((h) => h.trim().toLowerCase());
+  const out = {} as Record<K, number>;
+  for (const key of Object.keys(expected) as K[]) {
+    const at = names.indexOf(key.toLowerCase());
+    out[key] = at >= 0 ? at : expected[key];
+    if (at < 0 && names.length > 0 && !warnedColumns.has(`${view}|${key}`)) {
+      warnedColumns.add(`${view}|${key}`);
+      console.warn(`[finviz] ${view}: no "${key}" column in the header (${(header ?? []).join(', ')}) — reading position ${expected[key]}`);
+    }
+  }
+  return out;
+}
+
 // Thrown when Finviz returns HTTP 429. Distinct type so callers can tell a
 // rate-limit ("back off, try later — data still exists") apart from a genuine
 // empty result, instead of both collapsing to [].
@@ -186,8 +217,8 @@ export async function fetchScreener(opts: ScreenerOptions): Promise<ScreenerRow[
   // still resolve to the right universe.
   const afterHours = opts.session === 'afterhours';
   const f = encodeURIComponent(afterHours ? toAfterHoursFilter(opts.filter) : opts.filter);
-  const ownershipUrl = `${FINVIZ_BASE}/export?v=131&f=${f}&o=-change&auth=${token()}`;
-  const overviewUrl = `${FINVIZ_BASE}/export?v=110&f=${f}&o=-change&auth=${token()}`;
+  const ownershipUrl = screenerExportUrl(`v=131&f=${f}&o=-change`);
+  const overviewUrl = screenerExportUrl(`v=110&f=${f}&o=-change`);
 
   const [ownership, overview] = await Promise.all([
     fetchCsv(ownershipUrl),
@@ -202,31 +233,54 @@ export async function fetchScreener(opts: ScreenerOptions): Promise<ScreenerRow[
     throw new Error('Finviz ownership export returned empty body');
   }
 
-  // v=110 (overview) header order: No, Ticker, Company, Sector, Industry, Country, ...
+  const out = parseScreenerExports(ownership, overview, opts);
+
+  // After-hours: v=131's Price/Change/Volume are frozen at the 4pm close.
+  // Overlay the live after-hours figures (which Finviz keeps in separate
+  // columns) so the screener reflects the current session.
+  if (afterHours && out.length > 0) {
+    await applyAfterHoursQuotes(out);
+  }
+  return out;
+}
+
+// The two exports of one cycle → screener rows: v=131 (ownership) rows in their order, each
+// with its v=110 (overview) company / sector / industry / country, the float cap applied, the
+// first `topN`. Columns are read by header name (csvColumns; the positions are the fallback).
+export function parseScreenerExports(ownership: string[][], overview: string[][], opts: { floatMaxM: number; topN: number }): ScreenerRow[] {
+  // v=110 (overview) header: No., Ticker, Company, Sector, Industry, Country, ...
+  const ov = csvColumns(overview[0], { Ticker: 1, Company: 2, Sector: 3, Industry: 4, Country: 5 }, 'v=110');
+  const ovNeed = Math.max(ov.Ticker, ov.Company, ov.Sector, ov.Industry, ov.Country);
   type Meta = { company: string | null; sector: string | null; industry: string | null; country: string | null };
   const metaByTicker = new Map<string, Meta>();
   for (let i = 1; i < overview.length; i++) {
     const r = overview[i];
-    if (r.length >= 6) {
-      metaByTicker.set(r[1], {
-        company: r[2] || null,
-        sector: r[3] || null,
-        industry: r[4] || null,
-        country: r[5] || null,
+    if (r.length > ovNeed) {
+      metaByTicker.set(r[ov.Ticker], {
+        company: r[ov.Company] || null,
+        sector: r[ov.Sector] || null,
+        industry: r[ov.Industry] || null,
+        country: r[ov.Country] || null,
       });
     }
   }
 
-  // v=131 (ownership) header order: No, Ticker, Market Cap, Outstanding,
-  // Float, Insider Own, Insider Trans, Inst Own, Inst Trans, Float Short,
-  // Short Ratio, Avg Volume, Price, Change, Volume.
+  // v=131 (ownership) header: No., Ticker, Market Cap, Shares Outstanding, Shares Float,
+  // Insider Ownership, Insider Transactions, Institutional Ownership, Institutional
+  // Transactions, Short Float, Short Ratio, Average Volume, Price, Change, Volume.
+  const c = csvColumns(ownership[0], {
+    'Ticker': 1, 'Market Cap': 2, 'Shares Outstanding': 3, 'Shares Float': 4, 'Insider Ownership': 5, 'Insider Transactions': 6,
+    'Institutional Ownership': 7, 'Institutional Transactions': 8, 'Short Float': 9, 'Short Ratio': 10, 'Average Volume': 11,
+    'Price': 12, 'Change': 13, 'Volume': 14,
+  }, 'v=131');
+  const need = Math.max(...Object.values(c));
   const out: ScreenerRow[] = [];
   for (let i = 1; i < ownership.length && out.length < opts.topN; i++) {
     const r = ownership[i];
-    if (r.length < 15) continue;
-    const ticker = r[1];
-    const rawFloat = num(r[4]);
-    const sharesOut = num(r[3]);
+    if (r.length <= need) continue;
+    const ticker = r[c.Ticker];
+    const rawFloat = num(r[c['Shares Float']]);
+    const sharesOut = num(r[c['Shares Outstanding']]);
     // Size cap based on best-available "tradeable supply" estimate. If Finviz
     // returned a Float value, use it. If not (Finviz often misses Float for
     // recent IPOs / nano-caps like CNSP), fall back to Shares Outstanding —
@@ -251,42 +305,35 @@ export async function fetchScreener(opts: ScreenerOptions): Promise<ScreenerRow[
     }
     if (floatValue != null && floatValue >= opts.floatMaxM) continue;
     const meta = metaByTicker.get(ticker);
-    const avg_volume = numScaled(r[11]);   // v=131 col 11 = Avg Volume; Finviz returns this with K/M/B suffix
-    const volume = num(r[14]);
+    const avg_volume = numScaled(r[c['Average Volume']]);   // Finviz returns this with K/M/B suffix
+    const volume = num(r[c.Volume]);
     const rel_volume = avg_volume && avg_volume > 0 && volume != null
       ? +(volume / avg_volume).toFixed(2)
       : null;
     out.push({
       ticker,
-      change_pct: num(r[13]),
+      change_pct: num(r[c.Change]),
       float_m: floatValue,
       float_is_proxy: floatIsProxy,
-      price: num(r[12]),
+      price: num(r[c.Price]),
       volume,
       avg_volume,
       rel_volume,
-      mcap_m: num(r[2]),
+      mcap_m: num(r[c['Market Cap']]),
       country: meta?.country ?? null,
       company: meta?.company ?? null,
       sector: meta?.sector ?? null,
       industry: meta?.industry ?? null,
-      // v=131 columns 3, 5–10. Insider/Inst Own & Trans, Short Float & Ratio,
-      // Shares Outstanding (returned in millions like Float).
-      shares_out_m:      num(r[3]),
-      insider_own_pct:   num(r[5]),
-      insider_trans_pct: num(r[6]),
-      inst_own_pct:      num(r[7]),
-      inst_trans_pct:    num(r[8]),
-      short_float_pct:   num(r[9]),
-      short_ratio:       num(r[10]),
+      // Insider/Inst Own & Trans, Short Float & Ratio, Shares Outstanding (returned in
+      // millions like Float).
+      shares_out_m:      sharesOut,
+      insider_own_pct:   num(r[c['Insider Ownership']]),
+      insider_trans_pct: num(r[c['Insider Transactions']]),
+      inst_own_pct:      num(r[c['Institutional Ownership']]),
+      inst_trans_pct:    num(r[c['Institutional Transactions']]),
+      short_float_pct:   num(r[c['Short Float']]),
+      short_ratio:       num(r[c['Short Ratio']]),
     });
-  }
-
-  // After-hours: v=131's Price/Change/Volume are frozen at the 4pm close.
-  // Overlay the live after-hours figures (which Finviz keeps in separate
-  // columns) so the screener reflects the current session.
-  if (afterHours && out.length > 0) {
-    await applyAfterHoursQuotes(out);
   }
   return out;
 }
@@ -313,20 +360,14 @@ function toAfterHoursFilter(filter: string): string {
 // Best-effort: on any fetch failure or a missing per-ticker quote we keep the
 // regular-session value rather than blanking the row.
 async function applyAfterHoursQuotes(rows: ScreenerRow[]): Promise<void> {
-  const url = `${FINVIZ_BASE}/export?v=152&t=${rows.map((r) => r.ticker).join(',')}&c=1,71,72,141&auth=${token()}`;
+  const url = screenerExportUrl(`v=152&t=${rows.map((r) => r.ticker).join(',')}&c=1,71,72,141`);
   let csv: string[][];
   try {
     csv = await fetchCsv(url);
   } catch {
     return;
   }
-  // header: Ticker, After-Hours Close, After-Hours Change, After-Hours Volume
-  const ah = new Map<string, { close: number | null; change: number | null; volume: number | null }>();
-  for (let i = 1; i < csv.length; i++) {
-    const r = csv[i];
-    if (r.length < 4) continue;
-    ah.set(r[0], { close: num(r[1]), change: num(r[2]), volume: num(r[3]) });
-  }
+  const ah = parseAfterHoursQuotes(csv);
   for (const row of rows) {
     const q = ah.get(row.ticker);
     if (!q) continue;
@@ -334,6 +375,21 @@ async function applyAfterHoursQuotes(rows: ScreenerRow[]): Promise<void> {
     if (q.change != null) row.change_pct = q.change;
     if (q.volume != null) row.volume = q.volume;
   }
+}
+
+// The after-hours overlay's CSV → ticker → its after-hours close, change and volume. Header
+// today: Ticker, After-Hours Close, After-Hours Change, After-Hours Volume (read by name, so a
+// leading "No." doesn't move them).
+export function parseAfterHoursQuotes(csv: string[][]): Map<string, { close: number | null; change: number | null; volume: number | null }> {
+  const c = csvColumns(csv[0], { 'Ticker': 0, 'After-Hours Close': 1, 'After-Hours Change': 2, 'After-Hours Volume': 3 }, 'v=152 after-hours');
+  const need = Math.max(...Object.values(c));
+  const ah = new Map<string, { close: number | null; change: number | null; volume: number | null }>();
+  for (let i = 1; i < csv.length; i++) {
+    const r = csv[i];
+    if (r.length <= need || !r[c.Ticker]) continue;
+    ah.set(r[c.Ticker], { close: num(r[c['After-Hours Close']]), change: num(r[c['After-Hours Change']]), volume: num(r[c['After-Hours Volume']]) });
+  }
+  return ah;
 }
 
 // Live quotes for any tickers (2026-10-05: the 📐 setups that aren't on the
@@ -348,23 +404,34 @@ export interface TickerQuote {
 export async function fetchQuotes(tickers: string[], afterHours: boolean): Promise<Map<string, TickerQuote>> {
   const out = new Map<string, TickerQuote>();
   if (tickers.length === 0) return out;
-  const url = `${FINVIZ_BASE}/export?v=152&t=${tickers.map(encodeURIComponent).join(',')}&c=${afterHours ? '1,65,66,71,72' : '1,65,66'}&auth=${token()}`;
+  const url = screenerExportUrl(`v=152&t=${tickers.map(encodeURIComponent).join(',')}&c=${afterHours ? '1,65,66,71,72' : '1,65,66'}`);
   let csv: string[][];
   try {
     csv = await fetchCsv(url);
   } catch {
     return out;
   }
+  return parseQuotes(csv, afterHours);
+}
+
+// The quote export's CSV → ticker → price and change; after hours the after-hours close and
+// change take their place where Finviz has them. Header today: Ticker, Price, Change[,
+// After-Hours Close, After-Hours Change] (read by name).
+export function parseQuotes(csv: string[][], afterHours: boolean): Map<string, TickerQuote> {
+  const out = new Map<string, TickerQuote>();
+  const c = csvColumns(csv[0], { Ticker: 0, Price: 1, Change: 2 }, 'v=152 quotes');
+  const a = afterHours ? csvColumns(csv[0], { 'After-Hours Close': 3, 'After-Hours Change': 4 }, 'v=152 quotes') : null;
+  const need = Math.max(c.Ticker, c.Price, c.Change);
   for (let i = 1; i < csv.length; i++) {
     const r = csv[i];
-    if (r.length < 3 || !r[0]) continue;
-    let price = num(r[1]);
-    let change = num(r[2]);
-    if (afterHours && r.length >= 5) {
-      price = num(r[3]) ?? price;
-      change = num(r[4]) ?? change;
+    if (r.length <= need || !r[c.Ticker]) continue;
+    let price = num(r[c.Price]);
+    let change = num(r[c.Change]);
+    if (a && r.length > Math.max(a['After-Hours Close'], a['After-Hours Change'])) {
+      price = num(r[a['After-Hours Close']]) ?? price;
+      change = num(r[a['After-Hours Change']]) ?? change;
     }
-    out.set(r[0], { price, change_pct: change });
+    out.set(r[c.Ticker], { price, change_pct: change });
   }
   return out;
 }

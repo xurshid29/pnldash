@@ -187,6 +187,9 @@ Finviz's `change >=20%` filter typically returns 0–3 rows pre-market. `[TIMEST
 ### Finviz `export.ashx` was deprecated
 Finviz silently moved `elite.finviz.com/export.ashx` → `elite.finviz.com/export` (no `.ashx`) in early 2026. The old path now returns HTTP 301. **All curl calls in this repo use `-L` to follow redirects** as a future-proof safety net, regardless of which path is current.
 
+### Finviz wants `type=stocks` in screener export URLs (07.Dec.2026)
+Finviz split its screener into a Stock and an ETF one and asks every export URL to name the product: `…/export/screener?type=stocks&v=131&…`. The web service was moved on 2026-11-16 (`screenerExportUrl()` in `apps/api/src/services/finviz.ts`). **The three bash scripts were left as they are** (`screener-poll_breakout.sh`, `screener-poll_1min_2percent.sh`, `screener-poll_2min_5percent.sh`): their URLs have no `type=`. Finviz says such URLs keep working and from 07.Dec.2026 return stocks only in the new screener's layout; these scripts request fixed views (131 / 110 / 141 / 140), whose columns were the same with and without `type=stocks` when checked on 11-16 (131 and 110). To move them, insert `type=stocks&` after the `?`.
+
 ### `${var//%/}` doesn't strip on macOS bash 3.2
 macOS ships GPLv2 bash 3.2.57 which silently fails on unescaped `%` in parameter expansion. Always escape: `${var//\%/}`. Affected the original script's ACC/UP detection (silently broken until found).
 

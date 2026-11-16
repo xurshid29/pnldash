@@ -5,10 +5,9 @@
 //
 // Refreshes every 10 min. Single-instance, like PollerService.
 
-import { parseCsv } from './finviz.js';
+import { csvColumns, parseCsv, screenerExportUrl } from './finviz.js';
 import { poller } from './poller.js';
 
-const FINVIZ_BASE = 'https://elite.finviz.com';
 const UA = 'Mozilla/5.0';
 const REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -108,22 +107,24 @@ class UniverseService {
       for (let fi = 0; fi < filters.length; fi++) {
         // Finviz's real ceiling is ~1 req/s — space consecutive exports.
         if (fi > 0) await new Promise((r) => setTimeout(r, 1300));
-        const url = `${FINVIZ_BASE}/export?v=110&f=${encodeURIComponent(filters[fi])}&auth=${token}`;
+        // 2026-11-16: the screener export names its product (type=stocks; Finviz's 07.Dec.2026 change).
+        const url = screenerExportUrl(`v=110&f=${encodeURIComponent(filters[fi])}`, token);
         const res = await fetch(url, { headers: { 'User-Agent': UA } });
         if (!res.ok) throw new Error(`Finviz HTTP ${res.status}`);
         const text = await res.text();
         const rows = parseCsv(text);
-        // v=110 header: No, Ticker, Company, Sector, Industry, Country,
-        //   Market Cap, P/E, Price, Change, Volume  → Price=8, Change=9.
+        // v=110 header: No., Ticker, Company, Sector, Industry, Country,
+        //   Market Cap, P/E, Price, Change, Volume  → read by name (Price=8, Change=9 today).
+        const col = csvColumns(rows[0], { Ticker: 1, Price: 8, Change: 9 }, 'v=110 universe');
         for (let i = 1; i < rows.length; i++) {
-          const t = rows[i][1];
+          const t = rows[i][col.Ticker];
           if (!t) continue;
           const tk = t.toUpperCase();
           next.add(tk);
           // prior close = price / (1 + change%/100); change% is always vs the
           // prior close, so this holds at any time of day.
-          const price = parseFloat(rows[i][8]);
-          const chg = parseFloat(String(rows[i][9]).replace('%', ''));
+          const price = parseFloat(rows[i][col.Price]);
+          const chg = parseFloat(String(rows[i][col.Change]).replace('%', ''));
           if (Number.isFinite(price) && price > 0 && Number.isFinite(chg) && chg > -100) {
             priors.set(tk, price / (1 + chg / 100));
           }

@@ -32,6 +32,16 @@ Note: Elite subdomain requires authentication. Public version may have the same 
 
 ## Screener API
 
+> **2026-11-16 — the export URL changed.** Finviz split the screener into a Stock and an ETF one
+> and emailed: "add type= to your Finviz screener export URLs by 07.Dec.2026". The current form is
+> `https://elite.finviz.com/export/screener?type=stocks&v=111&f={filters}&auth={token}` (`type=etf`
+> for ETFs; two requests if both are needed). The `export.ashx` / `export?…` forms below still
+> answer, but from 07.Dec.2026 in the new screener's layout: one product per file (no filters =
+> stocks only), columns as in the new screener, a custom `c=` list starting with `No.` and `Ticker`,
+> and saved custom columns from the old screener no longer applied. Checked that day: with
+> `type=stocks`, views 110, 131 and 152 (custom columns) return the same headers and rows as
+> before. The API uses `screenerExportUrl()` and reads columns by name (`services/finviz.ts`).
+
 Scan stocks based on filters.
 
 | Type | URL |

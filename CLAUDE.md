@@ -92,11 +92,13 @@ A standalone `ShelfService` (`services/shelf.ts`) runs alongside the poller: for
 
 **Important:** Add `-A "Mozilla/5.0"` to curl commands to avoid blocks. Add `-L` to follow the `export.ashx` → `export` redirect (Finviz silently moved this in early 2026).
 
+**Screener exports name their product (2026-11-16):** Finviz split the screener into a Stock and an ETF one, so a screener export URL is `export/screener?type=stocks&v=…` (`type=etf` for ETFs). A URL without `type=` still answers, but from 07.Dec.2026 in the new screener's layout (stocks only; a custom `c=` column list then starts with `No.` and `Ticker`). The API builds every screener URL with `screenerExportUrl()` and reads columns by header name (`csvColumns()`, both in `services/finviz.ts`; `npx tsx scripts/verify-finviz-export.ts` checks them). `quote_export` and `news_export` are not screener exports and are unchanged. The three bash scripts still use the old URLs.
+
 **Rate limit:** Finviz Elite's real ceiling is **~1 request/second** (measured 2026-06-11: a 2nd call 300ms after the 1st gets a 429). All API-side Finviz HTTP goes through `rateLimitGate()` in `apps/api/src/services/finviz.ts` (≥1.1s spacing) and 429s raise a typed `FinvizRateLimitError`. Keep manual curl probing under ~1/s too — hammering faster starves the live poller.
 
 ```bash
 # Screen stocks (v=111 overview, v=171 technical, v=131 ownership, v=161 financial)
-curl -sL -A "Mozilla/5.0" "https://elite.finviz.com/export?v=171&f=sh_price_o20,sh_price_u30,cap_midover&auth=$FINVIZ_API_TOKEN"
+curl -sL -A "Mozilla/5.0" "https://elite.finviz.com/export/screener?type=stocks&v=171&f=sh_price_o20,sh_price_u30,cap_midover&auth=$FINVIZ_API_TOKEN"
 
 # Price history (daily bars only — Finviz API doesn't expose intraday)
 curl -sL -A "Mozilla/5.0" "https://elite.finviz.com/quote_export?t=AAPL&p=d&auth=$FINVIZ_API_TOKEN" | tail -30
@@ -118,10 +120,10 @@ source .env
 curl -sL -A "Mozilla/5.0" "https://elite.finviz.com/quote_export?t=TICKER&p=d&auth=$FINVIZ_API_TOKEN" > /tmp/ticker.csv && tail -60 /tmp/ticker.csv
 
 # MULTIPLE TICKERS — Technical
-curl -sL -A "Mozilla/5.0" "https://elite.finviz.com/export?v=171&t=AAPL,MSFT,GOOGL&auth=$FINVIZ_API_TOKEN"
+curl -sL -A "Mozilla/5.0" "https://elite.finviz.com/export/screener?type=stocks&v=171&t=AAPL,MSFT,GOOGL&auth=$FINVIZ_API_TOKEN"
 
 # MULTIPLE TICKERS — Ownership
-curl -sL -A "Mozilla/5.0" "https://elite.finviz.com/export?v=131&t=AAPL,MSFT,GOOGL&auth=$FINVIZ_API_TOKEN"
+curl -sL -A "Mozilla/5.0" "https://elite.finviz.com/export/screener?type=stocks&v=131&t=AAPL,MSFT,GOOGL&auth=$FINVIZ_API_TOKEN"
 ```
 
 ### View Types for Screening
