@@ -299,6 +299,13 @@ value". Built without measuring (`docs/vwap-setup.md` §18.6).
   their save 41 and the fixed paste is save 42). `verify-tv-setups.ts` now scans the script for reserved words used as
   parameters, variables, tuple targets or loop counters (683 checks). Lesson: a syntax error at a function's first parameter
   can be about any parameter of that line.
+- **v42 compiles and is running (operator, ~07:15 ET: "I updated the indicator and alerts").** Read from the live rows at
+  07:20 ET: the first v42 row arrived at 07:19 (a BAND cross on CENN carrying `mid`); nothing rejected in the last 3 hours; no
+  BASIS row yet (minutes after the alerts were recreated). **How the operator runs it, from the rows:** candle timeframe **1m**
+  for the VB and for the EMA / band cross, band timeframe **30S**; EMA rows and BOUNCE rows stopped at 05:20 ET while BAND
+  rows went on, so the line choice is "BB upper" (not Both); none of 147 EMA / BAND rows since 04:20 is weak, including the
+  pre-07:00 ones, so the v36 filter is switched off in their inputs; their ⚙ EMA switch is on (a CLRO BAND cross was
+  announced at 07:02).
 
 **2026-11-16 (Mon, 06:20–07:00 ET) — SCRIPT v41: THE BAND'S MIDDLE-LINE TEST (a cross made by a drop is weak).** The operator,
 with RBNE, GP and CLRO 1m charts: the band setups "are working very well" (RBNE, GP: the run's first candle takes the band over
