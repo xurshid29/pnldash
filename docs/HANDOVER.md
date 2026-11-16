@@ -286,6 +286,11 @@ only; a custom `c=` column list starts with `No.` and `Ticker`; saved custom col
   (`docs/screener-poll-breakout.md` has the note).
 - To check on or after 12-07: the API log for `[finviz] … no "…" column in the header` lines, and that the 📐 sidebar's
   off-screen change % and the after-hours Momentum rows still fill in.
+- Pushed `54e96a7`, deployed at 04:04 ET (pre-market just open; a ~20 s gap in the polls) and checked on prod: the first polls
+  after the restart came through the new URL with the same 5 rows as before it, each with a price, a country and a float, every
+  20 s; no Finviz error or column warning in the log. Before the push, the changed code ran once against the live API from this
+  machine (the Momentum fetch, the quote export, its after-hours columns). Not exercised live: the after-hours overlay (it only
+  runs after 16:00 ET) and the universe export (its consumer is parked).
 
 **2026-11-15 (Sun, night) — EMA / BAND / BOUNCE: MOMENTUM LIST ONLY, A ⚙ RULE (server + dashboard, no script change).** The
 operator had said "btw, ema cross must be checked only with momentum list"; asked whether to drop the +30% day-high exception
