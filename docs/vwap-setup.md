@@ -2663,7 +2663,7 @@ line, and a drop lowers it.
 `EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | basis 8.03 (+0.7%) | bb 45S | len 10 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S`
 
 `basis` is the line with the price against it, `bb` its band's timeframe, `len` its length. The
-script's `emMsgBy(…, by, mid)` builds all three kinds (`by` = "ema" / "bb" / "bs"); `emMsg()` is
+script's `emMsgBy(…, kind, mid)` builds all three kinds (`kind` = "ema" / "bb" / "bs"); `emMsg()` is
 kept as the EMA's and the band's caller. (`| basis` was a RECLAIM field until v27; those stages are
 no longer read, so the name is free.)
 

@@ -1828,11 +1828,12 @@ if bsOk
 emPct(float px, float ln) => (px >= ln ? "+" : "") + str.tostring((px / ln - 1) * 100, "#.0")
 // v41: a band cross also carries `| mid 8.05 (+0.5%)` after `bb` — the band's middle line and the
 // price against it (under it = the band widened on a drop).
-// v42, a cross of the basis (`by` = "bs"; `e` is then the basis): `| basis 8.03 (+0.7%) | bb 45S | len 10`
+// v42, a cross of the basis (`kind` = "bs"; `e` is then the basis): `| basis 8.03 (+0.7%) | bb 45S | len 10`
 // — the basis, the price against it, its band's timeframe and length:
 //   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | basis 8.03 (+0.7%) | bb 45S | len 10 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S
-// `by` names the line that crossed: "ema", "bb" (the band) or "bs" (the basis).
-emMsgBy(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak, string by, float mid) =>
+// `kind` names the line that crossed: "ema", "bb" (the band) or "bs" (the basis). (Not `by`: that is
+// a reserved word in Pine, and v42's first paste failed to compile on it.)
+emMsgBy(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak, string kind, float mid) =>
     string names = ""
     if fS
         names := pbJoin(names, "session")
@@ -1847,11 +1848,11 @@ emMsgBy(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv,
         msg += " | mVWAP " + str.tostring(mv, format.mintick) + " (" + emPct(px, mv) + "%)"
     if not na(yv)
         msg += " | yVWAP " + str.tostring(yv, format.mintick) + " (" + emPct(px, yv) + "%)"
-    if by == "bb"
+    if kind == "bb"
         msg += " | upper " + str.tostring(e, format.mintick) + " (" + emPct(px, e) + "%) | bb " + vbBbTf
         if not na(mid)
             msg += " | mid " + str.tostring(mid, format.mintick) + " (" + emPct(px, mid) + "%)"
-    else if by == "bs"
+    else if kind == "bs"
         msg += " | basis " + str.tostring(e, format.mintick) + " (" + emPct(px, e) + "%) | bb " + bsTf + " | len " + str.tostring(bsLen)
     else
         msg += " | ema " + str.tostring(emLen) + " " + str.tostring(e, format.mintick)

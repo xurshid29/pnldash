@@ -282,7 +282,7 @@ value". Built without measuring (`docs/vwap-setup.md` §18.6).
   operator, it is one field to change; 1 makes the basis the price). `bsBasis()` averages the band timeframe's last closes
   from the alert timeframe's bars, with its own lower-timeframe replay. Section 4c: its own `EmaLine` state through
   `bbSample()` (no middle-line test), independent of the EMA / band choice; olive line and **BS** marks (gray **bs** when
-  weak); no BOUNCE. `emMsgBy(…, by, mid)` builds the three messages; `emMsg()` stays for the EMA's and the band's callers.
+  weak); no BOUNCE. `emMsgBy(…, kind, mid)` builds the three messages; `emMsg()` stays for the EMA's and the band's callers.
   73 inputs, 43 plots, 16 `alert()` calls. **No reset needed.**
 - **Message:** `EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | basis 8.03 (+0.7%) | bb 45S | len 10 | line session | candle 3 | cross 1 |
   …`. Server: stage `ema`, `emaByBasis()` (and `emaByBand` now needs no basis), gate key `|bs`, Telegram headline BASIS, rows
@@ -293,6 +293,12 @@ value". Built without measuring (`docs/vwap-setup.md` §18.6).
 - Pushed `1d8941f`, deployed at 06:55 ET (a ~50 s gap in the polls, which resumed) and checked on prod: the bundle serves v42;
   dry runs parse a basis cross (and a weak, late one with a 2m band of 1), a band cross with `| mid`, an EMA cross, and still
   answer 400 to an old RECLAIM message that carries `| basis`. **Open: the default length — ask whether "1/2" meant 10.**
+- **v42's first paste did not compile (17:05 Tashkent):** "Error at 1835:14 Syntax error at input "fS"" on `emMsgBy(…)`. The
+  cause was the parameter after it in the list, `string by`: `by` is a Pine reserved word (`for … to … by`), and the editor
+  points at the first parameter. Renamed to `kind` in place (still v42: the operator had skipped v41, so that failed save was
+  their save 41 and the fixed paste is save 42). `verify-tv-setups.ts` now scans the script for reserved words used as
+  parameters, variables, tuple targets or loop counters (683 checks). Lesson: a syntax error at a function's first parameter
+  can be about any parameter of that line.
 
 **2026-11-16 (Mon, 06:20–07:00 ET) — SCRIPT v41: THE BAND'S MIDDLE-LINE TEST (a cross made by a drop is weak).** The operator,
 with RBNE, GP and CLRO 1m charts: the band setups "are working very well" (RBNE, GP: the run's first candle takes the band over

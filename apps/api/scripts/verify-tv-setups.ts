@@ -986,8 +986,8 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'bbSample(bsS, bsM, bsY, bsHS, bsHM, bsHY, emBs[1], svwap[1], mvwap[1], yvwap[1], bsOkL, bsEarlyL, close[1], na)',
     'bbSample(bsS, bsM, bsY, bsHS, bsHM, bsHY, emBs, svwap, mvwap, yvwap, bsOkC, bsEarlyC, close, na)', 'bsS.restart(bsHS)',
     'if emEnd and (na(bsDone) or bsDone != emT)',
-    'emMsgBy(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak, string by, float mid) =>',
-    'if by == "bb"', 'else if by == "bs"',
+    'emMsgBy(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak, string kind, float mid) =>',
+    'if kind == "bb"', 'else if kind == "bs"',
     'msg += " | basis " + str.tostring(e, format.mintick) + " (" + emPct(px, e) + "%) | bb " + bsTf + " | len " + str.tostring(bsLen)',
     'emMsgBy(fS, fM, fY, n, px, e, sv, mv, yv, late, under, flips, weak, band ? "bb" : "ema", mid)',
     'alert(emMsgBy(bsLS, bsLM, bsLY, bsLN, close[1], emBs[1], svwap[1], mvwap[1], yvwap[1], true, bsLU, bsLF, bsLW, "bs", na), alert.freq_once_per_bar_close)',
@@ -1019,6 +1019,37 @@ console.log('Contract — the Pine script still emits what the parser reads');
     pine.indexOf('if bbLateS') > pine.indexOf('emY.arm(not emG6)') && pine.indexOf('if bbLateS') < pine.indexOf('bbS.restart(bbHS)')
     && pine.indexOf('bbS.restart(bbHS)') < pine.indexOf('if emEnd and (na(bbDone) or bbDone != emT)')
     && pine.indexOf('if emEnd and (na(bbDone) or bbDone != emT)') < pine.indexOf('emPct(float px, float ln) =>'));
+  // 2026-11-16: v42's first paste failed in the Pine editor ("Syntax error at input 'fS'") because a function parameter
+  // was named `by`, a reserved word. The script can't be compiled here, so at least no parameter, declared variable,
+  // tuple target or loop counter may be a Pine keyword.
+  {
+    const reserved = new Set(['and', 'as', 'by', 'catch', 'class', 'const', 'continue', 'do', 'else', 'enum', 'export', 'false', 'for', 'if',
+      'import', 'in', 'input', 'is', 'method', 'not', 'or', 'return', 'series', 'simple', 'switch', 'to', 'true', 'try', 'type', 'var', 'varip',
+      'while', 'break']);
+    const bad: string[] = [];
+    pine.split('\n').forEach((raw, i) => {
+      const line = raw.split('//')[0];
+      const fn = /^\s*(?:export\s+)?(?:method\s+)?([A-Za-z_]\w*)\s*\((.*)\)\s*=>/.exec(line);
+      if (fn) {
+        for (const part of fn[2].split(',')) {
+          const words = part.split('=')[0].replace(/<[^>]*>/g, '').trim().split(/\s+/);
+          const name = words[words.length - 1];
+          if (name && reserved.has(name)) bad.push(`line ${i + 1}: parameter ${name} of ${fn[1]}()`);
+        }
+      }
+      const decl = /^\s*(?:var\s+|varip\s+)?(?:(?:simple|series|const)\s+)?(?:[A-Za-z_]\w*(?:<[^>]*>)?\s+)?([A-Za-z_]\w*)\s*(?::=|=(?![=>]))/.exec(line);
+      if (decl && reserved.has(decl[1])) bad.push(`line ${i + 1}: variable ${decl[1]}`);
+      const tuple = /^\s*\[([^\]]*)\]\s*=/.exec(line);
+      if (tuple) for (const name of tuple[1].split(',').map((x) => x.trim())) if (reserved.has(name)) bad.push(`line ${i + 1}: tuple target ${name}`);
+      const loop = /^\s*for\s+(?:\[([^\]]*)\]|([A-Za-z_]\w*))/.exec(line);
+      if (loop) for (const name of (loop[1] ?? loop[2] ?? '').split(',').map((x) => x.trim())) if (reserved.has(name)) bad.push(`line ${i + 1}: loop counter ${name}`);
+    });
+    check('no Pine reserved word is used as a parameter, a variable, a tuple target or a loop counter', bad.length === 0, bad.join('; '));
+    check('…the scan sees the mistake it is there for', (() => {
+      const m = /^\s*([A-Za-z_]\w*)\s*\((.*)\)\s*=>/.exec('emMsgBy(bool weak, string by, float mid) =>');
+      return m != null && m[2].split(',').some((p) => reserved.has(p.trim().split(/\s+/).pop() ?? ''));
+    })());
+  }
   check('v26: no 30s-close cancel of the VB level left', !pine.includes('close < vLvLine'));
   // v39 removed the DIP's LIFT (v38) and the three extra VB lanes (v29): none of their inputs, state, messages or plots are left.
   for (const gone of ['"LIFT "', 'rsLift', 'lfLevel', 'lfGo', 'rsLiftMsg', '" | lift "', '" | up "', '" | by "', '"DIP lift', 'text = "LIFT"',
