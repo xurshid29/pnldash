@@ -290,6 +290,9 @@ value". Built without measuring (`docs/vwap-setup.md` §18.6).
 - Checks: `verify-tv-setups.ts` 681; `pinesim.selftest_ema` with `src='bs'` (lengths 10, 2, 1; a 2m band; 3m and 1m charts; a
   length of 1 equals the close's own crosses of the VWAP). The Pine was not compiled on TradingView (v40 did compile for the
   operator; v41 and v42 are unconfirmed).
+- Pushed `1d8941f`, deployed at 06:55 ET (a ~50 s gap in the polls, which resumed) and checked on prod: the bundle serves v42;
+  dry runs parse a basis cross (and a weak, late one with a 2m band of 1), a band cross with `| mid`, an EMA cross, and still
+  answer 400 to an old RECLAIM message that carries `| basis`. **Open: the default length — ask whether "1/2" meant 10.**
 
 **2026-11-16 (Mon, 06:20–07:00 ET) — SCRIPT v41: THE BAND'S MIDDLE-LINE TEST (a cross made by a drop is weak).** The operator,
 with RBNE, GP and CLRO 1m charts: the band setups "are working very well" (RBNE, GP: the run's first candle takes the band over
