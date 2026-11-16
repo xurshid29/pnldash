@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v40** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the RSI cross with its DIP and (v39) the MACD cross after a DIP (§17), and the EMA cross over VWAP with its filter and BOUNCE (§18); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v41** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the RSI cross with its DIP and (v39) the MACD cross after a DIP (§17), and the EMA cross over VWAP with its filter and BOUNCE (§18); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1139,6 +1139,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-14 | v38 | `7c7b4b9` | Operator: a buy stop 8% above the latest DIP, for the DIPs they pick; "lets add the +8% level (better configurable) and alert to the script. I want to experiment with it". Measured first (`research/rsi-dip`): the level is reached on 30% of DIPs and the price is lower on average afterwards, so it marks their level, not an edge. **LIFT** (§17.3, stage `lift`): a DIP sets a level `rsLiftPct` % (8) above its close, drawn as a magenta line; LIFT on the first later bar whose high reaches it (or that closes over it); a newer DIP moves it; it goes after 3 sessions. The DIP's message gains `| lift <level>`; `LIFT … | lift … | base … | up 8 | stop … | after 290m | by touch`. Five inputs and two plots last (section 5, after the EMA section); the DIP's `alert()` moved there. Server: its own ⚙ switch after DIP (a list saved before starts it at the DIP's value), `tv_lift`, announced like the DIP. Dashboard: LIFT pill, the DIP row shows `lift $X`. Replica `lift_rule_direct` / `simulate_rsi(full)['lifts']`. Regression 542 checks. **Paste, recreate both alerts.** |
 | 2026-11-15 | v39 | `16c9512` | Operator: "entering alone on the DIP is not easy, chart can keep going lower, that's why lets add macd line cross over zero line after the latest DIP, I want to experiment with it. Also, lets refactor some of our experimental features, such as EMA CROSS OVER VWAP, LIFT, VB LANES"; asked what refactor meant: remove them; then "can we keep it [the EMA cross]? I want to improve it later". **MACD** (§17.4, stage `macd`): after a DIP, the MACD line (EMA 12 − EMA 26 of 5m closes, from a request like the RSI) closes above zero after closing at or under it; a newer DIP starts the wait over; it ends after 3 sessions. Message `MACD … | macd 5 12 26 | base … | stop … | dip N | after 200m | candle 10`. Measured before (`research/rsi-dip/dip_macd_cross.py`): no better than the DIP itself. **Removed:** the DIP's LIFT (v38, §17.3) and the three extra VB lanes (v29, §16.10), in git at v38 `7c7b4b9`; `LIFT …` messages now get 400 and `vb_long_min` is gone. **Kept:** the EMA cross over VWAP with its filter and BOUNCE, unchanged. The RSI's defaults became the operator's (a 10m RSI checked at 1h). Inputs left the middle (18 lane inputs) and the end (5 LIFT inputs), and six MACD inputs and two plots went last: 68 inputs, 32 plots, 12 `alert()` calls. Server: ⚙ switch MACD after DIP (starts at the DIP's value), `tv_macd`, announced like the DIP. Dashboard: MACD pill, History filter "RSI + DIP + MACD". Replica `macd_rule_direct` / `simulate_rsi(full)['macds']`. Regression 569 checks. **Paste, Settings → Defaults → Reset settings, recreate both alerts.** |
 | 2026-11-15 | v40 | `16d0a28` | Operator: "can we make EMA Cross use BollingerBands upper row instead of EMA? So, add this to settings so I can switch between EMA and BB Upper row? We have a bb upper row already which we use for VWAP+BB Cross (btw, that bb appears only if VWAP+BB Cross enabled)", then "or, could we do both?". **The band as the line that crosses** (§18.3): one input, last, "EMA cross: the line that crosses the VWAP" = EMA / BB upper / Both (default Both). The band is the VB's (its BB timeframe, length, StdDev), rebuilt from the 30s bars by `emBand()` and replayed on bigger charts, so the alert and every chart read one line; drawn wherever its crosses run, with the VB off too. Its crosses follow the EMA's rule, settings and filter on their own state and day's numbers (script section 4b); no BOUNCE after them. Message: the EMA's with `| upper 8.13 (-0.5%) | bb 45S` in the place of `| ema 9 8.03`. v39's six MACD inputs are declared with the EMA section's now (same order), so the new one can come after them: nothing shifts. 69 inputs, 37 plots (five new, last), 14 `alert()` calls. Server: stage `ema`, `emaByBand()`, the gate's key carries `|bb` (an EMA cross and a band cross of one candle are two events), Telegram headline BAND; rows carry `upper` / `bb_tf`. Dashboard: BAND pill, its own thread. Replica `bb_upper_series` / `simulate_ema(src='bb')`. Not measured. Regression 619 checks. **Paste, recreate both alerts.** |
+| 2026-11-16 | v41 | `pending` | Operator: the band setups "are working very well" (RBNE, GP), "But, I turned out bb upper row moves away from price if it drops too fast, and crosses up the near vwap" (CLRO). A fast drop widens the band, and its upper line rises over the VWAP while the price falls away. **The middle-line test** (§18.5): a band cross whose candle closed under the band's middle line is weak (gray `bb`, `| weak`, no day's number, quiet), with `bbMidOn` (last input, on). Every band cross's message carries `| mid <line> (<price vs it>%)` after `bb`. A hidden plot for the middle line, last. Measured first (`research/ema-vwap/band_cross_study.py`, 5,563 crosses): a quarter of the band's crosses are drop-made, and on names already on our screen they were followed by a bounce more often than the rest (+0.2% / +0.8% five candles later against −0.6% / −0.5%) — a different event, not a worse one; the first push from flat isn't in our data. 70 inputs, 38 plots. Server: `bb_mid` / `bb_mid_pct` parsed, stored, shown. Replica `_band_drop`. Regression 638 checks. **Paste, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2568,3 +2569,63 @@ again: off the list, a day high of +30% or more announces.
 
 The script side is unchanged: it can't see our list, so it keeps its own gainer filter (`emGainOn`)
 and sends every cross; the server decides what pings.
+
+### 18.5 The band's middle-line test (script v41, 2026-11-16)
+
+**The report.** A day after v40: "Regarding our new Bands setups, they are working very well"
+(RBNE and GP, 1m charts: the first candle of the run takes the band over the VWAP). "But, I turned
+out bb upper row moves away from price if it drops too fast, and crosses up the near vwap" (CLRO,
+two BB marks while the price was falling away from the band and the VWAP).
+
+**Why it happens.** The upper band is the average of the last 20 closes plus two standard
+deviations. A fast drop lowers the average a little and raises the deviation a lot, so the upper
+line rises. Near the VWAP that reads as a cross.
+
+**The test.** At the cross candle's close, is the close **under the band's middle line** (that
+20-close average)? A price that lifts the band closes above the middle; one that falls away closes
+under it. With `bbMidOn` (the last input, on) such a cross is weak: drawn as the small gray **bb**,
+sent with `| weak`, without a day's number, and stored quietly by the server. Every band cross's
+message now carries the middle line after `bb`:
+
+`EMA CLRO 4.88 | sVWAP 5.22 (-6.5%) | upper 5.24 (-6.9%) | bb 45S | mid 5.04 (-3.2%) | line session | candle 3 | cross 0 | under 6 | flips 1 | weak | …`
+
+`mid` is the line and the price against it. `emBand()` returns the middle beside the band, the
+lower-timeframe replay carries both, and `bbSample()` takes the sampled close and middle. The
+middle line has its own plot, "BB middle (EMA cross, v41)", hidden until switched on in Style. One
+input and one plot, both last: nothing shifts.
+
+**Measured first** (`apps/api/scripts/research/ema-vwap/band_cross_study.py`; README has the
+table). 08-14 → 11-14, the upper band of 20 one-minute closes, 5,563 band crosses on 3m candles,
+split at 10-09:
+
+| in / out of sample | crosses | a close under the cross candle's low within 5 | 5 candles later | stop under the candle's low, 2R |
+|---|---:|---:|---:|---:|
+| all band crosses | 3,102 / 2,461 | 41% / 36% | −0.41% / −0.13% | −0.20R / −0.17R |
+| close at or above the middle (74% / 73%) | 2,286 / 1,803 | 45% / 40% | −0.64% / −0.49% | −0.28R / −0.24R |
+| **close under the middle** (26% / 27%) | 816 / 658 | 30% / 26% | +0.22% / +0.84% | +0.21R / +0.26R |
+
+- The test separates two different events cleanly: about a quarter of the band's crosses are made
+  by a drop. 1m and 5m candles give the same picture.
+- **They are not the worse ones on this data.** After a drop-made cross the price bounced more
+  often than not, and the crosses made by a push lost on average, in both halves. On names already
+  on our screen a fast dip tends to snap back and a pop tends to fade.
+- **What the data can't see:** a name's bars start when it reaches our screen, and the band needs
+  20 of them. The first push of a move from flat — RBNE's and GP's first candle, the kind the
+  operator calls working very well — happens before that. The "push" rows above are pops inside a
+  run that was already on the screen.
+- So v41 marks the drop-made cross as a different event and keeps it quiet by default, which is what
+  the operator asked for; it does not show that it is a bad trade. The rows carry `bb_mid_pct`, so
+  the two kinds can be graded live.
+
+**Our side.** `bb_mid` and `bb_mid_pct` are parsed from `| mid` and stored on band rows
+(`emaFields`). Telegram says "price −3.2% under the band's middle (the band widened on a drop)" or
+"price +10.1% over the band's middle". The dashboard's expanded row and history show the same; a
+weak band cross never takes a sidebar row, as before.
+
+**Checked.** `pinesim.selftest_ema`: with the middle-line test the crosses are the same and the
+script's verdicts and numbers match the plain rule's on the 3m and 1m charts, with the v36 filter
+on and off, for a 1m and a 2m band (`bb_upper_series` returns the middle too; `_band_drop`).
+`verify-tv-setups.ts` covers the message. Not checked: the Pine itself on TradingView.
+
+**To grade** from `tier_events` after a few weeks: band rows with `bb_mid_pct` under zero against
+the rest, on what followed.

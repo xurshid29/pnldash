@@ -91,6 +91,14 @@ function bandText(s: TvSetupInfo): string | null {
   return `${fmtTf(s.bb_tf ?? null) || '?'} BB upper $${s.upper < 1 ? s.upper.toFixed(4) : s.upper.toFixed(2)}`;
 }
 
+// v41: "−3.2% under the band's middle (a drop widened the band)" / "+0.5% over the band's middle".
+function bandMidText(s: TvSetupInfo): string | null {
+  if (s.bb_mid_pct == null) return null;
+  return s.bb_mid_pct < 0
+    ? `${fmtSignedPct(s.bb_mid_pct)} under the band's middle (a drop widened the band)`
+    : `${fmtSignedPct(s.bb_mid_pct)} over the band's middle`;
+}
+
 // v36: an EMA cross the script's filter calls weak (too early in the day, the EMA under the line
 // too briefly, or too much crossing before it), and (v37) the BOUNCE after one. Stored and listed
 // in the history, not announced, and never a ticker's live row in the 📐 sidebar.
@@ -235,7 +243,7 @@ export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   // v35 EMA cross: "+1.0% vs sVWAP · EMA 9 $8.03 · at the 3m close · 12 candles under · 1 flip" (v36: the filter's readings)
   if (s.stage === 'ema') {
     const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));
-    if (isBandCross(s)) parts.push(bandText(s));   // v40: the band in the EMA's place
+    if (isBandCross(s)) parts.push(bandText(s), bandMidText(s));   // v40: the band in the EMA's place; v41: the price against its middle
     else if (s.ema != null) parts.push(`EMA ${s.ema_len ?? '?'} $${s.ema < 1 ? s.ema.toFixed(4) : s.ema.toFixed(2)}`);
     if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
     if (s.under_n != null) parts.push(`${s.under_n} candle${s.under_n === 1 ? '' : 's'} under`);

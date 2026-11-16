@@ -386,6 +386,10 @@ export interface TvSetupInfo {
   upper_pct?: number | null;  // price vs that band, %
   candle_tf?: string | null;  // "5", "60", …
   bb_tf?: string | null;      // "2", "30", …
+  // v41, a band cross (an EMA-stage row with bb_tf and no ema): the band's middle line and the
+  // price against it — under it, the band widened on a drop (the script's weak kind)
+  bb_mid?: number | null;
+  bb_mid_pct?: number | null;
   candle_open?: number | null;
   cross_n?: number | null;    // the day's crosses on the ticker, this one included
   // VB retest (script v28)

@@ -4013,7 +4013,9 @@ class PollerService {
     });
     if (sig.stage === 'ema') {
       // v40: the line that crossed is the EMA or the BB upper band (`| upper … | bb …` in the EMA's place)
-      const crossed = emaByBand(sig) ? `BB upper ${sig.bb_tf} ${sig.upper ?? '?'}` : `EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}`;
+      const crossed = emaByBand(sig)
+        ? `BB upper ${sig.bb_tf} ${sig.upper ?? '?'}${sig.bb_mid_pct != null ? ` · price ${sig.bb_mid_pct}% vs the band's middle` : ''}`
+        : `EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}`;
       console.log(`[tv-setup] EMA ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · ${sig.candle_tf ?? '?'} candle · ${crossed}` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%) · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
         ` · under ${sig.under_n ?? '?'} · flips ${sig.flips_n ?? '?'}` +

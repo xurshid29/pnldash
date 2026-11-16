@@ -179,3 +179,63 @@ Nothing built. Limits as above, plus: our MACD starts with the run, so the first
 name's time on the screen are left out of the main rows (on 5m that is its first three hours); the
 Yahoo check covers the names of one week's RSI / DIP alerts, not every Momentum name, and its last
 60 days only; no 1m Yahoo check (Yahoo keeps 1m bars for 30 days).
+
+## The band's crosses: which come from a falling price? (2026-11-16)
+
+Script v40 lets the upper Bollinger Band be the line that crosses the VWAP. The operator, a day
+later, with RBNE, GP and CLRO on 1m charts: the band setups "are working very well", "But, I turned
+out bb upper row moves away from price if it drops too fast, and crosses up the near vwap". A fast
+drop widens the band, and its upper line rises over the VWAP while the price falls away.
+
+```bash
+python band_cross_study.py rows.csv.gz --tf 3 --cut 2026-10-09      # also --tf 1, --tf 5
+```
+
+`band_cross_study.py` takes v40's band crosses on the same data (08-14 → 11-14): the upper band of
+20 one-minute closes × 2 (the operator's is on 45s candles; 1m is the nearest our bars allow),
+sampled at each candle's close, against the session VWAP.
+
+- **fell** = a candle closes under the cross candle's low within 5 candles.
+- **5 later** = the close 5 candles later against the cross candle's close.
+- **B** = a stop a tick under the cross candle's low, a 2R target, 20 candles, in R.
+
+| in / out of sample | crosses | fell | 5 later | B |
+|---|---:|---:|---:|---:|
+| **3m candles**, all band crosses | 3,102 / 2,461 | 41% / 36% | −0.41% / −0.13% | −0.20R / −0.17R |
+| green cross candle (49% / 45%) | 1,508 / 1,118 | 38% / 33% | −0.74% / −0.73% | −0.27R / −0.21R |
+| red or flat candle (51% / 55%) | 1,594 / 1,343 | 44% / 39% | −0.10% / +0.36% | −0.05R / −0.07R |
+| close above the VWAP (42% / 43%) | 1,311 / 1,058 | 36% / 34% | −0.80% / −0.81% | −0.32R / −0.26R |
+| close at or above the band's middle (74% / 73%) | 2,286 / 1,803 | 45% / 40% | −0.64% / −0.49% | −0.28R / −0.24R |
+| **close under the band's middle** (26% / 27%) | 816 / 658 | 30% / 26% | +0.22% / +0.84% | +0.21R / +0.26R |
+| …and the middle falling (23% / 23%) | 710 / 564 | 28% / 24% | +0.20% / +0.74% | +0.23R / +0.26R |
+| the v36 filter's crosses (52% / 49%) | 1,613 / 1,208 | 40% / 36% | −0.37% / −0.08% | −0.18R / −0.19R |
+| **1m candles**, close at or above the middle | 2,598 / 2,019 | 50% / 43% | −0.57% / −0.52% | −0.47R / −0.43R |
+| 1m, close under the middle (25% / 26%) | 849 / 694 | 28% / 22% | +0.35% / +0.60% | +0.31R / +0.30R |
+| **5m candles**, close at or above the middle | 2,088 / 1,616 | 41% / 36% | −0.67% / −0.60% | −0.27R / −0.18R |
+| 5m, close under the middle (28% / 28%) | 808 / 637 | 34% / 26% | +0.07% / +0.83% | +0.17R / +0.29R |
+
+- **The close against the band's middle line separates the two kinds.** A quarter of the band's
+  crosses have the cross candle closing under the middle: the price fell and the band widened over
+  the line. On the rest the price pushed the band up.
+- **The drop-made crosses are not the worse ones.** After them the price was higher 5 and 10
+  candles later on average, they fell through the candle's low less often, and a stop under that
+  low with a 2R target was positive, in both halves and on 1m, 3m and 5m candles. The crosses made
+  by a push lost on every measure. By where the close sits in the bands: at the lower band (under
+  0.1) +0.51% five candles later and +0.26R on 1,046 crosses; above the upper band −0.94% and
+  −0.28R on 1,719.
+- Read plainly: on names already on our screen, a fast dip tends to snap back and a pop tends to
+  fade. It agrees with the other studies here (a high RSI or a 20-candle-high close made the EMA
+  cross a worse entry).
+- **What this can't see.** A name's bars start when it reaches our screen, and the band needs 20
+  of them. The first push of a move from flat (RBNE's and GP's first candle, the ones the operator
+  showed) happens before that, so the "push" rows are pops inside a run already under way.
+- The v36 filter does little for the band (−0.18R / −0.19R against −0.20R / −0.17R).
+
+Built as script v41's middle-line test (`docs/vwap-setup.md` §18.5): a band cross whose candle
+closed under the middle is drawn gray and sent quietly, as the operator asked, and its message
+carries the middle line, so the two kinds can be graded on live rows. Given the table, the quiet
+ones may be the ones worth an alert of their own; that is for the live rows to say.
+
+Limits as above, plus: a 1m band in the 45s band's place; the bounce after a dip is measured from
+the cross candle's close with ideal fills on thin names; 20 minutes of a run are needed before the
+first cross.

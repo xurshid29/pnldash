@@ -10,7 +10,7 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v40 (2026-11-15).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v41 (2026-11-16).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
 - **PULLBACK** and the **VWAP + BB cross with its RETEST**, as below. **The VB lanes (v29) were
   removed in v39**, with the server's `vb_long_min` exception: every line below about lanes is
@@ -23,7 +23,9 @@ v31; the session log has each step since. What the script carries now:
 - **EMA cross over VWAP** (v35) with its filter (v36) and **BOUNCE** (v37): kept unchanged in v39.
   The operator: "can we keep it? I want to improve it later". **v40: the line that crosses can be
   the VB's BB upper band, or both run side by side (the default)**; a band cross is stage `ema`
-  shown as BAND, with no BOUNCE. **Since 11-15 EMA / BAND / BOUNCE announce on Momentum names
+  shown as BAND, with no BOUNCE. **v41: a band cross whose candle closed under the band's middle
+  line (a drop widened the band) is weak — gray, quiet** (the operator's CLRO report; measured, such
+  crosses are not worse, see §18.5). **Since 11-15 EMA / BAND / BOUNCE announce on Momentum names
   only** (the operator: "ema cross must be checked only with momentum list"); the VB's +30%
   day-high exception is back for them only if ⚙ → "EMA / BAND / BOUNCE: Momentum list only" is
   unticked.
@@ -267,6 +269,24 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-16 (Mon, 06:20–07:00 ET) — SCRIPT v41: THE BAND'S MIDDLE-LINE TEST (a cross made by a drop is weak).** The operator,
+with RBNE, GP and CLRO 1m charts: the band setups "are working very well" (RBNE, GP: the run's first candle takes the band over
+the VWAP), "But, I turned out bb upper row moves away from price if it drops too fast, and crosses up the near vwap" (CLRO: two
+BB marks while the price fell away). So they pasted v40 and it compiled; their chart shows VB and BB marks on 1m.
+- **Measured first** (`research/ema-vwap/band_cross_study.py`, README has the table; the rows export of 11-15 was still in the
+  scratchpad): 5,563 band crosses on 3m candles (a 1m band). **A close under the band's middle line marks the drop-made ones: a
+  quarter of all crosses.** They are not worse: +0.22% / +0.84% five candles later and +0.21R / +0.26R, against −0.64% / −0.49%
+  and −0.28R / −0.24R for the rest, in both halves, on 1m and 5m candles too. On names already on our screen a dip snaps back
+  and a pop fades. The data can't see the first push from flat (RBNE, GP): a name's bars start when it reaches our screen.
+- **Built as asked, with the measurement stated:** `bbMidOn` (last input, on): a band cross whose candle closed under the
+  middle is weak (gray `bb`, `| weak`, no number, quiet). Every band cross carries `| mid <line> (<pct>%)`; `emBand()` returns
+  the middle too; a hidden plot for it, last. Server: `bb_mid` / `bb_mid_pct` parsed, stored, in Telegram and the expanded row.
+  70 inputs, 38 plots. `docs/vwap-setup.md` §18.5.
+- Checks: `verify-tv-setups.ts` 638; `pinesim.selftest_ema` (the middle-line test with the v36 filter on and off, 1m and 2m
+  bands, 3m and 1m charts). The Pine was not compiled on TradingView.
+- To grade later: band rows with `bb_mid_pct < 0` against the rest. If the drop-made ones keep bouncing live, they may deserve
+  their own alert instead of the quiet treatment; say so to the operator with the numbers.
 
 **2026-11-16 (Mon, 04:00 ET) — FINVIZ: `type=stocks` IN EVERY SCREENER EXPORT URL (their 07.Dec.2026 change).** The operator
 forwarded Finviz's email: "Action needed: add {type=} to your Finviz screener export URLs by 07.Dec.2026". The screener split

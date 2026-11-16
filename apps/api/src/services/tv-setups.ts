@@ -131,6 +131,10 @@ export interface TvSetupSignal {
   upper_pct?: number | null;  // price vs that band, %
   candle_tf?: string | null;  // the candle's timeframe: "5", "60", …
   bb_tf?: string | null;      // the band's timeframe: "2", "45S", …
+  // v41, a band cross (emaByBand): the band's middle line at the cross and the price against it.
+  // Under it, the band widened on a drop — the script calls such a cross weak (its bbMidOn input).
+  bb_mid?: number | null;
+  bb_mid_pct?: number | null;
   candle_open?: number | null; // the candle's open
   cross_n?: number | null;    // the day's crosses on this ticker, this one included
   // VB retest (script v28)
@@ -297,7 +301,7 @@ export function emaFields(sig: TvSetupSignal): {
   candle_tf?: string | null; cross_n?: number | null; ema_len?: number | null; ema?: number | null; late?: boolean;
   under_n?: number | null; flips_n?: number | null; weak?: boolean;
   stop?: number | null; bounce_n?: number | null; since_n?: number | null; bounce_from?: TvBounceFrom | null;
-  upper?: number | null; upper_pct?: number | null; bb_tf?: string | null;
+  upper?: number | null; upper_pct?: number | null; bb_tf?: string | null; bb_mid?: number | null; bb_mid_pct?: number | null;
 } {
   if (sig.stage === 'bounce') {
     return {
@@ -312,7 +316,10 @@ export function emaFields(sig: TvSetupSignal): {
     late: sig.late === true,
     under_n: sig.under_n ?? null, flips_n: sig.flips_n ?? null, weak: sig.weak === true,
     // v40: the band that crossed, when it was the band
-    ...(emaByBand(sig) ? { upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null, bb_tf: sig.bb_tf ?? null } : {}),
+    ...(emaByBand(sig) ? {
+      upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null, bb_tf: sig.bb_tf ?? null,
+      bb_mid: sig.bb_mid ?? null, bb_mid_pct: sig.bb_mid_pct ?? null,   // v41
+    } : {}),
   };
 }
 
@@ -430,6 +437,8 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     upper_pct: toNum(o.upper_pct),
     candle_tf: toTf(o.candle_tf ?? o.candle),
     bb_tf: toTf(o.bb_tf ?? o.bb),
+    bb_mid: toNum(o.bb_mid ?? o.mid),
+    bb_mid_pct: toNum(o.bb_mid_pct),
     candle_open: toNum(o.candle_open ?? o.open),
     cross_n: toNum(o.cross_n ?? o.cross),
     stop: toNum(o.stop),
@@ -536,6 +545,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   // v21 fields, read after a "|" so a ticker can't pass for one (BB, OPEN).
   const candle = /\|\s*candle\s+([0-9]+[A-Za-z]?|[DWM])\b/i.exec(text);
   const bbTf = /\|\s*bb\s+([0-9]+[A-Za-z]?|[DWM])\b/i.exec(text);
+  // v41, a band cross: "| mid 8.05 (+0.5%)" — the band's middle line and the price against it
+  const bbMid = /\|\s*mid\s+\$?(\d*\.?\d+)\s*\(\s*([-+]?\d*\.?\d+)\s*%\s*\)/i.exec(text);
   const open = /\|\s*open\s+\$?(\d*\.?\d+)/i.exec(text);
   const crossN = /\|\s*cross\s+(\d+)\b/i.exec(text);
   const retestN = /\|\s*retest\s+(\d+)\b/i.exec(text);   // v28
@@ -577,6 +588,8 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     upper_pct: toNum(up?.[2]),
     candle_tf: toTf(candle?.[1]),
     bb_tf: toTf(bbTf?.[1]),
+    bb_mid: toNum(bbMid?.[1]),
+    bb_mid_pct: toNum(bbMid?.[2]),
     candle_open: toNum(open?.[1]),
     cross_n: toNum(crossN?.[1]),
     stop: toNum(stop?.[1]),
@@ -994,6 +1007,12 @@ function formatEma(
   const what: string[] = [];
   if (band) {
     if (sig.upper != null) what.push(`${fmtTf(sig.bb_tf)} BB upper ${fmtPx(sig.upper)} (${fmtSigned(sig.upper_pct ?? null)})`);
+    // v41: the price against the band's middle line — under it, the band widened on a drop
+    if (sig.bb_mid_pct != null) {
+      what.push(sig.bb_mid_pct < 0
+        ? `price ${fmtSigned(sig.bb_mid_pct)} under the band's middle (the band widened on a drop)`
+        : `price ${fmtSigned(sig.bb_mid_pct)} over the band's middle`);
+    }
   } else if (sig.ema != null) what.push(`EMA ${fmtPx(sig.ema)}`);
   if (sig.cross_n != null) {
     what.push(`cross ${sig.cross_n} today${sig.cross_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
