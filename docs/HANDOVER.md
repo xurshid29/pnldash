@@ -285,6 +285,10 @@ what band are these?"; with the ⚙ menu: "and, these ones also?". `docs/vwap-se
   `|bs` key suffixes are gone (the stage is in the key). Pills: maroon BAND, olive BASIS; History filters and counts.
 - Seen in the operator's settings while there: basis band on **1m** candles; band on 30S; candle 1m.
 - Checks: `verify-tv-setups.ts` 696.
+- Pushed `2584f0a`, deployed at 07:50 ET and checked on prod: the menu lists BAND and BASIS and both are on (with PULLBACK,
+  DIP, MACD, EMA); today's rows as the dashboard gets them split into 126 BAND, 28 BASIS, 89 EMA, 13 BOUNCE, each with its
+  fields (a basis row: band 1m, length 10; an EMA row: length 9 again); dry runs give stage `band` / `basis` / `ema`. Not
+  checked in a browser: the pills and the two new checkboxes. The operator's basis length is 10, the default.
 
 **2026-11-16 (Mon, ~07:30 ET) — SCRIPT v42: THE BASIS CROSS (the basis of a separate band, its own length).** After v41 the
 operator asked "maybe we ignore such crosses completely? Or, better not to do that?" → I advised keeping them quiet (no ping,
