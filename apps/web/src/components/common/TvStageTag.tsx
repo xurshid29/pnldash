@@ -68,6 +68,8 @@ export function crossTfText(s: TvSetupInfo): string | null {
   if (s.stage === 'macd') return s.macd_tf ? fmtTf(s.macd_tf) : null;
   // v40, the band as the line: "3m/45s" — the judged candle's timeframe over the band's, like a CROSS
   if (isBandCross(s)) return s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
+  // v42, the basis as the line: "3m/45s·10" — the candle's timeframe over the basis band's timeframe and length
+  if (isBasisCross(s)) return s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}·${s.bb_len ?? '?'}` : null;
   // v35 EMA cross: "3m/9" — the EMA's timeframe over its length (its v37 BOUNCE the same)
   if (s.stage === 'ema' || s.stage === 'bounce') return s.candle_tf ? `${fmtTf(s.candle_tf)}/${s.ema_len ?? '?'}` : null;
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
@@ -77,12 +79,25 @@ export function crossTfText(s: TvSetupInfo): string | null {
 // crosses the VWAP" set to "BB upper" or "Both"): the message carries the band and its timeframe
 // in the EMA's place. Same stage and switch; its own thread per line; the pill reads "BAND".
 export function isBandCross(s: TvSetupInfo): boolean {
-  return s.stage === 'ema' && s.bb_tf != null && s.ema == null;
+  return s.stage === 'ema' && s.bb_tf != null && s.ema == null && s.basis == null;
 }
 
-// The pill's label when it isn't the stage's own (a band cross), else undefined.
+// v42: an EMA-stage cross whose line is the basis (middle line) of the script's separate band
+// ("Basis cross on"): the message carries the basis, its band's timeframe and length in the EMA's
+// place. Same stage and switch; its own thread per line; the pill reads "BASIS".
+export function isBasisCross(s: TvSetupInfo): boolean {
+  return s.stage === 'ema' && s.basis != null && s.ema == null;
+}
+
+// The pill's label when it isn't the stage's own (a band or a basis cross), else undefined.
 export function stageLabelOf(s: TvSetupInfo): string | undefined {
-  return isBandCross(s) ? 'BAND' : undefined;
+  return isBandCross(s) ? 'BAND' : isBasisCross(s) ? 'BASIS' : undefined;
+}
+
+// "45s basis (10) $8.03" — the basis a v42 cross read.
+function basisText(s: TvSetupInfo): string | null {
+  if (s.basis == null) return null;
+  return `${fmtTf(s.bb_tf ?? null) || '?'} basis${s.bb_len != null ? ` (${s.bb_len})` : ''} $${s.basis < 1 ? s.basis.toFixed(4) : s.basis.toFixed(2)}`;
 }
 
 // "45s BB upper $8.03" — the band a v40 cross read.
@@ -111,7 +126,7 @@ export function isWeakEma(s: TvSetupInfo): boolean {
 export function emaEventKey(s: TvSetupInfo): string {
   if (s.stage === 'bounce') return `${s.bounce_n ?? ''}/${s.since_n ?? ''}/${s.stop ?? ''}/${s.weak ? 'w' : ''}`;
   // v40: a band cross and an EMA cross of one candle are two events
-  return `${s.cross_n ?? ''}/${s.under_n ?? ''}/${s.flips_n ?? ''}/${s.weak ? 'w' : ''}${isBandCross(s) ? '/bb' : ''}`;
+  return `${s.cross_n ?? ''}/${s.under_n ?? ''}/${s.flips_n ?? ''}/${s.weak ? 'w' : ''}${isBandCross(s) ? '/bb' : isBasisCross(s) ? '/bs' : ''}`;
 }
 
 // The number beside a stage tag: a pullback's touch, a CROSS's or an EMA cross's number today, a
@@ -244,6 +259,7 @@ export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   if (s.stage === 'ema') {
     const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));
     if (isBandCross(s)) parts.push(bandText(s), bandMidText(s));   // v40: the band in the EMA's place; v41: the price against its middle
+    else if (isBasisCross(s)) parts.push(basisText(s));           // v42: the basis in the EMA's place
     else if (s.ema != null) parts.push(`EMA ${s.ema_len ?? '?'} $${s.ema < 1 ? s.ema.toFixed(4) : s.ema.toFixed(2)}`);
     if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
     if (s.under_n != null) parts.push(`${s.under_n} candle${s.under_n === 1 ? '' : 's'} under`);

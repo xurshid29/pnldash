@@ -390,6 +390,11 @@ export interface TvSetupInfo {
   // price against it — under it, the band widened on a drop (the script's weak kind)
   bb_mid?: number | null;
   bb_mid_pct?: number | null;
+  // v42, a basis cross (an EMA-stage row with basis and no ema): the basis of the separate band,
+  // the price against it, and that band's length (bb_tf is its timeframe)
+  basis?: number | null;
+  basis_pct?: number | null;
+  bb_len?: number | null;
   candle_open?: number | null;
   cross_n?: number | null;    // the day's crosses on the ticker, this one included
   // VB retest (script v28)

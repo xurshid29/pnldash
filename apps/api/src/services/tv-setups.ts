@@ -85,8 +85,17 @@ export const EMA_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'bounce
 // message with `| upper 8.03 (+0.7%) | bb 45S` in the place of `| ema 9 8.03`: the same stage,
 // ⚙ switch, cap and filter, shown as BAND, and its own event beside an EMA cross of the same
 // candle (the gate's key). There is no BOUNCE after it (the bounce is the EMA's).
-export function emaByBand(sig: { stage: TvStage; bb_tf?: string | null; ema?: number | null }): boolean {
-  return sig.stage === 'ema' && sig.bb_tf != null && sig.ema == null;
+export function emaByBand(sig: { stage: TvStage; bb_tf?: string | null; ema?: number | null; basis?: number | null }): boolean {
+  return sig.stage === 'ema' && sig.bb_tf != null && sig.ema == null && sig.basis == null;
+}
+// v42 (operator, 2026-11-16: "can you add one more band? … a separate bollinger bands with
+// configurable it's Length … the similar setup as our bands cross, but this time I want to use Basis
+// line"): a third line that can cross the VWAP, the basis (middle line) of a band of its own. Its
+// message is the EMA's with `| basis 8.03 (+0.7%) | bb 45S | len 10` in the place of `| ema 9 8.03`:
+// the same stage, ⚙ switch, cap, filter and Momentum rule, shown as BASIS, its own event beside an
+// EMA or a band cross of the same candle. No BOUNCE after it, and no middle-line test.
+export function emaByBasis(sig: { stage: TvStage; ema?: number | null; basis?: number | null }): boolean {
+  return sig.stage === 'ema' && sig.basis != null && sig.ema == null;
 }
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
@@ -135,6 +144,11 @@ export interface TvSetupSignal {
   // Under it, the band widened on a drop — the script calls such a cross weak (its bbMidOn input).
   bb_mid?: number | null;
   bb_mid_pct?: number | null;
+  // v42, a basis cross (emaByBasis): the basis at the cross, the price against it, and its band's
+  // length (bb_tf is then that band's timeframe)
+  basis?: number | null;
+  basis_pct?: number | null;
+  bb_len?: number | null;
   candle_open?: number | null; // the candle's open
   cross_n?: number | null;    // the day's crosses on this ticker, this one included
   // VB retest (script v28)
@@ -302,6 +316,7 @@ export function emaFields(sig: TvSetupSignal): {
   under_n?: number | null; flips_n?: number | null; weak?: boolean;
   stop?: number | null; bounce_n?: number | null; since_n?: number | null; bounce_from?: TvBounceFrom | null;
   upper?: number | null; upper_pct?: number | null; bb_tf?: string | null; bb_mid?: number | null; bb_mid_pct?: number | null;
+  basis?: number | null; basis_pct?: number | null; bb_len?: number | null;
 } {
   if (sig.stage === 'bounce') {
     return {
@@ -319,6 +334,10 @@ export function emaFields(sig: TvSetupSignal): {
     ...(emaByBand(sig) ? {
       upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null, bb_tf: sig.bb_tf ?? null,
       bb_mid: sig.bb_mid ?? null, bb_mid_pct: sig.bb_mid_pct ?? null,   // v41
+    } : {}),
+    // v42: the basis that crossed, when it was the basis
+    ...(emaByBasis(sig) ? {
+      basis: sig.basis ?? null, basis_pct: sig.basis_pct ?? null, bb_tf: sig.bb_tf ?? null, bb_len: sig.bb_len ?? null,
     } : {}),
   };
 }
@@ -439,6 +458,9 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     bb_tf: toTf(o.bb_tf ?? o.bb),
     bb_mid: toNum(o.bb_mid ?? o.mid),
     bb_mid_pct: toNum(o.bb_mid_pct),
+    basis: toNum(o.basis),
+    basis_pct: toNum(o.basis_pct),
+    bb_len: toNum(o.bb_len ?? o.len),
     candle_open: toNum(o.candle_open ?? o.open),
     cross_n: toNum(o.cross_n ?? o.cross),
     stop: toNum(o.stop),
@@ -547,6 +569,11 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
   const bbTf = /\|\s*bb\s+([0-9]+[A-Za-z]?|[DWM])\b/i.exec(text);
   // v41, a band cross: "| mid 8.05 (+0.5%)" — the band's middle line and the price against it
   const bbMid = /\|\s*mid\s+\$?(\d*\.?\d+)\s*\(\s*([-+]?\d*\.?\d+)\s*%\s*\)/i.exec(text);
+  // v42, a basis cross: "| basis 8.03 (+0.7%) | bb 45S | len 10" — the basis, the price against it,
+  // its band's timeframe (read as `bb`) and length. Only an EMA-stage message carries it (v1–v26's
+  // RECLAIM had a `| basis` too; those stages are no longer read).
+  const bsLine = /\|\s*basis\s+\$?(\d*\.?\d+)\s*\(\s*([-+]?\d*\.?\d+)\s*%\s*\)/i.exec(text);
+  const bbLen = /\|\s*len\s+(\d+)\b/i.exec(text);
   const open = /\|\s*open\s+\$?(\d*\.?\d+)/i.exec(text);
   const crossN = /\|\s*cross\s+(\d+)\b/i.exec(text);
   const retestN = /\|\s*retest\s+(\d+)\b/i.exec(text);   // v28
@@ -590,6 +617,9 @@ export function parseTvMessage(body: unknown): TvSetupSignal | null {
     bb_tf: toTf(bbTf?.[1]),
     bb_mid: toNum(bbMid?.[1]),
     bb_mid_pct: toNum(bbMid?.[2]),
+    basis: toNum(bsLine?.[1]),
+    basis_pct: toNum(bsLine?.[2]),
+    bb_len: toNum(bbLen?.[1]),
     candle_open: toNum(open?.[1]),
     cross_n: toNum(crossN?.[1]),
     stop: toNum(stop?.[1]),
@@ -679,7 +709,7 @@ export class TvSetupGate {
     const rsi = RSI_STAGES.has(sig.stage);   // the RSI cross, its DIP and (v39) the MACD after it
     const ema = EMA_STAGES.has(sig.stage);   // the EMA cross and (v37) its bounce
     // v40: a band cross and an EMA cross of one candle are two events (`|bb`).
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi || ema ? `|${sig.candle_tf ?? ''}` : ''}${emaByBand(sig) ? '|bb' : ''}`;
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi || ema ? `|${sig.candle_tf ?? ''}` : ''}${emaByBand(sig) ? '|bb' : emaByBasis(sig) ? '|bs' : ''}`;
     const prev = this.lastExact.get(exact);
     const dupSec = vb || ema ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
@@ -742,6 +772,8 @@ export const TV_STAGE_LABEL: Record<TvStage, string> = {
 };
 // v40: an EMA-stage cross whose line is the BB upper band reads "BAND" (emaByBand).
 export const EMA_BAND_LABEL = 'BAND';
+// v42: …and one whose line is the basis of the separate band reads "BASIS" (emaByBasis).
+export const EMA_BASIS_LABEL = 'BASIS';
 const STAGE_ICON: Record<TvStage, string> = {
   pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', rsi: '📈', dip: '🎯', ema: '〽️', bounce: '🏀', macd: '🟢',
 };
@@ -997,11 +1029,14 @@ function formatEma(
 ): string {
   const tokens = lineTokens(sig.stage, sig.line);
   const tf = fmtTf(sig.candle_tf);
-  // v40: the line that crossed — the EMA, or the BB upper band (headline "BAND")
+  // v40: the line that crossed — the EMA, or the BB upper band (headline "BAND"), or (v42) the
+  // basis of the separate band (headline "BASIS")
   const band = emaByBand(sig);
-  const crossed = band ? `the ${fmtTf(sig.bb_tf)} BB upper band` : `the ${tf} EMA ${sig.ema_len ?? '?'}`;
+  const basis = emaByBasis(sig);
+  const basisName = `${fmtTf(sig.bb_tf)} basis${sig.bb_len != null ? ` (${sig.bb_len})` : ''}`;
+  const crossed = band ? `the ${fmtTf(sig.bb_tf)} BB upper band` : basis ? `the ${basisName}` : `the ${tf} EMA ${sig.ema_len ?? '?'}`;
   const lines = [
-    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.ema} <b>${band ? EMA_BAND_LABEL : TV_STAGE_LABEL.ema}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.ema} <b>${band ? EMA_BAND_LABEL : basis ? EMA_BASIS_LABEL : TV_STAGE_LABEL.ema}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
     `<i>${crossed} crossed above the ${(tokens.length > 0 ? tokens : ['session']).join(' + ')} VWAP (at the ${tf} close${sig.late ? ', a bar late' : ''})</i>`,
   ];
   const what: string[] = [];
@@ -1013,6 +1048,8 @@ function formatEma(
         ? `price ${fmtSigned(sig.bb_mid_pct)} under the band's middle (the band widened on a drop)`
         : `price ${fmtSigned(sig.bb_mid_pct)} over the band's middle`);
     }
+  } else if (basis) {
+    what.push(`${basisName} ${fmtPx(sig.basis ?? null)} (${fmtSigned(sig.basis_pct ?? null)})`);
   } else if (sig.ema != null) what.push(`EMA ${fmtPx(sig.ema)}`);
   if (sig.cross_n != null) {
     what.push(`cross ${sig.cross_n} today${sig.cross_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);

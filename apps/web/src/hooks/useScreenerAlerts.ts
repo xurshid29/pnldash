@@ -1,4 +1,4 @@
-import { isBandCross, lineTokens } from '../components/common/TvStageTag';
+import { isBandCross, isBasisCross, lineTokens } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { useHiddenTickers } from './useHiddenTickers';
@@ -250,6 +250,10 @@ export function opportunityTitle(a: OpportunityAlert): string {
       // v40, the band as the line: "📐 BAND OMH — 45s BB upper over sVWAP at the 3m close · #1"
       if (isBandCross(s)) {
         return `${s.on_screen ? '⭐ ' : ''}📐 BAND ${a.ticker} — ${shortTf(s.bb_tf)} BB upper over ${ln} at the ${shortTf(s.candle_tf)} close${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
+      }
+      // v42, the basis as the line: "📐 BASIS OMH — 45s basis (10) over sVWAP at the 3m close · #1"
+      if (isBasisCross(s)) {
+        return `${s.on_screen ? '⭐ ' : ''}📐 BASIS ${a.ticker} — ${shortTf(s.bb_tf)} basis${s.bb_len != null ? ` (${s.bb_len})` : ''} over ${ln} at the ${shortTf(s.candle_tf)} close${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
       }
       return `${s.on_screen ? '⭐ ' : ''}📐 EMA ${a.ticker} — ${shortTf(s.candle_tf)} EMA ${s.ema_len ?? '?'} over ${ln}${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
     }

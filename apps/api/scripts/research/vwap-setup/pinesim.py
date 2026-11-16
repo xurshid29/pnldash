@@ -1661,9 +1661,20 @@ def selftest_rsi():
 # state; no bounce (it is the EMA's). The script's "Both" runs the two side by side, each on its own.
 # v41, `bb_mid`: a band cross whose candle closed under the band's middle line (the band widened on a
 # fast drop and rose over the VWAP while the price fell away) is weak, whatever the v36 filter says.
+# v42, `src` 'bs': the basis (middle line) of a band of its own — the last bs_n − 1 finished closes of
+# bs_min candles plus the forming one, averaged (bs_n 1 = the close). The band cross's rule on its own
+# state; no middle-line test and no bounce.
 EMA_DEFAULTS = dict(tf_min=3, n=9, filter=True, min_under=5, max_flips=2, from_hour=7,
                     bounce=True, wait=10, tol_e=0.0, tol_v=1.0, from_ema=True, from_vwap=True,
-                    src='ema', base_min=1, bb_min=1, bb_n=20, bb_mult=2.0, bb_mid=True)
+                    src='ema', base_min=1, bb_min=1, bb_n=20, bb_mult=2.0, bb_mid=True, bs_min=1, bs_n=10)
+
+
+def _line_params(p):
+    """→ (the crossing line's band timeframe and length as bb_min / bb_n, which of the pair
+    bb_upper_series returns is the line: 0 the upper band, 1 the average) for src 'bb' / 'bs'."""
+    if p['src'] == 'bs':
+        return dict(p, bb_min=p['bs_min'], bb_n=p['bs_n']), 1
+    return p, 0
 
 
 def _ema_weak(p, hour, under, flips):
@@ -1809,10 +1820,12 @@ def ema_rule_direct(bars, p=None):
     p = dict(EMA_DEFAULTS, **(p or {}))
     c = resample_vw(bars, p['tf_min'])
     mids = [None] * len(c)
-    if p['src'] == 'bb':
-        band = _band_at(bars, p, p['tf_min'])
-        e = [band.get(x['t'], (None, None))[0] for x in c]
-        mids = [band.get(x['t'], (None, None))[1] for x in c]
+    if p['src'] in ('bb', 'bs'):
+        q, k = _line_params(p)
+        band = _band_at(bars, q, p['tf_min'])
+        e = [band.get(x['t'], (None, None))[k] for x in c]
+        if p['src'] == 'bb':                                   # v41's middle-line test is the band's alone
+            mids = [band.get(x['t'], (None, None))[1] for x in c]
     else:
         e = ema_series([x['c'] for x in c], p['n'])
     out, day, n = [], None, 0
@@ -1846,7 +1859,7 @@ def ema_bounce_direct(bars, p=None):
     → [(candle start, the day's number, the candle is its day's last, the pullback's low, candles
     after the cross, 'ema' | 'vwap' | 'ema+vwap', weak)]. None after a band's cross (v40)."""
     p = dict(EMA_DEFAULTS, **(p or {}))
-    if p['src'] == 'bb':
+    if p['src'] in ('bb', 'bs'):
         return []
     c = resample_vw(bars, p['tf_min'])
     e = ema_series([x['c'] for x in c], p['n'])
@@ -1896,12 +1909,13 @@ def simulate_ema(bars, chart_min, p=None, fine=None, full=False):
     p = dict(EMA_DEFAULTS, **(p or {}))
     if not (chart_min <= p['tf_min'] and p['tf_min'] % chart_min == 0):
         return ([], []) if full else []
-    by_band = p['src'] == 'bb'
+    by_band = p['src'] in ('bb', 'bs')          # the band (v40) or the basis of the separate band (v42)
     if by_band:
-        # the script's emBbOk: a chart of the alert timeframe or a multiple of it, a band timeframe no smaller
-        if not (chart_min >= p['base_min'] and chart_min % p['base_min'] == 0 and p['bb_min'] >= p['base_min']):
+        q, line_k = _line_params(p)
+        # the script's emBbOk / bsBbOk: a chart of the alert timeframe or a multiple of it, a band timeframe no smaller
+        if not (chart_min >= p['base_min'] and chart_min % p['base_min'] == 0 and q['bb_min'] >= p['base_min']):
             return ([], []) if full else []
-        band_at = _band_at(fine if chart_min > p['base_min'] else bars, p, chart_min)
+        band_at = _band_at(fine if chart_min > p['base_min'] else bars, q, chart_min)
     c = resample_vw(fine or bars, p['tf_min'])
     e_after = ema_series([x['c'] for x in c], p['n'])
     starts = [x['t'] for x in c]
@@ -1919,7 +1933,9 @@ def simulate_ema(bars, chart_min, p=None, fine=None, full=False):
             j += 1
         live = alpha * b['c'] + (1 - alpha) * e_after[j - 1] if j >= 1 and e_after[j - 1] is not None else None
         if by_band:
-            live, mid = band_at.get(_candle_start(t, chart_min), (None, None))      # the line that crosses is the band
+            pair = band_at.get(_candle_start(t, chart_min), (None, None))
+            live = pair[line_k]                                   # the line that crosses: the band, or the basis
+            mid = pair[1] if p['src'] == 'bb' else None           # the middle-line test is the band's alone
         new_day = prev_day is not None and t.date() != prev_day
         if prev_t is None or ct != prev_t:
             cop, clp, co, cl = co, cl, b['o'], b['l']
@@ -2117,7 +2133,38 @@ def selftest_ema():
         shown_m.append(f"a {bb_min}m band {under_mid} of {len(all_a)} crosses closed under the middle; with the v36 filter {len(weak_on)} weak ({len(by_drop)} of them by this test alone)")
     print(f"…the band's middle line (v41), a cross whose candle closed under it is weak: {'; '.join(shown_m)}; "
           f"the same crosses, the script's verdicts and numbers the plain rule's on the 3m and 1m charts", '→', 'OK' if ok8 else 'UNEXPECTED')
-    return ok and first_of_day == 0 and ok5 and ok6 and ok7 and ok8
+    # v42, the basis of a separate band as the line that crosses: the average of the band timeframe's last
+    # closes (10 by default; 2; 1 = the close itself), a 1m and a 2m band. The plain rule against the
+    # script on the 3m and 1m charts; no bounce; the middle-line test doesn't apply.
+    ok9, shown_s = True, []
+    band_t = {t for t, *_ in ema_rule_direct(fine, dict(src='bb'))}
+    for bs_min, bs_n in ((1, 10), (1, 2), (1, 1), (2, 10)):
+        q = dict(src='bs', bs_min=bs_min, bs_n=bs_n)
+        wants = ema_rule_direct(fine, q)
+        s3, bs3 = simulate_ema(resample_vw(fine, 3), 3, q, fine=fine, full=True)
+        s1, bs1 = simulate_ema(fine, 1, q, full=True)
+        all_s = [(t, n, u, f, w) for t, n, _, u, f, w in wants]
+        end_s = {(t, n, u, f, w) for t, n, last, u, f, w in wants if last}
+        drop_s = [x for x in all_s if x not in full(s1)]
+        ok9 = (ok9 and len(all_s) >= 20 and full(s3) == all_s and not any(late for _, late, *_ in s3)
+               and [x for x in all_s if x not in drop_s] == full(s1) and all(x in end_s for x in drop_s)
+               and bs3 == [] and bs1 == [] and ema_bounce_direct(fine, q) == []
+               and {t for t, *_ in all_s} != ema_t and {t for t, *_ in all_s} != band_t
+               and all(w == (t.hour < 7 or u < 5 or f > 2) for t, _, u, f, w in all_s)       # no middle-line test
+               and full(simulate_ema(fine, 1, dict(q, bb_mid=False))) == full(s1))
+        shown_s.append(f"a {bs_min}m band of {bs_n} {len(all_s)} crosses ({sum(1 for x in all_s if x[4])} weak)")
+    # with a length of 1 the basis is the close: the candle's close crossing the VWAP
+    c3 = resample_vw(fine, 3)
+    px_cross = [x['t'] for i, x in enumerate(c3) if i > 0 and c3[i - 1]['t'].date() == x['t'].date() and x['vw'] is not None
+                and c3[i - 1]['vw'] is not None and x['c'] > x['vw'] and c3[i - 1]['c'] <= c3[i - 1]['vw']]
+    ok9 = (ok9 and [t for t, *_ in ema_rule_direct(fine, dict(src='bs', bs_n=1))] == px_cross
+           and simulate_ema(fine, 1, dict(src='bs', base_min=3, bs_min=3)) == []
+           and simulate_ema(resample_vw(fine, 3), 3, dict(src='bs', base_min=3, bs_min=1), fine=fine) == []
+           and simulate_ema(resample_vw(fine, 5), 5, dict(src='bs'), fine=fine) == [])
+    print(f"…the basis of a separate band (v42), judged at the 3m close: {'; '.join(shown_s)}; a length of 1 gives the close's own crosses "
+          f"of the VWAP ({len(px_cross)}); the script gives the plain rule's crosses, numbers and verdicts on the 3m and 1m charts, and no bounce",
+          '→', 'OK' if ok9 else 'UNEXPECTED')
+    return ok and first_of_day == 0 and ok5 and ok6 and ok7 and ok8 and ok9
 
 
 if __name__ == '__main__':

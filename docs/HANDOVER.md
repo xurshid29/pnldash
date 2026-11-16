@@ -10,7 +10,7 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v41 (2026-11-16).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v42 (2026-11-16).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
 - **PULLBACK** and the **VWAP + BB cross with its RETEST**, as below. **The VB lanes (v29) were
   removed in v39**, with the server's `vb_long_min` exception: every line below about lanes is
@@ -25,7 +25,9 @@ v31; the session log has each step since. What the script carries now:
   the VB's BB upper band, or both run side by side (the default)**; a band cross is stage `ema`
   shown as BAND, with no BOUNCE. **v41: a band cross whose candle closed under the band's middle
   line (a drop widened the band) is weak — gray, quiet** (the operator's CLRO report; measured, such
-  crosses are not worse, see §18.5). **Since 11-15 EMA / BAND / BOUNCE announce on Momentum names
+  crosses are not worse, see §18.5; asked whether to ignore them completely, they agreed to keep
+  them quiet: "ok, lets keep it"). **v42: a third line, the basis of a separate band (its own
+  timeframe and length, 45S / 10), shown as BASIS.** **Since 11-15 EMA / BAND / BOUNCE announce on Momentum names
   only** (the operator: "ema cross must be checked only with momentum list"); the VB's +30%
   day-high exception is back for them only if ⚙ → "EMA / BAND / BOUNCE: Momentum list only" is
   unticked.
@@ -269,6 +271,25 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-16 (Mon, ~07:30 ET) — SCRIPT v42: THE BASIS CROSS (the basis of a separate band, its own length).** After v41 the
+operator asked "maybe we ignore such crosses completely? Or, better not to do that?" → I advised keeping them quiet (no ping,
+rows kept for grading; the gray marks can be hidden in Style) → "ok, lets keep it. And, also, can you add one more band? This
+time, it should be a separate bollinger bands with configurable it's Length (let it be 1/2 by default), what I want is, the
+similar setup as our bands cross, but this time I want to use Basis line. It should be a separate bb so I can change its Length
+value". Built without measuring (`docs/vwap-setup.md` §18.6).
+- **Script:** three inputs, last: `bsOn` (on), `bsTf` (45S), `bsLen` (**10** — I read "1/2" as half the VB band's 20; told the
+  operator, it is one field to change; 1 makes the basis the price). `bsBasis()` averages the band timeframe's last closes
+  from the alert timeframe's bars, with its own lower-timeframe replay. Section 4c: its own `EmaLine` state through
+  `bbSample()` (no middle-line test), independent of the EMA / band choice; olive line and **BS** marks (gray **bs** when
+  weak); no BOUNCE. `emMsgBy(…, by, mid)` builds the three messages; `emMsg()` stays for the EMA's and the band's callers.
+  73 inputs, 43 plots, 16 `alert()` calls. **No reset needed.**
+- **Message:** `EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | basis 8.03 (+0.7%) | bb 45S | len 10 | line session | candle 3 | cross 1 |
+  …`. Server: stage `ema`, `emaByBasis()` (and `emaByBand` now needs no basis), gate key `|bs`, Telegram headline BASIS, rows
+  carry `basis` / `basis_pct` / `bb_len`. Dashboard: BASIS pill (`3m/45s·10`), thread `bs:`.
+- Checks: `verify-tv-setups.ts` 681; `pinesim.selftest_ema` with `src='bs'` (lengths 10, 2, 1; a 2m band; 3m and 1m charts; a
+  length of 1 equals the close's own crosses of the VWAP). The Pine was not compiled on TradingView (v40 did compile for the
+  operator; v41 and v42 are unconfirmed).
 
 **2026-11-16 (Mon, 06:20–07:00 ET) — SCRIPT v41: THE BAND'S MIDDLE-LINE TEST (a cross made by a drop is weak).** The operator,
 with RBNE, GP and CLRO 1m charts: the band setups "are working very well" (RBNE, GP: the run's first candle takes the band over

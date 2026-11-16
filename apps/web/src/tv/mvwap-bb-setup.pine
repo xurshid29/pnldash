@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v41 (2026-11-16). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v42 (2026-11-16). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -60,6 +60,9 @@
 //   (v41) a band cross whose candle closed under the band's middle line — the band widened on a
 //         fast drop and rose over the VWAP while the price fell away — is weak: gray, `| weak`,
 //         not announced (an input; the message carries `| mid` either way)
+//   (v42) the BASIS cross: the basis (middle line) of a separate Bollinger Band — its own
+//         timeframe and length (45S, 10) — crosses the VWAP by the same rule, with its own switch,
+//         day's numbers, alerts and marks (olive "BS"); the dashboard calls it BASIS (section 4c)
 // VWAP lines (v28): from 30s bars by default, so the session line is the same on every
 // chart (TradingView's built-in VWAP is built from the chart's own bars and differs by
 // timeframe), or from the chart's bars ("VWAP lines from" in Inputs).
@@ -1226,6 +1229,16 @@ emUseB  = emSrc != "EMA"        // the band's crosses are on
 // event (a dip, not a push), not a worse one. The first push of a move from flat, the kind the
 // operator showed (RBNE, GP), happens before a name reaches our screen and isn't in that data.
 bbMidOn = input.bool(true, "BB cross (v41): a cross with the candle closing under the band's middle line (the band widened on a drop; the price didn't lift it) is drawn gray and sent quietly", group = "EMA cross over VWAP (v35)")
+// v42 inputs go last: the BASIS cross (operator, 11-16: "can you add one more band? This time, it
+// should be a separate bollinger bands with configurable it's Length (let it be 1/2 by default), what
+// I want is, the similar setup as our bands cross, but this time I want to use Basis line. It should
+// be a separate bb so I can change its Length value"). The basis is a Bollinger Band's middle line:
+// the average of its last Length closes. This one belongs to its own band (its own timeframe and
+// length; the VB's band is untouched), and its crosses of the VWAP follow the band cross's rule.
+// The default length 10 is half the VB band's 20 (my reading of "1/2"); 1 makes the basis the price.
+bsOn  = input.bool(true,       "Basis cross on (v42): the basis (middle line) of its own Bollinger Band crosses above the VWAP, by the EMA cross's rule and settings", group = "EMA cross over VWAP (v35)")
+bsTf  = input.timeframe("45S", "Basis: its band's timeframe", group = "EMA cross over VWAP (v35)")
+bsLen = input.int(10,          "Basis: its band's length — the closes it averages (1 = the price itself)", minval = 1, group = "EMA cross over VWAP (v35)")
 
 // The EMA after the last finished candle of its timeframe, and live at this bar (that EMA's
 // chart value now: the finished candles + this bar's close as the open one's).
@@ -1276,11 +1289,39 @@ float emBbMid = na
 if array.size(emBbIn) > 0
     emBb    := array.get(emBbIn, array.size(emBbIn) - 1)
     emBbMid := array.get(emBbMidIn, array.size(emBbMidIn) - 1)
+// v42: the basis of the operator's separate band — the average of its timeframe's last bsLen - 1
+// finished closes and the forming one, from the alert timeframe's bars like the band above (and
+// replayed on a bigger chart the same way). With a length of 1 it is the close.
+bsBasis(simple string bTf, simple int len) =>
+    bool sNew = timeframe.change(bTf)
+    var sCloses = array.new<float>()
+    var float sLastC = na
+    if sNew and not na(sLastC)
+        array.push(sCloses, sLastC)
+        if array.size(sCloses) > len - 1
+            array.shift(sCloses)
+    sLastC := close
+    float sMid = na
+    int   sN   = array.size(sCloses)
+    if sN == len - 1
+        float sSum = close
+        if sN > 0
+            for i = 0 to sN - 1
+                sSum := sSum + array.get(sCloses, i)
+        sMid := sSum / len
+    sMid
+bsBbOk  = rsChartSec >= vbBaseSec and rsChartSec % vbBaseSec == 0 and timeframe.in_seconds(bsTf) >= vbBaseSec
+bsLower = emOn and bsOn and bsBbOk and rsChartSec > vbBaseSec and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0
+bsIn    = request.security_lower_tf(syminfo.tickerid, bsLower ? vbTf : timeframe.period, bsBasis(bsTf, bsLen))
+float emBs = na
+if array.size(bsIn) > 0
+    emBs := array.get(bsIn, array.size(bsIn) - 1)
 // Where the samples are right: a chart no bigger than the EMA's timeframe whose bars divide it.
-// The EMA's crosses run there when the EMA is a chosen line; the band's (bbOk) where the band is
-// right too.
+// The EMA's crosses run there when the EMA is a chosen line; the band's (bbOk) and the basis's
+// (bsOk) where their line is right too.
 emOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0 and emUseE
 bbOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0 and emUseB and emBbOk
+bsOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0 and bsOn and bsBbOk
 
 // One line's state, stepped once per sampled candle close.
 type EmaLine
@@ -1711,6 +1752,71 @@ if bbOk
         bbCF := bbB6
         bbCW := bbB7
 
+// ── 4c) THE BASIS'S CROSSES (v42) ─────────────────────────────────────────────
+// The basis of the operator's separate band (emBs, above) against the same VWAP lines, sampled and
+// filtered like the band's crosses (bbSample): at each close of the EMA's candle timeframe, above
+// the line now and at or under it at the close before, the day's first candle excluded, gainers
+// only, the v36 filter's three tests on the basis's own stay under the line and crossings. There is
+// no middle-line test: the basis is a middle line, and a drop lowers it. Its own lines, so its own
+// `cross N` per day. No BOUNCE.
+var EmaLine bsS = EmaLine.new()
+var EmaLine bsM = EmaLine.new()
+var EmaLine bsY = EmaLine.new()
+var bsHS = array.new<int>()
+var bsHM = array.new<int>()
+var bsHY = array.new<int>()
+var int bsDone = na
+bool bsLateS = not na(emT[1]) and emT != emT[1] and (na(bsDone) or bsDone != emT[1])
+bool bsLS = false
+bool bsLM = false
+bool bsLY = false
+int  bsLN = 0
+int  bsLU = 0
+int  bsLF = 0
+bool bsLW = false
+bool bsCS = false
+bool bsCM = false
+bool bsCY = false
+int  bsCN = 0
+int  bsCU = 0
+int  bsCF = 0
+bool bsCW = false
+if bsOk
+    if bsLateS
+        bool bsOkL    = inWindow and not newDay and (not emGainOn or gainer[1])
+        bool bsEarlyL = hour(emT[1], "America/New_York") < emFromHour
+        [bsA1, bsA2, bsA3, bsA4, bsA5, bsA6, bsA7] = bbSample(bsS, bsM, bsY, bsHS, bsHM, bsHY, emBs[1], svwap[1], mvwap[1], yvwap[1], bsOkL, bsEarlyL, close[1], na)
+        bsDone := emT[1]
+        bsLS := bsA1
+        bsLM := bsA2
+        bsLY := bsA3
+        bsLN := bsA4
+        bsLU := bsA5
+        bsLF := bsA6
+        bsLW := bsA7
+    // The anchors: a new day restarts the session line and the day's counts.
+    if newDay
+        bsS.restart(bsHS)
+        bsS.n := 0
+        bsM.n := 0
+        bsY.n := 0
+    if emNewM
+        bsM.restart(bsHM)
+    if emNewY
+        bsY.restart(bsHY)
+    if emEnd and (na(bsDone) or bsDone != emT)
+        bool bsOkC    = inWindow and (not emGainOn or gainer)
+        bool bsEarlyC = hour(emT, "America/New_York") < emFromHour
+        [bsB1, bsB2, bsB3, bsB4, bsB5, bsB6, bsB7] = bbSample(bsS, bsM, bsY, bsHS, bsHM, bsHY, emBs, svwap, mvwap, yvwap, bsOkC, bsEarlyC, close, na)
+        bsDone := emT
+        bsCS := bsB1
+        bsCM := bsB2
+        bsCY := bsB3
+        bsCN := bsB4
+        bsCU := bsB5
+        bsCF := bsB6
+        bsCW := bsB7
+
 // The message — a contract with services/tv-setups.ts parseTvMessage. Every value is the sampled
 // candle's (a late one's from the bar before):
 //   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S
@@ -1722,7 +1828,11 @@ if bbOk
 emPct(float px, float ln) => (px >= ln ? "+" : "") + str.tostring((px / ln - 1) * 100, "#.0")
 // v41: a band cross also carries `| mid 8.05 (+0.5%)` after `bb` — the band's middle line and the
 // price against it (under it = the band widened on a drop).
-emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak, bool band, float mid) =>
+// v42, a cross of the basis (`by` = "bs"; `e` is then the basis): `| basis 8.03 (+0.7%) | bb 45S | len 10`
+// — the basis, the price against it, its band's timeframe and length:
+//   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | basis 8.03 (+0.7%) | bb 45S | len 10 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S
+// `by` names the line that crossed: "ema", "bb" (the band) or "bs" (the basis).
+emMsgBy(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak, string by, float mid) =>
     string names = ""
     if fS
         names := pbJoin(names, "session")
@@ -1737,10 +1847,12 @@ emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, f
         msg += " | mVWAP " + str.tostring(mv, format.mintick) + " (" + emPct(px, mv) + "%)"
     if not na(yv)
         msg += " | yVWAP " + str.tostring(yv, format.mintick) + " (" + emPct(px, yv) + "%)"
-    if band
+    if by == "bb"
         msg += " | upper " + str.tostring(e, format.mintick) + " (" + emPct(px, e) + "%) | bb " + vbBbTf
         if not na(mid)
             msg += " | mid " + str.tostring(mid, format.mintick) + " (" + emPct(px, mid) + "%)"
+    else if by == "bs"
+        msg += " | basis " + str.tostring(e, format.mintick) + " (" + emPct(px, e) + "%) | bb " + bsTf + " | len " + str.tostring(bsLen)
     else
         msg += " | ema " + str.tostring(emLen) + " " + str.tostring(e, format.mintick)
     msg += " | line " + names + " | candle " + emTf + " | cross " + str.tostring(n)
@@ -1754,6 +1866,9 @@ emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, f
     if late
         msg += " | late"
     msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
+// The EMA's and the band's messages, as their alerts have called them since v40 / v41.
+emMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak, bool band, float mid) =>
+    emMsgBy(fS, fM, fY, n, px, e, sv, mv, yv, late, under, flips, weak, band ? "bb" : "ema", mid)
 
 // v37, the bounce's message (the same contract):
 //   BOUNCE PARA 0.1021 | stop 0.0985 | sVWAP 0.0975 (+4.7%) | ema 9 0.099 | line session | from ema+vwap | candle 3 | bounce 1 | since 3 | day high +25% | vwap 30s | tf 30S
@@ -1801,6 +1916,11 @@ if (bbLS or bbLM or bbLY) and timeframe.period == vbTf
     alert(emMsg(bbLS, bbLM, bbLY, bbLN, close[1], emBb[1], svwap[1], mvwap[1], yvwap[1], true, bbLU, bbLF, bbLW, true, emBbMid[1]), alert.freq_once_per_bar_close)
 if (bbCS or bbCM or bbCY) and timeframe.period == vbTf
     alert(emMsg(bbCS, bbCM, bbCY, bbCN, close, emBb, svwap, mvwap, yvwap, false, bbCU, bbCF, bbCW, true, emBbMid), alert.freq_once_per_bar_close)
+// v42: the basis's crosses, the same message with the basis in the EMA's place.
+if (bsLS or bsLM or bsLY) and timeframe.period == vbTf
+    alert(emMsgBy(bsLS, bsLM, bsLY, bsLN, close[1], emBs[1], svwap[1], mvwap[1], yvwap[1], true, bsLU, bsLF, bsLW, "bs", na), alert.freq_once_per_bar_close)
+if (bsCS or bsCM or bsCY) and timeframe.period == vbTf
+    alert(emMsgBy(bsCS, bsCM, bsCY, bsCN, close, emBs, svwap, mvwap, yvwap, false, bsCU, bsCF, bsCW, "bs", na), alert.freq_once_per_bar_close)
 // v35 plots go last: the EMA line, the markers, and a VWAP line this setup uses that no other draws.
 plot(emOk and emShow ? emLive : na, "EMA (EMA cross, v35)", color.aqua)
 plotshape(emShow and (emCS or emCM or emCY) and not emCW, "EMA cross (v35)", shape.labelup, location.belowbar, color.orange, text = "EMA", textcolor = color.black, size = size.small)
@@ -1961,3 +2081,10 @@ plotshape(emShow and (bbLS or bbLM or bbLY) and bbLW, "BB upper cross, filtered,
 // v41 plot goes last: the band's middle line, hidden until switched on in Style (a cross whose candle
 // closed under it is the gray kind).
 plot(bbOk and emShow ? emBbMid : na, "BB middle (EMA cross, v41)", color.new(color.orange, 60), display = display.none)
+// v42 plots go last: the basis of the separate band, and its crosses (olive "BS"; gray "bs" for the
+// ones the filter calls weak).
+plot(bsOk and emShow ? emBs : na, "Basis (basis cross, v42)", color.olive)
+plotshape(emShow and (bsCS or bsCM or bsCY) and not bsCW, "Basis cross over VWAP (v42)", shape.labelup, location.belowbar, color.olive, text = "BS", textcolor = color.white, size = size.small)
+plotshape(emShow and (bsLS or bsLM or bsLY) and not bsLW, "Basis cross, late close (v42)", shape.labelup, location.belowbar, color.olive, text = "BS", textcolor = color.white, size = size.small, offset = -1)
+plotshape(emShow and (bsCS or bsCM or bsCY) and bsCW, "Basis cross, filtered (v42)", shape.labelup, location.belowbar, color.gray, text = "bs", textcolor = color.white, size = size.tiny)
+plotshape(emShow and (bsLS or bsLM or bsLY) and bsLW, "Basis cross, filtered, late close (v42)", shape.labelup, location.belowbar, color.gray, text = "bs", textcolor = color.white, size = size.tiny, offset = -1)
