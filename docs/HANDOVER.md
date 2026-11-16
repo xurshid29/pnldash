@@ -287,6 +287,9 @@ BB marks while the price fell away). So they pasted v40 and it compiled; their c
   bands, 3m and 1m charts). The Pine was not compiled on TradingView.
 - To grade later: band rows with `bb_mid_pct < 0` against the rest. If the drop-made ones keep bouncing live, they may deserve
   their own alert instead of the quiet treatment; say so to the operator with the numbers.
+- Pushed `017c079`, deployed at 06:29 ET (a ~50 s gap in the polls, which resumed with the same 12 rows) and checked on prod:
+  the bundle serves v41; dry runs parse a band cross with `| mid` (over and under the middle, the second one weak), a v40 band
+  cross without it, and an EMA cross. Not checked: v41's Pine on TradingView.
 
 **2026-11-16 (Mon, 04:00 ET) — FINVIZ: `type=stocks` IN EVERY SCREENER EXPORT URL (their 07.Dec.2026 change).** The operator
 forwarded Finviz's email: "Action needed: add {type=} to your Finviz screener export URLs by 07.Dec.2026". The screener split
