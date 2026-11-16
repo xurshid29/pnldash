@@ -18,7 +18,8 @@ import { fileURLToPath } from 'url';
 import {
   parseTvMessage, normTicker, TvSetupGate, TV_SETUP, formatTvSetupAlert, lineTokens,
   parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, stageSwitch, readStoredStages, storedStages,
-  fmtMinutes, emaByBand, emaByBasis, emaFields, EMA_BAND_LABEL, EMA_BASIS_LABEL, readStoredRules, type TvSetupSignal,
+  fmtMinutes, emaByBand, emaByBasis, emaFields, EMA_BAND_LABEL, EMA_BASIS_LABEL, readStoredRules, emaLineStage, storedSetupFields, storedStage,
+  type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 
 let failures = 0;
@@ -207,28 +208,38 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'pullback', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, day_gain: 25, ah_gain: null,
     tf: '1', vol_x: null, run_pct: null, svwap: 1.95, spx_pct: 2.6, line: 'session', touch: 1, fails: 0, ...over,
   });
-  check('default switches: PULLBACK, CROSS, RETEST, RSI, DIP, MACD, EMA on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi","dip","macd","ema"]');
+  check('default switches: PULLBACK, CROSS, RETEST, RSI, DIP, MACD, EMA, BAND, BASIS on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","rsi","dip","macd","ema","band","basis"]');
   check('parseStageList keeps known stages in menu order, drops the rest (v27: a saved go / ready / forming too)',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 'ready', 7])) === '["pullback","held"]'
       && parseStageList('pullback') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists the nine stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST; 11-13 DIP after it; v39 MACD after DIP, in LIFT\'s place; v35 EMA)',
-    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","dip","macd","ema","broken","held"]'
+  check('menu order lists the eleven stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v32 RSI after RETEST; 11-13 DIP after it; v39 MACD after DIP, in LIFT\'s place; v35 EMA; 11-16 BAND and BASIS after it)',
+    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","rsi","dip","macd","ema","band","basis","broken","held"]'
       && JSON.stringify(parseStageList(['pullback', 'cross', 'break'])) === '["pullback","cross"]'
       && JSON.stringify(parseStageList(['dip', 'lift', 'macd'])) === '["dip","macd"]');
   // 2026-11-13: DIP got its own switch. A list saved before that (a plain array) gives DIP the RSI's value;
   // one saved since ({ announced, known }) is read as saved. v39: MACD starts with the DIP's value (v38's LIFT did).
   const legacy = readStoredStages(['pullback', 'cross', 'rsi', 'ema']);
-  check('an old saved list with RSI on → DIP on too, and MACD with it; the rest as saved',
-    JSON.stringify(legacy) === '["pullback","cross","rsi","dip","macd","ema"]', JSON.stringify(legacy));
-  check('…with RSI off → DIP and MACD off; an empty old list stays empty',
-    JSON.stringify(readStoredStages(['pullback', 'cross', 'ema'])) === '["pullback","cross","ema"]' && JSON.stringify(readStoredStages([])) === '[]');
+  check('an old saved list with RSI on → DIP on too, and MACD with it; EMA on → BAND and BASIS with it; the rest as saved',
+    JSON.stringify(legacy) === '["pullback","cross","rsi","dip","macd","ema","band","basis"]', JSON.stringify(legacy));
+  check('…with RSI off → DIP and MACD off; with EMA off → BAND and BASIS off; an empty old list stays empty',
+    JSON.stringify(readStoredStages(['pullback', 'cross', 'ema'])) === '["pullback","cross","ema","band","basis"]'
+      && JSON.stringify(readStoredStages(['pullback', 'cross'])) === '["pullback","cross"]' && JSON.stringify(readStoredStages([])) === '[]');
   check('a new saved list is read as saved: RSI on and DIP off stays off; DIP on with MACD off stays so',
     JSON.stringify(readStoredStages(storedStages(['pullback', 'rsi']))) === '["pullback","rsi"]'
       && JSON.stringify(readStoredStages(storedStages(['dip', 'ema']))) === '["dip","ema"]'
       && JSON.stringify(readStoredStages(storedStages(['macd']))) === '["macd"]');
   check('…a stage the saved list didn\'t know takes the switch it follows (DIP ← RSI, MACD ← DIP), any other its default',
     JSON.stringify(readStoredStages({ announced: ['rsi'], known: ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'] })) === '["rsi","dip","macd"]'
-      && JSON.stringify(readStoredStages({ announced: [], known: ['pullback'] })) === '["cross","retest","rsi","dip","macd","ema"]');
+      && JSON.stringify(readStoredStages({ announced: [], known: ['pullback'] })) === '["cross","retest","rsi","dip","macd","ema","band","basis"]');
+  // 2026-11-16: BAND and BASIS got a switch each; a list saved before starts them at the EMA's value
+  const v42 = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'broken', 'held'], announced: ['pullback', 'dip', 'macd', 'ema'] };
+  check('a list saved before 11-16 with EMA on (the operator\'s) → BAND and BASIS on; with EMA off → both off',
+    JSON.stringify(readStoredStages(v42)) === '["pullback","dip","macd","ema","band","basis"]'
+      && JSON.stringify(readStoredStages({ ...v42, announced: ['pullback', 'dip', 'macd'] })) === '["pullback","dip","macd"]');
+  check('…a list saved since is read as saved: BAND on alone, BASIS off with EMA on',
+    JSON.stringify(readStoredStages(storedStages(['band']))) === '["band"]'
+      && JSON.stringify(readStoredStages(storedStages(['ema', 'band']))) === '["ema","band"]'
+      && JSON.stringify(parseStageList(['basis', 'band', 'ema'])) === '["ema","band","basis"]');
   // the operator's switches as saved on 11-13 (before LIFT or MACD existed): PULLBACK and DIP on
   const saved = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'ema', 'broken', 'held'], announced: ['pullback', 'dip'] };
   check('…a list saved before v39 with DIP on → MACD on; with DIP off → MACD off',
@@ -665,7 +676,7 @@ console.log('The band as the line that crosses (v40, 2026-11-15)');
   const T0 = 1_794_760_000;
   const ema = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S');
   const b = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.13 (-0.5%) | bb 45S | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S');
-  check('a band cross parses: stage EMA, the band and its timeframe, no EMA', b?.stage === 'ema' && b.ticker === 'OMH' && b.price === 8.09 && b.upper === 8.13
+  check('a band cross parses: an "EMA …" message read as stage BAND (11-16), the band and its timeframe, no EMA', b?.stage === 'band' && b.ticker === 'OMH' && b.price === 8.09 && b.upper === 8.13
     && b.upper_pct === -0.5 && b.bb_tf === '45S' && b.ema === null && b.ema_len === null && b.svwap === 8.01 && b.line === 'session' && b.candle_tf === '3'
     && b.cross_n === 1 && b.under_n === 12 && b.flips_n === 1 && b.weak === false && b.day_gain === 25 && b.tf === '30S', JSON.stringify(b));
   check('emaByBand: the band cross yes; an EMA cross, a CROSS and a BOUNCE no', emaByBand(b!) && !emaByBand(ema!)
@@ -732,7 +743,7 @@ console.log('The basis of a separate band as the line that crosses (v42, 2026-11
   const ema = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S');
   const band = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.13 (-0.5%) | bb 45S | mid 8.02 (+0.9%) | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S');
   const bs = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | basis 8.03 (+0.7%) | bb 45S | len 10 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S');
-  check('a basis cross parses: stage EMA, the basis with the price against it, its band\'s timeframe and length, no EMA or band', bs?.stage === 'ema'
+  check('a basis cross parses: an "EMA …" message read as stage BASIS (11-16), the basis with the price against it, its band\'s timeframe and length, no EMA or band', bs?.stage === 'basis'
     && bs.ticker === 'OMH' && bs.price === 8.09 && bs.basis === 8.03 && bs.basis_pct === 0.7 && bs.bb_tf === '45S' && bs.bb_len === 10 && bs.ema === null
     && bs.upper === null && bs.bb_mid === null && bs.svwap === 8.01 && bs.line === 'session' && bs.candle_tf === '3' && bs.cross_n === 1 && bs.under_n === 12
     && bs.flips_n === 1 && bs.weak === false && bs.day_gain === 25, JSON.stringify(bs));
@@ -767,6 +778,62 @@ console.log('The basis of a separate band as the line that crosses (v42, 2026-11
     && formatTvSetupAlert(bw!, 'NASDAQ:NCPL', null).includes('filtered as weak'));
   check('the band cross and the EMA cross still read BAND and EMA', formatTvSetupAlert(band!, 'NASDAQ:OMH', null).includes('<b>BAND</b>')
     && formatTvSetupAlert(ema!, 'NASDAQ:OMH', null).includes('<b>EMA</b>'));
+}
+
+// 2026-11-16 (operator, with a sidebar of BAND pills and the ⚙ menu: "can we separate what band are these? … and, these
+// ones also?"): BAND and BASIS are stages of their own, each with a ⚙ switch; the script still heads all three "EMA".
+// And the day's rows a reloaded page reads carry every stage-specific field (they carried the VB's alone).
+console.log('BAND and BASIS as stages, each with its switch (2026-11-16)');
+{
+  const T0 = 1_794_830_000;
+  const ema = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 1 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S')!;
+  const band = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.13 (-0.5%) | bb 30S | mid 8.02 (+0.9%) | line session | candle 1 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S')!;
+  const basis = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | basis 8.03 (+0.7%) | bb 1 | len 10 | line session | candle 1 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S')!;
+  const bounce = parseTvMessage('BOUNCE OMH 8.2 | stop 8.0 | sVWAP 8.01 (+2.4%) | ema 9 8.1 | line session | from ema | candle 1 | bounce 1 | since 3 | vwap 30s | tf 30S')!;
+  check('the stage follows the line the message names: EMA, BAND, BASIS', ema.stage === 'ema' && band.stage === 'band' && basis.stage === 'basis'
+    && emaLineStage({ stage: 'ema', ema: 8.03 }) === 'ema' && emaLineStage({ stage: 'ema', bb_tf: '45S' }) === 'band'
+    && emaLineStage({ stage: 'ema', bb_tf: '1', basis: 8.03 }) === 'basis' && emaLineStage({ stage: 'ema' }) === 'ema'
+    && emaLineStage({ stage: 'cross', bb_tf: '45S' }) === 'cross' && emaLineStage({ stage: 'bounce', ema: 8.1 }) === 'bounce');
+  check('…a JSON body may name the stage itself', parseTvMessage({ stage: 'band', ticker: 'OMH', upper: 8.13, bb: '30S' })?.stage === 'band'
+    && parseTvMessage({ stage: 'basis', ticker: 'OMH', basis: 8.03, bb: '1', len: 10 })?.stage === 'basis'
+    && parseTvMessage({ stage: 'ema', ticker: 'OMH', basis: 8.03, bb: '1' })?.stage === 'basis');
+  check('each has its own switch, after EMA in the menu; the BOUNCE still rides the EMA\'s', stageSwitch('band') === 'band' && stageSwitch('basis') === 'basis'
+    && stageSwitch('bounce') === 'ema' && TV_STAGE_ORDER.indexOf('band') === TV_STAGE_ORDER.indexOf('ema') + 1
+    && TV_STAGE_ORDER.indexOf('basis') === TV_STAGE_ORDER.indexOf('band') + 1);
+  const only = (stages: Parameters<TvSetupGate['setAnnounced']>[0]) => { const g = new TvSetupGate(); g.setAnnounced(stages); return g; };
+  check('BAND off, EMA and BASIS on → the band cross is quiet, the other two and the bounce announce',
+    only(['ema', 'basis']).admit(band, T0, false, true) === 'quiet' && only(['ema', 'basis']).admit(ema, T0, false, true) === 'notify'
+      && only(['ema', 'basis']).admit(basis, T0, false, true) === 'notify' && only(['ema', 'basis']).admit(bounce, T0, false, true) === 'notify'
+      && !only(['ema', 'basis']).announces('band') && only(['ema', 'basis']).announces('basis'));
+  check('BASIS off → the basis cross is quiet; BAND alone on → only the band cross announces (no EMA, no bounce)',
+    only(['ema', 'band']).admit(basis, T0, false, true) === 'quiet' && only(['band']).admit(band, T0, false, true) === 'notify'
+      && only(['band']).admit(ema, T0, false, true) === 'quiet' && only(['band']).admit(bounce, T0, false, true) === 'quiet'
+      && only(['band']).admit(basis, T0, false, true) === 'quiet');
+  check('…both still follow the Momentum rule, the cap and the weak rule', new TvSetupGate().admit(band, T0, false, false) === 'quiet'
+    && new TvSetupGate().admit(basis, T0, false, false) === 'quiet' && pastCap({ ...band, cross_n: TV_SETUP.em_cap + 1 }) && pastCap({ ...basis, cross_n: TV_SETUP.em_cap + 1 })
+    && !pastCap(band) && new TvSetupGate().admit({ ...basis, weak: true }, T0, false, true) === 'quiet');
+  check('labels', formatTvSetupAlert(band, 'NASDAQ:OMH', null).includes('<b>BAND</b>') && formatTvSetupAlert(basis, 'NASDAQ:OMH', null).includes('<b>BASIS</b>')
+    && formatTvSetupAlert(basis, 'NASDAQ:OMH', null).includes('the 1m basis (10) crossed above the session VWAP (at the 1m close)')
+    && formatTvSetupAlert(band, 'NASDAQ:OMH', null).includes('the 30s BB upper band crossed above the session VWAP (at the 1m close)'));
+
+  // A reloaded page's rows (GET /api/screener/alerts): the stored meta → the setup info
+  const bandRow = { stage: 'ema', ...emaFields(band), candle_tf: '1' };          // as stored on 11-15 / 11-16: stage `ema`
+  const basisRow = { stage: 'ema', ...emaFields(basis) };
+  check('a row stored as `ema` reads BAND or BASIS by its fields; an EMA row stays EMA; other stages are themselves',
+    storedStage(bandRow) === 'band' && storedStage(basisRow) === 'basis' && storedStage({ stage: 'ema', ...emaFields(ema) }) === 'ema'
+      && storedStage({ stage: 'band' }) === 'band' && storedStage({ stage: 'cross', bb_tf: '45S' }) === 'cross' && storedStage({}) === null);
+  const sb = storedSetupFields(basisRow);
+  check('…and carries its fields: the basis, its band and length; an EMA row its length, readings and weak flag',
+    sb.basis === 8.03 && sb.basis_pct === 0.7 && sb.bb_tf === '1' && sb.bb_len === 10 && sb.cross_n === 1 && sb.under_n === 12 && sb.weak === false
+      && storedSetupFields({ stage: 'ema', ...emaFields({ ...ema, weak: true }) }).weak === true
+      && storedSetupFields({ stage: 'ema', ...emaFields(ema) }).ema_len === 9 && storedSetupFields(bandRow).bb_mid_pct === 0.9, JSON.stringify(sb));
+  const rsiRow = { stage: 'rsi', rsi_tf: '10', rsi: 28.4, rsi_ma: 26.9, rsi_low: 24.1, candle_tf: '60', late: true };
+  const macdRow = { stage: 'macd', macd_tf: '5', macd_fast: 12, macd_slow: 26, dip_px: 37.53, after_min: 200, stop: 37.2, dip_n: 1 };
+  check('…the RSI\'s, the DIP\'s, the MACD\'s and the BOUNCE\'s fields too', storedSetupFields(rsiRow).rsi_tf === '10' && storedSetupFields(rsiRow).rsi === 28.4
+    && storedSetupFields(rsiRow).late === true && storedSetupFields(macdRow).macd_tf === '5' && storedSetupFields(macdRow).dip_px === 37.53
+    && storedSetupFields(macdRow).after_min === 200 && storedSetupFields({ stage: 'bounce', bounce_n: 2, bounce_from: 'ema+vwap', since_n: 3 }).bounce_from === 'ema+vwap');
+  check('…only what the row has (a PULLBACK row gets none), and junk reads as null', Object.keys(storedSetupFields({ stage: 'pullback', touch: 1, line: 'session' })).length === 0
+    && storedSetupFields({ ema_len: '9', bb_tf: 45 }).ema_len === null && storedSetupFields({ ema_len: '9', bb_tf: 45 }).bb_tf === null);
 }
 
 console.log('EMA bounce (v37, 2026-11-13)');

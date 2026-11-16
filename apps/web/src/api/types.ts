@@ -346,8 +346,11 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // MACD (script v39): after a DIP, the MACD line of a timeframe (5m) crossed above zero — the
 // operator's entry. Its own ⚙ switch. (v38's LIFT, a level some % above the DIP, went in v39;
 // its old rows are skipped like the other removed stages'.)
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'macd' | 'ema' | 'bounce';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'bounce'];
+// BAND (script v40) and BASIS (v42): the EMA cross's rule with another line over the VWAP — the BB
+// upper band, or the basis of a separate band. Stages of their own since 2026-11-16, each with a ⚙
+// switch (the server reads a row stored as `ema` on 11-15 / 11-16 as `band` / `basis` by its fields).
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'macd' | 'ema' | 'bounce' | 'band' | 'basis';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'bounce', 'band', 'basis'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'bounce' ? 'ema' : stage;

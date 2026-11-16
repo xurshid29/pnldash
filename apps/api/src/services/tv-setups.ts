@@ -35,7 +35,7 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'macd' | 'ema' | 'bounce';
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'macd' | 'ema' | 'bounce' | 'band' | 'basis';
 // The PULLBACK setup's stages (script v10).
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
 // The VWAP + BB cross (script v21): one stage, CROSS, on the candle timeframe's
@@ -67,8 +67,11 @@ export const RSI_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['rsi', 'dip', 
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'bounce' ? 'ema' : stage;
 }
-// The EMA cross and its bounce: one alert each from the 30s alert, limited alike.
-export const EMA_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'bounce']);
+// The EMA cross, its bounce and (since 2026-11-16 stages of their own) the band's and the basis's
+// crosses: one alert each from the 30s alert, limited alike.
+export const EMA_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'bounce', 'band', 'basis']);
+// The three crosses of a line over the VWAP (not the bounce): the EMA's, the band's, the basis's.
+export const LINE_CROSS_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'band', 'basis']);
 // v35 EMA cross (operator, 2026-11-13): the EMA of a timeframe's closes (3m, length 9) crosses
 // above a VWAP line (session; month / year are script switches), judged at that timeframe's
 // candle close, from the 30s alert alone. Announced like CROSS: its own ⚙ switch, Momentum names
@@ -85,8 +88,13 @@ export const EMA_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'bounce
 // message with `| upper 8.03 (+0.7%) | bb 45S` in the place of `| ema 9 8.03`: the same stage,
 // ⚙ switch, cap and filter, shown as BAND, and its own event beside an EMA cross of the same
 // candle (the gate's key). There is no BOUNCE after it (the bounce is the EMA's).
-export function emaByBand(sig: { stage: TvStage; bb_tf?: string | null; ema?: number | null; basis?: number | null }): boolean {
-  return sig.stage === 'ema' && sig.bb_tf != null && sig.ema == null && sig.basis == null;
+// 2026-11-16 (operator, with the ⚙ menu and a sidebar full of BAND pills: "can we separate what band
+// are these? … and, these ones also?"): the band's cross and the basis's are stages of their own,
+// `band` and `basis`, each with a ⚙ switch, a label and a Telegram slug (tv_band / tv_basis). The
+// script still heads all three messages "EMA"; emaLineStage() tells them apart by their fields, for
+// a new message and for a row stored as stage `ema` on 11-15 / 11-16 alike.
+export function emaByBand(sig: { stage: TvStage }): boolean {
+  return sig.stage === 'band';
 }
 // v42 (operator, 2026-11-16: "can you add one more band? … a separate bollinger bands with
 // configurable it's Length … the similar setup as our bands cross, but this time I want to use Basis
@@ -94,8 +102,14 @@ export function emaByBand(sig: { stage: TvStage; bb_tf?: string | null; ema?: nu
 // message is the EMA's with `| basis 8.03 (+0.7%) | bb 45S | len 10` in the place of `| ema 9 8.03`:
 // the same stage, ⚙ switch, cap, filter and Momentum rule, shown as BASIS, its own event beside an
 // EMA or a band cross of the same candle. No BOUNCE after it, and no middle-line test.
-export function emaByBasis(sig: { stage: TvStage; ema?: number | null; basis?: number | null }): boolean {
-  return sig.stage === 'ema' && sig.basis != null && sig.ema == null;
+export function emaByBasis(sig: { stage: TvStage }): boolean {
+  return sig.stage === 'basis';
+}
+// The stage of an "EMA …" message by the line it names: `basis` when it carries a basis and no EMA,
+// `band` when it carries a band timeframe and no EMA, else `ema`. Any other stage is itself.
+export function emaLineStage(sig: { stage: TvStage; ema?: number | null; bb_tf?: string | null; basis?: number | null }): TvStage {
+  if (sig.stage !== 'ema' || sig.ema != null) return sig.stage;
+  return sig.basis != null ? 'basis' : sig.bb_tf != null ? 'band' : 'ema';
 }
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
@@ -245,9 +259,11 @@ export const TV_SETUP = {
   offscreen_silent: true,
 } as const;
 
+// A message's head word (or a JSON body's `stage`) → its stage. The script heads the band's and the
+// basis's crosses "EMA" (emaLineStage sorts them out); a JSON body may name `band` / `basis` itself.
 const STAGES: Record<string, TvStage> = {
   pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest', rsi: 'rsi', dip: 'dip', ema: 'ema',
-  bounce: 'bounce', macd: 'macd',
+  bounce: 'bounce', macd: 'macd', band: 'band', basis: 'basis',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
@@ -255,7 +271,7 @@ const STAGES: Record<string, TvStage> = {
 // v21: a CROSS past the day's TV_SETUP.vb_cap crosses on its ticker. v35: an EMA cross past em_cap
 // (v37: its BOUNCE on its own `bounce N`).
 export function pastCap(sig: TvSetupSignal): boolean {
-  if (sig.stage === 'ema') return sig.cross_n != null && sig.cross_n > TV_SETUP.em_cap;
+  if (LINE_CROSS_STAGES.has(sig.stage)) return sig.cross_n != null && sig.cross_n > TV_SETUP.em_cap;   // each line its own `cross N`
   if (sig.stage === 'bounce') return sig.bounce_n != null && sig.bounce_n > TV_SETUP.em_cap;
   if (sig.stage === 'cross') return sig.cross_n != null && sig.cross_n > TV_SETUP.vb_cap;
   if (sig.stage === 'retest') return sig.retest_n != null && sig.retest_n > TV_SETUP.vb_cap;
@@ -325,7 +341,7 @@ export function emaFields(sig: TvSetupSignal): {
       bounce_from: sig.bounce_from ?? null,
     };
   }
-  if (sig.stage !== 'ema') return {};
+  if (!LINE_CROSS_STAGES.has(sig.stage)) return {};
   return {
     candle_tf: sig.candle_tf ?? null, cross_n: sig.cross_n ?? null, ema_len: sig.ema_len ?? null, ema: sig.ema ?? null,
     late: sig.late === true,
@@ -342,6 +358,37 @@ export function emaFields(sig: TvSetupSignal): {
   };
 }
 
+// A stored tv_setup row's stage-specific fields (what vbFields / rsiFields / emaFields put in its
+// meta) → the same fields for the alert's setup info, each kept only when the row has it. GET
+// /api/screener/alerts builds a reloaded page's rows from this. Until 2026-11-16 that endpoint
+// copied the VB's fields alone, so after a reload an EMA row lost its length ("1m/?"), a weak cross
+// its `weak`, an RSI / DIP / MACD row its readings, and a basis cross looked like a band cross.
+const STORED_NUM_FIELDS = ['upper', 'upper_pct', 'candle_open', 'cross_n', 'stop', 'retest_n', 'rsi', 'rsi_ma', 'rsi2', 'rsi2_ma', 'rsi_low',
+  'dip_n', 'since_n', 'macd_fast', 'macd_slow', 'dip_px', 'after_min', 'ema_len', 'ema', 'under_n', 'flips_n', 'bounce_n',
+  'bb_mid', 'bb_mid_pct', 'basis', 'basis_pct', 'bb_len'] as const;
+const STORED_STR_FIELDS = ['candle_tf', 'bb_tf', 'rsi_tf', 'rsi2_tf', 'macd_tf', 'bounce_from'] as const;
+const STORED_BOOL_FIELDS = ['late', 'weak'] as const;
+export function storedSetupFields(meta: Record<string, unknown>): Record<string, number | string | boolean | null> {
+  const out: Record<string, number | string | boolean | null> = {};
+  for (const k of STORED_NUM_FIELDS) {
+    if (k in meta) out[k] = typeof meta[k] === 'number' && Number.isFinite(meta[k] as number) ? (meta[k] as number) : null;
+  }
+  for (const k of STORED_STR_FIELDS) if (k in meta) out[k] = typeof meta[k] === 'string' ? (meta[k] as string) : null;
+  for (const k of STORED_BOOL_FIELDS) if (k in meta) out[k] = meta[k] === true;
+  return out;
+}
+
+// A stored row's stage as the dashboard should see it: a band or a basis cross stored as `ema`
+// (rows of 2026-11-15 / 11-16, before they were stages) reads `band` / `basis`.
+export function storedStage(meta: Record<string, unknown>): string | null {
+  const stage = typeof meta.stage === 'string' ? meta.stage : null;
+  if (stage !== 'ema') return stage;
+  return emaLineStage({
+    stage: 'ema', ema: typeof meta.ema === 'number' ? meta.ema : null,
+    bb_tf: typeof meta.bb_tf === 'string' ? meta.bb_tf : null, basis: typeof meta.basis === 'number' ? meta.basis : null,
+  });
+}
+
 const GRADE_LADDER = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'];
 // "B+" or better, by the Momentum grade ladder.
 export function gradeAtLeast(grade: string | null | undefined, min: string): boolean {
@@ -351,7 +398,7 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'band', 'basis', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
@@ -366,7 +413,8 @@ export function parseStageList(v: unknown): TvStage[] | null {
 // list saved before the split keeps announcing what it did (2026-11-13: DIP, from RSI). A stage
 // that follows another starts with its value too (v39: MACD, from DIP; v38's LIFT did the same).
 // A parent comes before its child in TV_STAGE_ORDER, so it is settled first.
-const SPLIT_FROM: Partial<Record<TvStage, TvStage>> = { dip: 'rsi', macd: 'dip' };
+// 2026-11-16: BAND and BASIS, which rode the EMA's switch on 11-15 / 11-16, start with its value.
+const SPLIT_FROM: Partial<Record<TvStage, TvStage>> = { dip: 'rsi', macd: 'dip', band: 'ema', basis: 'ema' };
 // The menu's stages while the switches were stored as a plain array (before 2026-11-13).
 const LEGACY_KNOWN: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'];
 
@@ -534,6 +582,13 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 // object with the TvSetupSignal field names. Express hands us the raw text for
 // text/plain bodies and an already-parsed object for JSON ones.
 export function parseTvMessage(body: unknown): TvSetupSignal | null {
+  const sig = parseTvMessageAsSent(body);
+  // 2026-11-16: an "EMA …" message about the band or the basis is stage `band` / `basis`.
+  if (sig) sig.stage = emaLineStage(sig);
+  return sig;
+}
+
+function parseTvMessageAsSent(body: unknown): TvSetupSignal | null {
   if (body && typeof body === 'object' && !Array.isArray(body)) return fromJson(body as Record<string, unknown>);
   if (typeof body !== 'string') return null;
   const text = body.replace(/−/g, '-').trim();
@@ -707,9 +762,9 @@ export class TvSetupGate {
     // The candle timeframe is part of a VB event's key (a changed VB candle is another event), and
     // of an RSI cross's, a DIP's or a MACD's: the timeframe it is judged at.
     const rsi = RSI_STAGES.has(sig.stage);   // the RSI cross, its DIP and (v39) the MACD after it
-    const ema = EMA_STAGES.has(sig.stage);   // the EMA cross and (v37) its bounce
+    const ema = EMA_STAGES.has(sig.stage);   // the EMA cross, (v37) its bounce, and the band's and the basis's crosses
     // v40: a band cross and an EMA cross of one candle are two events (`|bb`).
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi || ema ? `|${sig.candle_tf ?? ''}` : ''}${emaByBand(sig) ? '|bb' : emaByBasis(sig) ? '|bs' : ''}`;
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi || ema ? `|${sig.candle_tf ?? ''}` : ''}`;   // the stage tells an EMA, a band and a basis cross of one candle apart
     const prev = this.lastExact.get(exact);
     const dupSec = vb || ema ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
@@ -724,7 +779,8 @@ export class TvSetupGate {
     // 2026-11-15: Momentum names only by default — the fresh-runner exception is a ⚙ rule now.
     if (ema) {
       const fresh = !this.emaMomoOnly && sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
-      const quiet = !this.announced.has('ema') || sig.weak === true || pastCap(sig)
+      // each line its own ⚙ switch since 2026-11-16 (EMA, BAND, BASIS); the BOUNCE rides the EMA's
+      const quiet = !this.announced.has(stageSwitch(sig.stage)) || sig.weak === true || pastCap(sig)
         || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
       return quiet ? 'quiet' : 'notify';
     }
@@ -768,14 +824,14 @@ export class TvSetupGate {
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
-  bounce: 'BOUNCE', macd: 'MACD',
+  bounce: 'BOUNCE', macd: 'MACD', band: 'BAND', basis: 'BASIS',
 };
-// v40: an EMA-stage cross whose line is the BB upper band reads "BAND" (emaByBand).
-export const EMA_BAND_LABEL = 'BAND';
-// v42: …and one whose line is the basis of the separate band reads "BASIS" (emaByBasis).
-export const EMA_BASIS_LABEL = 'BASIS';
+// The band's (v40) and the basis's (v42) labels, as the checks have named them.
+export const EMA_BAND_LABEL = TV_STAGE_LABEL.band;
+export const EMA_BASIS_LABEL = TV_STAGE_LABEL.basis;
 const STAGE_ICON: Record<TvStage, string> = {
   pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', rsi: '📈', dip: '🎯', ema: '〽️', bounce: '🏀', macd: '🟢',
+  band: '〽️', basis: '〽️',   // the EMA cross's sign: the same setup with another line
 };
 const STAGE_HINT: Record<TvStage, string> = {
   pullback: 'back near VWAP after the run — be ready',
@@ -788,6 +844,8 @@ const STAGE_HINT: Record<TvStage, string> = {
   macd: 'after the DIP, the MACD line crossed above zero',
   ema: 'the EMA crossed above the VWAP line',
   bounce: 'after the EMA cross, price pulled back and bounced',
+  band: 'the BB upper band crossed above the VWAP line',
+  basis: 'the basis of the separate band crossed above the VWAP line',
 };
 // A TradingView interval, short: "5" → "5m", "60" → "1h", "30S" → "30s".
 export function fmtTf(tf: string | null | undefined): string {
@@ -829,7 +887,7 @@ export function formatTvSetupAlert(
   if (sig.stage === 'rsi') return formatRsi(sig, tvSym, row);
   if (sig.stage === 'dip') return formatDip(sig, tvSym, row);
   if (sig.stage === 'macd') return formatMacd(sig, tvSym, row);
-  if (sig.stage === 'ema') return formatEma(sig, tvSym, row);
+  if (LINE_CROSS_STAGES.has(sig.stage)) return formatEma(sig, tvSym, row);   // the EMA's, the band's, the basis's
   if (sig.stage === 'bounce') return formatBounce(sig, tvSym, row);
   // PULLBACK / BROKEN / HELD. PULLBACK and BROKEN name the line: "back near the
   // session VWAP after the run — be ready".

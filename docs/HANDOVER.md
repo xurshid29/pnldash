@@ -272,6 +272,20 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-16 (Mon, ~08:00 ET) — BAND AND BASIS: THEIR OWN STAGES AND ⚙ SWITCHES; RELOADED ROWS CARRY THEIR FIELDS (server +
+dashboard, no script change).** The operator, with the 📐 sidebar (BAND pills reading `1m/30s` and `1m/1m`): "can we separate
+what band are these?"; with the ⚙ menu: "and, these ones also?". `docs/vwap-setup.md` §18.7.
+- **A real bug behind the first one:** `GET /api/screener/alerts` (the day's rows for a loaded page) copied only the VB's
+  fields from a stored row. So the `1m/1m` "BAND" rows were basis crosses without their `basis`; older EMA rows read `1m/?`;
+  a weak cross lost `weak` after a reload; RSI / DIP / MACD rows lost their readings. In the gap since v32. Fixed with
+  `storedSetupFields()`.
+- **Stages:** `band` and `basis` (TvStage, both sides). The script still heads all three "EMA"; `emaLineStage()` sorts a new
+  message and `storedStage()` a row stored as `ema` on 11-15 / 11-16. ⚙ switches BAND (BB upper) and BASIS after EMA + BOUNCE
+  (`SPLIT_FROM` ← ema: the operator's EMA switch is on, so both start on); slugs `tv_band` / `tv_basis`; the gate's `|bb` /
+  `|bs` key suffixes are gone (the stage is in the key). Pills: maroon BAND, olive BASIS; History filters and counts.
+- Seen in the operator's settings while there: basis band on **1m** candles; band on 30S; candle 1m.
+- Checks: `verify-tv-setups.ts` 696.
+
 **2026-11-16 (Mon, ~07:30 ET) — SCRIPT v42: THE BASIS CROSS (the basis of a separate band, its own length).** After v41 the
 operator asked "maybe we ignore such crosses completely? Or, better not to do that?" → I advised keeping them quiet (no ping,
 rows kept for grading; the gray marks can be hidden in Style) → "ok, lets keep it. And, also, can you add one more band? This

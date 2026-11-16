@@ -4011,13 +4011,13 @@ class PollerService {
       ...emaFields(sig),
       vwap_src: sig.vwap_src ?? null,
     });
-    if (sig.stage === 'ema') {
+    if (sig.stage === 'ema' || sig.stage === 'band' || sig.stage === 'basis') {
       // v40: the line that crossed is the EMA or the BB upper band (`| upper … | bb …` in the EMA's place)
       const crossed = emaByBand(sig)
         ? `BB upper ${sig.bb_tf} ${sig.upper ?? '?'}${sig.bb_mid_pct != null ? ` · price ${sig.bb_mid_pct}% vs the band's middle` : ''}`
         : emaByBasis(sig) ? `basis ${sig.bb_tf ?? '?'} ${sig.bb_len ?? '?'} ${sig.basis ?? '?'}`   // v42
           : `EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}`;
-      console.log(`[tv-setup] EMA ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · ${sig.candle_tf ?? '?'} candle · ${crossed}` +
+      console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · ${sig.candle_tf ?? '?'} candle · ${crossed}` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%) · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
         ` · under ${sig.under_n ?? '?'} · flips ${sig.flips_n ?? '?'}` +
         `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +

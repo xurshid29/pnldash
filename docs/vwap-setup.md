@@ -2690,3 +2690,38 @@ basis cross is worth anything.
 
 **To grade** later: basis rows (`meta->>'basis' is not null`) against band and EMA rows on the same
 names.
+
+### 18.7 BAND and BASIS as stages, each with its switch; the reloaded rows (server, 2026-11-16)
+
+**The report.** With the 📐 sidebar full of BAND pills, some `1m/30s` and some `1m/1m`: "can we
+separate what band are these?" And with the ⚙ menu, where one "EMA + BOUNCE" switch covered
+everything: "and, these ones also?"
+
+**What the sidebar was showing.** The `1m/1m` rows were basis crosses (the operator's basis band is
+on 1m candles). They read BAND because `GET /api/screener/alerts`, which gives a loaded page the
+day's rows, copied the VB's fields from a stored row and none of the others. A reloaded row
+therefore had a band timeframe and no basis, which is how a band cross looked. The same gap had
+been there since v32: after a reload an EMA row lost its length (`1m/?`), a weak cross its `weak`
+flag, and an RSI / DIP / MACD row its readings. Rows that arrived live over SSE were complete.
+
+**Fixed.** `storedSetupFields(meta)` copies every stage-specific field a row stores (the lists
+beside it mirror `vbFields` / `rsiFields` / `emaFields`), each only when the row has it, and the
+endpoint spreads it into the setup info.
+
+**Stages.** The band's cross and the basis's are stages now, `band` and `basis`:
+
+- The script is unchanged and still heads all three messages "EMA". `parseTvMessage` sets the stage
+  with `emaLineStage()`: a basis and no EMA → `basis`; a band timeframe and no EMA → `band`; else
+  `ema`. A JSON body may name `band` / `basis` itself.
+- Rows stored as `ema` on 11-15 / 11-16 are read the same way (`storedStage()`), so the dashboard
+  sees them as BAND / BASIS. In SQL, tell a band row by `stage = 'band'` or by
+  `stage = 'ema' and bb_tf is not null and ema is null and basis is null`, and a basis row by
+  `stage = 'basis'` or `basis is not null`.
+- **⚙ switches:** BAND (BB upper) and BASIS, after EMA + BOUNCE in the menu. A list saved before
+  gives each the EMA's value (`SPLIT_FROM`), so with the operator's EMA switch on both start on.
+  The BOUNCE still rides the EMA's. Telegram slugs `tv_band`, `tv_basis`.
+- The gate, the cap (`em_cap` on each line's own `cross N`), the weak rule and the Momentum-list
+  rule (§18.4, now labelled "EMA / BAND / BASIS / BOUNCE: Momentum list only") are unchanged:
+  `EMA_STAGES` holds the four, `LINE_CROSS_STAGES` the three crosses.
+- Dashboard: a maroon **BAND** pill and an olive **BASIS** pill (the chart marks' colours), each
+  its own thread per line; History has BAND and BASIS filters and counts.

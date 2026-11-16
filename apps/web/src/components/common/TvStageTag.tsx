@@ -14,6 +14,8 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   macd: { label: 'MACD', color: '#1f1f1f', bg: '#36cfc9' }, // v39, aqua like its chart marker
   ema: { label: 'EMA', color: '#1f1f1f', bg: '#fa8c16' },   // v35, orange like its chart marker
   bounce: { label: 'BOUNCE', color: '#1f1f1f', bg: '#a0d911' },   // v37, lime like its chart marker
+  band: { label: 'BAND', color: '#ffffff', bg: '#a8071a' },       // v40, maroon like its chart marker (the BB upper band over the VWAP)
+  basis: { label: 'BASIS', color: '#ffffff', bg: '#7c8b00' },     // v42, olive like its chart marker (the separate band's basis over the VWAP)
 };
 
 // The VWAP + BB cross's stages: CROSS (v21) and RETEST (v28).
@@ -75,23 +77,20 @@ export function crossTfText(s: TvSetupInfo): string | null {
   return isVbStage(s.stage) && s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
 }
 
-// v40: an EMA-stage cross whose line is the BB upper band (the script's "EMA cross: the line that
-// crosses the VWAP" set to "BB upper" or "Both"): the message carries the band and its timeframe
-// in the EMA's place. Same stage and switch; its own thread per line; the pill reads "BAND".
+// v40 BAND: the EMA cross's rule with the BB upper band as the line over the VWAP (the script's
+// "EMA cross: the line that crosses the VWAP" set to "BB upper" or "Both"). v42 BASIS: the same
+// with the basis (middle line) of the script's separate band ("Basis cross on"). Stages of their
+// own since 2026-11-16 (the server sorts an "EMA …" message, and an older stored row, by its
+// fields), each with its ⚙ switch, pill and thread.
 export function isBandCross(s: TvSetupInfo): boolean {
-  return s.stage === 'ema' && s.bb_tf != null && s.ema == null && s.basis == null;
+  return s.stage === 'band';
 }
-
-// v42: an EMA-stage cross whose line is the basis (middle line) of the script's separate band
-// ("Basis cross on"): the message carries the basis, its band's timeframe and length in the EMA's
-// place. Same stage and switch; its own thread per line; the pill reads "BASIS".
 export function isBasisCross(s: TvSetupInfo): boolean {
-  return s.stage === 'ema' && s.basis != null && s.ema == null;
+  return s.stage === 'basis';
 }
-
-// The pill's label when it isn't the stage's own (a band or a basis cross), else undefined.
-export function stageLabelOf(s: TvSetupInfo): string | undefined {
-  return isBandCross(s) ? 'BAND' : isBasisCross(s) ? 'BASIS' : undefined;
+// The three crosses of a line over the VWAP: the EMA's, the band's, the basis's (not the BOUNCE).
+export function isLineCross(stage: TvStage): boolean {
+  return stage === 'ema' || stage === 'band' || stage === 'basis';
 }
 
 // "45s basis (10) $8.03" — the basis a v42 cross read.
@@ -118,7 +117,7 @@ function bandMidText(s: TvSetupInfo): string | null {
 // too briefly, or too much crossing before it), and (v37) the BOUNCE after one. Stored and listed
 // in the history, not announced, and never a ticker's live row in the 📐 sidebar.
 export function isWeakEma(s: TvSetupInfo): boolean {
-  return (s.stage === 'ema' || s.stage === 'bounce') && s.weak === true;
+  return (isLineCross(s.stage) || s.stage === 'bounce') && s.weak === true;   // …and a weak band or basis cross
 }
 
 // What tells one EMA cross (or bounce) from the next when merging copies: a weak one doesn't take
@@ -132,7 +131,7 @@ export function emaEventKey(s: TvSetupInfo): string {
 // The number beside a stage tag: a pullback's touch, a CROSS's or an EMA cross's number today, a
 // RETEST's, a DIP's, a BOUNCE's. A weak EMA cross or bounce has none (the script doesn't count it).
 export function tagNumber(s: TvSetupInfo): number | null {
-  if (s.stage === 'ema') return s.weak ? null : s.cross_n ?? null;
+  if (isLineCross(s.stage)) return s.weak ? null : s.cross_n ?? null;   // the EMA's, the band's, the basis's: each its own count
   if (s.stage === 'bounce') return s.weak ? null : s.bounce_n ?? null;
   if (s.stage === 'cross') return s.cross_n ?? null;
   if (s.stage === 'retest') return s.retest_n ?? null;
@@ -142,7 +141,7 @@ export function tagNumber(s: TvSetupInfo): number | null {
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2, macd: 3, ema: 1, bounce: 2 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, rsi: 1, dip: 2, macd: 3, ema: 1, bounce: 2, band: 1, basis: 1 };
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -150,8 +149,8 @@ export function fmtSignedPct(p: number | null | undefined): string {
 
 // PULLBACK-setup stages show their line (S / M / S+M) and touch number (#1 = first);
 // a v21 CROSS / v28 RETEST its timeframes ("5m/45s", `tfs`) and the day's number as `touch`.
-export function TvStageTag({ stage, dim, line, touch, tfs, label }: {
-  stage: TvStage; dim?: boolean; line?: TvLine | null; touch?: number | null; tfs?: string | null; label?: string;
+export function TvStageTag({ stage, dim, line, touch, tfs }: {
+  stage: TvStage; dim?: boolean; line?: TvLine | null; touch?: number | null; tfs?: string | null;
 }) {
   const s = TV_STAGE_STYLE[stage];
   const ln = lineTag(stage, line);
@@ -163,7 +162,7 @@ export function TvStageTag({ stage, dim, line, touch, tfs, label }: {
           lineHeight: '18px', color: s.color, background: s.bg,
         }}
       >
-        {label ?? s.label}
+        {s.label}
       </span>
       {ln && <span style={{ color: ln.color, fontSize: 10, fontWeight: 700, marginLeft: 3 }}>{ln.label}</span>}
       {tfs && <span style={{ color: '#5cdbd3', fontSize: 10, fontWeight: 700, marginLeft: 3 }}>{tfs}</span>}
@@ -256,7 +255,7 @@ export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   if (s.stage === 'macd') return macdText(s, price);
   if (s.stage === 'bounce') return bounceText(s, price);
   // v35 EMA cross: "+1.0% vs sVWAP · EMA 9 $8.03 · at the 3m close · 12 candles under · 1 flip" (v36: the filter's readings)
-  if (s.stage === 'ema') {
+  if (isLineCross(s.stage)) {   // …and the band's and the basis's crosses, with their line in the EMA's place
     const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));
     if (isBandCross(s)) parts.push(bandText(s), bandMidText(s));   // v40: the band in the EMA's place; v41: the price against its middle
     else if (isBasisCross(s)) parts.push(basisText(s));           // v42: the basis in the EMA's place

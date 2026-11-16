@@ -10,6 +10,7 @@ import { addClient } from '../services/sse.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
 import { getDb } from '../db/index.js';
 import { getComponentFlags } from '../config/components.js';
+import { storedSetupFields, storedStage } from '../services/tv-setups.js';
 
 const router = Router();
 
@@ -163,7 +164,11 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     if (!a.kinds.includes(r.event)) a.kinds.push(r.event);
     if (r.event === 'tv_setup' && str(m.stage)) {
       a.setup = {
-        stage: str(m.stage)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct),
+        // 2026-11-16: every stage-specific field the row stored (the RSI's, the DIP's, the MACD's, the EMA
+        // cross's, the BOUNCE's, the band's, the basis's), not the VB's alone; the explicit ones below
+        // keep their null defaults. A band or basis cross stored as `ema` reads `band` / `basis`.
+        ...storedSetupFields(m),
+        stage: storedStage(m)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct),
         day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf),
         vol_x: num(m.vol_x), run_pct: num(m.run_pct),
         // PULLBACK setup (script v10)

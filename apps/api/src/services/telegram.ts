@@ -47,6 +47,8 @@ export type AlertComponent =
   | 'tv_macd'       // 📐 MACD after a DIP (script v39): after a DIP, the MACD line crossed above zero
   | 'tv_ema'        // 📐 EMA cross (script v35): the EMA of a timeframe's closes crossed above a VWAP line
   | 'tv_bounce'     // 📐 EMA bounce (script v37): after an EMA cross, a pullback to the EMA or the VWAP, then a green close above the EMA
+  | 'tv_band'       // 📐 BAND (script v40; its own stage since 2026-11-16): the BB upper band crossed above a VWAP line
+  | 'tv_basis'      // 📐 BASIS (script v42; its own stage since 2026-11-16): the basis of the separate band crossed above a VWAP line
   | 'tv_year';      // 📐 any setup message about the year VWAP alone (PULLBACK v14, VB v22)
 let disabledAlerts: Set<string> | null = null;
 export function alertDisabled(component: AlertComponent): boolean {

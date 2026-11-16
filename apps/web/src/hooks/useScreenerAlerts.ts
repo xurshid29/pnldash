@@ -1,4 +1,4 @@
-import { isBandCross, isBasisCross, lineTokens } from '../components/common/TvStageTag';
+import { isBandCross, isBasisCross, isLineCross, lineTokens } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { useHiddenTickers } from './useHiddenTickers';
@@ -198,7 +198,7 @@ function fmtAlertPrice(p: number | null): string {
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
-  bounce: 'BOUNCE', macd: 'MACD',
+  bounce: 'BOUNCE', macd: 'MACD', band: 'BAND', basis: 'BASIS',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -245,7 +245,7 @@ export function opportunityTitle(a: OpportunityAlert): string {
         + `${s.dip_px != null ? ` at ${fmtAlertPrice(s.dip_px)}` : ''}`;
     }
     // v35: "📐 EMA OMH — 3m EMA 9 over sVWAP · #1"
-    if (s.stage === 'ema') {
+    if (isLineCross(s.stage)) {   // the EMA's cross, the band's (v40) and the basis's (v42)
       const ln = lineTokens(s.stage, s.line).map((t) => SHORT_LINE[t]).join(' + ') || 'VWAP';
       // v40, the band as the line: "📐 BAND OMH — 45s BB upper over sVWAP at the 3m close · #1"
       if (isBandCross(s)) {
@@ -409,7 +409,7 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
         && a.setup?.on_screen === true);
       try {
         // (a v34 DIP and the v39 MACD after it are entry signals: the bright pair, on or off Momentum; a v35 EMA cross and its v37 BOUNCE sound like a CROSS)
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce')
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce') || tvStage('band') || tvStage('basis')
           || audible.some((a) => a.setup?.stage === 'dip' || a.setup?.stage === 'macd')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('pullback') || audible.some((a) => a.setup?.stage === 'rsi')) setupReadyPing();   // v32 RSI, on or off Momentum
