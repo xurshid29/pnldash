@@ -920,7 +920,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("5",     "VB: candle timeframe',
     'input.timeframe("45S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v42', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v43', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -1130,6 +1130,26 @@ console.log('Contract — the Pine script still emits what the parser reads');
     check(`v28: script no longer has ${gone}`, !pine.includes(gone));
   }
   const at = (x: string) => pine.indexOf(x);
+  // v43 (2026-11-18): on a 30s chart, a timeframe's bars first requested after a request.security_lower_tf() call load only
+  // as deep as 100,000 30s bars would reach (833 hourly bars, 34 daily ones), and every later request for that timeframe shares
+  // what the first one loaded. v28 put its 30s-bar request above the year line's hourly one, so from 10-29 to v42 the 30s
+  // alert's year line started months late (LXEO 11-18: 3.64 against 4.79). Found and reproduced through TradingView's MCP
+  // (docs/vwap-setup.md §19). The hourly anchors must stay the script's first request; the VB's hourly request shares them.
+  {
+    const code = pine.split('\n').map((l) => (/^\s*\/\//.test(l) ? '' : l));
+    const firstReq = code.findIndex((l) => /request\.[a-z_]+\(/.test(l));
+    const firstLower = code.findIndex((l) => l.includes('request.security_lower_tf('));
+    check('v43: the hourly anchors (the year\'s and the month\'s sums) are the script\'s first request, above every lower-timeframe request',
+      firstReq >= 0 && code[firstReq].includes('"60", anchorsBefore()') && firstReq < firstLower,
+      firstReq >= 0 ? `line ${firstReq + 1}: ${code[firstReq].slice(0, 90)}` : 'no request found');
+    const hourly = code.filter((l) => l.includes('request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", '));
+    check('v43: the VB asks for the same hourly bars (same ticker and timeframe), so it shares the fully loaded ones',
+      hourly.length === 2 && hourly.some((l) => l.includes('vbAnchors()')), String(hourly.length));
+    const plainAfter = code.slice(firstLower).filter((l) => /request\.security\(/.test(l))
+      .map((l) => (l.includes('session.extended), "60", ') ? '"60"' : /request\.security\(rsSym,\s*([^,]+),/.exec(l)?.[1]?.trim()));
+    check('v43: every other plain request after it is for a short-lookback timeframe (the RSI\'s, the EMA\'s, the MACD\'s) or the hourly bars',
+      plainAfter.length === 4 && plainAfter.every((tf) => tf === '"60"' || tf === 'rsTfA' || tf === 'emTf' || tf === 'mcTf'), plainAfter.join(', '));
+  }
   check('v28: the new inputs come after the last v27 one', at('vbShow     = input.bool') > 0 && at('vbShow     = input.bool') < at('vwSrc      = input.string')
     && at('vwSrc      = input.string') < at('vbRtNear   = input.float') && at('vbRtNear   = input.float') < at('vbRtWait   = input.int'));
   check('v28: the retest switches sit in the VB break\'s old places (same order around them)',

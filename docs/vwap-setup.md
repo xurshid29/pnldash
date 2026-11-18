@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v42** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the RSI cross with its DIP and (v39) the MACD cross after a DIP (§17), and the EMA cross over VWAP with its filter and BOUNCE (§18); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v43** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the RSI cross with its DIP and (v39) the MACD cross after a DIP (§17), and the EMA cross over VWAP with its filter and BOUNCE (§18); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1141,6 +1141,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-15 | v40 | `16d0a28` | Operator: "can we make EMA Cross use BollingerBands upper row instead of EMA? So, add this to settings so I can switch between EMA and BB Upper row? We have a bb upper row already which we use for VWAP+BB Cross (btw, that bb appears only if VWAP+BB Cross enabled)", then "or, could we do both?". **The band as the line that crosses** (§18.3): one input, last, "EMA cross: the line that crosses the VWAP" = EMA / BB upper / Both (default Both). The band is the VB's (its BB timeframe, length, StdDev), rebuilt from the 30s bars by `emBand()` and replayed on bigger charts, so the alert and every chart read one line; drawn wherever its crosses run, with the VB off too. Its crosses follow the EMA's rule, settings and filter on their own state and day's numbers (script section 4b); no BOUNCE after them. Message: the EMA's with `| upper 8.13 (-0.5%) | bb 45S` in the place of `| ema 9 8.03`. v39's six MACD inputs are declared with the EMA section's now (same order), so the new one can come after them: nothing shifts. 69 inputs, 37 plots (five new, last), 14 `alert()` calls. Server: stage `ema`, `emaByBand()`, the gate's key carries `|bb` (an EMA cross and a band cross of one candle are two events), Telegram headline BAND; rows carry `upper` / `bb_tf`. Dashboard: BAND pill, its own thread. Replica `bb_upper_series` / `simulate_ema(src='bb')`. Not measured. Regression 619 checks. **Paste, recreate both alerts.** |
 | 2026-11-16 | v41 | `017c079` | Operator: the band setups "are working very well" (RBNE, GP), "But, I turned out bb upper row moves away from price if it drops too fast, and crosses up the near vwap" (CLRO). A fast drop widens the band, and its upper line rises over the VWAP while the price falls away. **The middle-line test** (§18.5): a band cross whose candle closed under the band's middle line is weak (gray `bb`, `| weak`, no day's number, quiet), with `bbMidOn` (last input, on). Every band cross's message carries `| mid <line> (<price vs it>%)` after `bb`. A hidden plot for the middle line, last. Measured first (`research/ema-vwap/band_cross_study.py`, 5,563 crosses): a quarter of the band's crosses are drop-made, and on names already on our screen they were followed by a bounce more often than the rest (+0.2% / +0.8% five candles later against −0.6% / −0.5%) — a different event, not a worse one; the first push from flat isn't in our data. 70 inputs, 38 plots. Server: `bb_mid` / `bb_mid_pct` parsed, stored, shown. Replica `_band_drop`. Regression 638 checks. **Paste, recreate both alerts.** |
 | 2026-11-16 | v42 | `1d8941f` | Operator (keeping v41's quiet treatment: "ok, lets keep it"): "can you add one more band? This time, it should be a separate bollinger bands with configurable it's Length (let it be 1/2 by default) … the similar setup as our bands cross, but this time I want to use Basis line. It should be a separate bb so I can change its Length value". **The BASIS cross** (§18.6): the basis (middle line) of a band of its own — `bsOn`, `bsTf` (45S), `bsLen` (10, half the VB band's 20; 1 = the price) — crosses the VWAP by the band cross's rule (script section 4c, through `bbSample`), independent of the EMA / band choice, with its own day's numbers; no BOUNCE, no middle-line test. Message: the EMA's with `| basis 8.03 (+0.7%) | bb 45S | len 10`. Olive line and **BS** marks. Three inputs and five plots, last: 73 inputs, 43 plots, 16 `alert()` calls. Server: stage `ema`, `emaByBasis()`, gate key `|bs`, Telegram headline BASIS, rows carry `basis` / `basis_pct` / `bb_len`. Dashboard: BASIS pill (`3m/45s·10`), its own thread. Replica `simulate_ema(src='bs')`. Not measured. Regression 681 checks. **Paste, recreate both alerts.** |
+| 2026-11-18 | v43 | (this commit) | **The 30s alert's year line was anchored months late since v28** (§19), found on the first run through TradingView's MCP (the operator connected it that day): the saved v42 on LXEO read 4.79 on a 1m chart and 3.64 on a 30s chart, where the year's VWAP is 4.86. On a 30s chart a timeframe's bars first requested after a `request.security_lower_tf()` call load only as deep as 100,000 30s bars would reach (833 hourly bars), and v28 had put its 30s-bar request above the year line's hourly one. In the stored rows the 30s alert's year line matched the 1m alert's on 92% of ticker-days until 10-28 and on 13% since, a median 22% lower; 1,383 rows from the 30s alert named the year line, 713 of them announced. **Fix:** the hourly anchors are the script's first request again (the VB's request shares their bars). No input, plot, message or rule changed; no Reset settings. `verify-tv-setups.ts` pins the order. Stored 30s rows from 10-29 until the new alerts keep the short line. **Paste, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2725,3 +2726,142 @@ endpoint spreads it into the setup info.
   `EMA_STAGES` holds the four, `LINE_CROSS_STAGES` the three crosses.
 - Dashboard: a maroon **BAND** pill and an olive **BASIS** pill (the chart marks' colours), each
   its own thread per line; History has BAND and BASIS filters and counts.
+
+## 19. The 30s alert's year line, found through TradingView's MCP (script v43, 2026-11-18)
+
+### 19.1 The finding
+
+On 2026-11-18 the operator connected TradingView's MCP server (§19.4), and the first thing run
+through it was the saved v42 on LXEO. On a 1m chart it reproduced a live band cross from the 30s
+alert (11:44 ET) on the same candle and with the same lines:
+
+| | the 30s alert's message | v42 run on a 1m chart |
+|---|---|---|
+| session VWAP | 2.91 | 2.9113 |
+| band's upper line | 2.93 | 2.9277 |
+| band's middle line | 2.87 | 2.8745 |
+| month VWAP | 3.37 | 3.3667 |
+| **year VWAP** | **3.64** | **4.7946** |
+
+The year's VWAP from Finviz daily bars is 4.86, so the 1m chart was right and the 30s alert was
+not. The same v42 run on a 30s chart gave 3.638: the script itself, on a 30s chart.
+
+**In the stored rows** (`tier_events`, the year line the 1m alert sent against the one the 30s alert
+sent, same ticker and day, each day's median):
+
+| days | pairs | within 2% of each other | median 30s ÷ 1m |
+|---|---|---|---|
+| 10-05 → 10-28 (v14–v26) | 1,324 | 1,224 (92%) | 1.000 every day |
+| 10-29 → 11-18 (v28–v42) | 882 | 116 (13%) | 0.62 – 0.95 by day, about 0.78 |
+
+A tenth of the pairs are under 0.3: names that reverse-split or collapsed this year, where the
+months before matter most (SMX 11-09: 272.52 from the 1m alert, 9.60 from the 30s one). Since
+10-29 the 30s alert stored 1,383 rows whose setup named the year line (`line` holds `year`: 694
+CROSS, 265 RETEST, 179 PULLBACK, the rest BROKEN / HELD / BAND / EMA / BASIS), 713 of them
+announced, and every 30s message's `yVWAP … (…%)` was computed from it. The month and session lines
+were not affected.
+
+### 19.2 The cause
+
+v14 builds the year line from this year's hourly bars with one `request.security(…, "60", …)`
+"that reaches back to January". On a 30s chart that stops being true when the request comes after
+a `request.security_lower_tf()` call. Four test scripts of about 20 lines, each run on LXEO's 30s
+chart through the MCP, counting the bars each request sees:
+
+| test script | hourly bars (first one) | daily bars | year VWAP, hourly / daily |
+|---|---|---|---|
+| A. an hourly and a daily request, nothing else | 1,837 (2026-01-02) | 763 | 4.794 / 4.864 |
+| B. a lower-timeframe request first, then the same two | 833 (2026-06-30) | 34 | 3.638 / 3.241 |
+| C. the same two first, then the lower-timeframe request | 1,837 (2026-01-02) | 763 | 4.794 / 4.864 |
+| D. hourly before; hourly inside the lower-timeframe request's expression; hourly, daily and 10m after | 1,837; 1,837; 1,837 | 34 | (10m: 5,001 bars) |
+
+So, on a 30s chart:
+
+- A timeframe's bars **first asked for after a lower-timeframe request** load only as deep as
+  100,000 30s bars would reach: 833 × 1h = 34 × 1 day = 5,001 × 10m = 3,000,000 seconds. (100,000
+  is Premium's limit on lower-timeframe bars.) For hourly bars that is two to five months,
+  depending on how many hours a day the name trades.
+- A timeframe's bars are loaded **once**, by the first request for them (same ticker and
+  timeframe); every later request shares them, including one nested inside a lower-timeframe
+  request's expression (test D).
+
+v28 (2026-10-29) added the request for the 30s bars that the VWAP lines are built from, and put
+it above the year line's. From then the hourly bars were first asked for after a lower-timeframe
+request. v26 and v27 had lower-timeframe requests too, but below the year line's, which is why the
+break is at v28. On a 1m chart the full v42 reads the full line (4.7946 against test A's 4.794),
+so the 1m alert and the operator's 2m / 5m charts were right throughout.
+
+### 19.3 The fix (v43)
+
+`anchorsBefore()` and its hourly request moved above the 30s-bar request, so the year's and the
+month's sums are the script's **first request**; the VB's own hourly request (`vbAnchors()`,
+inside `vbStep()`, also run inside the chart's replay) asks for the same ticker and timeframe and
+shares the fully loaded bars. Nothing else changed: no input, plot, message or rule, so no Reset
+settings; paste, save, recreate both alerts.
+
+The script's other plain requests still come after a lower-timeframe one and are loaded to the
+same depth, which is enough for them: the RSI's timeframe (10m: 5,000 bars), the EMA's (2m / 3m)
+and the MACD's (5m: 10,000 bars). A new request that needs a long history (anything daily, or
+months of hourly bars) must go above the first `request.security_lower_tf()`, or share a timeframe
+already requested there.
+
+`verify-tv-setups.ts` pins it: the hourly anchors are the first request; the VB's request names
+the same ticker and timeframe; every other plain request after the first lower-timeframe one is
+the RSI's, the EMA's, the MACD's or the hourly bars.
+
+**Checked on TradingView before the paste** (the first version that could be): v43's comment-free
+copy, sent through the MCP and run on LXEO's 30s chart, compiled with no errors and the same six
+cosmetic warnings as v42, has 73 inputs and 43 plots, and reads a year line of **4.7945** where
+v42 read 3.638 on the same chart (month 3.3665, session 2.9152, as before). The copy was typed
+out by a subagent from the file, not sent byte for byte, so this checks the script's text as
+closely as a careful transcription does.
+
+**Not fixed:** the rows stored from 10-29 to the day v43's alerts start. In them `yvwap`,
+`ypx_pct` and any `line` naming `year` from the 30s alert (`tf = '30S'`) describe the short line.
+Grade year-line setups from the 1m alert's rows, or from rows after v43.
+
+**To check after the operator's paste:** the first query in §19.1's table again; the 30s ÷ 1m
+ratio should be back at 1.000.
+
+### 19.4 TradingView's MCP, and how we use it
+
+TradingView's own MCP server (`https://mcp.tradingview.com/mcp`, OAuth with the TradingView
+account, paid plans; Pine tools since 2026-11-16; docs at `https://www.tradingview.com/mcp/docs`).
+The operator added it to Claude Code for this project on 2026-11-18
+(`claude mcp add --transport http mcp-tradingview https://mcp.tradingview.com/mcp`, then `/mcp` →
+Authenticate; a session started before the `add` doesn't list it). The saved script is
+`USER;68db6697efdb4cdc87b8110d643ce8fe` ("mVWAP x BB basis setup"); its version there is the
+number our script versions follow (42.0 = v42).
+
+What it is for here:
+
+- **A compile check before a paste.** Until now no script version could be compiled before the
+  operator pasted it (v42's first paste failed on a reserved word). `validate_pine_script` and
+  `run_pine_indicator` take the code as a tool argument, so the whole script is sent each time:
+  send the comment-free copy from `research/vwap-setup/pine_strip.py` (120 KB → 71 KB, compiles
+  to the same thing; its line map turns a message's line back into the script's).
+- **Running the script and reading its plots**: `run_pine_indicator` with the saved script's id
+  (nothing to send) or with code, on any symbol; inputs by id (`in_17` VB candle, `in_18` VB band,
+  `in_46` EMA candle, …; `get_pine_script_info` lists the 73 inputs and 43 plots, which is also a
+  check on their order). It accepts `30S` although its description lists 1m and up.
+- **Small test scripts**, as in §19.2: the cheapest way to learn how TradingView behaves.
+- `get_alerts_log` / `list_alerts` for what TradingView fired, when a delivery gap is suspected.
+
+What to know:
+
+- It runs under the operator's plan and data, **regular session only**: its session VWAP starts
+  at 09:30, so compare a run with a live message after the open, on a name with little pre-market
+  volume, or compare lines that don't depend on the session (band, month, year).
+- A run of the full script returns the 73 inputs and 43 plots every time (about 10,000 tokens);
+  ask for few bars (`return_bars`), and prefer a small test script for a narrow question.
+- **Every call counts against a daily limit** (Premium: 50; since 2026-11-17). A `compile_timeout`
+  must not be retried (repeats block Pine calls for an hour).
+- It can save a script (`update_pine_script`), which advances the version counter; we don't,
+  unless the operator asks: they paste from the repo, as before. It cannot create webhook alerts,
+  so the two watchlist alerts are still recreated by hand.
+- Its terms: personal use, no bulk downloads, no automated trading, no model training on its
+  data. Interactive use only; nothing in `apps/api` calls it.
+
+The compiler's only warnings on v42 are cosmetic: six `inline` inputs with titles (the "month
+VWAP" / "year VWAP" tick boxes of PULLBACK, the VB and the EMA cross) "might not align" in the
+settings window.

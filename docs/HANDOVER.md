@@ -10,8 +10,16 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v42 (2026-11-16).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v43 (2026-11-18).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
+- **v43 (11-18): the 30s alert's year line is fixed.** From v28 to v42 the year VWAP on a 30s chart
+  and in the 30s alert started two to five months back instead of in January (a median 22% under
+  the 1m alert's line; 1,383 stored rows from the 30s alert named it, 713 announced). The hourly
+  request behind it has to be the script's first request (`docs/vwap-setup.md` §19). No reset:
+  paste, recreate both alerts. The 30s alert's rows from 10-29 until then keep the short line.
+- **TradingView's MCP is connected in Claude Code for this project (11-18, §19.4).** It compiles
+  and runs the script on TradingView's side, which is how v43's bug was found. Compile-check a new
+  version through it before the operator pastes; 50 calls a day.
 - **PULLBACK** and the **VWAP + BB cross with its RETEST**, as below. **The VB lanes (v29) were
   removed in v39**, with the server's `vb_long_min` exception: every line below about lanes is
   history. The VB's one candle timeframe is still an input.
@@ -271,6 +279,31 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-18 (Wed, ~12:30 ET) — TRADINGVIEW'S MCP CONNECTED; IT FOUND THE 30s ALERT'S YEAR LINE WRONG SINCE v28; SCRIPT v43
+FIXES IT.** The operator sent TradingView's blog post about its MCP server getting Pine tools, then connected it
+(`claude mcp add --transport http mcp-tradingview https://mcp.tradingview.com/mcp`, `/mcp` → Authenticate; the session had
+to be restarted to list it, because it had started 19 seconds before the `add`). `docs/vwap-setup.md` §19.
+- **First run:** the saved script is `USER;68db6697efdb4cdc87b8110d643ce8fe`, version 42.0, 73 inputs / 43 plots in our
+  order, six cosmetic `inline` warnings. A 1m run on LXEO reproduced the 11:44 ET band cross from the 30s alert (same candle,
+  same session / month lines and band), except the year line: 4.79 against the message's 3.64. The same script on a 30s chart
+  gave 3.638. Finviz daily bars: 4.86.
+- **Stored rows:** the 30s alert's year line against the 1m alert's, same ticker and day: within 2% on 92% of 1,324 pairs
+  through 10-28, on 13% of 882 since 10-29 (median 0.78, a tenth under 0.3). 1,383 rows from the 30s alert named the year
+  line (694 CROSS, 265 RETEST, 179 PULLBACK), 713 announced.
+- **Cause (four 20-line test scripts through the MCP):** on a 30s chart, a timeframe's bars first requested after a
+  `request.security_lower_tf()` call load only as deep as 100,000 30s bars would reach (833 hourly bars, 34 daily, 5,001 of
+  10m), and later requests for that timeframe share whatever the first one loaded. v28 put the 30s-bar request above the year
+  line's hourly one. Not seen on a 1m chart.
+- **v43:** `anchorsBefore()` and its request moved above the 30s-bar request (the script's first request); nothing else.
+  `verify-tv-setups.ts` pins the order (699 checks). Its comment-free copy (`research/vwap-setup/pine_strip.py`, 120 KB →
+  71 KB) was compiled and run on TradingView through the MCP before any paste: no errors, year line 4.7945 on LXEO's 30s
+  chart. A subagent sent it, to keep the file and the 10,000-token response out of the main context.
+- **For the operator:** paste v43, recreate both alerts; no Reset settings. Then re-run §19.1's pairs query: the ratio should
+  be 1.000 again. The 30s alert's rows from 10-29 until then keep the short line.
+- **MCP use from here:** compile-check each new version before the paste; small test scripts for questions about
+  TradingView's behaviour; 50 calls a day (9 used today); regular session only; we don't save scripts through it.
+- Not looked at: whether the short year line changed any graded result (year-line setups were never graded on their own).
 
 **2026-11-16 (Mon, ~08:00 ET) — BAND AND BASIS: THEIR OWN STAGES AND ⚙ SWITCHES; RELOADED ROWS CARRY THEIR FIELDS (server +
 dashboard, no script change).** The operator, with the 📐 sidebar (BAND pills reading `1m/30s` and `1m/1m`): "can we separate

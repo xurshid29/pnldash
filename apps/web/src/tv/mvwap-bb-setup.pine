@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v42 (2026-11-16). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v43 (2026-11-18). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -137,6 +137,55 @@ firstBar = na(hlc3[1])
 mvChart = ta.vwap(hlc3, timeframe.change("M") or firstBar)
 svChart = ta.vwap(hlc3, timeframe.change("D") or firstBar)
 
+// The year line (v11; v14 builds it from hourly bars). An intraday chart loads
+// weeks of history, not a year, so a year VWAP from the chart's own bars started
+// wherever the history began and differed by timeframe: SDEV 2026-10-05 was 4.36
+// on the 30s chart and 4.70 on the 2m alert. v14 takes this year's 60-minute bars
+// (extended hours) up to the end of yesterday, from a request that reaches back
+// to January, and adds today's bars from the chart, so the 30s chart, the 1m alert
+// and the 30s alert share one line. `anchorsBefore` returns the year's and (v31) the month's sums
+// up to the start of the current day; they don't depend on the current hour, which is why
+// lookahead_on is safe here.
+// v43: THIS MUST STAY THE SCRIPT'S FIRST request.*() CALL. On a 30s chart, a timeframe's bars
+// first asked for after a request.security_lower_tf() call load only as deep as 100,000 30s bars
+// would reach (833 hourly bars, two to five months; 34 daily bars), and every later request for
+// that timeframe shares what the first one loaded. v28 put its 30s-bar request above this one,
+// so from 2026-10-29 to v42 the 30s chart's and the 30s alert's year line (and the VB's, which
+// asks for the same hourly bars) started months late instead of in January: on the same ticker
+// and day it sat a median 21% under the 1m alert's (LXEO 2026-11-18: 3.64 against 4.79; the
+// year's VWAP from daily bars is 4.86). Asked for first, the hourly bars load in full and the
+// VB's request further down shares them. The month line was not affected.
+anchorsBefore() =>
+    var float pv     = 0.0
+    var float v      = 0.0
+    var float pvDay  = 0.0
+    var float vDay   = 0.0
+    var float mpv    = 0.0
+    var float mv     = 0.0
+    var float mpvDay = 0.0
+    var float mvDay  = 0.0
+    if timeframe.change("D")
+        pvDay  := pv
+        vDay   := v
+        mpvDay := mpv
+        mvDay  := mv
+    if timeframe.change("M")
+        mpv    := 0.0
+        mv     := 0.0
+        mpvDay := 0.0
+        mvDay  := 0.0
+    if timeframe.change("12M")
+        pv    := 0.0
+        v     := 0.0
+        pvDay := 0.0
+        vDay  := 0.0
+    pv  := pv + hlc3 * volume
+    v   := v + volume
+    mpv := mpv + hlc3 * volume
+    mv  := mv + volume
+    [pvDay, vDay, mpvDay, mvDay]
+[yPrevPV, yPrevV, mPrevPV, mPrevV] = request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", anchorsBefore(), lookahead = barmerge.lookahead_on)
+
 // v28 (operator, 10-29: "vwaps in tv chart are differs for 5min and 30s"): a VWAP built
 // from bars counts each bar's volume at the bar's (high + low + close) / 3, so bigger bars
 // drift further from the true VWAP. On the operator's alerts since 10-23 the 5m-candle
@@ -169,45 +218,8 @@ s30PV := s30PV + barPV
 s30V  := s30V + barV
 svwap = lower30 ? (s30V > 0 ? s30PV / s30V : na) : svChart
 
-// The year line (v11; v14 builds it from hourly bars). An intraday chart loads
-// weeks of history, not a year, so a year VWAP from the chart's own bars started
-// wherever the history began and differed by timeframe: SDEV 2026-10-05 was 4.36
-// on the 30s chart and 4.70 on the 2m alert. v14 takes this year's 60-minute bars
-// (extended hours) up to the end of yesterday, from a request that reaches back
-// to January, and adds today's bars from the chart, so the 30s chart, the 1m alert
-// and the 30s alert share one line. `anchorsBefore` returns the year's and (v31) the month's sums
-// up to the start of the current day; they don't depend on the current hour, which is why
-// lookahead_on is safe here.
-anchorsBefore() =>
-    var float pv     = 0.0
-    var float v      = 0.0
-    var float pvDay  = 0.0
-    var float vDay   = 0.0
-    var float mpv    = 0.0
-    var float mv     = 0.0
-    var float mpvDay = 0.0
-    var float mvDay  = 0.0
-    if timeframe.change("D")
-        pvDay  := pv
-        vDay   := v
-        mpvDay := mpv
-        mvDay  := mv
-    if timeframe.change("M")
-        mpv    := 0.0
-        mv     := 0.0
-        mpvDay := 0.0
-        mvDay  := 0.0
-    if timeframe.change("12M")
-        pv    := 0.0
-        v     := 0.0
-        pvDay := 0.0
-        vDay  := 0.0
-    pv  := pv + hlc3 * volume
-    v   := v + volume
-    mpv := mpv + hlc3 * volume
-    mv  := mv + volume
-    [pvDay, vDay, mpvDay, mvDay]
-[yPrevPV, yPrevV, mPrevPV, mPrevV] = request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", anchorsBefore(), lookahead = barmerge.lookahead_on)
+// Today's part of the year line; the days before today come from anchorsBefore(), requested
+// above the 30s-bar request (v43: it must be the script's first request).
 var float yDayPV = 0.0
 var float yDayV  = 0.0
 if timeframe.change("D")
