@@ -304,6 +304,8 @@ to be restarted to list it, because it had started 19 seconds before the `add`).
 - **MCP use from here:** compile-check each new version before the paste; small test scripts for questions about
   TradingView's behaviour; 50 calls a day (9 used today); regular session only; we don't save scripts through it.
 - Not looked at: whether the short year line changed any graded result (year-line setups were never graded on their own).
+- **Deployed `97546dd` at 12:06 ET** (run success; prod on it; the API restarted, a gap of seconds; setups arriving again at
+  12:07:07 ET). The server's behaviour is unchanged: the fix is live only once the operator pastes v43 and recreates the alerts.
 
 **2026-11-16 (Mon, ~08:00 ET) — BAND AND BASIS: THEIR OWN STAGES AND ⚙ SWITCHES; RELOADED ROWS CARRY THEIR FIELDS (server +
 dashboard, no script change).** The operator, with the 📐 sidebar (BAND pills reading `1m/30s` and `1m/1m`): "can we separate
