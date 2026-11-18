@@ -2816,12 +2816,23 @@ v42 read 3.638 on the same chart (month 3.3665, session 2.9152, as before). The 
 out by a subagent from the file, not sent byte for byte, so this checks the script's text as
 closely as a careful transcription does.
 
-**Not fixed:** the rows stored from 10-29 to the day v43's alerts start. In them `yvwap`,
+**Not fixed:** the rows stored from 10-29 until v43's alerts started (11-18 about 12:14 ET). In them `yvwap`,
 `ypx_pct` and any `line` naming `year` from the 30s alert (`tf = '30S'`) describe the short line.
 Grade year-line setups from the 1m alert's rows, or from rows after v43.
 
-**To check after the operator's paste:** the first query in §19.1's table again; the 30s ÷ 1m
-ratio should be back at 1.000.
+**After the operator's paste (11-18; the new alerts' rows start between 12:13:25 and 12:14:33 ET):**
+TradingView's saved script is version 43.0, and the 30s alert's year line moved to the full line on
+the names where the two differ:
+
+| ticker | 30s alert before | 30s alert after | the 1m alert / a full-history test script |
+|---|---|---|---|
+| TGHL | 1.2258 | 1.3052 (12:14:33) | 1.3126 / 1.3049 |
+| FFAI | 1.2199 (1.2007 at 12:12:37) | 6.7015 (12:16:11) | 6.8964 / — |
+| FLNA | 0.9503 | 1.3733 (12:15:00) | — |
+
+So the short line is in the 30s alert's rows (`tf = '30S'`) from 2026-10-29 to 2026-11-18 12:13 ET.
+**Still to do** with a full day of rows: the first query in §19.1's table again; the daily median of
+30s ÷ 1m should be back at 1.000.
 
 ### 19.4 TradingView's MCP, and how we use it
 

@@ -15,8 +15,10 @@ v31; the session log has each step since. What the script carries now:
 - **v43 (11-18): the 30s alert's year line is fixed.** From v28 to v42 the year VWAP on a 30s chart
   and in the 30s alert started two to five months back instead of in January (a median 22% under
   the 1m alert's line; 1,383 stored rows from the 30s alert named it, 713 announced). The hourly
-  request behind it has to be the script's first request (`docs/vwap-setup.md` §19). No reset:
-  paste, recreate both alerts. The 30s alert's rows from 10-29 until then keep the short line.
+  request behind it has to be the script's first request (`docs/vwap-setup.md` §19). The operator
+  pasted it and recreated both alerts on 11-18; the new 30s alert carries the full line from about
+  12:14 ET. The 30s alert's rows from 10-29 until then keep the short line. Open: re-run §19.1's
+  pairs query on a full day of rows (from 11-19).
 - **TradingView's MCP is connected in Claude Code for this project (11-18, §19.4).** It compiles
   and runs the script on TradingView's side, which is how v43's bug was found. Compile-check a new
   version through it before the operator pastes; 50 calls a day.
@@ -306,6 +308,11 @@ to be restarted to list it, because it had started 19 seconds before the `add`).
 - Not looked at: whether the short year line changed any graded result (year-line setups were never graded on their own).
 - **Deployed `97546dd` at 12:06 ET** (run success; prod on it; the API restarted, a gap of seconds; setups arriving again at
   12:07:07 ET). The server's behaviour is unchanged: the fix is live only once the operator pastes v43 and recreates the alerts.
+- **The operator pasted v43 and recreated both alerts ("I updated everything"); checked.** TradingView's saved script is
+  version 43.0. The new 30s alert's rows start between 12:13:25 and 12:14:33 ET and carry the full line: TGHL 1.2258 → 1.3052
+  (the 1m alert 1.3126; a full-history test script through the MCP 1.3049), FFAI 1.2199 → 6.7015 (the 1m alert 6.8964),
+  FLNA 0.9503 → 1.3733. **Open:** re-run §19.1's pairs query once a full day of rows exists (from 11-19); the daily median
+  of 30s ÷ 1m should be 1.000 again. MCP calls today: 11 of 50.
 
 **2026-11-16 (Mon, ~08:00 ET) — BAND AND BASIS: THEIR OWN STAGES AND ⚙ SWITCHES; RELOADED ROWS CARRY THEIR FIELDS (server +
 dashboard, no script change).** The operator, with the 📐 sidebar (BAND pills reading `1m/30s` and `1m/1m`): "can we separate
