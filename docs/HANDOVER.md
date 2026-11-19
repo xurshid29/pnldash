@@ -282,6 +282,26 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-19 (Thu, ~05:10 ET) — TRADINGVIEW'S "LIMITED DATA" BADGE: THE CBOE ONE FEED RE-MEASURED; BUYING EXCHANGE DATA IS THE
+OPERATOR'S CALL (no code change).** The operator sent TradingView's new badge ("Limited data … NASDAQ by Cboe One … may be
+slightly different to its official counterpart") and the purchase page: "It looks like, tradingview changed how data is
+displayed".
+- **Not a change in the data.** Their account has never had paid US exchange data; charts, both alerts and the MCP run on Cboe
+  One, as measured on 10-19 (10–18% of the market's volume). Re-measured through the MCP (`get-ohlcv`, 1h bars) against Finviz
+  daily volume, LXEO: 18% (11-12), 8% (11-13), 6% (11-16), 7% (11-17), 10% (11-18). Past days' intraday bars stay Cboe-only, so
+  the script's hourly sums and today's bars are one feed; TradingView's daily bars are consolidated.
+- **So every line, band and candle in the script is built from 6–18% of the trades**, and on thin names whole 30s bars are
+  missing (LXEO 11-18: 16 one-minute bars in 25 minutes).
+- **The alert watchlist** (`pnldash-runners-2026-11-19`, 926 symbols): NASDAQ 787 (85%), AMEX 68, NYSE 51, OTC 9.
+- **Prices (their page, yearly):** NASDAQ $36, NYSE $36, NYSE Arca $36, OTC $36, index data $60; the US bundle $119.40.
+  Recommended buying (the bundle, or NASDAQ alone); not verified which feed the paid packages are, or which covers AMEX names.
+  **If they buy:** note the date here (rows before and after are not like for like), re-measure coverage, expect lines to shift.
+- **Open, found on the way:** 11 watchlist tickers resolve to non-US listings or CFDs on TradingView's import (TSX:ABX,
+  CAPITALCOM:ACVA, LSE:AMZE, CAPITALCOM:BTAI, STONEXTRADINGSB_NEW:ELME, TSXV:IBO, BSE:LESL, PSX:LUCK, MYX:MI, CFI:RITR,
+  ASX:ZIP), so the alerts watch the wrong instrument for them. `GET /api/tv/watchlist` leaves a ticker bare when SEC's
+  exchange file doesn't say NASDAQ (`edgar.ts`). Offered a fix; not done.
+- MCP note: a result too large for the context is saved to a file (`list-watchlists`, 60 KB), readable with `jq`.
+
 **2026-11-18 (Wed, ~12:30 ET) — TRADINGVIEW'S MCP CONNECTED; IT FOUND THE 30s ALERT'S YEAR LINE WRONG SINCE v28; SCRIPT v43
 FIXES IT.** The operator sent TradingView's blog post about its MCP server getting Pine tools, then connected it
 (`claude mcp add --transport http mcp-tradingview https://mcp.tradingview.com/mcp`, `/mcp` → Authenticate; the session had
