@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v44 (2026-11-22). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v45 (2026-11-22). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -15,6 +15,8 @@
 // ("I want to improve it later").
 // v44 removed three more (operator, 11-22): the RSI cross with its DIP (v32–v34), the MACD cross after a DIP (v39)
 // and the BASIS cross (v42). All are in git history (v43, 97546dd) and docs/vwap-setup.md §17 / §18.6.
+// v45 draws one more line for the PULLBACK (section 6, at the end): the basis of a Bollinger Band
+// of its own timeframe (15S by default). A line only, with no alert.
 // 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
@@ -1582,3 +1584,33 @@ plotshape(emShow and (bbLS or bbLM or bbLY) and bbLW, "BB upper cross, filtered,
 // closed under it is the gray kind).
 plot(bbOk and emShow ? emBbMid : na, "BB middle (EMA cross, v41)", color.new(color.orange, 60), display = display.none)
 // (v42's five BASIS plots sat here until v44 removed the BASIS cross.)
+
+// ── 6) THE PULLBACK'S BASIS LINE (v45) ────────────────────────────────────────
+// Operator, 11-22, with TradingView's own "BB 15S 20 SMA close" on a 1m chart, only its middle
+// line shown: "add own BollingerBand to Pullback section, with configurable timeframe, only basis
+// row is enough … I'm going to experiment entering when price closes above it after the pullback".
+// The basis (middle line) of a Bollinger Band is the SMA of the closes; the band's StdDev doesn't
+// move it, so there is no StdDev input. A line only: no alert, no marker, nothing sent, so the
+// alerts need not be recreated for it. Drawn while the Pullback setup is on.
+// It is the SMA on the band's own timeframe, read at each chart bar's close, which is what
+// TradingView's built-in draws when its timeframe is set under the chart's. On bigger bars (15S
+// on a 1m chart) it comes from a lower-timeframe request: the value at the last 15s bar inside
+// the chart bar (a chart bar with none keeps the line where it was). On bars of the same size
+// it is the chart's own SMA. On smaller bars (a 1m basis on a 30s chart) it comes from a plain
+// request. Its three inputs are the script's last and show in the "Pullback to VWAP" group; its
+// requests come after the hourly anchors (they need 20 bars, not a long history, see the note
+// at anchorsBefore()); its plot is the script's last.
+pbBsOn  = input.bool(true,       "Pullback basis line (v45): the basis (middle line) of a Bollinger Band of its own timeframe — a line to time an entry after a pullback, no alert", group = "Pullback to VWAP (v10)")
+pbBsTf  = input.timeframe("15S", "Pullback basis: its band's timeframe", group = "Pullback to VWAP (v10)")
+pbBsLen = input.int(20,          "Pullback basis: its band's length (the closes it averages)", minval = 1, group = "Pullback to VWAP (v10)")
+pbBsSec   = timeframe.in_seconds(pbBsTf)
+pbBsLower = pbOn and pbBsOn and pbBsSec < chartSec
+pbBsUpper = pbOn and pbBsOn and pbBsSec > chartSec
+pbBsIn    = request.security_lower_tf(syminfo.tickerid, pbBsLower ? pbBsTf : timeframe.period, ta.sma(close, pbBsLen))
+pbBsHtf   = request.security(syminfo.tickerid, pbBsUpper ? pbBsTf : timeframe.period, ta.sma(close, pbBsLen))
+var float pbBasis = na
+if pbBsUpper
+    pbBasis := pbBsHtf
+else if array.size(pbBsIn) > 0
+    pbBasis := array.get(pbBsIn, array.size(pbBsIn) - 1)
+plot(pbOn and pbBsOn ? pbBasis : na, "Pullback basis (v45)", color.white)

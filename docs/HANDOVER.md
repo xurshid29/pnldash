@@ -10,8 +10,12 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v44 (2026-11-22).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v45 (2026-11-22).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
+- **v45 (11-22) draws the pullback's basis line**: the SMA of the last 20 closes of 15-second
+  bars, white, for the operator's entry experiment (a close above it after a pullback). Chart
+  only: no alert, nothing server-side (`docs/vwap-setup.md` §13.8). The operator runs v44 in
+  the alerts, which is fine.
 - **v44 (11-22) removed the RSI cross with its DIP and the MACD cross after a DIP, and the BASIS
   cross**, at the operator's request (`docs/vwap-setup.md` §20). **Every line below about RSI /
   DIP / MACD / BASIS is history.** Left: PULLBACK, the VWAP + BB cross with its RETEST, the EMA
@@ -287,6 +291,25 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-22 (Sun, ~06:30 ET) — v44 CONFIRMED ON TRADINGVIEW; SCRIPT v45: THE PULLBACK'S BASIS LINE (chart only).** The
+operator: "nice, I updated everything. And, please, add own BollingerBand to Pullback section, with configurable timeframe,
+only basis row is enough, something like this [TradingView's BB, timeframe 15S, middle line only, on VWAV 1m]. I'm going to
+experiment entering when price closes above it after the pullback". `docs/vwap-setup.md` §13.8.
+- **v44 on their account:** the saved script is version 44.0. The comparison left open in the entry below is done: v43 and
+  v44, both by script id, with the line set to "Both", on NASDAQ:CIGL 30s, 1,000 bars: every kept plot equal, among them
+  the EMA line, 3 EMA crosses, 4 filtered ones and 1 BOUNCE. Whether the new alerts send what's expected can only be seen
+  from Monday's rows (expect `candle 2`, `bb 30S`, no BASIS rows and no 400s).
+- **v45:** a white line, the SMA of the last 20 closes of 15-second bars (`pbBsOn`, `pbBsTf` 15S, `pbBsLen` 20: the last
+  three inputs, shown in the Pullback group; the last plot). From a `request.security_lower_tf`, read at each chart bar's
+  close, as TradingView's built-in does. No alert, no message field, no server change; the dashboard's help text has two
+  sentences about it. 57 inputs, 32 plots, 8 requests; `verify-tv-setups.ts` 609 checks.
+- **Checked through the MCP before the paste:** compiles; on NASDAQ:VWAV 30s all 31 plots v44 has are equal bar by bar (the
+  year line too); the new line equals a 15s chart's `ta.sma(close, 20)` on all 620 shared bars. A small result comes back
+  inline (the first 15s probe, 31 KB, did); ask for `format: rows` and a few extra plots when a file is wanted.
+- **For the operator:** paste v45 and Save. No Reset settings, and the alerts can stay on v44 (the line sends nothing).
+- **Not measured:** the entry (first close above the line after a PULLBACK): our data has no 15-second bars. If they like
+  it, the next step is a follow-up alert after PULLBACK, graded from its rows.
 
 **2026-11-22 (Sun, ~05:30 ET) — SCRIPT v44: THE RSI CROSS (WITH ITS DIP AND THE MACD CROSS) AND THE BASIS CROSS REMOVED.** The
 operator: "I think we should remove some of our experimental setups. Let's remove RSI Cross and Basis Cross. Pullback, VWAP +
