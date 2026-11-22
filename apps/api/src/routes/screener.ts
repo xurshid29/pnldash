@@ -103,7 +103,8 @@ router.get('/ema-debug', authMiddleware, (req, res) => {
 // setups: PULLBACK since script v10, the VWAP + BB cross since v21) carry their
 // own id and the stage + levels in `setup`. Rows of the stages scripts removed
 // (v27: RECLAIM's FORMING / READY / GO; v28: the VB break's LEVEL / BREAK; v39: the DIP's
-// LIFT) stay in the table but aren't listed.
+// LIFT; v44, 2026-11-22: the RSI cross, its DIP, the MACD cross and the BASIS cross) stay in the
+// table but aren't listed.
 router.get('/alerts', authMiddleware, async (req, res) => {
   const dayParam = typeof req.query.day === 'string' ? req.query.day : null;
   if (dayParam && !/^\d{4}-\d{2}-\d{2}$/.test(dayParam)) return res.status(400).json({ error: 'day must be YYYY-MM-DD' });
@@ -117,7 +118,7 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     .select(['event', 'ticker', 'at', 'meta'])
     .where('tier', '=', 'alert')
     .where('event', '!=', 'tv_breakout')   // v17–v26 BB breakouts (removed in v27; thousands a day)
-    .where(sql<boolean>`NOT (event = 'tv_setup' AND meta->>'stage' IN ('forming', 'ready', 'go', 'level', 'break', 'lift'))`)
+    .where(sql<boolean>`NOT (event = 'tv_setup' AND meta->>'stage' IN ('forming', 'ready', 'go', 'level', 'break', 'lift', 'rsi', 'dip', 'macd', 'basis'))`)
     .where(dayExpr)
     .orderBy('ticker').orderBy('at')
     .limit(3000)
@@ -146,6 +147,9 @@ router.get('/alerts', authMiddleware, async (req, res) => {
   let last: { ticker: string; ms: number; alert: Alert } | null = null;
   for (const r of rows) {
     const m = (r.meta ?? {}) as Record<string, unknown>;
+    // A basis cross stored as stage `ema` (2026-11-15 / 11-16, before `basis` was a stage of its
+    // own): a removed stage's row that the query can't tell from an EMA cross by its `stage`.
+    if (r.event === 'tv_setup' && storedStage(m) === 'basis') continue;
     const ms = new Date(r.at).getTime();
     const id = str(m.id);
     let a: Alert | undefined = id ? byId.get(id) : undefined;
@@ -164,9 +168,9 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     if (!a.kinds.includes(r.event)) a.kinds.push(r.event);
     if (r.event === 'tv_setup' && str(m.stage)) {
       a.setup = {
-        // 2026-11-16: every stage-specific field the row stored (the RSI's, the DIP's, the MACD's, the EMA
-        // cross's, the BOUNCE's, the band's, the basis's), not the VB's alone; the explicit ones below
-        // keep their null defaults. A band or basis cross stored as `ema` reads `band` / `basis`.
+        // 2026-11-16: every stage-specific field the row stored (the EMA cross's, the BOUNCE's, the
+        // band's), not the VB's alone; the explicit ones below keep their null defaults. A band
+        // cross stored as `ema` reads `band`.
         ...storedSetupFields(m),
         stage: storedStage(m)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct),
         day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf),

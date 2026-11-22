@@ -29,12 +29,9 @@ export function setTvMomoOnly(on: boolean): void {
 }
 
 // A 📐 setup the switch silences: it's on and the ticker isn't on the screen
-// in this payload (the same test as the sidebar's ⭐). A v32 RSI cross, its v34 DIP and the
-// v39 MACD after a DIP are never silenced — a longer trade, rarely on today's screen (the sidebar
-// keeps their rows too).
+// in this payload (the same test as the sidebar's ⭐).
 export function mutedByMomoOnly(a: OpportunityAlert, payload: CyclePayload): boolean {
-  const rsi = a.setup?.stage === 'rsi' || a.setup?.stage === 'dip' || a.setup?.stage === 'macd';
-  return current && !rsi && !(payload.rows ?? []).some((r) => r.ticker === a.ticker);
+  return current && !(payload.rows ?? []).some((r) => r.ticker === a.ticker);
 }
 
 export function useTvMomoOnly(): boolean {

@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v43** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the RSI cross with its DIP and (v39) the MACD cross after a DIP (§17), and the EMA cross over VWAP with its filter and BOUNCE (§18); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v44** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setup: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1142,6 +1142,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-16 | v41 | `017c079` | Operator: the band setups "are working very well" (RBNE, GP), "But, I turned out bb upper row moves away from price if it drops too fast, and crosses up the near vwap" (CLRO). A fast drop widens the band, and its upper line rises over the VWAP while the price falls away. **The middle-line test** (§18.5): a band cross whose candle closed under the band's middle line is weak (gray `bb`, `| weak`, no day's number, quiet), with `bbMidOn` (last input, on). Every band cross's message carries `| mid <line> (<price vs it>%)` after `bb`. A hidden plot for the middle line, last. Measured first (`research/ema-vwap/band_cross_study.py`, 5,563 crosses): a quarter of the band's crosses are drop-made, and on names already on our screen they were followed by a bounce more often than the rest (+0.2% / +0.8% five candles later against −0.6% / −0.5%) — a different event, not a worse one; the first push from flat isn't in our data. 70 inputs, 38 plots. Server: `bb_mid` / `bb_mid_pct` parsed, stored, shown. Replica `_band_drop`. Regression 638 checks. **Paste, recreate both alerts.** |
 | 2026-11-16 | v42 | `1d8941f` | Operator (keeping v41's quiet treatment: "ok, lets keep it"): "can you add one more band? This time, it should be a separate bollinger bands with configurable it's Length (let it be 1/2 by default) … the similar setup as our bands cross, but this time I want to use Basis line. It should be a separate bb so I can change its Length value". **The BASIS cross** (§18.6): the basis (middle line) of a band of its own — `bsOn`, `bsTf` (45S), `bsLen` (10, half the VB band's 20; 1 = the price) — crosses the VWAP by the band cross's rule (script section 4c, through `bbSample`), independent of the EMA / band choice, with its own day's numbers; no BOUNCE, no middle-line test. Message: the EMA's with `| basis 8.03 (+0.7%) | bb 45S | len 10`. Olive line and **BS** marks. Three inputs and five plots, last: 73 inputs, 43 plots, 16 `alert()` calls. Server: stage `ema`, `emaByBasis()`, gate key `|bs`, Telegram headline BASIS, rows carry `basis` / `basis_pct` / `bb_len`. Dashboard: BASIS pill (`3m/45s·10`), its own thread. Replica `simulate_ema(src='bs')`. Not measured. Regression 681 checks. **Paste, recreate both alerts.** |
 | 2026-11-18 | v43 | `97546dd` | **The 30s alert's year line was anchored months late since v28** (§19), found on the first run through TradingView's MCP (the operator connected it that day): the saved v42 on LXEO read 4.79 on a 1m chart and 3.64 on a 30s chart, where the year's VWAP is 4.86. On a 30s chart a timeframe's bars first requested after a `request.security_lower_tf()` call load only as deep as 100,000 30s bars would reach (833 hourly bars), and v28 had put its 30s-bar request above the year line's hourly one. In the stored rows the 30s alert's year line matched the 1m alert's on 92% of ticker-days until 10-28 and on 13% since, a median 22% lower; 1,383 rows from the 30s alert named the year line, 713 of them announced. **Fix:** the hourly anchors are the script's first request again (the VB's request shares their bars). No input, plot, message or rule changed; no Reset settings. `verify-tv-setups.ts` pins the order. Stored 30s rows from 10-29 until the new alerts keep the short line. **Paste, recreate both alerts.** |
+| 2026-11-22 | v44 | (this commit) | Operator: "I think we should remove some of our experimental setups. Let's remove RSI Cross and Basis Cross. Pullback, VWAP + BB Cross, EMA Cross Over VWAP and it's Upper Band cross will be kept". **Removed** (§20): the RSI cross with its DIP (v32–v34) and the MACD cross after a DIP (v39), which hangs off the DIP; and the BASIS cross (v42). Script sections 3, 4c and 5, 19 inputs (73 → 54), 12 plots (43 → 31) and 5 `alert()` calls (16 → 11) are gone; `rsSym` and `rsChartSec`, which the EMA section uses, stay under their names. Server and dashboard: stages `rsi`, `dip`, `macd` and `basis` are gone (their messages get 400, saved switches are dropped, stored rows aren't listed). **Four defaults became the operator's live settings**, because the reset this version needs would otherwise undo them: VB candle 5m → 2m, VB band 45S → 30S, EMA candle 3m → 2m, the EMA cross's line Both → BB upper. Kept unchanged: PULLBACK, the VWAP + BB cross with its RETEST, the EMA cross with its filter and BOUNCE, the band's cross with the middle-line test. Compiled on TradingView through the MCP before the paste and compared with v43 bar by bar (§20.3). **Paste, Settings → Defaults → Reset settings, recreate both alerts.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1993,7 +1994,19 @@ Our bars exist only while a name is on our Momentum screen and end at 20:00, so 
 trades end at the day's close or when the name leaves the screen (the 4h break's +2.6% has only
 6% stopped). Multi-day trades and the month / year lines can only be graded live.
 
-## 17. The RSI cross (script v32, 2026-11-08)
+## 17. The RSI cross (script v32, 2026-11-08; removed in v44)
+
+> **Removed in script v44 (2026-11-22)**, with its DIP (§17.2) and the MACD cross after a DIP
+> (§17.4), at the operator's request: "we should remove some of our experimental setups. Let's
+> remove RSI Cross and Basis Cross" (§20). The operator had already switched the RSI setup off
+> on the chart: the last RSI and DIP rows are from 11-13 (519 RSI rows since 11-09, 185 DIP rows),
+> and the MACD cross, built on 11-15, never sent one. Script sections 3 and 5, their 16
+> inputs, 7 plots and 3 `alert()` calls are gone; the server no longer has stages `rsi`, `dip`
+> and `macd` (their messages get 400, saved switches are dropped, stored rows aren't listed) and
+> the dashboard has no pills, filters or switches for them. The code is in git at v43
+> (`97546dd`); `pinesim.simulate_rsi` and the research in
+> `apps/api/scripts/research/rsi-dip/` stay. What follows, through §17.4, is the record of the
+> three as they were.
 
 **The ask** (XTND and DKI on a 6h chart with two RSIs, 12h and 3h, each with its yellow
 "RSI-based MA"): a third setup "for longer term trades": a 6h chart, the 12h RSI must be
@@ -2034,7 +2047,7 @@ without measuring first (the operator: "you don't need to check it against our d
 - **Not built:** a replica in `pinesim.py`, and any grading. It's untested on our data, and our
   bars end when a name leaves the screen, so a multi-day trade can only be graded live.
 
-### 17.1 One RSI (script v33, 2026-11-10)
+### 17.1 One RSI (script v33, 2026-11-10; removed in v44)
 
 The operator: "The experiment with 2 different RSIs failed … remove the second rsi (keep only
 one) and remove its checkbox. And check if it works with … the same 30min timeframe for both RSI
@@ -2065,7 +2078,7 @@ and chart timeframe."
 - Candles start at the 04:00 ET open (`_candle_start`): 30m on :00 / :30, 6h at 04:00 / 10:00 /
   16:00, 12h at 04:00 / 16:00.
 
-### 17.2 The DIP after an RSI cross (script v34, 2026-11-12)
+### 17.2 The DIP after an RSI cross (script v34, 2026-11-12; removed in v44)
 
 The operator (OMH on 11-11 / 11-12, RSI settings: a **15m RSI checked at the 1h close**): "can we
 add a signal when RSI cross signal fires and rsi purple line crosses down the smoothing line (and
@@ -2200,7 +2213,7 @@ itself on TradingView.
 picks are a subset of them. Compare what followed a LIFT with what followed the DIPs that never
 got one, on the live rows, after two or three weeks.
 
-### 17.4 The MACD cross after a DIP (script v39, 2026-11-15)
+### 17.4 The MACD cross after a DIP (script v39, 2026-11-15; removed in v44)
 
 **The ask.** "entering alone on the DIP is not easy, chart can keep going lower, that's why lets
 add macd line cross over zero line after the latest DIP, I want to experiment with it." The
@@ -2632,7 +2645,16 @@ on and off, for a 1m and a 2m band (`bb_upper_series` returns the middle too; `_
 **To grade** from `tier_events` after a few weeks: band rows with `bb_mid_pct` under zero against
 the rest, on what followed.
 
-### 18.6 The BASIS cross: the basis of a separate band (script v42, 2026-11-16)
+### 18.6 The BASIS cross: the basis of a separate band (script v42, 2026-11-16; removed in v44)
+
+> **Removed in script v44 (2026-11-22)**, six days after it was built, at the operator's request
+> (§20). It ran with its ⚙ switch off: about 1,000 rows a day on 11-19 and 11-20, none
+> announced. Script section 4c, its 3 inputs, 5 plots and 2 `alert()` calls are gone; the server
+> no longer has stage `basis` (an `EMA …` message carrying `| basis …` gets 400, a saved BASIS
+> switch is dropped, stored basis rows aren't listed, including those stored as `ema` on
+> 11-15 / 11-16) and the dashboard has no BASIS pill. The band's cross (§18.3, §18.5) is
+> unchanged. The code is in git at v43 (`97546dd`); `pinesim.simulate_ema(src='bs')` stays.
+> What follows is the record of the BASIS cross as it was.
 
 **The ask.** Right after v41 (and after agreeing to keep the drop-made band crosses quiet rather
 than ignore them): "can you add one more band? This time, it should be a separate bollinger bands
@@ -2693,6 +2715,10 @@ basis cross is worth anything.
 names.
 
 ### 18.7 BAND and BASIS as stages, each with its switch; the reloaded rows (server, 2026-11-16)
+
+> Since v44 (2026-11-22) only BAND is left of the two: stage `basis`, its switch, slug and pill
+> were removed with the BASIS cross (§18.6, §20). What this section says about BAND and about
+> `storedSetupFields()` still holds.
 
 **The report.** With the 📐 sidebar full of BAND pills, some `1m/30s` and some `1m/1m`: "can we
 separate what band are these?" And with the ⚙ menu, where one "EMA + BOUNCE" switch covered
@@ -2876,3 +2902,96 @@ What to know:
 The compiler's only warnings on v42 are cosmetic: six `inline` inputs with titles (the "month
 VWAP" / "year VWAP" tick boxes of PULLBACK, the VB and the EMA cross) "might not align" in the
 settings window.
+
+## 20. Three experiments removed (script v44, 2026-11-22)
+
+### 20.1 What went and what stays
+
+The operator: "I think we should remove some of our experimental setups. Let's remove RSI Cross
+and Basis Cross. Pullback, VWAP + BB Cross, EMA Cross Over VWAP and it's Upper Band cross will be
+kept." The RSI group in the script's settings holds the RSI cross, its DIP and the MACD cross
+after a DIP; the last two can't fire without the first, so all three went.
+
+| Removed | Built | What it sent while it ran |
+|---|---|---|
+| RSI cross (§17, §17.1) | v32, 11-08 | 519 rows, 377 announced, 11-09 → 11-13; switched off on the chart after |
+| DIP after an RSI cross (§17.2) | v34, 11-12 | 185 rows, all announced, 11-12 → 11-13 |
+| MACD cross after a DIP (§17.4) | v39, 11-15 | none: the RSI was off by then |
+| BASIS cross (§18.6) | v42, 11-16 | 2,398 rows, 11-16 → 11-20; 54 announced, all on 11-16; about 1,000 a day with its switch off |
+
+**Kept, unchanged:** PULLBACK (§13), the VWAP + BB cross with its RETEST (§16), the EMA cross
+with its filter and BOUNCE (§18, §18.1, §18.2), and the band as the line that crosses, with the
+middle-line test (§18.3, §18.5).
+
+### 20.2 The change
+
+**Script.** Sections 3 (RSI + DIP), 4c (BASIS) and 5 (MACD) are gone, with 19 inputs (73 → 54),
+12 plots (43 → 31) and 5 `alert()` calls (16 → 11); `emMsgBy()` lost its `"bs"` branch. Two
+names from the RSI section stay under those names because the EMA section uses them: `rsSym`
+(the ticker with extended hours, for the EMA's request) and `rsChartSec` (the chart's bar in
+seconds). Each removed spot has a one-line marker comment. The hourly anchors are still the
+first request (§19); the plain requests after the first lower-timeframe one are now the VB's
+hourly bars and the EMA's candles. 2,103 lines → 1,585.
+
+**Four defaults became the operator's live settings.** v44 takes inputs out of the middle (the
+RSI's, the DIP's, the MACD's) and the end (the BASIS's), so the saved values shift and the
+indicator needs Reset settings once; a reset puts every input on its default. From the alerts'
+own rows on 11-19 and 11-20 (every VB and band row `candle 2`, `bb 30S`; no `ema` row since
+11-16):
+
+| Input | Before | v44 |
+|---|---|---|
+| VB: candle timeframe | 5m | 2m |
+| VB: BB timeframe (the band) | 45S | 30S |
+| EMA: candle timeframe | 3m | 2m |
+| EMA cross: the line that crosses the VWAP | Both | BB upper |
+
+With "BB upper" the EMA's own crosses, its BOUNCE and its aqua line don't run until that input is
+set to EMA or Both. Everything else the operator changed away from a default is not visible in
+the rows and has to be set again by hand after the reset.
+
+**Server.** `TvStage` is pullback, broken, held, cross, retest, ema, bounce, band. A message for
+a removed stage (`RSI …`, `DIP …`, `MACD …`, an `EMA …` message carrying `| basis …`, or a JSON
+body naming one) is not parsed, so the webhook answers 400 "Unrecognised alert message", as it
+does for `LIFT …`; nothing is stored or announced, and a basis message is not read as an EMA or
+a BAND cross (`emaLineStage()` returns null for it). A saved switch for a removed stage is
+ignored (the operator's saved list read back as PULLBACK and BAND, as before), and
+`PUT /api/tv/settings` rejects a removed name. `GET /api/screener/alerts` no longer lists the
+removed stages' rows, including the 29 basis rows stored as `ema` on 11-16 (`storedStage()`
+still names them, so they are skipped and not shown as EMA crosses). Telegram slugs `tv_rsi`,
+`tv_dip`, `tv_macd`, `tv_basis` are gone.
+
+**Dashboard.** No RSI / DIP / MACD / BASIS pills, threads, history filters, sounds or ⚙
+switches; the ⚙ rule reads "EMA / BAND / BOUNCE: Momentum list only". "Show only Momentum
+tickers" now hides every off-list setup (the RSI family was exempt). The how-to text states the
+new defaults and v44's reset.
+
+**Not removed:** the rows in `tier_events`; `pinesim.simulate_rsi` and
+`simulate_ema(src='bs')` with their self-tests; the research in
+`apps/api/scripts/research/rsi-dip/`. The script's code is in git at v43 (`97546dd`).
+
+### 20.3 Checked before the paste
+
+- **The code that is left is v43's.** Comments aside, v44 is v43 minus 394 code lines plus six
+  lines that changed or moved: the four defaults, and the declarations of `rsSym` and
+  `rsChartSec` (now beside their first use in the EMA section).
+- **It compiles on TradingView** (the comment-free copy through the MCP, §19.4): no errors, the
+  same six cosmetic warnings, 54 inputs and 31 plots with the titles in order.
+- **It draws what v43 drew.** v43 (the saved script, with the four inputs set to v44's defaults)
+  and v44 were run on NASDAQ:CIGL's 30s chart, 1,000 bars from 11-09 to 11-20, and compared plot
+  by plot, matched by title: all 31 kept plots are equal on every bar — the three VWAP lines, the
+  VB's band, the band cross's band and middle line, 6 PULLBACKs and 1 past the cap, 4 BROKEN,
+  3 HELD, 3 VB crosses, 1 RETEST and 1 band cross. With "BB upper" as the line, the EMA's own
+  crosses and BOUNCE drew nothing in either run, so that path rests on the first point.
+  The method is two `run_pine_indicator` calls with `format: columns`, whose results the client
+  saves to files, compared by `research/vwap-setup/pine_compare_runs.py`.
+
+### 20.4 For the operator
+
+1. Paste v44 over the script and Save (TradingView's version 44).
+2. On the chart: the indicator's Settings → Defaults → **Reset settings**. The four inputs in
+   §20.2's table land on the values the alerts were running; set again anything else that was
+   changed by hand.
+3. Delete and recreate both alerts (1 minute and 30 seconds).
+
+Until then the v43 alerts keep sending BASIS messages, about 1,000 a day, and each gets 400.

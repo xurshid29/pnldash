@@ -1,4 +1,4 @@
-import { isBandCross, isBasisCross, isLineCross, lineTokens } from '../components/common/TvStageTag';
+import { isBandCross, isLineCross, lineTokens } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { useHiddenTickers } from './useHiddenTickers';
@@ -197,8 +197,8 @@ function fmtAlertPrice(p: number | null): string {
 }
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
-  bounce: 'BOUNCE', macd: 'MACD', band: 'BAND', basis: 'BASIS',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', ema: 'EMA',
+  bounce: 'BOUNCE', band: 'BAND',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -225,35 +225,12 @@ export function opportunityTitle(a: OpportunityAlert): string {
       return `${s.on_screen ? '⭐ ' : ''}📐 RETEST ${a.ticker} — back at the ${tokens.join(' + ')} VWAP after the ${shortTf(s.candle_tf)} VB`
         + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.retest_n != null ? ` · #${s.retest_n}` : ''}`;
     }
-    // v32: "📐 RSI XTND — 12h RSI 29.2 crossed its MA 27.0 (oversold, low 22.1)"
-    if (s.stage === 'rsi') {
-      const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
-      return `${s.on_screen ? '⭐ ' : ''}📐 RSI ${a.ticker} — ${shortTf(s.rsi_tf)} RSI ${one(s.rsi)} crossed its MA ${one(s.rsi_ma)}`
-        + ` (oversold${s.rsi_low != null ? `, low ${one(s.rsi_low)}` : ''})`;
-    }
-    // v34: "📐 DIP OMH — 15m RSI turned up under its MA (31.4 / 31.3, dip low 30.9) · stop $7.89 · #1"
-    if (s.stage === 'dip') {
-      const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
-      const over = s.rsi != null && s.rsi_ma != null && s.rsi > s.rsi_ma;
-      return `${s.on_screen ? '⭐ ' : ''}📐 DIP ${a.ticker} — ${shortTf(s.rsi_tf)} RSI turned up ${over ? 'and is back over' : 'under'} its MA`
-        + ` (${one(s.rsi)} / ${one(s.rsi_ma)}${s.rsi_low != null ? `, dip low ${one(s.rsi_low)}` : ''})`
-        + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.dip_n != null ? ` · #${s.dip_n}` : ''}`;
-    }
-    // v39: "📐 MACD KRMN — 5m MACD line over zero after the DIP at $37.53"
-    if (s.stage === 'macd') {
-      return `${s.on_screen ? '⭐ ' : ''}📐 MACD ${a.ticker} — ${shortTf(s.macd_tf)} MACD line over zero after the DIP`
-        + `${s.dip_px != null ? ` at ${fmtAlertPrice(s.dip_px)}` : ''}`;
-    }
     // v35: "📐 EMA OMH — 3m EMA 9 over sVWAP · #1"
-    if (isLineCross(s.stage)) {   // the EMA's cross, the band's (v40) and the basis's (v42)
+    if (isLineCross(s.stage)) {   // the EMA's cross and the band's (v40)
       const ln = lineTokens(s.stage, s.line).map((t) => SHORT_LINE[t]).join(' + ') || 'VWAP';
       // v40, the band as the line: "📐 BAND OMH — 45s BB upper over sVWAP at the 3m close · #1"
       if (isBandCross(s)) {
         return `${s.on_screen ? '⭐ ' : ''}📐 BAND ${a.ticker} — ${shortTf(s.bb_tf)} BB upper over ${ln} at the ${shortTf(s.candle_tf)} close${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
-      }
-      // v42, the basis as the line: "📐 BASIS OMH — 45s basis (10) over sVWAP at the 3m close · #1"
-      if (isBasisCross(s)) {
-        return `${s.on_screen ? '⭐ ' : ''}📐 BASIS ${a.ticker} — ${shortTf(s.bb_tf)} basis${s.bb_len != null ? ` (${s.bb_len})` : ''} over ${ln} at the ${shortTf(s.candle_tf)} close${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
       }
       return `${s.on_screen ? '⭐ ' : ''}📐 EMA ${a.ticker} — ${shortTf(s.candle_tf)} EMA ${s.ema_len ?? '?'} over ${ln}${s.cross_n != null ? ` · #${s.cross_n}` : ''}`;
     }
@@ -280,30 +257,6 @@ export function opportunityTitle(a: OpportunityAlert): string {
 export function opportunityBody(a: OpportunityAlert): string {
   if (a.kinds.includes('tv_setup') && a.setup) {
     const s = a.setup;
-    if (s.stage === 'rsi') {
-      const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
-      const rb = [fmtAlertPrice(a.price)];
-      if (s.rsi2 != null) rb.push(`${shortTf(s.rsi2_tf)} RSI ${one(s.rsi2)} / MA ${one(s.rsi2_ma)}`);
-      if (s.candle_tf) rb.push(`at the ${shortTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
-      if (a.grade) rb.push(`grade ${a.grade}`);
-      return rb.filter(Boolean).join(' · ');
-    }
-    if (s.stage === 'dip') {
-      const db = [fmtAlertPrice(a.price)];
-      if (s.stop != null && a.price != null && a.price > 0) db.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the dip's low`);
-      if (s.since_n != null) db.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the RSI cross`);
-      if (s.candle_tf) db.push(`at the ${shortTf(s.candle_tf)} close${s.late ? ' (late)' : ''}`);
-      if (a.grade) db.push(`grade ${a.grade}`);
-      return db.filter(Boolean).join(' · ');
-    }
-    if (s.stage === 'macd') {
-      const lb = [fmtAlertPrice(a.price)];
-      if (s.dip_px != null && a.price != null && s.dip_px > 0) lb.push(`${fmtSignedPct((a.price / s.dip_px - 1) * 100)} from the DIP`);
-      if (s.stop != null && a.price != null && a.price > 0) lb.push(`the DIP's stop ${fmtAlertPrice(s.stop)} (${fmtSignedPct((s.stop / a.price - 1) * 100)})`);
-      if (s.after_min != null) lb.push(`${s.after_min < 60 ? `${s.after_min}m` : `${Math.floor(s.after_min / 60)}h ${s.after_min % 60}m`} after the DIP`);
-      if (a.grade) lb.push(`grade ${a.grade}`);
-      return lb.filter(Boolean).join(' · ');
-    }
     const bits = [fmtAlertPrice(a.price)];
     if (s.stage === 'bounce' && s.stop != null && a.price != null && a.price > 0) bits.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the pullback's low`);
     if (s.stage === 'bounce' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the cross`);
@@ -408,11 +361,10 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        // (a v34 DIP and the v39 MACD after it are entry signals: the bright pair, on or off Momentum; a v35 EMA cross and its v37 BOUNCE sound like a CROSS)
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce') || tvStage('band') || tvStage('basis')
-          || audible.some((a) => a.setup?.stage === 'dip' || a.setup?.stage === 'macd')) crossConfirmPing();
+        // (a v35 EMA cross, its v37 BOUNCE and a v40 BAND cross sound like a CROSS)
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce') || tvStage('band')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
-        else if (tvStage('pullback') || audible.some((a) => a.setup?.stage === 'rsi')) setupReadyPing();   // v32 RSI, on or off Momentum
+        else if (tvStage('pullback')) setupReadyPing();
         else if (audible.some((a) => a.kinds.includes('news'))) chime();
         else watchPing();
       } catch { /* audio context not unlocked */ }

@@ -42,14 +42,11 @@ export type AlertComponent =
   | 'tv_held'       // 📐 … a pullback ran +10% (always a silent message)
   | 'tv_cross'      // 📐 VWAP + BB cross (script v21): a candle crossed over the session VWAP and the BB upper band
   | 'tv_retest'     // 📐 VB retest (script v28): back at the VWAP line after the VB candle, and bounced
-  | 'tv_rsi'        // 📐 RSI cross (script v32): the 12h RSI crossed above its MA after being oversold
-  | 'tv_dip'        // 📐 RSI dip (script v34): after an RSI cross, the RSI dipped under its MA and turned up
-  | 'tv_macd'       // 📐 MACD after a DIP (script v39): after a DIP, the MACD line crossed above zero
   | 'tv_ema'        // 📐 EMA cross (script v35): the EMA of a timeframe's closes crossed above a VWAP line
   | 'tv_bounce'     // 📐 EMA bounce (script v37): after an EMA cross, a pullback to the EMA or the VWAP, then a green close above the EMA
   | 'tv_band'       // 📐 BAND (script v40; its own stage since 2026-11-16): the BB upper band crossed above a VWAP line
-  | 'tv_basis'      // 📐 BASIS (script v42; its own stage since 2026-11-16): the basis of the separate band crossed above a VWAP line
   | 'tv_year';      // 📐 any setup message about the year VWAP alone (PULLBACK v14, VB v22)
+// (tv_rsi / tv_dip / tv_macd / tv_basis went with their stages on 2026-11-22, script v44.)
 let disabledAlerts: Set<string> | null = null;
 export function alertDisabled(component: AlertComponent): boolean {
   if (!disabledAlerts) {

@@ -10,8 +10,14 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v43 (2026-11-18).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v44 (2026-11-22).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
+- **v44 (11-22) removed the RSI cross with its DIP and the MACD cross after a DIP, and the BASIS
+  cross**, at the operator's request (`docs/vwap-setup.md` §20). **Every line below about RSI /
+  DIP / MACD / BASIS is history.** Left: PULLBACK, the VWAP + BB cross with its RETEST, the EMA
+  cross with its filter and BOUNCE, and the band's cross. v44 needs Reset settings once; its
+  defaults are what the operator runs (VB candle 2m, band 30S, EMA candle 2m, the line "BB
+  upper", so the EMA's own crosses are off by default).
 - **v43 (11-18): the 30s alert's year line is fixed.** From v28 to v42 the year VWAP on a 30s chart
   and in the 30s alert started two to five months back instead of in January (a median 22% under
   the 1m alert's line; 1,383 stored rows from the 30s alert named it, 713 announced). The hourly
@@ -281,6 +287,27 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-22 (Sun, ~05:30 ET) — SCRIPT v44: THE RSI CROSS (WITH ITS DIP AND THE MACD CROSS) AND THE BASIS CROSS REMOVED.** The
+operator: "I think we should remove some of our experimental setups. Let's remove RSI Cross and Basis Cross. Pullback, VWAP +
+BB Cross, EMA Cross Over VWAP and it's Upper Band cross will be kept". `docs/vwap-setup.md` §20.
+- **Script:** sections 3, 4c and 5 gone; 73 → 54 inputs, 43 → 31 plots, 16 → 11 `alert()` calls; `rsSym` / `rsChartSec` stay
+  (the EMA section uses them). **Four defaults are now the operator's live settings** (from the rows of 11-19 / 11-20): VB
+  candle 2m, VB band 30S, EMA candle 2m, the EMA cross's line "BB upper" (so the EMA's own crosses and BOUNCE are off by
+  default; their last rows are from 11-16 05:20 ET).
+- **Server / dashboard:** stages `rsi`, `dip`, `macd`, `basis` removed the way `lift` was in v39 (messages → 400
+  "Unrecognised alert message"; saved switches ignored; rows unlisted, the 29 basis rows stored as `ema` on 11-16 included;
+  slugs gone). The operator's saved switches still read PULLBACK + BAND. `verify-tv-setups.ts`: 606 checks (699 before:
+  the removed stages' checks went, 66 "v44:" ones came, among them the 54 input names in order).
+- **Checked before the paste, through the MCP:** v44 compiles (no errors); comments aside it is v43 minus 394 code lines plus
+  six changed or moved lines; and a 1,000-bar run on NASDAQ:CIGL 30s gives the same values as v43 on all 31 kept plots.
+- **How it was built:** three subagents in parallel (script, server, dashboard), then the verify script, then a subagent to
+  send the comment-free copy to TradingView. Results of big MCP calls are saved to files, so two runs can be diffed offline.
+- **For the operator:** paste v44 → Settings → Defaults → Reset settings → recreate both alerts. Until then the v43 alerts'
+  BASIS messages (about 1,000 a day) get 400.
+- **Open:** after the paste, compare v43 and v44 once more with the line set to "Both" (both by script id, no code to send),
+  to exercise the EMA's own crosses and BOUNCE; the 11-19 items (paid exchange data: the operator's call; the 11 watchlist
+  tickers on non-US listings; the 30s-vs-1m year-line pairs query on a full day of rows) are still open.
 
 **2026-11-19 (Thu, ~05:10 ET) — TRADINGVIEW'S "LIMITED DATA" BADGE: THE CBOE ONE FEED RE-MEASURED; BUYING EXCHANGE DATA IS THE
 OPERATOR'S CALL (no code change).** The operator sent TradingView's new badge ("Limited data … NASDAQ by Cboe One … may be

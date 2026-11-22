@@ -1,10 +1,11 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v43 (2026-11-18). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v44 (2026-11-22). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
-// Four setups in one script, so the same two watchlist alerts carry them all (the VWAP +
-// BB cross, the RSI cross and the EMA cross only send from the 30s alert). Each has its own "… setup on" switch: off
+// Three setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross), so the same two
+// watchlist alerts carry them all (the VWAP + BB cross and the EMA cross only send from the 30s
+// alert). Each has its own "… setup on" switch: off
 // = no markers and no alerts from it, and a VWAP line no setup uses isn't drawn.
 // v27 removed the RECLAIM setup (FORMING / READY / GO, v1–v26) and the BB breakout
 // (TOUCH / BREAKOUT / TRIGGERED, v17–v26): the operator tested all four and kept these
@@ -12,6 +13,8 @@
 // v39 removed two experiments (operator, 11-15): the DIP's LIFT (v38) and the VB lanes (v29).
 // They are in git history (v38, 7c7b4b9) and docs/vwap-setup.md. The EMA cross over VWAP stays
 // ("I want to improve it later").
+// v44 removed three more (operator, 11-22): the RSI cross with its DIP (v32–v34), the MACD cross after a DIP (v39)
+// and the BASIS cross (v42). All are in git history (v43, 97546dd) and docs/vwap-setup.md §17 / §18.6.
 // 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
@@ -32,19 +35,10 @@
 //              stop under the pullback's low (the operator's entry; v25–v27 had LEVEL / BREAK here;
 //              v28–v29 fired at the first green 30s close above the line, still an option)
 // Built from the 30s alert's bars; drawn on the candle's own chart.
-// 3) RSI CROSS (v32): one RSI (14) crosses above its MA (SMA 14, the "RSI-based MA") while
-// oversold, judged at the close of a "check" candle — the RSI's own timeframe for the plain cross
-// (30m and 30m), or a longer one (the operator's: a 10m RSI at each 1h close, the default since
-// v39). Built from requests, so it works on any smaller chart and sends from the 30s alert; the
-// chart marks the bar that closed the check candle. v33 dropped v32's second RSI.
-//   RSI   the cross up while oversold, at a check candle's close
-//   DIP   (v34) after an RSI cross, the RSI closes back under its MA on its own timeframe and
-//         then turns up — the pullback, with a stop under the dip's low
-//   MACD  (v39) after a DIP, the MACD line of a timeframe (5m, 12 / 26) crosses above zero —
-//         the operator's entry, since a DIP alone can keep going lower (section 5)
-// 4) EMA CROSS OVER VWAP (v35): the EMA of a timeframe's closes (3m, length 9) crosses above a
+// 3) (v32–v34's RSI cross and DIP, and v39's MACD cross after a DIP, were here until v44 removed them.)
+// 4) EMA CROSS OVER VWAP (v35): the EMA of a timeframe's closes (2m, length 9) crosses above a
 // VWAP line (session; month and year are switches), judged at each close of that timeframe's
-// candles. Built from a request like the RSI, so it works on the 3m chart or a smaller one.
+// candles. Built from a request, so it works on the 2m chart or a smaller one.
 //   EMA   above the line at this close, at or under it at the one before
 //         (v36) the filter calls a cross weak — its candle opened before 07:00 New York, the EMA
 //         was under the line for fewer than 5 candles, or the two crossed more than 2 times in
@@ -52,7 +46,7 @@
 //   BOUNCE (v37) after an EMA cross, a candle's low comes down to the EMA or the VWAP and that
 //         candle or a later one closes green above the EMA — the pullback entry, with a stop
 //         under the pullback's low; a close under the VWAP first ends the wait
-//   (v40) "EMA cross: the line that crosses the VWAP" — EMA, BB upper, or Both (the default).
+//   (v40) "EMA cross: the line that crosses the VWAP" — EMA, BB upper (the default since v44), or Both.
 //         BB upper is the VB's upper Bollinger Band (its BB timeframe, length and StdDev) crossing
 //         the VWAP by the same rule, settings and filter, with its own day's numbers; its message
 //         carries the band in the EMA's place and the dashboard calls it BAND. The BOUNCE stays
@@ -60,9 +54,7 @@
 //   (v41) a band cross whose candle closed under the band's middle line — the band widened on a
 //         fast drop and rose over the VWAP while the price fell away — is weak: gray, `| weak`,
 //         not announced (an input; the message carries `| mid` either way)
-//   (v42) the BASIS cross: the basis (middle line) of a separate Bollinger Band — its own
-//         timeframe and length (45S, 10) — crosses the VWAP by the same rule, with its own switch,
-//         day's numbers, alerts and marks (olive "BS"); the dashboard calls it BASIS (section 4c)
+//   (v42's BASIS cross, the basis of a separate Bollinger Band over the VWAP, was removed in v44.)
 // VWAP lines (v28): from 30s bars by default, so the session line is the same on every
 // chart (TradingView's built-in VWAP is built from the chart's own bars and differs by
 // timeframe), or from the chart's bars ("VWAP lines from" in Inputs).
@@ -76,12 +68,16 @@
 indicator("mVWAP x BB basis setup", shorttitle = "mVWAP-BB", overlay = true)
 
 // v27 put the inputs in a new order (TradingView keeps saved values by position, so
-// after the paste: Settings → Defaults → Reset settings). The defaults are the
-// operator's own settings on 10-28: gainer filter 10%, VB candle 5m, band 45s.
+// after the paste: Settings → Defaults → Reset settings). The defaults were the
+// operator's own settings on 10-28: gainer filter 10%, VB candle 5m, band 45s (v44: 2m and 30s).
 // From here on, new inputs go last again.
 // v39 took inputs out of the middle (the VB lanes) and the end (the LIFT), so it needs the same
 // Reset settings once. The RSI's defaults became the operator's (a 10m RSI checked at 1h), so
 // the reset lands on their setup.
+// v44 took inputs out of the middle again (the RSI's, the DIP's, the MACD's) and the end (the
+// BASIS's), so it needs the same Reset settings once. Four defaults became the operator's live
+// settings (VB candle 2m, VB band 30S, EMA candle 2m, the EMA cross's line "BB upper"), so the
+// reset lands on them.
 // Gainer filter: computed per ticker from its own bars — no screener, no ranking.
 // A ticker that doesn't pass stays silent; -100 switches the filter off.
 minDayGain = input.float(10.0, "Up at least % (day high vs prior close; -100 = filter off)", group = "Gainer filter (this ticker's own move)")
@@ -101,8 +97,8 @@ pbMax      = input.int(0,       "Script cap: stop a line after N failed pullback
 pbCapMark  = input.int(2,       "Chart: pullbacks after N failed ones are drawn gray (the dashboard's cap)", minval = 1, group = "Pullback to VWAP (v10)")
 pbTimeout  = input.int(60,      "Stop watching a pullback after N bars", minval = 1, group = "Pullback to VWAP (v10)")
 vbOn       = input.bool(true,         "VWAP + BB cross setup on (v21)", group = "VWAP + BB cross (v21)")
-vbCandleTf = input.timeframe("5",     "VB: candle timeframe — the chart you trade (its candles and session VWAP)", group = "VWAP + BB cross (v21)")
-vbBbTf     = input.timeframe("45S",   "VB: BB timeframe (the band)", group = "VWAP + BB cross (v21)")
+vbCandleTf = input.timeframe("2",     "VB: candle timeframe — the chart you trade (its candles and session VWAP)", group = "VWAP + BB cross (v21)")
+vbBbTf     = input.timeframe("30S",   "VB: BB timeframe (the band)", group = "VWAP + BB cross (v21)")
 vbLen      = input.int(20,            "VB: BB length", minval = 2, group = "VWAP + BB cross (v21)")
 vbMult     = input.float(2.0,         "VB: BB StdDev", minval = 0.1, group = "VWAP + BB cross (v21)")
 vbTol      = input.float(0.0,         "VB: the candle may open up to % above the lower line (price sitting on VWAP; 0 = under both)", minval = 0, group = "VWAP + BB cross (v21)")
@@ -893,280 +889,14 @@ plotshape(vbMarkR, "VB retest (v28)", shape.labelup, location.belowbar, color.li
 // give it the same style as "VB retest (v28)" in Style if you restyled that one.
 plotshape(vbMarkRL, "VB retest, late close (v31)", shape.labelup, location.belowbar, color.lime, text = "RT", textcolor = color.black, size = size.small, offset = -1)
 
-// ── 3) RSI CROSS (v32) and its DIP (v34) ──────────────────────────────────────
-// Operator, 2026-11-08 (XTND and DKI on a 6h chart with two RSIs, 12h and 3h): "12h rsi must be
-// oversold; signal is, when 12h rsi crosses the smoothing line" — for longer trades, without
-// leaving the 2m chart. The RSI is TradingView's (ta.rma of the gains and losses, as the default
-// RSI script) and its MA the default "RSI-based MA" (SMA 14). A request returns the RSI's state
-// after its last finished candle (lookahead on + [1]: no repainting); the live value at this bar
-// comes from that state and the bar's close, as the RSI's own chart shows it. It is sampled when a
-// check candle closes ("RSI: checked at the close of"): a signal is the RSI above its MA at that
-// close after being at or under it at the previous one, with the RSI at or under the oversold
-// level then or within its last N candles (DKI 10-03: crossed at ~31 after ~22 a few candles
-// earlier). No gainer filter: these are beaten-down names. A candle whose closing bar had no
-// trades is judged on the next bar and drawn one bar back (as v31's late RT).
-// v33 (operator, 11-10: "The experiment with 2 different RSIs failed … remove the second rsi (keep
-// only one) and remove its checkbox"): one RSI. Checked on the replica (pinesim.selftest_rsi, and
-// five names' 2m bars over 60 days): a 30m RSI checked at the 30m close marks the plain rule's
-// crosses on a 30m, 2m or 1m chart.
-// v34 DIP (operator, 11-12, OMH, a 15m RSI checked at the 1h close: "can we add a signal when RSI
-// cross signal fires and rsi purple line crosses down the smoothing line (and find the deepest part
-// of it somehow)"). After an RSI cross the script follows the RSI at each close of its own
-// timeframe's candles:
-//   the dip starts  the RSI closes under its MA, within "RSI dip: it must start within N" candles
-//   DIP             the first candle that closes with the RSI higher than the candle before, after
-//                   the dip's lowest RSI so far — the low was one candle ago; a lower low and
-//                   another rise gives the next DIP (at most "RSI dip: at most N signals"). If the
-//                   RSI gets back over its MA without one, that close is the DIP.
-//   the dip is over when the RSI closes back over its MA; the next RSI cross arms the next one.
-// The message carries a stop a tick under the dip's lowest price. Untested on our data.
-// v34 also: a candle left unsampled is sampled before the bar's own closes (v33's else-if skipped
-// it when one bar ended both), and the marks are drawn only on charts whose bars line up with the
-// candles sampled (v33 drew wrong ones on the 1h / 4h charts): a chart no bigger than the RSI's
-// timeframe that divides the check timeframe; the DIP marks need a chart that divides the RSI's
-// timeframe too (a 15m RSI: 15m, 5m, 3m, 1m — not 10m).
-// v32 inputs go last.
-rsOn    = input.bool(true,       "RSI setup on (v32): the RSI crosses above its MA while oversold — marks on charts up to the RSI's timeframe", group = "RSI cross (v32)")
-rsCheck = input.timeframe("60",  "RSI: checked at the close of these candles (1h; the RSI's own timeframe = the plain cross)", group = "RSI cross (v32)")
-rsTfA   = input.timeframe("10",  "RSI: the RSI's timeframe (10m)", group = "RSI cross (v32)")
-rsLen   = input.int(14,          "RSI: length", minval = 2, group = "RSI cross (v32)")
-rsMaLen = input.int(14,          "RSI: MA length (SMA — TradingView's “RSI-based MA”)", minval = 2, group = "RSI cross (v32)")
-rsOs    = input.float(30.0,      "RSI: oversold — the RSI at or under this…", group = "RSI cross (v32)")
-rsOsN   = input.int(6,           "…at the cross or within its last N candles (0 = at the cross)", minval = 0, group = "RSI cross (v32)")
-// v34 inputs go last.
-rsDipOn   = input.bool(true,     "RSI dip (v34): after an RSI cross, the RSI closes back under its MA and then turns up — the pullback entry", group = "RSI cross (v32)")
-rsDipWait = input.int(16,        "RSI dip: it must start within N of the RSI's candles after the RSI cross (0 = until the next RSI cross)", minval = 0, group = "RSI cross (v32)")
-rsDipMax  = input.int(2,         "RSI dip: at most N signals per dip (each after a new lower RSI low)", minval = 1, group = "RSI cross (v32)")
-
-// The RSI timeframe's state after its last finished candle: close, the two rma's, the sum of the
-// last (MA length − 1) RSI values, and the lowest RSI of the last N candles.
-rsState(simple int len, simple int maLen, simple int lowN) =>
-    float ch = ta.change(close)
-    float up = ta.rma(math.max(ch, 0), len)
-    float dn = ta.rma(-math.min(ch, 0), len)
-    float r  = dn == 0 ? 100.0 : up == 0 ? 0.0 : 100.0 - 100.0 / (1.0 + up / dn)
-    float sm = math.sum(r, maLen - 1)
-    float lo = ta.lowest(r, math.max(lowN, 1))
-    [close[1], up[1], dn[1], sm[1], lo[1]]
-rsSym = ticker.new(syminfo.prefix, syminfo.ticker, session.extended)
-[rsCA, rsUA, rsDA, rsSmA, rsLoA] = request.security(rsSym, rsTfA, rsState(rsLen, rsMaLen, rsOsN), lookahead = barmerge.lookahead_on)
-// The RSI and its MA as that timeframe's chart shows them now: the finished candles + `px` as the open one's close.
-rsLive(float c0, float up, float dn, float sm, float px) =>
-    float ch = px - c0
-    float u  = (up * (rsLen - 1) + math.max(ch, 0)) / rsLen
-    float d  = (dn * (rsLen - 1) + math.max(-ch, 0)) / rsLen
-    float r  = d == 0 ? 100.0 : u == 0 ? 0.0 : 100.0 - 100.0 / (1.0 + u / d)
-    [r, (sm + r) / rsMaLen]
-[rsA, rsMaA] = rsLive(rsCA, rsUA, rsDA, rsSmA, close)
-float rsLowA = rsOsN > 0 ? math.min(nz(rsLoA, rsA), rsA) : rsA
-
-// The setup's state, stepped once per sampled candle close (no history inside: a bar can sample two).
-type RsiSetup
-    float prevA  = na      // the cross: the RSI and its MA at the previous check close
-    float prevMa = na
-    float prevR  = na      // the dip: the RSI at the previous close of its own candles
-    bool  armed  = false   // an RSI cross fired: watching for the dip
-    int   age    = 0       // the RSI's candles since that cross
-    bool  inDip  = false   // the RSI has closed under its MA
-    float lowR   = na      // the dip's lowest RSI…
-    bool  lowNew = false   // …made by the last candle (a rise now is the turn)
-    float lowPx  = na      // the dip's lowest price
-    int   n      = 0       // DIP signals sent in this dip
-
-// A check candle's close → true on a cross up while oversold.
-method checkCross(RsiSetup s, float r, float ma, float lo) =>
-    bool up = not na(s.prevA) and not na(r) and s.prevA <= s.prevMa and r > ma and lo <= rsOs
-    if not na(r)
-        s.prevA  := r
-        s.prevMa := ma
-    up
-
-// An RSI cross fired: watch for its dip.
-method armDip(RsiSetup s) =>
-    s.armed  := true
-    s.age    := 0
-    s.inDip  := false
-    s.lowR   := na
-    s.lowNew := false
-    s.lowPx  := na
-    s.n      := 0
-    true
-
-// A close of the RSI's own candle (`cLow` = that candle's low) → 0 nothing, 1 the dip starts, 2 DIP.
-method stepDip(RsiSetup s, float r, float ma, float cLow) =>
-    int ev = 0
-    if not na(r) and not na(ma)
-        if s.armed
-            s.age := s.age + 1
-            if not s.inDip
-                if r < ma
-                    s.inDip  := true
-                    s.lowR   := r
-                    s.lowNew := true
-                    s.lowPx  := cLow
-                    s.n      := 0
-                    ev := 1
-                else if rsDipWait > 0 and s.age >= rsDipWait
-                    s.armed := false
-            else
-                s.lowPx := na(s.lowPx) ? cLow : math.min(s.lowPx, cLow)
-                bool rose = not na(s.prevR) and r > s.prevR
-                if ((rose and s.lowNew) or (r > ma and s.n == 0)) and s.n < rsDipMax
-                    s.n := s.n + 1
-                    ev := 2
-                if r > ma
-                    s.armed := false
-                    s.inDip := false
-                else if r < s.lowR
-                    s.lowR   := r
-                    s.lowNew := true
-                else
-                    s.lowNew := false
-        s.prevR := r
-    ev
-
-// Where the samples are right: the chart's bars must line up with the candles sampled.
-rsChartSec = timeframe.in_seconds(timeframe.period)
-rsCheckSec = timeframe.in_seconds(rsCheck)
-rsTfSec    = timeframe.in_seconds(rsTfA)
-rsCrossOk  = rsOn and rsChartSec <= rsTfSec and rsCheckSec % rsChartSec == 0
-rsDipOk    = rsCrossOk and rsDipOn and rsTfSec % rsChartSec == 0
-
-// A candle is sampled on the bar that closes it, or (its closing bar had no trades) late, on the
-// next bar, from the bar before. One bar can do both: the late ones first.
-rsT     = time(rsCheck)
-rsTA    = time(rsTfA)
-rsEndC  = time_close == time_close(rsCheck)
-rsEndA  = time_close == time_close(rsTfA)
-var int rsDoneC = na
-var int rsDoneA = na
-bool rsLateC = not na(rsT[1]) and rsT != rsT[1] and (na(rsDoneC) or rsDoneC != rsT[1])
-bool rsLateA = not na(rsTA[1]) and rsTA != rsTA[1] and (na(rsDoneA) or rsDoneA != rsTA[1])
-// The low of the RSI's candle so far, and of the one before (for a late sample).
-var float rsCLow  = na
-var float rsCLowP = na
-if na(rsTA[1]) or rsTA != rsTA[1]
-    rsCLowP := rsCLow
-    rsCLow  := low
-else
-    rsCLow := math.min(rsCLow, low)
-
-var RsiSetup rs = RsiSetup.new()
-bool  rsFire  = false
-bool  rsLate  = false
-float rsSA    = na
-float rsSMa   = na
-float rsSLo   = na
-float rsSPx   = na
-bool  rsDipFrom = false   // the dip started on this bar's sample
-bool  rsDipGo   = false
-bool  rsDipLate = false
-float rsDR    = na
-float rsDMa   = na
-float rsDLo   = na        // the dip's lowest RSI
-float rsDPx   = na
-float rsDStop = na
-int   rsDN    = 0
-int   rsDAge  = 0
-if rsCrossOk
-    // Candles that ended before this bar, unsampled: the dip's, then the cross's.
-    if rsDipOk and rsLateA
-        int rsE1 = rs.stepDip(rsA[1], rsMaA[1], rsCLowP)
-        rsDoneA := rsTA[1]
-        if rsE1 == 1
-            rsDipFrom := true
-        if rsE1 == 2
-            rsDipGo   := true
-            rsDipLate := true
-            rsDR      := rsA[1]
-            rsDMa     := rsMaA[1]
-            rsDPx     := close[1]
-            rsDLo     := rs.lowR
-            rsDStop   := rs.lowPx - syminfo.mintick
-            rsDN      := rs.n
-            rsDAge    := rs.age
-    if rsLateC
-        bool rsF1 = rs.checkCross(rsA[1], rsMaA[1], rsLowA[1])
-        rsDoneC := rsT[1]
-        if rsF1
-            rsFire := true
-            rsLate := true
-            rsSA   := rsA[1]
-            rsSMa  := rsMaA[1]
-            rsSLo  := rsLowA[1]
-            rsSPx  := close[1]
-            rs.armDip()
-    // The candles this bar closes.
-    if rsDipOk and rsEndA and (na(rsDoneA) or rsDoneA != rsTA)
-        int rsE2 = rs.stepDip(rsA, rsMaA, rsCLow)
-        rsDoneA := rsTA
-        if rsE2 == 1
-            rsDipFrom := true
-        if rsE2 == 2
-            rsDipGo   := true
-            rsDipLate := false
-            rsDR      := rsA
-            rsDMa     := rsMaA
-            rsDPx     := close
-            rsDLo     := rs.lowR
-            rsDStop   := rs.lowPx - syminfo.mintick
-            rsDN      := rs.n
-            rsDAge    := rs.age
-    if rsEndC and (na(rsDoneC) or rsDoneC != rsT)
-        bool rsF2 = rs.checkCross(rsA, rsMaA, rsLowA)
-        rsDoneC := rsT
-        if rsF2
-            rsFire := true
-            rsLate := false
-            rsSA   := rsA
-            rsSMa  := rsMaA
-            rsSLo  := rsLowA
-            rsSPx  := close
-            rs.armDip()
-// Announced inside the alert window only (the state above runs on).
-rsFire  := rsFire and inWindow
-rsDipGo := rsDipGo and inWindow
-
-// The messages — a contract with services/tv-setups.ts parseTvMessage (v32 also sent a second
-// "| rsi 180 … ma …", which the server still reads on old rows):
-//   RSI XTND 1.07 | rsi 30 29.2 ma 27.0 | low 22.1 | candle 30 | tf 30S
-//   DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | tf 30S
-// (DIP: `low` the dip's lowest RSI, `stop` a tick under its lowest price, `dip` the signal's number
-// in this dip, `since` the RSI's candles since the RSI cross, `candle` the RSI's timeframe. v38's
-// `| lift` went with the LIFT in v39.)
-rsMsg() =>
-    string msg = "RSI " + syminfo.ticker + " " + str.tostring(rsSPx, format.mintick)
-    msg += " | rsi " + rsTfA + " " + str.tostring(rsSA, "#.0") + " ma " + str.tostring(rsSMa, "#.0")
-    msg += " | low " + str.tostring(rsSLo, "#.0") + " | candle " + rsCheck
-    if rsLate
-        msg += " | late"
-    msg + " | tf " + timeframe.period
-rsDipMsg() =>
-    string msg = "DIP " + syminfo.ticker + " " + str.tostring(rsDPx, format.mintick)
-    msg += " | rsi " + rsTfA + " " + str.tostring(rsDR, "#.0") + " ma " + str.tostring(rsDMa, "#.0")
-    msg += " | low " + str.tostring(rsDLo, "#.0") + " | stop " + str.tostring(rsDStop, format.mintick)
-    msg += " | dip " + str.tostring(rsDN) + " | since " + str.tostring(rsDAge) + " | candle " + rsTfA
-    if rsDipLate
-        msg += " | late"
-    msg + " | tf " + timeframe.period
-
-// From the 30s alert alone (the VB's alert timeframe), like the VB.
-if rsFire and timeframe.period == vbTf
-    alert(rsMsg(), alert.freq_once_per_bar_close)
-if rsDipGo and timeframe.period == vbTf
-    alert(rsDipMsg(), alert.freq_once_per_bar_close)
-plotshape(rsFire and not rsLate, "RSI cross (v32)", shape.labelup, location.belowbar, color.purple, text = "RSI", textcolor = color.white, size = size.small)
-plotshape(rsFire and rsLate, "RSI cross, late close (v32)", shape.labelup, location.belowbar, color.purple, text = "RSI", textcolor = color.white, size = size.small, offset = -1)
-// v34 plots go last: the DIP, and a small mark where the dip started (the RSI closed under its MA).
-plotshape(rsDipGo and not rsDipLate, "RSI dip (v34)", shape.labelup, location.belowbar, color.fuchsia, text = "DIP", textcolor = color.white, size = size.small)
-plotshape(rsDipGo and rsDipLate, "RSI dip, late close (v34)", shape.labelup, location.belowbar, color.fuchsia, text = "DIP", textcolor = color.white, size = size.small, offset = -1)
-plotshape(rsDipFrom, "RSI dip starts (v34)", shape.triangledown, location.abovebar, color.purple, size = size.tiny)
+// (v32–v34's RSI cross and DIP, section 3, sat here until v44 removed them.)
+// (v32's seven RSI inputs and v34's three DIP inputs, rsOn … rsDipMax, sat here until v44 removed them.)
 
 // ── 4) EMA CROSS OVER VWAP (v35) ──────────────────────────────────────────────
 // Operator, 2026-11-13: "I want to be notified when ema crosses up the vwap (for example, 9 ema
 // crosses up the session vwap in 3 min chart timeframe)". The EMA of a timeframe's closes against
 // a VWAP line, judged at each close of that timeframe's candles: above the line now, at or under
-// it at the close before. As the RSI: a request returns the EMA after the last finished candle
+// it at the close before. A request returns the EMA after the last finished candle
 // (lookahead on + [1]) and the bar's close makes it live, so it works on any chart whose bars
 // divide the timeframe and sends from the 30s alert. The lines are the script's own (the session
 // line from 30s bars by default), the ones it draws.
@@ -1178,7 +908,7 @@ plotshape(rsDipFrom, "RSI dip starts (v34)", shape.triangledown, location.aboveb
 // announces the first few on Momentum names (TV_SETUP.em_cap), like the VB.
 // v35 inputs go last.
 emOn      = input.bool(true,     "EMA cross setup on (v35): an EMA crosses above a VWAP line, judged at a candle's close", group = "EMA cross over VWAP (v35)")
-emTf      = input.timeframe("3", "EMA: candle timeframe (the EMA of its closes; judged at each close)", group = "EMA cross over VWAP (v35)")
+emTf      = input.timeframe("2", "EMA: candle timeframe (the EMA of its closes; judged at each close)", group = "EMA cross over VWAP (v35)")
 emLen     = input.int(9,         "EMA: length", minval = 1, group = "EMA cross over VWAP (v35)")
 emSession = input.bool(true,     "EMA lines: session VWAP", inline = "eml", group = "EMA cross over VWAP (v35)")
 emMonth   = input.bool(false,    "month VWAP", inline = "eml", group = "EMA cross over VWAP (v35)")
@@ -1213,20 +943,13 @@ emBncTolE = input.float(0.0,           "EMA bounce: a low within this % above th
 emBncTolV = input.float(1.0,           "EMA bounce: a low within this % above the VWAP counts as a touch", minval = 0, step = 0.1, group = "EMA cross over VWAP (v35)")
 emBncE = emBncFrom != "VWAP"
 emBncV = emBncFrom != "EMA"
-// v39's inputs (the MACD after a DIP, section 5) are declared here since v40: an input has to come
-// before the code that reads it, and v40's input, which this section reads, has to come after
-// them (new inputs go last).
-mcOn   = input.bool(true,     "MACD after a DIP on (v39): after a DIP, the MACD line closes above zero — the entry", group = "RSI cross (v32)")
-mcTf   = input.timeframe("5", "MACD: its timeframe (the chart you read the MACD on)", group = "RSI cross (v32)")
-mcFast = input.int(12,        "MACD: fast length", minval = 1, group = "RSI cross (v32)")
-mcSlow = input.int(26,        "MACD: slow length", minval = 2, group = "RSI cross (v32)")
-mcLife = input.int(3,         "MACD: wait for the cross for N sessions after the DIP's own (0 = until the next DIP)", minval = 0, group = "RSI cross (v32)")
-mcShow = input.bool(true,     "MACD: draw the marker", group = "RSI cross (v32)")
+// (v39's six MACD inputs, mcOn … mcShow, sat here until v44 removed the MACD cross after a DIP.)
 // v40 input goes last: the line that crosses the VWAP (operator, 11-15: "can we make EMA Cross use
 // BollingerBands upper row instead of EMA? So, add this to settings so I can switch between EMA and
 // BB Upper row? We have a bb upper row already which we use for VWAP+BB Cross"; then: "or, could we
 // do both?"). With "Both" each line runs on its own: its own crosses, day's numbers and alerts.
-emSrc   = input.string("Both", "EMA cross: the line that crosses the VWAP (v40) — the EMA, the upper Bollinger Band (the VB's band: its BB timeframe, length and StdDev), or both, each with its own alerts", options = ["EMA", "BB upper", "Both"], group = "EMA cross over VWAP (v35)")
+// v44: the default is "BB upper", the operator's live setting (it was "Both").
+emSrc   = input.string("BB upper", "EMA cross: the line that crosses the VWAP (v40) — the EMA, the upper Bollinger Band (the VB's band: its BB timeframe, length and StdDev), or both, each with its own alerts", options = ["EMA", "BB upper", "Both"], group = "EMA cross over VWAP (v35)")
 emUseE  = emSrc != "BB upper"   // the EMA's crosses (and its BOUNCE) are on
 emUseB  = emSrc != "EMA"        // the band's crosses are on
 // v41 input goes last (operator, 11-16, CLRO on a 1m chart: "bb upper row moves away from price if it
@@ -1241,17 +964,10 @@ emUseB  = emSrc != "EMA"        // the band's crosses are on
 // event (a dip, not a push), not a worse one. The first push of a move from flat, the kind the
 // operator showed (RBNE, GP), happens before a name reaches our screen and isn't in that data.
 bbMidOn = input.bool(true, "BB cross (v41): a cross with the candle closing under the band's middle line (the band widened on a drop; the price didn't lift it) is drawn gray and sent quietly", group = "EMA cross over VWAP (v35)")
-// v42 inputs go last: the BASIS cross (operator, 11-16: "can you add one more band? This time, it
-// should be a separate bollinger bands with configurable it's Length (let it be 1/2 by default), what
-// I want is, the similar setup as our bands cross, but this time I want to use Basis line. It should
-// be a separate bb so I can change its Length value"). The basis is a Bollinger Band's middle line:
-// the average of its last Length closes. This one belongs to its own band (its own timeframe and
-// length; the VB's band is untouched), and its crosses of the VWAP follow the band cross's rule.
-// The default length 10 is half the VB band's 20 (my reading of "1/2"); 1 makes the basis the price.
-bsOn  = input.bool(true,       "Basis cross on (v42): the basis (middle line) of its own Bollinger Band crosses above the VWAP, by the EMA cross's rule and settings", group = "EMA cross over VWAP (v35)")
-bsTf  = input.timeframe("45S", "Basis: its band's timeframe", group = "EMA cross over VWAP (v35)")
-bsLen = input.int(10,          "Basis: its band's length — the closes it averages (1 = the price itself)", minval = 1, group = "EMA cross over VWAP (v35)")
+// (v42's three BASIS inputs, bsOn / bsTf / bsLen, sat here until v44 removed the BASIS cross.)
 
+// rsSym (the symbol with extended hours, for the request): the name comes from the RSI section, removed in v44.
+rsSym = ticker.new(syminfo.prefix, syminfo.ticker, session.extended)
 // The EMA after the last finished candle of its timeframe, and live at this bar (that EMA's
 // chart value now: the finished candles + this bar's close as the open one's).
 emPrevE = request.security(rsSym, emTf, ta.ema(close, emLen)[1], lookahead = barmerge.lookahead_on)
@@ -1291,6 +1007,8 @@ emBand(simple string bTf) =>
         bUp  := bMean + vbMult * math.sqrt(bSq / vbLen)
         bMid := bMean
     [bUp, bMid]
+// rsChartSec (the chart's bar in seconds): the name comes from the RSI section, removed in v44.
+rsChartSec = timeframe.in_seconds(timeframe.period)
 // The band is the alert's on a chart of the alert timeframe or a multiple of it, with a band
 // timeframe no smaller than it.
 emBbOk    = rsChartSec >= vbBaseSec and rsChartSec % vbBaseSec == 0 and timeframe.in_seconds(vbBbTf) >= vbBaseSec
@@ -1301,39 +1019,12 @@ float emBbMid = na
 if array.size(emBbIn) > 0
     emBb    := array.get(emBbIn, array.size(emBbIn) - 1)
     emBbMid := array.get(emBbMidIn, array.size(emBbMidIn) - 1)
-// v42: the basis of the operator's separate band — the average of its timeframe's last bsLen - 1
-// finished closes and the forming one, from the alert timeframe's bars like the band above (and
-// replayed on a bigger chart the same way). With a length of 1 it is the close.
-bsBasis(simple string bTf, simple int len) =>
-    bool sNew = timeframe.change(bTf)
-    var sCloses = array.new<float>()
-    var float sLastC = na
-    if sNew and not na(sLastC)
-        array.push(sCloses, sLastC)
-        if array.size(sCloses) > len - 1
-            array.shift(sCloses)
-    sLastC := close
-    float sMid = na
-    int   sN   = array.size(sCloses)
-    if sN == len - 1
-        float sSum = close
-        if sN > 0
-            for i = 0 to sN - 1
-                sSum := sSum + array.get(sCloses, i)
-        sMid := sSum / len
-    sMid
-bsBbOk  = rsChartSec >= vbBaseSec and rsChartSec % vbBaseSec == 0 and timeframe.in_seconds(bsTf) >= vbBaseSec
-bsLower = emOn and bsOn and bsBbOk and rsChartSec > vbBaseSec and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0
-bsIn    = request.security_lower_tf(syminfo.tickerid, bsLower ? vbTf : timeframe.period, bsBasis(bsTf, bsLen))
-float emBs = na
-if array.size(bsIn) > 0
-    emBs := array.get(bsIn, array.size(bsIn) - 1)
+// (v42's basis line, the middle of a separate band, was built here until v44 removed the BASIS cross.)
 // Where the samples are right: a chart no bigger than the EMA's timeframe whose bars divide it.
-// The EMA's crosses run there when the EMA is a chosen line; the band's (bbOk) and the basis's
-// (bsOk) where their line is right too.
+// The EMA's crosses run there when the EMA is a chosen line; the band's (bbOk) where its line is
+// right too.
 emOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0 and emUseE
 bbOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0 and emUseB and emBbOk
-bsOk    = emOn and rsChartSec <= emTfSec and emTfSec % rsChartSec == 0 and bsOn and bsBbOk
 
 // One line's state, stepped once per sampled candle close.
 type EmaLine
@@ -1764,70 +1455,7 @@ if bbOk
         bbCF := bbB6
         bbCW := bbB7
 
-// ── 4c) THE BASIS'S CROSSES (v42) ─────────────────────────────────────────────
-// The basis of the operator's separate band (emBs, above) against the same VWAP lines, sampled and
-// filtered like the band's crosses (bbSample): at each close of the EMA's candle timeframe, above
-// the line now and at or under it at the close before, the day's first candle excluded, gainers
-// only, the v36 filter's three tests on the basis's own stay under the line and crossings. There is
-// no middle-line test: the basis is a middle line, and a drop lowers it. Its own lines, so its own
-// `cross N` per day. No BOUNCE.
-var EmaLine bsS = EmaLine.new()
-var EmaLine bsM = EmaLine.new()
-var EmaLine bsY = EmaLine.new()
-var bsHS = array.new<int>()
-var bsHM = array.new<int>()
-var bsHY = array.new<int>()
-var int bsDone = na
-bool bsLateS = not na(emT[1]) and emT != emT[1] and (na(bsDone) or bsDone != emT[1])
-bool bsLS = false
-bool bsLM = false
-bool bsLY = false
-int  bsLN = 0
-int  bsLU = 0
-int  bsLF = 0
-bool bsLW = false
-bool bsCS = false
-bool bsCM = false
-bool bsCY = false
-int  bsCN = 0
-int  bsCU = 0
-int  bsCF = 0
-bool bsCW = false
-if bsOk
-    if bsLateS
-        bool bsOkL    = inWindow and not newDay and (not emGainOn or gainer[1])
-        bool bsEarlyL = hour(emT[1], "America/New_York") < emFromHour
-        [bsA1, bsA2, bsA3, bsA4, bsA5, bsA6, bsA7] = bbSample(bsS, bsM, bsY, bsHS, bsHM, bsHY, emBs[1], svwap[1], mvwap[1], yvwap[1], bsOkL, bsEarlyL, close[1], na)
-        bsDone := emT[1]
-        bsLS := bsA1
-        bsLM := bsA2
-        bsLY := bsA3
-        bsLN := bsA4
-        bsLU := bsA5
-        bsLF := bsA6
-        bsLW := bsA7
-    // The anchors: a new day restarts the session line and the day's counts.
-    if newDay
-        bsS.restart(bsHS)
-        bsS.n := 0
-        bsM.n := 0
-        bsY.n := 0
-    if emNewM
-        bsM.restart(bsHM)
-    if emNewY
-        bsY.restart(bsHY)
-    if emEnd and (na(bsDone) or bsDone != emT)
-        bool bsOkC    = inWindow and (not emGainOn or gainer)
-        bool bsEarlyC = hour(emT, "America/New_York") < emFromHour
-        [bsB1, bsB2, bsB3, bsB4, bsB5, bsB6, bsB7] = bbSample(bsS, bsM, bsY, bsHS, bsHM, bsHY, emBs, svwap, mvwap, yvwap, bsOkC, bsEarlyC, close, na)
-        bsDone := emT
-        bsCS := bsB1
-        bsCM := bsB2
-        bsCY := bsB3
-        bsCN := bsB4
-        bsCU := bsB5
-        bsCF := bsB6
-        bsCW := bsB7
+// (v42's section 4c, the basis's crosses, sat here until v44 removed the BASIS cross.)
 
 // The message — a contract with services/tv-setups.ts parseTvMessage. Every value is the sampled
 // candle's (a late one's from the bar before):
@@ -1840,11 +1468,9 @@ if bsOk
 emPct(float px, float ln) => (px >= ln ? "+" : "") + str.tostring((px / ln - 1) * 100, "#.0")
 // v41: a band cross also carries `| mid 8.05 (+0.5%)` after `bb` — the band's middle line and the
 // price against it (under it = the band widened on a drop).
-// v42, a cross of the basis (`kind` = "bs"; `e` is then the basis): `| basis 8.03 (+0.7%) | bb 45S | len 10`
-// — the basis, the price against it, its band's timeframe and length:
-//   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | basis 8.03 (+0.7%) | bb 45S | len 10 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S
-// `kind` names the line that crossed: "ema", "bb" (the band) or "bs" (the basis). (Not `by`: that is
-// a reserved word in Pine, and v42's first paste failed to compile on it.)
+// `kind` names the line that crossed: "ema" or "bb" (the band); v42's third kind, the basis, went
+// with the BASIS cross in v44. (Not `by`: that is a reserved word in Pine, and v42's first paste
+// failed to compile on it.)
 emMsgBy(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv, float yv, bool late, int under, int flips, bool weak, string kind, float mid) =>
     string names = ""
     if fS
@@ -1864,8 +1490,6 @@ emMsgBy(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv,
         msg += " | upper " + str.tostring(e, format.mintick) + " (" + emPct(px, e) + "%) | bb " + vbBbTf
         if not na(mid)
             msg += " | mid " + str.tostring(mid, format.mintick) + " (" + emPct(px, mid) + "%)"
-    else if kind == "bs"
-        msg += " | basis " + str.tostring(e, format.mintick) + " (" + emPct(px, e) + "%) | bb " + bsTf + " | len " + str.tostring(bsLen)
     else
         msg += " | ema " + str.tostring(emLen) + " " + str.tostring(e, format.mintick)
     msg += " | line " + names + " | candle " + emTf + " | cross " + str.tostring(n)
@@ -1915,7 +1539,7 @@ emBncMsg(bool fS, bool fM, bool fY, int n, float px, float e, float sv, float mv
         msg += " | late"
     msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
 
-// From the 30s alert alone (the VB's alert timeframe), like the VB and the RSI.
+// From the 30s alert alone (the VB's alert timeframe), like the VB.
 if (emBLS or emBLM or emBLY) and timeframe.period == vbTf
     alert(emBncMsg(emBLS, emBLM, emBLY, emBLN, close[1], emLive[1], svwap[1], mvwap[1], yvwap[1], true, emBLStop, emBLAge, emBLE, emBLV, emBLW), alert.freq_once_per_bar_close)
 if (emBCS or emBCM or emBCY) and timeframe.period == vbTf
@@ -1929,11 +1553,7 @@ if (bbLS or bbLM or bbLY) and timeframe.period == vbTf
     alert(emMsg(bbLS, bbLM, bbLY, bbLN, close[1], emBb[1], svwap[1], mvwap[1], yvwap[1], true, bbLU, bbLF, bbLW, true, emBbMid[1]), alert.freq_once_per_bar_close)
 if (bbCS or bbCM or bbCY) and timeframe.period == vbTf
     alert(emMsg(bbCS, bbCM, bbCY, bbCN, close, emBb, svwap, mvwap, yvwap, false, bbCU, bbCF, bbCW, true, emBbMid), alert.freq_once_per_bar_close)
-// v42: the basis's crosses, the same message with the basis in the EMA's place.
-if (bsLS or bsLM or bsLY) and timeframe.period == vbTf
-    alert(emMsgBy(bsLS, bsLM, bsLY, bsLN, close[1], emBs[1], svwap[1], mvwap[1], yvwap[1], true, bsLU, bsLF, bsLW, "bs", na), alert.freq_once_per_bar_close)
-if (bsCS or bsCM or bsCY) and timeframe.period == vbTf
-    alert(emMsgBy(bsCS, bsCM, bsCY, bsCN, close, emBs, svwap, mvwap, yvwap, false, bsCU, bsCF, bsCW, "bs", na), alert.freq_once_per_bar_close)
+// (v42's two BASIS alerts sat here until v44 removed the BASIS cross.)
 // v35 plots go last: the EMA line, the markers, and a VWAP line this setup uses that no other draws.
 plot(emOk and emShow ? emLive : na, "EMA (EMA cross, v35)", color.aqua)
 plotshape(emShow and (emCS or emCM or emCY) and not emCW, "EMA cross (v35)", shape.labelup, location.belowbar, color.orange, text = "EMA", textcolor = color.black, size = size.small)
@@ -1950,140 +1570,7 @@ plotshape(emShow and (emBLS or emBLM or emBLY) and not emBLW, "EMA bounce, late 
 plotshape(emShow and (emBCS or emBCM or emBCY) and emBCW, "EMA bounce, filtered (v37)", shape.labelup, location.belowbar, color.gray, text = "bnc", textcolor = color.white, size = size.tiny)
 plotshape(emShow and (emBLS or emBLM or emBLY) and emBLW, "EMA bounce, filtered, late close (v37)", shape.labelup, location.belowbar, color.gray, text = "bnc", textcolor = color.white, size = size.tiny, offset = -1)
 
-// ── 5) MACD CROSS AFTER A DIP (v39) ───────────────────────────────────────────
-// Operator, 2026-11-15: "entering alone on the DIP is not easy, chart can keep going lower, that's
-// why lets add macd line cross over zero line after the latest DIP, I want to experiment with it."
-// Their layout: a 5m chart with TradingView's standard MACD under it, the RSI cross checked at 1h
-// with a 10m RSI.
-// After a DIP alert the script waits for the MACD line (the EMA 12 minus the EMA 26 of a
-// timeframe's closes, 5m by default) to close above zero after closing at or under it. That close
-// is MACD. Like the RSI, the two EMAs come from a request (their values after the last finished
-// candle: lookahead on + [1]) and the bar's close makes them live, so it works on any chart whose
-// bars divide the MACD's timeframe and sends from the 30s alert.
-// A newer DIP starts the wait over (the latest DIP), and it ends after N sessions without a
-// cross. One MACD per DIP. A MACD candle that closed with or before the DIP's candle doesn't count.
-// A candle whose closing bar had no trades is judged on the next bar (`| late`, drawn one bar
-// back), the day's last one on the next morning's first bar, like a late RSI or DIP. The marks
-// are the same on every chart when the MACD's timeframe divides the RSI's (5m and 10m).
-// Measured before building (research/rsi-dip/dip_macd_cross.py, 60 days of Yahoo 5m bars, 4,591
-// replayed DIPs): the line crosses up on 70% of the DIPs, a median 3.3 hours later and 1% over the
-// DIP's price, and what follows is no better than buying the DIP itself (+10% within three
-// sessions on 29% / 40% of them in the two halves of the data; 51% in the week of 11-02). Built
-// for the operator's own selection, not as an edge.
-// Its six inputs (mcOn … mcShow) are declared with the EMA section's, above (see there, v40).
-
-// The two EMAs after the last finished candle of the MACD's timeframe, and the line live at this
-// bar (that MACD's chart value now: the finished candles + this bar's close as the open one's).
-mcState(simple int fast, simple int slow) =>
-    float f = ta.ema(close, fast)
-    float s = ta.ema(close, slow)
-    [f[1], s[1]]
-[mcPrevF, mcPrevS] = request.security(rsSym, mcTf, mcState(mcFast, mcSlow), lookahead = barmerge.lookahead_on)
-mcAF   = 2.0 / (mcFast + 1)
-mcAS   = 2.0 / (mcSlow + 1)
-mcLine = (mcAF * close + (1 - mcAF) * mcPrevF) - (mcAS * close + (1 - mcAS) * mcPrevS)
-// Where the samples are right: a chart that shows the DIP, no bigger than the MACD's timeframe,
-// whose bars divide it.
-mcTfSec = timeframe.in_seconds(mcTf)
-mcOk    = mcOn and rsDipOk and rsChartSec <= mcTfSec and mcTfSec % rsChartSec == 0
-
-// The line closed above zero after closing at or under it.
-mcUp(float before, float now) => not na(before) and not na(now) and before <= 0 and now > 0
-
-mcT   = time(mcTf)
-mcEnd = time_close == time_close(mcTf)
-var int   mcDone  = na
-bool mcLateS = not na(mcT[1]) and mcT != mcT[1] and (na(mcDone) or mcDone != mcT[1])
-var float mcWas   = na      // the line at the candle close before
-var bool  mcArmed = false   // a DIP is waiting for its cross
-var float mcBase  = na      // that DIP's price…
-var float mcStop  = na      // …its stop (a tick under the dip's low)…
-var int   mcDipN  = 0       // …its number in the dip…
-var int   mcT0    = na      // …and when its candle closed
-var int   mcAge   = 0       // sessions begun since
-bool  mcGo     = false      // MACD on this bar, and what it carries
-bool  mcLate   = false
-float mcGoPx   = na
-float mcGoBase = na
-float mcGoStop = na
-int   mcGoDipN = 0
-int   mcGoMin  = 0
-if mcOk
-    // 1) A candle that ended before this bar, unsampled. It closed with or before a DIP judged
-    //    late on this bar, so it belongs to the wait of the DIP before. Like a late RSI or DIP it
-    //    is sent on a new day's first bar too (`| late`, with the price it closed at).
-    if mcLateS
-        float mcL1 = mcLine[1]
-        if mcArmed and mcUp(mcWas, mcL1)
-            mcGo     := true
-            mcLate   := true
-            mcGoPx   := close[1]
-            mcGoBase := mcBase
-            mcGoStop := mcStop
-            mcGoDipN := mcDipN
-            mcGoMin  := math.round((time - mcT0) / 60000.0)
-            mcArmed  := false
-        if not na(mcL1)
-            mcWas := mcL1
-        mcDone := mcT[1]
-    // The sessions begun since the DIP (after the late sample, which belongs to the bar before).
-    if mcArmed and newDay
-        mcAge := mcAge + 1
-    if mcArmed and mcLife > 0 and mcAge > mcLife
-        mcArmed := false
-    // 2) A DIP judged late belongs to the candle before: its wait starts here.
-    if rsDipGo and rsDipLate
-        mcArmed := true
-        mcBase  := rsDPx
-        mcStop  := rsDStop
-        mcDipN  := rsDN
-        mcT0    := time
-        mcAge   := newDay ? 1 : 0
-    // 3) The candle this bar closes.
-    if mcEnd and (na(mcDone) or mcDone != mcT)
-        if mcArmed and mcUp(mcWas, mcLine)
-            mcGo     := true
-            mcLate   := false
-            mcGoPx   := close
-            mcGoBase := mcBase
-            mcGoStop := mcStop
-            mcGoDipN := mcDipN
-            mcGoMin  := math.round((time_close - mcT0) / 60000.0)
-            mcArmed  := false
-        if not na(mcLine)
-            mcWas := mcLine
-        mcDone := mcT
-    // 4) A DIP on the bar that closes its candle: its wait starts after this bar.
-    if rsDipGo and not rsDipLate
-        mcArmed := true
-        mcBase  := rsDPx
-        mcStop  := rsDStop
-        mcDipN  := rsDN
-        mcT0    := time_close
-        mcAge   := 0
-// Announced inside the alert window only (the wait is over either way).
-mcGo := mcGo and inWindow
-
-// The message — a contract with services/tv-setups.ts parseTvMessage:
-//   MACD KRMN 38.12 | macd 5 12 26 | base 37.53 | stop 37.2 | dip 1 | after 200m | candle 10 | tf 30S
-// (`macd` its timeframe and the two lengths, `base` the DIP's price, `stop` the DIP's stop, `dip`
-// the DIP's number in its dip, `after` minutes since the DIP candle closed, `candle` the RSI's
-// timeframe, `| late` when the MACD candle's closing bar had no trades.)
-mcMsg() =>
-    string msg = "MACD " + syminfo.ticker + " " + str.tostring(mcGoPx, format.mintick)
-    msg += " | macd " + mcTf + " " + str.tostring(mcFast) + " " + str.tostring(mcSlow)
-    msg += " | base " + str.tostring(mcGoBase, format.mintick) + " | stop " + str.tostring(mcGoStop, format.mintick)
-    msg += " | dip " + str.tostring(mcGoDipN) + " | after " + str.tostring(mcGoMin) + "m" + " | candle " + rsTfA
-    if mcLate
-        msg += " | late"
-    msg + " | tf " + timeframe.period
-
-// From the 30s alert alone, like the rest of the RSI setup.
-if mcGo and timeframe.period == vbTf
-    alert(mcMsg(), alert.freq_once_per_bar_close)
-// v39 plots go last.
-plotshape(mcShow and mcGo and not mcLate, "MACD after a DIP (v39)", shape.labelup, location.belowbar, color.aqua, text = "MACD", textcolor = color.black, size = size.small)
-plotshape(mcShow and mcGo and mcLate, "MACD after a DIP, late close (v39)", shape.labelup, location.belowbar, color.aqua, text = "MACD", textcolor = color.black, size = size.small, offset = -1)
+// (v39's MACD cross after a DIP, section 5, sat here until v44 removed it.)
 // v40 plots go last: the band where its crosses run and the VB isn't already drawing it on this
 // chart, and the band's crosses (maroon "BB"; gray "bb" for the ones the filter calls weak).
 plot(bbOk and emShow and not (vbShow and (vbLower or (vbOk and vbChartSec == vbBaseSec))) ? emBb : na, "BB upper (EMA cross, v40)", color.new(color.orange, 20))
@@ -2094,10 +1581,4 @@ plotshape(emShow and (bbLS or bbLM or bbLY) and bbLW, "BB upper cross, filtered,
 // v41 plot goes last: the band's middle line, hidden until switched on in Style (a cross whose candle
 // closed under it is the gray kind).
 plot(bbOk and emShow ? emBbMid : na, "BB middle (EMA cross, v41)", color.new(color.orange, 60), display = display.none)
-// v42 plots go last: the basis of the separate band, and its crosses (olive "BS"; gray "bs" for the
-// ones the filter calls weak).
-plot(bsOk and emShow ? emBs : na, "Basis (basis cross, v42)", color.olive)
-plotshape(emShow and (bsCS or bsCM or bsCY) and not bsCW, "Basis cross over VWAP (v42)", shape.labelup, location.belowbar, color.olive, text = "BS", textcolor = color.white, size = size.small)
-plotshape(emShow and (bsLS or bsLM or bsLY) and not bsLW, "Basis cross, late close (v42)", shape.labelup, location.belowbar, color.olive, text = "BS", textcolor = color.white, size = size.small, offset = -1)
-plotshape(emShow and (bsCS or bsCM or bsCY) and bsCW, "Basis cross, filtered (v42)", shape.labelup, location.belowbar, color.gray, text = "bs", textcolor = color.white, size = size.tiny)
-plotshape(emShow and (bsLS or bsLM or bsLY) and bsLW, "Basis cross, filtered, late close (v42)", shape.labelup, location.belowbar, color.gray, text = "bs", textcolor = color.white, size = size.tiny, offset = -1)
+// (v42's five BASIS plots sat here until v44 removed the BASIS cross.)

@@ -19,8 +19,10 @@ const gate = new TvSetupGate();
 // phone and dashboard alike. One global row in app_settings, like the
 // screener config, because the gate and Telegram are global. Loaded once,
 // before the first webhook or settings read; never rejects (defaults stay).
-// Stored as { announced, known } since 2026-11-13 (DIP got its own switch); an older plain list
-// is read with DIP following RSI (readStoredStages).
+// Stored as { announced, known } since 2026-11-13, so a stage that gets its own switch later can
+// start with the value of the switch it rode (BAND, from EMA); an older plain list is still read.
+// A saved stage that a script removed since (2026-11-22: RSI, DIP, MACD, BASIS) is dropped
+// (readStoredStages).
 // 2026-11-15: a second row, `tv_alert_rules` — the menu's rules beside the switches (so far one:
 // EMA / BAND / BOUNCE on Momentum names only, on by default). Missing = the defaults.
 const STAGES_KEY = 'tv_alert_stages';

@@ -35,7 +35,7 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'macd' | 'ema' | 'bounce' | 'band' | 'basis';
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band';
 // The PULLBACK setup's stages (script v10).
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
 // The VWAP + BB cross (script v21): one stage, CROSS, on the candle timeframe's
@@ -46,32 +46,23 @@ export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback
 // within 1% of the line it crossed and a 30s candle closing green above it; `stop` = a tick
 // under the pullback's low. Announced like CROSS (its own ⚙ switch, the cap on `retest N`).
 export const VB_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['cross', 'retest']);
-// v32 RSI cross (operator, 2026-11-08, for longer trades): the 12h RSI crosses above its MA
-// (SMA 14) while oversold, judged at a 6h candle's close (`candle 360`), from the 30s alert alone;
-// the 3h RSI rides along. Announced off Momentum too (beaten-down names), behind its ⚙ switch.
-// v34 DIP (operator, 2026-11-12): after an RSI cross, the RSI closes back under its MA on its own
-// timeframe's candles and then turns up — the pullback entry, with a stop under the dip's low.
-// It rode the RSI's ⚙ switch until 2026-11-13; since then it has its own (operator: "separate
-// RSI+DIP alert settings"). A list saved before that gives DIP the RSI's value (readStoredStages).
-// v39 MACD (operator, 2026-11-15: "entering alone on the DIP is not easy, chart can keep going
-// lower, that's why lets add macd line cross over zero line after the latest DIP"): after a DIP,
-// the MACD line of a timeframe (5m, 12 / 26) closes above zero. Its own ⚙ switch; a list saved
-// before it existed gives it the DIP's value. Announced like the DIP: off Momentum too, no cap.
-// v39 also removed two experiments: the DIP's LIFT (stage `lift`, v38: a level some % above the
-// DIP) and the VB lanes (v29: more candle timeframes for CROSS / RETEST). LIFT messages are no
-// longer read (400), their rows stay in tier_events, and the code is in git at v38 (7c7b4b9).
-export const RSI_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['rsi', 'dip', 'macd']);
+// Removed 2026-11-22 (script v44), at the operator's request: the RSI cross (stage `rsi`, v32), its
+// DIP (`dip`, v34), the MACD cross after a DIP (`macd`, v39) and the basis's cross (`basis`, v42;
+// see emaLineStage). Their messages are no longer read (400), a saved ⚙ switch of theirs is
+// dropped, and their rows stay in tier_events, unlisted. The code is in git at 97546dd.
+// Removed before them, in v39: the DIP's LIFT (stage `lift`, v38: a level some % above the DIP)
+// and the VB lanes (v29: more candle timeframes for CROSS / RETEST); code in git at v38 (7c7b4b9).
 // v37 BOUNCE (operator, 2026-11-13): after an EMA cross, a candle's low comes down to the EMA or
 // the VWAP and that candle or a later one closes green above the EMA — the pullback entry, with a
 // stop under the pullback's low. It rides the EMA's ⚙ switch (no switch of its own).
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'bounce' ? 'ema' : stage;
 }
-// The EMA cross, its bounce and (since 2026-11-16 stages of their own) the band's and the basis's
-// crosses: one alert each from the 30s alert, limited alike.
-export const EMA_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'bounce', 'band', 'basis']);
-// The three crosses of a line over the VWAP (not the bounce): the EMA's, the band's, the basis's.
-export const LINE_CROSS_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'band', 'basis']);
+// The EMA cross, its bounce and (since 2026-11-16 a stage of its own) the band's cross: one alert
+// each from the 30s alert, limited alike.
+export const EMA_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'bounce', 'band']);
+// The crosses of a line over the VWAP (not the bounce): the EMA's and the band's.
+export const LINE_CROSS_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 'band']);
 // v35 EMA cross (operator, 2026-11-13): the EMA of a timeframe's closes (3m, length 9) crosses
 // above a VWAP line (session; month / year are script switches), judged at that timeframe's
 // candle close, from the 30s alert alone. Announced like CROSS: its own ⚙ switch, Momentum names
@@ -89,27 +80,24 @@ export const LINE_CROSS_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['ema', 
 // ⚙ switch, cap and filter, shown as BAND, and its own event beside an EMA cross of the same
 // candle (the gate's key). There is no BOUNCE after it (the bounce is the EMA's).
 // 2026-11-16 (operator, with the ⚙ menu and a sidebar full of BAND pills: "can we separate what band
-// are these? … and, these ones also?"): the band's cross and the basis's are stages of their own,
-// `band` and `basis`, each with a ⚙ switch, a label and a Telegram slug (tv_band / tv_basis). The
-// script still heads all three messages "EMA"; emaLineStage() tells them apart by their fields, for
-// a new message and for a row stored as stage `ema` on 11-15 / 11-16 alike.
+// are these? … and, these ones also?"): the band's cross is a stage of its own, `band`, with a ⚙
+// switch, a label and a Telegram slug (tv_band). The script still heads its message "EMA";
+// emaLineStage() tells the two apart by their fields, for a new message and for a row stored as
+// stage `ema` on 11-15 / 11-16 alike. (The basis's cross became a stage the same day; removed since.)
 export function emaByBand(sig: { stage: TvStage }): boolean {
   return sig.stage === 'band';
 }
-// v42 (operator, 2026-11-16: "can you add one more band? … a separate bollinger bands with
-// configurable it's Length … the similar setup as our bands cross, but this time I want to use Basis
-// line"): a third line that can cross the VWAP, the basis (middle line) of a band of its own. Its
-// message is the EMA's with `| basis 8.03 (+0.7%) | bb 45S | len 10` in the place of `| ema 9 8.03`:
-// the same stage, ⚙ switch, cap, filter and Momentum rule, shown as BASIS, its own event beside an
-// EMA or a band cross of the same candle. No BOUNCE after it, and no middle-line test.
-export function emaByBasis(sig: { stage: TvStage }): boolean {
-  return sig.stage === 'basis';
-}
-// The stage of an "EMA …" message by the line it names: `basis` when it carries a basis and no EMA,
-// `band` when it carries a band timeframe and no EMA, else `ema`. Any other stage is itself.
-export function emaLineStage(sig: { stage: TvStage; ema?: number | null; bb_tf?: string | null; basis?: number | null }): TvStage {
+// The stage of an "EMA …" message by the line it names: `band` when it carries a band timeframe and
+// no EMA, else `ema`. Any other stage is itself.
+// Null = the basis's cross (v42: the basis of a separate band crossed the VWAP; its message was the
+// EMA's with `| basis 8.03 (+0.7%) | bb 45S | len 10` in the place of `| ema 9 8.03`), removed
+// 2026-11-22 (script v44; code in git at 97546dd). A message that carries a basis and no EMA is
+// rejected (parseTvMessage), so its `| bb` can't pass for a band cross's; a row stored that way on
+// 11-15 / 11-16 isn't listed (storedStage).
+export function emaLineStage(sig: { stage: TvStage; ema?: number | null; bb_tf?: string | null; basis?: number | null }): TvStage | null {
   if (sig.stage !== 'ema' || sig.ema != null) return sig.stage;
-  return sig.basis != null ? 'basis' : sig.bb_tf != null ? 'band' : 'ema';
+  if (sig.basis != null) return null;
+  return sig.bb_tf != null ? 'band' : 'ema';
 }
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
@@ -158,48 +146,25 @@ export interface TvSetupSignal {
   // Under it, the band widened on a drop — the script calls such a cross weak (its bbMidOn input).
   bb_mid?: number | null;
   bb_mid_pct?: number | null;
-  // v42, a basis cross (emaByBasis): the basis at the cross, the price against it, and its band's
-  // length (bb_tf is then that band's timeframe)
-  basis?: number | null;
-  basis_pct?: number | null;
-  bb_len?: number | null;
   candle_open?: number | null; // the candle's open
   cross_n?: number | null;    // the day's crosses on this ticker, this one included
   // VB retest (script v28)
   stop?: number | null;       // RETEST: a tick under the pullback's low
   retest_n?: number | null;   // RETEST: the day's retests on this ticker, this one included
   vwap_src?: TvVwapSrc | null; // v28: the lines from 30s bars or the chart's bars; null = an older script (chart bars)
-  // RSI cross (script v32); candle_tf is the timeframe it's checked at (360 = the 6h close)
-  rsi_tf?: string | null;     // the signal RSI's timeframe ("720" = 12h)
-  rsi?: number | null;        // its value at the check
-  rsi_ma?: number | null;     // its MA (SMA 14)
-  rsi2_tf?: string | null;    // the second RSI's timeframe ("180" = 3h)
-  rsi2?: number | null;
-  rsi2_ma?: number | null;
-  rsi_low?: number | null;    // the signal RSI's lowest at the cross or within its last N candles
-  late?: boolean;             // judged a bar late (the check candle's closing bar had no trades)
-  // RSI dip (script v34): rsi_tf / rsi / rsi_ma at the turn, rsi_low = the dip's lowest RSI,
-  // stop = a tick under the dip's lowest price, candle_tf = the RSI's timeframe
-  dip_n?: number | null;      // the signal's number in this dip (a lower low and another rise → 2)
-  since_n?: number | null;    // the RSI's candles since the RSI cross
   // EMA cross (script v35): candle_tf = the EMA's timeframe, cross_n = the day's crosses on the line
   ema_len?: number | null;    // the EMA's length (9)
   ema?: number | null;        // its value at the candle's close
+  late?: boolean;             // judged a bar late (the candle's closing bar had no trades)
   // v36, the script's filter: what it measured, and its verdict
   under_n?: number | null;    // candles in a row the EMA had been at or under the line before the cross
   flips_n?: number | null;    // EMA / line crossings in the 20 candles before
   weak?: boolean;             // the filter calls the cross weak → stored, not announced
-  // EMA bounce (script v37): stop = a tick under the pullback's low, since_n = candles after the
-  // cross candle, candle_tf / ema_len / ema as the cross, weak = its cross was weak
+  // EMA bounce (script v37): stop = a tick under the pullback's low, candle_tf / ema_len / ema as
+  // the cross, weak = its cross was weak
+  since_n?: number | null;    // candles after the cross candle
   bounce_n?: number | null;   // the day's bounces on the line, this one included (a weak one isn't counted)
   bounce_from?: TvBounceFrom | null;  // what the pullback came down to
-  // MACD after a DIP (script v39): stop / dip_n = its DIP's, candle_tf = the RSI's timeframe,
-  // late = the MACD candle's closing bar had no trades
-  macd_tf?: string | null;    // the MACD's timeframe ("5")
-  macd_fast?: number | null;  // its two lengths (12, 26)
-  macd_slow?: number | null;
-  dip_px?: number | null;     // the DIP's price (`| base`)
-  after_min?: number | null;  // minutes since the DIP candle closed
 }
 export type TvBounceFrom = 'ema' | 'vwap' | 'ema+vwap';
 
@@ -259,11 +224,11 @@ export const TV_SETUP = {
   offscreen_silent: true,
 } as const;
 
-// A message's head word (or a JSON body's `stage`) → its stage. The script heads the band's and the
-// basis's crosses "EMA" (emaLineStage sorts them out); a JSON body may name `band` / `basis` itself.
+// A message's head word (or a JSON body's `stage`) → its stage. The script heads the band's cross
+// "EMA" (emaLineStage sorts it out); a JSON body may name `band` itself.
 const STAGES: Record<string, TvStage> = {
-  pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest', rsi: 'rsi', dip: 'dip', ema: 'ema',
-  bounce: 'bounce', macd: 'macd', band: 'band', basis: 'basis',
+  pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest', ema: 'ema',
+  bounce: 'bounce', band: 'band',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
@@ -296,43 +261,12 @@ export function vbFields(sig: TvSetupSignal): {
   return {};
 }
 
-// The v32 RSI cross's, the v34 DIP's and the v39 MACD's fields for the alert's setup info and its
-// tier_events row; none on other stages.
-export function rsiFields(sig: TvSetupSignal): {
-  candle_tf?: string | null; rsi_tf?: string | null; rsi?: number | null; rsi_ma?: number | null;
-  rsi2_tf?: string | null; rsi2?: number | null; rsi2_ma?: number | null; rsi_low?: number | null; late?: boolean;
-  stop?: number | null; dip_n?: number | null; since_n?: number | null;
-  macd_tf?: string | null; macd_fast?: number | null; macd_slow?: number | null; dip_px?: number | null; after_min?: number | null;
-} {
-  if (sig.stage === 'dip') {
-    return {
-      candle_tf: sig.candle_tf ?? null, rsi_tf: sig.rsi_tf ?? null, rsi: sig.rsi ?? null, rsi_ma: sig.rsi_ma ?? null,
-      rsi_low: sig.rsi_low ?? null, stop: sig.stop ?? null, dip_n: sig.dip_n ?? null, since_n: sig.since_n ?? null,
-      late: sig.late === true,
-    };
-  }
-  if (sig.stage === 'macd') {
-    return {
-      candle_tf: sig.candle_tf ?? null, stop: sig.stop ?? null, dip_n: sig.dip_n ?? null, late: sig.late === true,
-      macd_tf: sig.macd_tf ?? null, macd_fast: sig.macd_fast ?? null, macd_slow: sig.macd_slow ?? null,
-      dip_px: sig.dip_px ?? null, after_min: sig.after_min ?? null,
-    };
-  }
-  if (sig.stage !== 'rsi') return {};
-  return {
-    candle_tf: sig.candle_tf ?? null, rsi_tf: sig.rsi_tf ?? null, rsi: sig.rsi ?? null, rsi_ma: sig.rsi_ma ?? null,
-    rsi2_tf: sig.rsi2_tf ?? null, rsi2: sig.rsi2 ?? null, rsi2_ma: sig.rsi2_ma ?? null, rsi_low: sig.rsi_low ?? null,
-    late: sig.late === true,
-  };
-}
-
 // The v35 EMA cross's fields for the alert's setup info and its tier_events row; none on other stages.
 export function emaFields(sig: TvSetupSignal): {
   candle_tf?: string | null; cross_n?: number | null; ema_len?: number | null; ema?: number | null; late?: boolean;
   under_n?: number | null; flips_n?: number | null; weak?: boolean;
   stop?: number | null; bounce_n?: number | null; since_n?: number | null; bounce_from?: TvBounceFrom | null;
   upper?: number | null; upper_pct?: number | null; bb_tf?: string | null; bb_mid?: number | null; bb_mid_pct?: number | null;
-  basis?: number | null; basis_pct?: number | null; bb_len?: number | null;
 } {
   if (sig.stage === 'bounce') {
     return {
@@ -351,22 +285,18 @@ export function emaFields(sig: TvSetupSignal): {
       upper: sig.upper ?? null, upper_pct: sig.upper_pct ?? null, bb_tf: sig.bb_tf ?? null,
       bb_mid: sig.bb_mid ?? null, bb_mid_pct: sig.bb_mid_pct ?? null,   // v41
     } : {}),
-    // v42: the basis that crossed, when it was the basis
-    ...(emaByBasis(sig) ? {
-      basis: sig.basis ?? null, basis_pct: sig.basis_pct ?? null, bb_tf: sig.bb_tf ?? null, bb_len: sig.bb_len ?? null,
-    } : {}),
   };
 }
 
-// A stored tv_setup row's stage-specific fields (what vbFields / rsiFields / emaFields put in its
-// meta) → the same fields for the alert's setup info, each kept only when the row has it. GET
+// A stored tv_setup row's stage-specific fields (what vbFields / emaFields put in its meta) → the
+// same fields for the alert's setup info, each kept only when the row has it. GET
 // /api/screener/alerts builds a reloaded page's rows from this. Until 2026-11-16 that endpoint
-// copied the VB's fields alone, so after a reload an EMA row lost its length ("1m/?"), a weak cross
-// its `weak`, an RSI / DIP / MACD row its readings, and a basis cross looked like a band cross.
-const STORED_NUM_FIELDS = ['upper', 'upper_pct', 'candle_open', 'cross_n', 'stop', 'retest_n', 'rsi', 'rsi_ma', 'rsi2', 'rsi2_ma', 'rsi_low',
-  'dip_n', 'since_n', 'macd_fast', 'macd_slow', 'dip_px', 'after_min', 'ema_len', 'ema', 'under_n', 'flips_n', 'bounce_n',
-  'bb_mid', 'bb_mid_pct', 'basis', 'basis_pct', 'bb_len'] as const;
-const STORED_STR_FIELDS = ['candle_tf', 'bb_tf', 'rsi_tf', 'rsi2_tf', 'macd_tf', 'bounce_from'] as const;
+// copied the VB's fields alone, so after a reload an EMA row lost its length ("1m/?") and a weak
+// cross its `weak`. The fields of the stages removed 2026-11-22 (the RSI's, the DIP's, the MACD's,
+// the basis's) are no longer copied: their rows aren't listed.
+const STORED_NUM_FIELDS = ['upper', 'upper_pct', 'candle_open', 'cross_n', 'stop', 'retest_n',
+  'since_n', 'ema_len', 'ema', 'under_n', 'flips_n', 'bounce_n', 'bb_mid', 'bb_mid_pct'] as const;
+const STORED_STR_FIELDS = ['candle_tf', 'bb_tf', 'bounce_from'] as const;
 const STORED_BOOL_FIELDS = ['late', 'weak'] as const;
 export function storedSetupFields(meta: Record<string, unknown>): Record<string, number | string | boolean | null> {
   const out: Record<string, number | string | boolean | null> = {};
@@ -378,15 +308,17 @@ export function storedSetupFields(meta: Record<string, unknown>): Record<string,
   return out;
 }
 
-// A stored row's stage as the dashboard should see it: a band or a basis cross stored as `ema`
-// (rows of 2026-11-15 / 11-16, before they were stages) reads `band` / `basis`.
+// A stored row's stage as the dashboard should see it: a band cross stored as `ema` (rows of
+// 2026-11-15 / 11-16, before it was a stage) reads `band`. A basis cross stored as `ema` on those
+// days still reads `basis`, a removed stage: GET /api/screener/alerts leaves such a row out, so it
+// can't come back as an EMA row.
 export function storedStage(meta: Record<string, unknown>): string | null {
   const stage = typeof meta.stage === 'string' ? meta.stage : null;
   if (stage !== 'ema') return stage;
   return emaLineStage({
     stage: 'ema', ema: typeof meta.ema === 'number' ? meta.ema : null,
     bb_tf: typeof meta.bb_tf === 'string' ? meta.bb_tf : null, basis: typeof meta.basis === 'number' ? meta.basis : null,
-  });
+  }) ?? 'basis';
 }
 
 const GRADE_LADDER = ['A+', 'A', 'A-', 'B+', 'B', 'B-', 'C', 'D'];
@@ -398,11 +330,12 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'band', 'basis', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'ema', 'band', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
-// A stage v27, v28 or v39 removed (forming / ready / go, level / break, lift) is dropped.
+// A stage v27, v28, v39 or v44 removed (forming / ready / go, level / break, lift, rsi / dip /
+// macd / basis) is dropped.
 export function parseStageList(v: unknown): TvStage[] | null {
   if (!Array.isArray(v)) return null;
   const wanted = new Set(v.filter((x): x is string => typeof x === 'string').map((x) => x.trim().toLowerCase()));
@@ -410,17 +343,19 @@ export function parseStageList(v: unknown): TvStage[] | null {
 }
 
 // A stage that got its own switch after riding another's starts with that switch's value, so a
-// list saved before the split keeps announcing what it did (2026-11-13: DIP, from RSI). A stage
-// that follows another starts with its value too (v39: MACD, from DIP; v38's LIFT did the same).
-// A parent comes before its child in TV_STAGE_ORDER, so it is settled first.
-// 2026-11-16: BAND and BASIS, which rode the EMA's switch on 11-15 / 11-16, start with its value.
-const SPLIT_FROM: Partial<Record<TvStage, TvStage>> = { dip: 'rsi', macd: 'dip', band: 'ema', basis: 'ema' };
-// The menu's stages while the switches were stored as a plain array (before 2026-11-13).
-const LEGACY_KNOWN: readonly TvStage[] = ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'];
+// list saved before the split keeps announcing what it did: BAND, which rode the EMA's switch on
+// 2026-11-15 / 11-16, starts with its value. A parent comes before its child in TV_STAGE_ORDER,
+// so it is settled first. (DIP from RSI, MACD from DIP and BASIS from EMA went with their stages
+// on 2026-11-22.)
+const SPLIT_FROM: Partial<Record<TvStage, TvStage>> = { band: 'ema' };
+// The menu's stages while the switches were stored as a plain array (before 2026-11-13), without
+// the RSI cross it also had then (removed 2026-11-22).
+const LEGACY_KNOWN: readonly TvStage[] = ['pullback', 'cross', 'retest', 'ema', 'broken', 'held'];
 
 // The stored switches: `{ announced, known }`, `known` = the menu's stages when it was saved. A
 // stage the list didn't know takes the switch it split from, or its default. A plain array (saved
-// before 2026-11-13) knew LEGACY_KNOWN. Null if the value is neither.
+// before 2026-11-13) knew LEGACY_KNOWN. A removed stage in either list is ignored: it switches
+// nothing on or off. Null if the value is neither.
 export function readStoredStages(v: unknown): TvStage[] | null {
   let list: unknown;
   let known: Set<string>;
@@ -478,7 +413,12 @@ export function normTicker(raw: unknown): string | null {
   return /^[A-Z][A-Z0-9.-]{0,9}$/.test(t) ? t : null;
 }
 
-function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
+// A message as the parser read it: the signal, and the basis an "EMA …" message may name in the
+// EMA's place. The basis is not part of the signal: emaLineStage alone looks at it, to reject the
+// removed basis cross.
+type TvMessageAsSent = TvSetupSignal & { basis: number | null };
+
+function fromJson(o: Record<string, unknown>): TvMessageAsSent | null {
   const stage = typeof o.stage === 'string' ? STAGES[o.stage.trim().toLowerCase()] : undefined;
   const ticker = normTicker(o.ticker);
   if (!stage || !ticker) return null;
@@ -506,23 +446,12 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     bb_tf: toTf(o.bb_tf ?? o.bb),
     bb_mid: toNum(o.bb_mid ?? o.mid),
     bb_mid_pct: toNum(o.bb_mid_pct),
-    basis: toNum(o.basis),
-    basis_pct: toNum(o.basis_pct),
-    bb_len: toNum(o.bb_len ?? o.len),
     candle_open: toNum(o.candle_open ?? o.open),
     cross_n: toNum(o.cross_n ?? o.cross),
     stop: toNum(o.stop),
     retest_n: toNum(o.retest_n ?? o.retest),
     vwap_src: toVwapSrc(o.vwap_src ?? o.vwap),
-    rsi_tf: toTf(o.rsi_tf),
-    rsi: toNum(o.rsi),
-    rsi_ma: toNum(o.rsi_ma),
-    rsi2_tf: toTf(o.rsi2_tf),
-    rsi2: toNum(o.rsi2),
-    rsi2_ma: toNum(o.rsi2_ma),
-    rsi_low: toNum(o.rsi_low ?? o.low),
     late: o.late === true,
-    dip_n: toNum(o.dip_n ?? o.dip),
     since_n: toNum(o.since_n ?? o.since),
     ema_len: toNum(o.ema_len),
     ema: toNum(o.ema),
@@ -531,11 +460,7 @@ function fromJson(o: Record<string, unknown>): TvSetupSignal | null {
     weak: o.weak === true,
     bounce_n: toNum(o.bounce_n ?? o.bounce),
     bounce_from: toBounceFrom(o.bounce_from ?? o.from),
-    macd_tf: toTf(o.macd_tf),
-    macd_fast: toNum(o.macd_fast),
-    macd_slow: toNum(o.macd_slow),
-    dip_px: toNum(o.dip_px ?? o.base),
-    after_min: toNum(o.after_min ?? o.after),
+    basis: toNum(o.basis),
   };
 }
 
@@ -571,9 +496,6 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S   (v21)
 //   CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | mVWAP 2.55 (+2.4%) | yVWAP 3.1 (-15.8%) | upper 2.58 (+1.2%) | open 2.5 | line session+month | candle 5 | bb 2 | cross 1 | … | tf 30S   (v22)
 //   RETEST AIOK 17.28 | stop 17.09 | sVWAP 17.1 (+1.1%) | mVWAP 14.2 (+21.7%) | line session | candle 5 | bb 45S | retest 1 | day high +46% | vwap 30s | tf 30S   (v28)
-//   RSI XTND 1.07 | rsi 720 29.2 ma 27.0 | rsi 180 41.2 ma 30.7 | low 22.1 | candle 360 | tf 30S   (v32; the signal RSI first, `| late` when judged a bar late)
-//   DIP OMH 8.02 | rsi 15 31.5 ma 32.8 | low 30.4 | stop 7.88 | dip 1 | since 6 | candle 15 | tf 30S   (v34; `low` the dip's lowest RSI, `candle` the RSI's timeframe)
-//   MACD KRMN 38.12 | macd 5 12 26 | base 37.53 | stop 37.2 | dip 1 | after 200m | candle 10 | tf 30S   (v39; `macd` its timeframe and lengths, `base` the DIP's price, `stop` / `dip` the DIP's, `after` minutes since it, `candle` the RSI's timeframe; v38's LIFT is no longer read)
 //   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | day high +25% | vwap 30s | tf 30S   (v35; `ema` its length and value, `candle` its timeframe)
 //   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 0 | under 3 | flips 4 | weak | day high +25% | vwap 30s | tf 30S   (v36; the filter's readings, `| weak` when it calls the cross weak)
 //   BOUNCE PARA 0.1021 | stop 0.0985 | sVWAP 0.0975 (+4.7%) | ema 9 0.099 | line session | from ema+vwap | candle 3 | bounce 1 | since 3 | day high +25% | vwap 30s | tf 30S   (v37; `from` what the pullback came down to, `since` candles after the cross, `| weak` after a weak cross)
@@ -581,14 +503,19 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 // (a negative day high is written "-2%"; scripts before v3 wrote "+-2%"), or a JSON
 // object with the TvSetupSignal field names. Express hands us the raw text for
 // text/plain bodies and an already-parsed object for JSON ones.
+// No longer read since 2026-11-22 (script v44), like v38's LIFT before them: "RSI …", "DIP …" and
+// "MACD …" messages, and an "EMA …" message with `| basis …` in the EMA's place. Each returns null
+// here, so the webhook answers 400 and nothing is stored or announced.
 export function parseTvMessage(body: unknown): TvSetupSignal | null {
-  const sig = parseTvMessageAsSent(body);
-  // 2026-11-16: an "EMA …" message about the band or the basis is stage `band` / `basis`.
-  if (sig) sig.stage = emaLineStage(sig);
-  return sig;
+  const sent = parseTvMessageAsSent(body);
+  if (!sent) return null;
+  const { basis, ...sig } = sent;
+  // 2026-11-16: an "EMA …" message about the band is stage `band`. One about the basis has no stage.
+  const stage = emaLineStage({ ...sig, basis });
+  return stage ? { ...sig, stage } : null;
 }
 
-function parseTvMessageAsSent(body: unknown): TvSetupSignal | null {
+function parseTvMessageAsSent(body: unknown): TvMessageAsSent | null {
   if (body && typeof body === 'object' && !Array.isArray(body)) return fromJson(body as Record<string, unknown>);
   if (typeof body !== 'string') return null;
   const text = body.replace(/−/g, '-').trim();
@@ -600,7 +527,7 @@ function parseTvMessageAsSent(body: unknown): TvSetupSignal | null {
       return null;
     }
   }
-  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST|RSI|DIP|EMA|BOUNCE|MACD)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST|EMA|BOUNCE)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
@@ -624,29 +551,20 @@ function parseTvMessageAsSent(body: unknown): TvSetupSignal | null {
   const bbTf = /\|\s*bb\s+([0-9]+[A-Za-z]?|[DWM])\b/i.exec(text);
   // v41, a band cross: "| mid 8.05 (+0.5%)" — the band's middle line and the price against it
   const bbMid = /\|\s*mid\s+\$?(\d*\.?\d+)\s*\(\s*([-+]?\d*\.?\d+)\s*%\s*\)/i.exec(text);
-  // v42, a basis cross: "| basis 8.03 (+0.7%) | bb 45S | len 10" — the basis, the price against it,
-  // its band's timeframe (read as `bb`) and length. Only an EMA-stage message carries it (v1–v26's
-  // RECLAIM had a `| basis` too; those stages are no longer read).
-  const bsLine = /\|\s*basis\s+\$?(\d*\.?\d+)\s*\(\s*([-+]?\d*\.?\d+)\s*%\s*\)/i.exec(text);
-  const bbLen = /\|\s*len\s+(\d+)\b/i.exec(text);
+  // v42's basis cross: "| basis 8.03 (+0.7%) | bb 45S | len 10" in the place of "| ema 9 8.03".
+  // Read only so that parseTvMessage can reject the message (removed 2026-11-22): without it, the
+  // `| bb` would make it a band cross.
+  const bsLine = /\|\s*basis\s+\$?(\d*\.?\d+)/i.exec(text);
   const open = /\|\s*open\s+\$?(\d*\.?\d+)/i.exec(text);
   const crossN = /\|\s*cross\s+(\d+)\b/i.exec(text);
   const retestN = /\|\s*retest\s+(\d+)\b/i.exec(text);   // v28
   const vwapSrc = /\|\s*vwap\s+(30s|chart)\b/i.exec(text);
-  // v32 RSI cross: "| rsi 720 29.2 ma 27.0" per RSI, the signal RSI first; "| low 22.1"; "| late"
-  const rsis = [...text.matchAll(/\|\s*rsi\s+([0-9]+[A-Za-z]?|[DWM])\s+(\d*\.?\d+)\s+ma\s+(\d*\.?\d+)/gi)];
-  const rsiLow = /\|\s*low\s+(\d*\.?\d+)/i.exec(text);
-  const dipN = /\|\s*dip\s+(\d+)\b/i.exec(text);       // v34
-  const sinceN = /\|\s*since\s+(\d+)\b/i.exec(text);
+  const sinceN = /\|\s*since\s+(\d+)\b/i.exec(text);   // v37
   const ema = /\|\s*ema\s+(\d+)\s+\$?(\d*\.?\d+)/i.exec(text);   // v35: "| ema 9 8.03"
   const underN = /\|\s*under\s+(\d+)\b/i.exec(text);   // v36
   const flipsN = /\|\s*flips\s+(\d+)\b/i.exec(text);
   const bounceN = /\|\s*bounce\s+(\d+)\b/i.exec(text);   // v37
   const bounceFrom = /\|\s*from\s+(ema\+vwap|ema|vwap)\b/i.exec(text);
-  // v39 MACD: "| macd 5 12 26" (its timeframe and the two lengths), "| base 37.53", "| after 200m"
-  const macd = /\|\s*macd\s+([0-9]+[A-Za-z]?|[DWM])\s+(\d+)\s+(\d+)\b/i.exec(text);
-  const dipPx = /\|\s*base\s+\$?(\d*\.?\d+)/i.exec(text);
-  const afterMin = /\|\s*after\s+(\d+)\s*m\b/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -672,23 +590,12 @@ function parseTvMessageAsSent(body: unknown): TvSetupSignal | null {
     bb_tf: toTf(bbTf?.[1]),
     bb_mid: toNum(bbMid?.[1]),
     bb_mid_pct: toNum(bbMid?.[2]),
-    basis: toNum(bsLine?.[1]),
-    basis_pct: toNum(bsLine?.[2]),
-    bb_len: toNum(bbLen?.[1]),
     candle_open: toNum(open?.[1]),
     cross_n: toNum(crossN?.[1]),
     stop: toNum(stop?.[1]),
     retest_n: toNum(retestN?.[1]),
     vwap_src: toVwapSrc(vwapSrc?.[1]),
-    rsi_tf: toTf(rsis[0]?.[1]),
-    rsi: toNum(rsis[0]?.[2]),
-    rsi_ma: toNum(rsis[0]?.[3]),
-    rsi2_tf: toTf(rsis[1]?.[1]),
-    rsi2: toNum(rsis[1]?.[2]),
-    rsi2_ma: toNum(rsis[1]?.[3]),
-    rsi_low: toNum(rsiLow?.[1]),
     late: /\|\s*late\b/i.test(text),
-    dip_n: toNum(dipN?.[1]),
     since_n: toNum(sinceN?.[1]),
     ema_len: toNum(ema?.[1]),
     ema: toNum(ema?.[2]),
@@ -697,11 +604,7 @@ function parseTvMessageAsSent(body: unknown): TvSetupSignal | null {
     weak: /\|\s*weak\b/i.test(text),
     bounce_n: toNum(bounceN?.[1]),
     bounce_from: toBounceFrom(bounceFrom?.[1]),
-    macd_tf: toTf(macd?.[1]),
-    macd_fast: toNum(macd?.[2]),
-    macd_slow: toNum(macd?.[3]),
-    dip_px: toNum(dipPx?.[1]),
-    after_min: toNum(afterMin?.[1]),
+    basis: toNum(bsLine?.[1]),
   };
 }
 
@@ -760,18 +663,14 @@ export class TvSetupGate {
     // minutes after one on the session line is a second event, not a re-delivery.
     const vb = VB_STAGES.has(sig.stage);
     // The candle timeframe is part of a VB event's key (a changed VB candle is another event), and
-    // of an RSI cross's, a DIP's or a MACD's: the timeframe it is judged at.
-    const rsi = RSI_STAGES.has(sig.stage);   // the RSI cross, its DIP and (v39) the MACD after it
-    const ema = EMA_STAGES.has(sig.stage);   // the EMA cross, (v37) its bounce, and the band's and the basis's crosses
+    // of an EMA cross's, a band cross's or a BOUNCE's: the timeframe it is judged at.
+    const ema = EMA_STAGES.has(sig.stage);   // the EMA cross, (v37) its bounce, and the band's cross
     // v40: a band cross and an EMA cross of one candle are two events (`|bb`).
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || rsi || ema ? `|${sig.candle_tf ?? ''}` : ''}`;   // the stage tells an EMA, a band and a basis cross of one candle apart
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || ema ? `|${sig.candle_tf ?? ''}` : ''}`;   // the stage tells an EMA and a band cross of one candle apart
     const prev = this.lastExact.get(exact);
     const dupSec = vb || ema ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
-    // v32 RSI cross: one per check candle from the 30s alert alone; a longer trade, so it
-    // announces off Momentum too — only its ⚙ switch makes it quiet. Its v34 DIP likewise, behind its own switch.
-    if (rsi) return this.announced.has(sig.stage) ? 'notify' : 'quiet';   // each its own switch (DIP since 11-13, MACD since v39)
     // v35 EMA cross: one per candle and line from the 30s alert alone, limited like a CROSS —
     // its ⚙ switch, the day's cap, and Momentum names only (or a day high ≥ vb_fresh_gain).
     // v36: a cross the script's filter calls weak is quiet. v37: its BOUNCE follows the same rules
@@ -779,7 +678,7 @@ export class TvSetupGate {
     // 2026-11-15: Momentum names only by default — the fresh-runner exception is a ⚙ rule now.
     if (ema) {
       const fresh = !this.emaMomoOnly && sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
-      // each line its own ⚙ switch since 2026-11-16 (EMA, BAND, BASIS); the BOUNCE rides the EMA's
+      // each line its own ⚙ switch since 2026-11-16 (EMA, BAND); the BOUNCE rides the EMA's
       const quiet = !this.announced.has(stageSwitch(sig.stage)) || sig.weak === true || pastCap(sig)
         || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
       return quiet ? 'quiet' : 'notify';
@@ -823,15 +722,14 @@ export class TvSetupGate {
 }
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', ema: 'EMA',
-  bounce: 'BOUNCE', macd: 'MACD', band: 'BAND', basis: 'BASIS',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', ema: 'EMA',
+  bounce: 'BOUNCE', band: 'BAND',
 };
-// The band's (v40) and the basis's (v42) labels, as the checks have named them.
+// The band's (v40) label, as the checks have named it.
 export const EMA_BAND_LABEL = TV_STAGE_LABEL.band;
-export const EMA_BASIS_LABEL = TV_STAGE_LABEL.basis;
 const STAGE_ICON: Record<TvStage, string> = {
-  pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', rsi: '📈', dip: '🎯', ema: '〽️', bounce: '🏀', macd: '🟢',
-  band: '〽️', basis: '〽️',   // the EMA cross's sign: the same setup with another line
+  pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', ema: '〽️', bounce: '🏀',
+  band: '〽️',   // the EMA cross's sign: the same setup with another line
 };
 const STAGE_HINT: Record<TvStage, string> = {
   pullback: 'back near VWAP after the run — be ready',
@@ -839,13 +737,9 @@ const STAGE_HINT: Record<TvStage, string> = {
   held: 'held — ran +10% from the pullback',
   cross: 'the candle crossed over the session VWAP and the BB upper band',
   retest: 'back at the VWAP line after the VB candle, and bounced',
-  rsi: 'the RSI crossed above its MA after being oversold',
-  dip: 'after the RSI cross, the RSI dipped under its MA and turned up',
-  macd: 'after the DIP, the MACD line crossed above zero',
   ema: 'the EMA crossed above the VWAP line',
   bounce: 'after the EMA cross, price pulled back and bounced',
   band: 'the BB upper band crossed above the VWAP line',
-  basis: 'the basis of the separate band crossed above the VWAP line',
 };
 // A TradingView interval, short: "5" → "5m", "60" → "1h", "30S" → "30s".
 export function fmtTf(tf: string | null | undefined): string {
@@ -884,10 +778,7 @@ export function formatTvSetupAlert(
 ): string {
   if (sig.stage === 'cross') return formatCross(sig, tvSym, row);
   if (sig.stage === 'retest') return formatRetest(sig, tvSym, row);
-  if (sig.stage === 'rsi') return formatRsi(sig, tvSym, row);
-  if (sig.stage === 'dip') return formatDip(sig, tvSym, row);
-  if (sig.stage === 'macd') return formatMacd(sig, tvSym, row);
-  if (LINE_CROSS_STAGES.has(sig.stage)) return formatEma(sig, tvSym, row);   // the EMA's, the band's, the basis's
+  if (LINE_CROSS_STAGES.has(sig.stage)) return formatEma(sig, tvSym, row);   // the EMA's, the band's
   if (sig.stage === 'bounce') return formatBounce(sig, tvSym, row);
   // PULLBACK / BROKEN / HELD. PULLBACK and BROKEN name the line: "back near the
   // session VWAP after the run — be ready".
@@ -990,95 +881,6 @@ function formatRetest(
   return lines.join('\n');
 }
 
-// v32 RSI cross: "the 12h RSI crossed above its MA after being oversold (at the 6h close)".
-function formatRsi(
-  sig: TvSetupSignal,
-  tvSym: string,
-  row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
-): string {
-  const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
-  const a = fmtTf(sig.rsi_tf);
-  const lines = [
-    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.rsi} <b>${TV_STAGE_LABEL.rsi}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>the ${a} RSI crossed above its MA after being oversold (at the ${fmtTf(sig.candle_tf)} close${sig.late ? ', a bar late' : ''})</i>`,
-    `${a} RSI ${one(sig.rsi)} · MA ${one(sig.rsi_ma)}${sig.rsi_low != null ? ` · low ${one(sig.rsi_low)}` : ''}`,
-  ];
-  if (sig.rsi2 != null) {
-    const above = sig.rsi2_ma != null ? (sig.rsi2 > sig.rsi2_ma ? ' (above its MA)' : ' (under its MA)') : '';
-    lines.push(`${fmtTf(sig.rsi2_tf)} RSI ${one(sig.rsi2)} · MA ${one(sig.rsi2_ma)}${above}`);
-  }
-  lines.push(momentumLine(row));
-  const ctx = contextParts(sig);
-  if (ctx.length > 0) lines.push(ctx.join(' · '));
-  lines.push(linksLine(sig, tvSym));
-  return lines.join('\n');
-}
-
-// v34 DIP: "after the RSI cross, the 15m RSI dipped under its MA and turned up (at the 15m close)".
-function formatDip(
-  sig: TvSetupSignal,
-  tvSym: string,
-  row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
-): string {
-  const one = (x: number | null | undefined) => (x == null ? '?' : x.toFixed(1));
-  const a = fmtTf(sig.rsi_tf);
-  const lines = [
-    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.dip} <b>${TV_STAGE_LABEL.dip}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>after the RSI cross, the ${a} RSI dipped under its MA and turned up (at the ${fmtTf(sig.candle_tf)} close${sig.late ? ', a bar late' : ''})</i>`,
-    `${a} RSI ${one(sig.rsi)} · MA ${one(sig.rsi_ma)}${sig.rsi_low != null ? ` · dip low ${one(sig.rsi_low)}` : ''}`,
-  ];
-  const what: string[] = [];
-  if (sig.stop != null) {
-    const risk = sig.price != null && sig.price > 0 ? `${fmtSigned((sig.stop / sig.price - 1) * 100)}, ` : '';
-    what.push(`stop ${fmtPx(sig.stop)} (${risk}under the dip's low)`);
-  }
-  if (sig.dip_n != null) what.push(sig.dip_n === 1 ? 'first turn of this dip' : `turn ${sig.dip_n} of this dip (a lower low since)`);
-  if (sig.since_n != null) what.push(`${sig.since_n} candle${sig.since_n === 1 ? '' : 's'} after the RSI cross`);
-  if (what.length > 0) lines.push(what.join(' · '));
-  lines.push(momentumLine(row));
-  const ctx = contextParts(sig);
-  if (ctx.length > 0) lines.push(ctx.join(' · '));
-  lines.push(linksLine(sig, tvSym));
-  return lines.join('\n');
-}
-
-// Minutes as "45m", "4h 50m", "2d 3h".
-export function fmtMinutes(min: number | null | undefined): string {
-  if (min == null || !Number.isFinite(min) || min < 0) return '?';
-  const m = Math.round(min);
-  if (m < 60) return `${m}m`;
-  if (m < 1440) return `${Math.floor(m / 60)}h${m % 60 ? ` ${m % 60}m` : ''}`;
-  return `${Math.floor(m / 1440)}d${Math.floor((m % 1440) / 60) ? ` ${Math.floor((m % 1440) / 60)}h` : ''}`;
-}
-
-// v39 MACD: "after the DIP at $37.53, the 5m MACD line crossed above zero (3h 20m after it)".
-function formatMacd(
-  sig: TvSetupSignal,
-  tvSym: string,
-  row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
-): string {
-  const lines = [
-    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.macd} <b>${TV_STAGE_LABEL.macd}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
-    `<i>after the DIP${sig.dip_px != null ? ` at ${fmtPx(sig.dip_px)}` : ''}, the ${fmtTf(sig.macd_tf)} MACD line crossed above zero`
-      + `${sig.after_min != null ? ` (${fmtMinutes(sig.after_min)} after it${sig.late ? ', a bar late' : ''})` : sig.late ? ' (a bar late)' : ''}</i>`,
-  ];
-  const what: string[] = [];
-  if (sig.dip_px != null && sig.price != null && sig.dip_px > 0) what.push(`${fmtSigned((sig.price / sig.dip_px - 1) * 100)} from the DIP`);
-  if (sig.stop != null) {
-    const risk = sig.price != null && sig.price > 0 ? `${fmtSigned((sig.stop / sig.price - 1) * 100)}, ` : '';
-    what.push(`the DIP's stop ${fmtPx(sig.stop)} (${risk}under the dip's low)`);
-  }
-  if (sig.dip_n != null && sig.dip_n > 1) what.push(`DIP ${sig.dip_n} of its dip`);
-  if (sig.macd_fast != null && sig.macd_slow != null) what.push(`MACD ${sig.macd_fast} / ${sig.macd_slow}`);
-  if (sig.candle_tf) what.push(`${fmtTf(sig.candle_tf)} RSI`);
-  if (what.length > 0) lines.push(what.join(' · '));
-  lines.push(momentumLine(row));
-  const ctx = contextParts(sig);
-  if (ctx.length > 0) lines.push(ctx.join(' · '));
-  lines.push(linksLine(sig, tvSym));
-  return lines.join('\n');
-}
-
 // v35 EMA cross: "the 3m EMA 9 crossed above the session VWAP (at the 3m close)".
 function formatEma(
   sig: TvSetupSignal,
@@ -1087,14 +889,11 @@ function formatEma(
 ): string {
   const tokens = lineTokens(sig.stage, sig.line);
   const tf = fmtTf(sig.candle_tf);
-  // v40: the line that crossed — the EMA, or the BB upper band (headline "BAND"), or (v42) the
-  // basis of the separate band (headline "BASIS")
+  // v40: the line that crossed — the EMA, or the BB upper band (headline "BAND")
   const band = emaByBand(sig);
-  const basis = emaByBasis(sig);
-  const basisName = `${fmtTf(sig.bb_tf)} basis${sig.bb_len != null ? ` (${sig.bb_len})` : ''}`;
-  const crossed = band ? `the ${fmtTf(sig.bb_tf)} BB upper band` : basis ? `the ${basisName}` : `the ${tf} EMA ${sig.ema_len ?? '?'}`;
+  const crossed = band ? `the ${fmtTf(sig.bb_tf)} BB upper band` : `the ${tf} EMA ${sig.ema_len ?? '?'}`;
   const lines = [
-    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.ema} <b>${band ? EMA_BAND_LABEL : basis ? EMA_BASIS_LABEL : TV_STAGE_LABEL.ema}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.ema} <b>${band ? EMA_BAND_LABEL : TV_STAGE_LABEL.ema}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
     `<i>${crossed} crossed above the ${(tokens.length > 0 ? tokens : ['session']).join(' + ')} VWAP (at the ${tf} close${sig.late ? ', a bar late' : ''})</i>`,
   ];
   const what: string[] = [];
@@ -1106,8 +905,6 @@ function formatEma(
         ? `price ${fmtSigned(sig.bb_mid_pct)} under the band's middle (the band widened on a drop)`
         : `price ${fmtSigned(sig.bb_mid_pct)} over the band's middle`);
     }
-  } else if (basis) {
-    what.push(`${basisName} ${fmtPx(sig.basis ?? null)} (${fmtSigned(sig.basis_pct ?? null)})`);
   } else if (sig.ema != null) what.push(`EMA ${fmtPx(sig.ema)}`);
   if (sig.cross_n != null) {
     what.push(`cross ${sig.cross_n} today${sig.cross_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);

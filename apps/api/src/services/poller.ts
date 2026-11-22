@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { emaByBand, emaByBasis, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, rsiFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
+import { emaByBand, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3946,7 +3946,7 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
-  // tv_cross / tv_retest / tv_rsi / tv_dip / tv_macd / tv_ema / tv_bounce, and tv_year for a message about the year line alone).
+  // tv_cross / tv_retest / tv_ema / tv_bounce / tv_band, and tv_year for a message about the year line alone).
   // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
   // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
@@ -3990,7 +3990,6 @@ class PollerService {
         yvwap: sig.yvwap ?? null, ypx_pct: sig.ypx_pct ?? null,
         fails: sig.fails ?? null, capped: pastCap(sig),
         ...vbFields(sig),
-        ...rsiFields(sig),
         ...emaFields(sig),
         vwap_src: sig.vwap_src ?? null,
         on_screen: row != null, notified: mode === 'notify',
@@ -4007,16 +4006,14 @@ class PollerService {
       on_screen: row != null, notified: mode === 'notify', quiet: mode === 'quiet',
       fails: sig.fails ?? null, capped: pastCap(sig), cap_exempt: capExempt,
       ...vbFields(sig),
-      ...rsiFields(sig),
       ...emaFields(sig),
       vwap_src: sig.vwap_src ?? null,
     });
-    if (sig.stage === 'ema' || sig.stage === 'band' || sig.stage === 'basis') {
+    if (sig.stage === 'ema' || sig.stage === 'band') {
       // v40: the line that crossed is the EMA or the BB upper band (`| upper … | bb …` in the EMA's place)
       const crossed = emaByBand(sig)
         ? `BB upper ${sig.bb_tf} ${sig.upper ?? '?'}${sig.bb_mid_pct != null ? ` · price ${sig.bb_mid_pct}% vs the band's middle` : ''}`
-        : emaByBasis(sig) ? `basis ${sig.bb_tf ?? '?'} ${sig.bb_len ?? '?'} ${sig.basis ?? '?'}`   // v42
-          : `EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}`;
+        : `EMA ${sig.ema_len ?? '?'} ${sig.ema ?? '?'}`;
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? '?'} line · ${sig.candle_tf ?? '?'} candle · ${crossed}` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%) · cross ${sig.cross_n ?? '?'} · day ${sig.day_gain ?? '?'}%` +
         ` · under ${sig.under_n ?? '?'} · flips ${sig.flips_n ?? '?'}` +
@@ -4034,24 +4031,6 @@ class PollerService {
         (mode === 'quiet' ? (why === 'weak' ? ' · quiet (after a weak cross)'
           : why === 'capped' ? ` · quiet (past the cap: bounce ${sig.bounce_n} today)`
           : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (the EMA stage is switched off)') : ''));
-    } else if (sig.stage === 'dip') {
-      console.log(`[tv-setup] DIP ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +
-        ` · dip low ${sig.rsi_low ?? '?'} · stop ${sig.stop ?? '?'} · dip ${sig.dip_n ?? '?'} · ${sig.since_n ?? '?'} candles after the RSI cross` +
-        `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +
-        `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? ' · quiet (DIP switched off)' : ''));
-    } else if (sig.stage === 'macd') {
-      console.log(`[tv-setup] MACD ${sig.ticker} $${sig.price ?? '?'} · the ${sig.macd_tf ?? '?'} MACD line (${sig.macd_fast ?? '?'} / ${sig.macd_slow ?? '?'}) crossed zero` +
-        ` · ${sig.after_min ?? '?'} min after the DIP at ${sig.dip_px ?? '?'} · the DIP's stop ${sig.stop ?? '?'} · ${sig.candle_tf ?? '?'} RSI` +
-        `${sig.late ? ' · a bar late' : ''} · tf ${sig.tf ?? '?'}` +
-        `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? ' · quiet (MACD switched off)' : ''));
-    } else if (sig.stage === 'rsi') {
-      console.log(`[tv-setup] RSI ${sig.ticker} $${sig.price ?? '?'} · ${sig.rsi_tf ?? '?'} RSI ${sig.rsi ?? '?'} / MA ${sig.rsi_ma ?? '?'}` +
-        ` · low ${sig.rsi_low ?? '?'} · ${sig.rsi2_tf ?? '?'} RSI ${sig.rsi2 ?? '?'} / MA ${sig.rsi2_ma ?? '?'}` +
-        ` · checked at the ${sig.candle_tf ?? '?'} close${sig.late ? ' (a bar late)' : ''} · tf ${sig.tf ?? '?'}` +
-        `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? ' · quiet (stage switched off)' : ''));
     } else if (VB_STAGES.has(sig.stage)) {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +

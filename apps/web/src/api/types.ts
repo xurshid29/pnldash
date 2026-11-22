@@ -337,26 +337,21 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // BB upper band. RETEST (script v28, the operator's entry): after the VB candle
 // closes, price comes back to the line it crossed and a 30s candle closes green
 // above it. It replaced v25–v27's LEVEL / BREAK (the VB candle's high as a trigger).
-// RSI (script v32, for longer trades): the 12h RSI crossed above its MA after being oversold,
-// judged at a 6h candle's close. DIP (script v34): after an RSI cross, the RSI closed back under
-// its MA on its own timeframe and turned up — the pullback entry. Its own ⚙ switch since 2026-11-13.
 // EMA (script v35): the EMA of a timeframe's closes (3m, length 9) crossed above a VWAP line,
 // judged at that timeframe's candle close. BOUNCE (script v37): after an EMA cross, a pullback to
 // the EMA or the VWAP and a green close above the EMA — the pullback entry. It rides the EMA's ⚙ switch.
-// MACD (script v39): after a DIP, the MACD line of a timeframe (5m) crossed above zero — the
-// operator's entry. Its own ⚙ switch. (v38's LIFT, a level some % above the DIP, went in v39;
-// its old rows are skipped like the other removed stages'.)
-// BAND (script v40) and BASIS (v42): the EMA cross's rule with another line over the VWAP — the BB
-// upper band, or the basis of a separate band. Stages of their own since 2026-11-16, each with a ⚙
-// switch (the server reads a row stored as `ema` on 11-15 / 11-16 as `band` / `basis` by its fields).
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'rsi' | 'dip' | 'macd' | 'ema' | 'bounce' | 'band' | 'basis';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'bounce', 'band', 'basis'];
+// BAND (script v40): the EMA cross's rule with the BB upper band as the line over the VWAP. A stage
+// of its own since 2026-11-16, with a ⚙ switch (the server reads a row stored as `ema` on
+// 11-15 / 11-16 as `band` by its fields).
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'ema', 'bounce', 'band'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'bounce' ? 'ema' : stage;
 }
 // Old days in History still hold rows of removed stages (v1–v26 RECLAIM and the BB
-// breakout, v25–v27 LEVEL / BREAK); they're skipped.
+// breakout, v25–v27 LEVEL / BREAK, v38 LIFT, and the RSI cross, DIP, MACD and BASIS);
+// they're skipped.
 export function isTvStage(s: unknown): s is TvStage {
   return typeof s === 'string' && (TV_STAGES as readonly string[]).includes(s);
 }
@@ -393,11 +388,6 @@ export interface TvSetupInfo {
   // price against it — under it, the band widened on a drop (the script's weak kind)
   bb_mid?: number | null;
   bb_mid_pct?: number | null;
-  // v42, a basis cross (an EMA-stage row with basis and no ema): the basis of the separate band,
-  // the price against it, and that band's length (bb_tf is its timeframe)
-  basis?: number | null;
-  basis_pct?: number | null;
-  bb_len?: number | null;
   candle_open?: number | null;
   cross_n?: number | null;    // the day's crosses on the ticker, this one included
   // VB retest (script v28)
@@ -406,34 +396,18 @@ export interface TvSetupInfo {
   // v28: which VWAP the script used — '30s' = our 30s-bar line (the same on every chart),
   // 'chart' = TradingView's chart-bar VWAP; null on older messages
   vwap_src?: '30s' | 'chart' | null;
-  // RSI cross (script v32); candle_tf is the timeframe it's checked at ("360" = the 6h close)
-  rsi_tf?: string | null;     // the signal RSI's timeframe ("720" = 12h)
-  rsi?: number | null;
-  rsi_ma?: number | null;     // its MA (SMA 14)
-  rsi2_tf?: string | null;    // the second RSI ("180" = 3h)
-  rsi2?: number | null;
-  rsi2_ma?: number | null;
-  rsi_low?: number | null;    // the signal RSI's lowest at the cross or within its last N candles (DIP: the dip's lowest RSI)
-  late?: boolean;
-  // RSI dip (script v34): rsi / rsi_ma at the turn, stop = under the dip's lowest price
-  dip_n?: number | null;      // the signal's number in this dip
-  since_n?: number | null;    // the RSI's candles since the RSI cross
   // EMA cross (script v35): candle_tf = the EMA's timeframe, cross_n = the day's crosses on the line
   ema_len?: number | null;    // the EMA's length (9)
   ema?: number | null;        // its value at the candle's close
+  late?: boolean;             // judged a bar late (the candle's closing bar had no trades)
   // v36, the script's filter on an EMA cross
   under_n?: number | null;    // candles in a row the EMA had been at or under the line before the cross
   flips_n?: number | null;    // EMA / line crossings in the 20 candles before
   weak?: boolean;             // the filter calls it weak: stored, never announced, kept out of the live list
   // EMA bounce (script v37): stop = under the pullback's low, since_n = candles after the cross, weak = its cross was
   bounce_n?: number | null;   // the day's bounces on the line
+  since_n?: number | null;
   bounce_from?: 'ema' | 'vwap' | 'ema+vwap' | null;   // what the pullback came down to
-  // MACD after a DIP (script v39): stop / dip_n = its DIP's, candle_tf = the RSI's timeframe
-  macd_tf?: string | null;    // the MACD's timeframe ("5")
-  macd_fast?: number | null;  // its lengths (12, 26)
-  macd_slow?: number | null;
-  dip_px?: number | null;     // the DIP's price
-  after_min?: number | null;  // minutes since the DIP candle closed
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

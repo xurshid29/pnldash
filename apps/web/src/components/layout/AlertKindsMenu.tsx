@@ -12,12 +12,11 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
   { kind: 'tv_setup', label: '📐 VWAP setup', hint: 'sound + notification on this device' },
 ].filter((k) => DASHBOARD_KINDS.includes(k.kind as AlertKind)) as Array<{ kind: AlertKind; label: string; hint: string }>;
 
-// The EMA switch also covers its v37 BOUNCE (the server lists no switch for 'bounce'). RSI and its
-// DIP have one each since 2026-11-13, and the MACD after a DIP (v39) its own. Since 2026-11-16 the
-// band's cross (BAND, v40) and the basis's (BASIS, v42) have one each too; they rode the EMA's.
+// The EMA switch also covers its v37 BOUNCE (the server lists no switch for 'bounce'). Since
+// 2026-11-16 the band's cross (BAND, v40) has its own; it rode the EMA's.
 const STAGE_LABEL: Record<TvStage, string> = {
-  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', rsi: 'RSI', dip: 'DIP', macd: 'MACD',
-  ema: 'EMA + BOUNCE', bounce: 'BOUNCE', band: 'BAND (BB upper)', basis: 'BASIS',
+  pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST',
+  ema: 'EMA + BOUNCE', bounce: 'BOUNCE', band: 'BAND (BB upper)',
 };
 
 // Click-to-open switches for which opportunity alerts make a sound and a
@@ -56,7 +55,7 @@ export function AlertKindsMenu() {
           server-side like the switches above. Off = the VWAP + BB cross's rule (a +30% day high pings off the list too). */}
       {settings && (
         <Checkbox checked={settings.ema_momo_only} onChange={(e) => saveEmaMomoOnly(e.target.checked)}>
-          <span style={{ fontWeight: 600 }}>EMA / BAND / BASIS / BOUNCE: Momentum list only</span>
+          <span style={{ fontWeight: 600 }}>EMA / BAND / BOUNCE: Momentum list only</span>
           <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
             off = also pings off the list when the day high is +30% or more
           </Text>
