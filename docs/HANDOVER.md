@@ -303,6 +303,12 @@ BB Cross, EMA Cross Over VWAP and it's Upper Band cross will be kept". `docs/vwa
   six changed or moved lines; and a 1,000-bar run on NASDAQ:CIGL 30s gives the same values as v43 on all 31 kept plots.
 - **How it was built:** three subagents in parallel (script, server, dashboard), then the verify script, then a subagent to
   send the comment-free copy to TradingView. Results of big MCP calls are saved to files, so two runs can be diffed offline.
+- **Deployed `4e2a969` at 04:37 ET (Sunday, market closed) and checked on prod:** `GET /api/tv/settings` gives announced
+  PULLBACK + BAND and seven stages; an `RSI …`, `DIP …`, `MACD …` and a BASIS-shaped `EMA …` message each get 400 and store
+  nothing; `GET /api/screener/alerts` for 11-13, 11-16 and 11-20 lists no removed stage (11-16 shows its 89 real EMA rows,
+  not the 29 basis rows stored as `ema`). The API restarted, and **this deploy also restarted Postgres** (a clean shutdown
+  and start 12 seconds apart; it reports 18.7; no compose change in the commit, so most likely a newer `postgres` image
+  was pulled). Data intact.
 - **For the operator:** paste v44 → Settings → Defaults → Reset settings → recreate both alerts. Until then the v43 alerts'
   BASIS messages (about 1,000 a day) get 400.
 - **Open:** after the paste, compare v43 and v44 once more with the line set to "Both" (both by script id, no code to send),
