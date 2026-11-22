@@ -292,6 +292,25 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-22 (Sun, ~08:00 ET) — THE BASIS LINE AS AN ENTRY RULE, MEASURED (research only, nothing built).** The operator,
+with VWAV charts: measure the PULLBACKs where the basis is going down at the alert and a candle then closes above it; not
+those where no candle closes above it; not those where the basis is going up at the alert ("such setups often drop"), or
+only after the drop and a break of the PULLBACK candle. "With measuring I mean the setup went +10% or not."
+`apps/api/scripts/research/vwap-pullback/basis_study.py` + README; `docs/vwap-setup.md` §13.9.
+- **Data:** our ~20-second price snapshots stand in for the 15-second line (mean of the last 300 s); session line;
+  08-14 → 11-21, 1,303 PULLBACKs, split at 10-09. Earlier the same day I had said this couldn't be measured on our data;
+  the snapshots make it possible.
+- **Holds in both halves:** basis going up at the PULLBACK (22% of them) is the worse one: the line breaks 73–79% of the
+  time against 59–61%, P&L −1.9% / −3.5% a trade against +0.1% / −0.4% for basis-down. A basis-down PULLBACK that never
+  gets a close above the basis (a third) reaches +10% about 1% of the time.
+- **Doesn't help:** entering at the close above the basis. It is a median 3.0% / 3.6% above the PULLBACK's close; +10%
+  from there comes 28% of the time (the PULLBACK's own close: 31% / 28%) and the average trade loses 1.6–1.7%.
+- **Can't call:** the break of the PULLBACK candle after a basis-up PULLBACK (52% of 48 trades in sample, 33% of 42 out).
+- **Offered, not built:** mark or quiet a PULLBACK whose basis is rising at the alert (the script has the line); measure
+  a tighter stop for the later entry.
+- The scratch data from 11-14 was gone (cleared 11-20); re-exported with `export-rows.sql` (12.8M rows, ~10 min) and a
+  fresh venv with duckdb.
+
 **2026-11-22 (Sun, ~06:30 ET) — v44 CONFIRMED ON TRADINGVIEW; SCRIPT v45: THE PULLBACK'S BASIS LINE (chart only).** The
 operator: "nice, I updated everything. And, please, add own BollingerBand to Pullback section, with configurable timeframe,
 only basis row is enough, something like this [TradingView's BB, timeframe 15S, middle line only, on VWAV 1m]. I'm going to

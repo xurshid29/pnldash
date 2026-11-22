@@ -1143,7 +1143,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-16 | v42 | `1d8941f` | Operator (keeping v41's quiet treatment: "ok, lets keep it"): "can you add one more band? This time, it should be a separate bollinger bands with configurable it's Length (let it be 1/2 by default) … the similar setup as our bands cross, but this time I want to use Basis line. It should be a separate bb so I can change its Length value". **The BASIS cross** (§18.6): the basis (middle line) of a band of its own — `bsOn`, `bsTf` (45S), `bsLen` (10, half the VB band's 20; 1 = the price) — crosses the VWAP by the band cross's rule (script section 4c, through `bbSample`), independent of the EMA / band choice, with its own day's numbers; no BOUNCE, no middle-line test. Message: the EMA's with `| basis 8.03 (+0.7%) | bb 45S | len 10`. Olive line and **BS** marks. Three inputs and five plots, last: 73 inputs, 43 plots, 16 `alert()` calls. Server: stage `ema`, `emaByBasis()`, gate key `|bs`, Telegram headline BASIS, rows carry `basis` / `basis_pct` / `bb_len`. Dashboard: BASIS pill (`3m/45s·10`), its own thread. Replica `simulate_ema(src='bs')`. Not measured. Regression 681 checks. **Paste, recreate both alerts.** |
 | 2026-11-18 | v43 | `97546dd` | **The 30s alert's year line was anchored months late since v28** (§19), found on the first run through TradingView's MCP (the operator connected it that day): the saved v42 on LXEO read 4.79 on a 1m chart and 3.64 on a 30s chart, where the year's VWAP is 4.86. On a 30s chart a timeframe's bars first requested after a `request.security_lower_tf()` call load only as deep as 100,000 30s bars would reach (833 hourly bars), and v28 had put its 30s-bar request above the year line's hourly one. In the stored rows the 30s alert's year line matched the 1m alert's on 92% of ticker-days until 10-28 and on 13% since, a median 22% lower; 1,383 rows from the 30s alert named the year line, 713 of them announced. **Fix:** the hourly anchors are the script's first request again (the VB's request shares their bars). No input, plot, message or rule changed; no Reset settings. `verify-tv-setups.ts` pins the order. Stored 30s rows from 10-29 until the new alerts keep the short line. **Paste, recreate both alerts.** |
 | 2026-11-22 | v44 | `4e2a969` | Operator: "I think we should remove some of our experimental setups. Let's remove RSI Cross and Basis Cross. Pullback, VWAP + BB Cross, EMA Cross Over VWAP and it's Upper Band cross will be kept". **Removed** (§20): the RSI cross with its DIP (v32–v34) and the MACD cross after a DIP (v39), which hangs off the DIP; and the BASIS cross (v42). Script sections 3, 4c and 5, 19 inputs (73 → 54), 12 plots (43 → 31) and 5 `alert()` calls (16 → 11) are gone; `rsSym` and `rsChartSec`, which the EMA section uses, stay under their names. Server and dashboard: stages `rsi`, `dip`, `macd` and `basis` are gone (their messages get 400, saved switches are dropped, stored rows aren't listed). **Four defaults became the operator's live settings**, because the reset this version needs would otherwise undo them: VB candle 5m → 2m, VB band 45S → 30S, EMA candle 3m → 2m, the EMA cross's line Both → BB upper. Kept unchanged: PULLBACK, the VWAP + BB cross with its RETEST, the EMA cross with its filter and BOUNCE, the band's cross with the middle-line test. Compiled on TradingView through the MCP before the paste and compared with v43 bar by bar (§20.3). **Paste, Settings → Defaults → Reset settings, recreate both alerts.** |
-| 2026-11-22 | v45 | `e1667a4` | Operator, after updating to v44, with TradingView's own BB (timeframe 15S, middle line only) on a 1m chart: "add own BollingerBand to Pullback section, with configurable timeframe, only basis row is enough … I'm going to experiment entering when price closes above it after the pullback". **The pullback's basis line** (§13.8): a white line, the SMA of the last 20 closes of 15-second bars (`pbBsOn`, `pbBsTf`, `pbBsLen`: the script's last three inputs, shown in the Pullback group; its last plot). From a lower-timeframe request, read at each chart bar's close, as TradingView's built-in does. A line only: no alert, no message field, nothing on the server or the dashboard but two sentences of help text. Not measured (our data has no 15-second bars). Checked on TradingView before the paste: compiles; on a 30s chart all 31 plots v44 had are equal bar by bar, and the new line equals a 15s chart's SMA(20). **Paste and Save; no reset, and the alerts can stay as they are.** |
+| 2026-11-22 | v45 | `e1667a4` | Operator, after updating to v44, with TradingView's own BB (timeframe 15S, middle line only) on a 1m chart: "add own BollingerBand to Pullback section, with configurable timeframe, only basis row is enough … I'm going to experiment entering when price closes above it after the pullback". **The pullback's basis line** (§13.8): a white line, the SMA of the last 20 closes of 15-second bars (`pbBsOn`, `pbBsTf`, `pbBsLen`: the script's last three inputs, shown in the Pullback group; its last plot). From a lower-timeframe request, read at each chart bar's close, as TradingView's built-in does. A line only: no alert, no message field, nothing on the server or the dashboard but two sentences of help text. Measured the same day with our 20-second snapshots in the line's place (§13.9). Checked on TradingView before the paste: compiles; on a 30s chart all 31 plots v44 had are equal bar by bar, and the new line equals a 15s chart's SMA(20). **Paste and Save; no reset, and the alerts can stay as they are.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -1430,10 +1430,43 @@ nothing else (the check below).
 Not checked there: a pre-market bar (the MCP runs regular hours only) and a 1m or 2m chart (the
 same request with four or eight bars inside each chart bar).
 
-**Not built, not measured.** The entry itself (after a PULLBACK, the first close above this
-line) is the operator's experiment on the chart. Our own data can't measure it: the Momentum
-rows give 1-minute bars, and the line is made of 15-second closes. If it looks useful it can
-become a follow-up alert, the way RETEST follows CROSS, and be graded from its rows.
+**Not built.** The entry itself (after a PULLBACK, the first close above this line) is the
+operator's experiment on the chart; §13.9 measures it. If it is wanted as an alert it can follow
+PULLBACK the way RETEST follows CROSS, and be graded from its rows.
+
+### 13.9 The basis line as an entry rule, measured (2026-11-22)
+
+The operator, the same day, with VWAV charts: measure the PULLBACKs where the basis is going
+down when the PULLBACK fires and a candle then closes above it; not those where no candle can
+close above it; and not those where the basis is going up at the PULLBACK ("such setups often
+drop"), unless one waits for the drop, the return, and a break of the PULLBACK candle. "With
+measuring I mean the setup went +10% or not."
+
+`research/vwap-pullback/basis_study.py` (its README has the full table). We have no 15-second
+bars, so the basis there is the mean of our own ~20-second price snapshots over the last five
+minutes; session line only; 08-14 → 11-21, 1,303 PULLBACKs, split at 10-09 (in sample / out).
+
+| | reach +10% | avg P&L |
+|---|---:|---:|
+| every PULLBACK, bought at its close | 29.3% / 24.6% | −0.32% / −1.19% |
+| basis going down at the PULLBACK (78%) | 30.8% / 27.9% | +0.13% / −0.38% |
+| basis going up at the PULLBACK (22%) | 25.8% / 17.6% | −1.87% / −3.46% |
+| basis down, no candle closes above the basis (a third) | 1.1% / 1.5% | −4.97% / −5.59% |
+| basis down, a candle does (two thirds): bought at the PULLBACK's close | 44.8% / 41.3% | +2.54% / +2.27% |
+| …bought at that close above the basis, +10% from there | 28.2% / 27.7% | −1.58% / −1.68% |
+| basis up: the drop, then the break of the PULLBACK candle (48 / 42 trades) | 52.1% / 33.3% | +0.06% / −3.65% |
+
+- The operator's two observations hold in both halves: a rising basis at the alert is the
+  worse PULLBACK (the line breaks 73–79% of the time against 59–61%), and one that never gets a
+  close above the basis fails.
+- The close above the basis is a confirmation, not a better price: it comes a median 3.0% / 3.6%
+  above the PULLBACK's close, +10% from there is no likelier than from the PULLBACK's close, and
+  a break costs more.
+- The break of the PULLBACK candle after a basis-up PULLBACK: too few trades, and the halves
+  disagree.
+
+Nothing built from it yet. What it supports is a mark on (or a quiet announcement of) a
+PULLBACK whose basis is rising, which the script can compute from the line it already draws.
 
 ## 14. The BB breakout (script v17, 2026-10-18)
 

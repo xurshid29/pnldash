@@ -155,3 +155,61 @@ the same with other VWAP anchors?"). The script's own reclaim logic
 
 Not added. The year line can't be measured here; it shipped as a live trial in
 script v11.
+
+## The basis line as an entry rule (2026-11-22, `basis_study.py`)
+
+The operator, a few hours after script v45 drew the pullback's basis line (the SMA of the last
+20 closes of 15-second bars), with VWAV charts: measure the PULLBACKs where "bb basis going down
+when pullback fires, and started going up and candle closes above it", but not those where the
+"candle could not close above bb basis", and not those where the "bb basis [is] going up while
+pullback fires, I noticed that such setups often drop, or we can count them if we wait for the
+drop, returns back and breaks out the candle with the pullback". "With measuring I mean the setup
+went +10% or not."
+
+    python basis_study.py rows.csv.gz [--cut 2026-10-09] [--window 300] [--list TICKER]
+
+**What stands in for the line.** We have no 15-second bars. The basis here is the mean of our
+own price snapshots (one per ~20 s) over the last 300 seconds, read at each 1m bar's last
+snapshot: the same five minutes of prices, sampled a little more coarsely, and from the whole
+market where TradingView's feed is Cboe One. Session line only. A borderline candle can fall on
+the other side of the line here than on the chart (VWAV 11-20 09:15 ET closes just above it in
+our data; on the operator's chart it didn't).
+
+**Data:** 08-14 → 11-21, 70 days, 19,191 ticker-days, 1,303 PULLBACKs (every touch, no cap); the
+basis's direction known for 1,246. In sample before 10-09, out of sample from it. The race is
+study.py's: a bar high +10% above the entry, or a bar close under the line first, 60 bars.
+
+| | n (in / out) | reach +10% | close under the line first | avg P&L |
+|---|---:|---:|---:|---:|
+| every PULLBACK, bought at its close (today's alert) | 751 / 552 | 29.3% / 24.6% | 61.7% / 64.1% | −0.32% / −1.19% |
+| **basis going down** at the PULLBACK (78% of them) | 568 / 398 | 30.8% / 27.9% | 59.2% / 60.6% | +0.13% / −0.38% |
+| **basis going up** at the PULLBACK (22%) | 155 / 125 | 25.8% / 17.6% | 72.9% / 79.2% | −1.87% / −3.46% |
+| basis down, **no candle closes above the basis** before the line breaks (a third) | 182 / 134 | 1.1% / 1.5% | 92.3% / 94.0% | −4.97% / −5.59% |
+| basis down, a candle does close above it (two thirds): the same PULLBACKs **bought at the PULLBACK's close** | 386 / 264 | 44.8% / 41.3% | 43.5% / 43.6% | +2.54% / +2.27% |
+| …**bought at that close above the basis** (rule A, a median 3 min later), +10% from there | 386 / 264 | 28.2% / 27.7% | 55.2% / 53.4% | −1.58% / −1.68% |
+| …the same entry, aiming at the PULLBACK's own +10% level | 370 / 248 | 41.9% / 37.5% | 46.2% / 47.2% | −1.10% / −1.75% |
+| …rule A with the basis also rising at that candle | 342 / 213 | 26.9% / 28.2% | 54.7% / 47.9% | −2.33% / −1.64% |
+| basis up: a drop under the PULLBACK candle's low, then a close above its high within 15 bars | 48 / 42 | 52.1% / 33.3% | 47.9% / 61.9% | +0.06% / −3.65% |
+
+**Read:**
+
+- **The basis's direction at the alert separates them, in both halves.** With the basis going up
+  the line breaks 73–79% of the time against 59–61%, and out of sample those reach +10% 18% of
+  the time against 28%. Buying only the basis-down PULLBACKs at their close is about break-even
+  (+0.13% / −0.38% a trade) where buying all of them loses (−0.32% / −1.19%).
+- **A PULLBACK that never gets a close above the basis fails**, 98–99% of the time. That is close
+  to true by construction: it never got back over its own five-minute average before closing
+  under the VWAP.
+- **Waiting for the close above the basis picks the good ones and then pays for it.** The entry
+  is a median 3.0% / 3.6% above the PULLBACK's close. From there +10% comes 28% of the time, no
+  more often than from the PULLBACK's own close (31% / 28%), and a break costs more, so the
+  average trade loses 1.6–1.7% where the PULLBACK's close made +0.1% / −0.4%.
+- **The break of the PULLBACK candle after a basis-up PULLBACK** is too few trades to call, and
+  the two halves disagree (52% of 48, then 33% of 42).
+- The same shape with a 180 s and a 420 s basis (rule A 26.5–28% from its entry; never-above
+  0.6–1.5%; basis-up breaking 70–80%).
+
+**Not built.** What it supports: marking or quieting a PULLBACK whose basis is rising at the
+alert, and treating "no close above the basis" as a reason to stand aside, not the close above
+it as a better price. Not measured: a tighter stop for the later entry (under the pullback's
+low), the month and year lines, and the real 15-second line.
