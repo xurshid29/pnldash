@@ -307,6 +307,8 @@ experiment entering when price closes above it after the pullback". `docs/vwap-s
 - **Checked through the MCP before the paste:** compiles; on NASDAQ:VWAV 30s all 31 plots v44 has are equal bar by bar (the
   year line too); the new line equals a 15s chart's `ta.sma(close, 20)` on all 620 shared bars. A small result comes back
   inline (the first 15s probe, 31 KB, did); ask for `format: rows` and a few extra plots when a file is wanted.
+- **Deployed `e1667a4` at 05:23 ET (Sunday):** run success, prod on it, the dashboard's bundle carries the v45 script
+  ("Copy Pine script"); the API restarted (seconds; market closed).
 - **For the operator:** paste v45 and Save. No Reset settings, and the alerts can stay on v44 (the line sends nothing).
 - **Not measured:** the entry (first close above the line after a PULLBACK): our data has no 15-second bars. If they like
   it, the next step is a follow-up alert after PULLBACK, graded from its rows.
