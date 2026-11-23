@@ -309,6 +309,8 @@ mean, bb basis for this bb setups of EMA Cross Over VWAP". `docs/vwap-setup.md` 
   two sentences of dashboard help. 60 inputs, 33 plots, 10 requests; `verify-tv-setups.ts` 612 checks.
 - **Checked through the MCP before the paste:** compiles; all 32 plots of the saved v45 equal on NASDAQ:CIGL 30s; the new
   line equals the pullback's line on every bar (same defaults).
+- **Deployed `06f2af2` at 14:54 ET (market open):** run success, prod on it, the dashboard's bundle carries v46; the API
+  restarted (seconds) and setups were arriving again at 14:54:30 ET.
 - **For the operator:** paste v46 and Save. No Reset settings; the alerts can stay as they are.
 - **What their settings window showed (11-24 00:45 their time):** EMA candle 5 minutes, session + month + year lines ticked,
   the v36 filter off, the line "BB upper", the v41 test on. So the band cross's candle is now 5m (rows said 1m at 08:24 ET).
