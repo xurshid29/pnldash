@@ -315,6 +315,12 @@ Friday sale: advised Premium plus the data); then "done. That badge disappeared"
   NASDAQ:CIGL 30s on the new feed, are equal on every plot, VB and band crosses included. So the alerts were most likely
   created from a chart with "VWAP + BB cross setup on" and "EMA cross setup on" unticked. Told the operator; an alert's
   inputs can't be read through the MCP. If it is deliberate (pullbacks only), nothing to do.
+- **Resolved 08:24 ET ("alerts updated"):** the operator edited the two alerts (same ids; expiry now 2027-01-22) and BAND /
+  CROSS / RETEST rows are back: 21 in 25 minutes. What the rows show they run now: **VB candle 1m and band-cross candle 1m
+  (it was 2m), band 30S, and the band's cross on the month line as well as the session line**. Both alerts were created at
+  06:54 ET, after the data purchase, so they run on the new feed (reasoned from the times, not measured). A price
+  comparison against Finviz snapshots (alert `price` vs the nearest `screener_results` row, four time windows) ran over
+  150 s on prod in pre-market; cancelled with `pg_cancel_backend`. Run that kind of join after the close, one window at a time.
 
 **2026-11-22 (Sun, ~08:00 ET) — THE BASIS LINE AS AN ENTRY RULE, MEASURED (research only, nothing built).** The operator,
 with VWAV charts: measure the PULLBACKs where the basis is going down at the alert and a candle then closes above it; not
