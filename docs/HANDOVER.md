@@ -308,6 +308,13 @@ Friday sale: advised Premium plus the data); then "done. That badge disappeared"
   them once. To check from rows: the alert's `price` against the nearest Finviz snapshot, before and after.
 - Their non-professional declaration form: advised to fill it with their real job details, and that sending these prices to
   the dashboard is personal use only while the dashboard is their own tool.
+- **"alerts recreated" (06:54 ET, on the saved script v45; `list-alerts`: 30S and 1m on the watchlist, both with an expiry of
+  11-26 03:20 UTC).** **Open: since 06:01 ET the 30s alert sends no BAND / CROSS / RETEST**, only PULLBACK / BROKEN / HELD
+  (a 3-minute gap in all rows at 06:01–06:04, then pullbacks only; the alerts recreated at 06:54 the same: 24 rows in 13
+  minutes, none of those stages, where Friday's same hour had 37). Not the script: v44 and v45, both by script id on
+  NASDAQ:CIGL 30s on the new feed, are equal on every plot, VB and band crosses included. So the alerts were most likely
+  created from a chart with "VWAP + BB cross setup on" and "EMA cross setup on" unticked. Told the operator; an alert's
+  inputs can't be read through the MCP. If it is deliberate (pullbacks only), nothing to do.
 
 **2026-11-22 (Sun, ~08:00 ET) — THE BASIS LINE AS AN ENTRY RULE, MEASURED (research only, nothing built).** The operator,
 with VWAV charts: measure the PULLBACKs where the basis is going down at the alert and a candle then closes above it; not
