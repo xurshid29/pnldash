@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v45** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setup: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v46** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setup: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1144,6 +1144,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-18 | v43 | `97546dd` | **The 30s alert's year line was anchored months late since v28** (§19), found on the first run through TradingView's MCP (the operator connected it that day): the saved v42 on LXEO read 4.79 on a 1m chart and 3.64 on a 30s chart, where the year's VWAP is 4.86. On a 30s chart a timeframe's bars first requested after a `request.security_lower_tf()` call load only as deep as 100,000 30s bars would reach (833 hourly bars), and v28 had put its 30s-bar request above the year line's hourly one. In the stored rows the 30s alert's year line matched the 1m alert's on 92% of ticker-days until 10-28 and on 13% since, a median 22% lower; 1,383 rows from the 30s alert named the year line, 713 of them announced. **Fix:** the hourly anchors are the script's first request again (the VB's request shares their bars). No input, plot, message or rule changed; no Reset settings. `verify-tv-setups.ts` pins the order. Stored 30s rows from 10-29 until the new alerts keep the short line. **Paste, recreate both alerts.** |
 | 2026-11-22 | v44 | `4e2a969` | Operator: "I think we should remove some of our experimental setups. Let's remove RSI Cross and Basis Cross. Pullback, VWAP + BB Cross, EMA Cross Over VWAP and it's Upper Band cross will be kept". **Removed** (§20): the RSI cross with its DIP (v32–v34) and the MACD cross after a DIP (v39), which hangs off the DIP; and the BASIS cross (v42). Script sections 3, 4c and 5, 19 inputs (73 → 54), 12 plots (43 → 31) and 5 `alert()` calls (16 → 11) are gone; `rsSym` and `rsChartSec`, which the EMA section uses, stay under their names. Server and dashboard: stages `rsi`, `dip`, `macd` and `basis` are gone (their messages get 400, saved switches are dropped, stored rows aren't listed). **Four defaults became the operator's live settings**, because the reset this version needs would otherwise undo them: VB candle 5m → 2m, VB band 45S → 30S, EMA candle 3m → 2m, the EMA cross's line Both → BB upper. Kept unchanged: PULLBACK, the VWAP + BB cross with its RETEST, the EMA cross with its filter and BOUNCE, the band's cross with the middle-line test. Compiled on TradingView through the MCP before the paste and compared with v43 bar by bar (§20.3). **Paste, Settings → Defaults → Reset settings, recreate both alerts.** |
 | 2026-11-22 | v45 | `e1667a4` | Operator, after updating to v44, with TradingView's own BB (timeframe 15S, middle line only) on a 1m chart: "add own BollingerBand to Pullback section, with configurable timeframe, only basis row is enough … I'm going to experiment entering when price closes above it after the pullback". **The pullback's basis line** (§13.8): a white line, the SMA of the last 20 closes of 15-second bars (`pbBsOn`, `pbBsTf`, `pbBsLen`: the script's last three inputs, shown in the Pullback group; its last plot). From a lower-timeframe request, read at each chart bar's close, as TradingView's built-in does. A line only: no alert, no message field, nothing on the server or the dashboard but two sentences of help text. Measured the same day with our 20-second snapshots in the line's place (§13.9). Checked on TradingView before the paste: compiles; on a 30s chart all 31 plots v44 had are equal bar by bar, and the new line equals a 15s chart's SMA(20). **Paste and Save; no reset, and the alerts can stay as they are.** |
+| 2026-11-24 | v46 | (this commit) | Operator: "add own BollingerBands basis row to the BB setups, as we did for Pullback", then, pointing at the "EMA cross over VWAP" settings: "I mean, bb basis for this bb setups of EMA Cross Over VWAP". **The band cross's basis line** (§18.8): the pullback's line again for the EMA cross setup — a teal line, the SMA of the last 20 closes of 15-second bars, with its own switch, timeframe and length (`bbBsOn`, `bbBsTf`, `bbBsLen`: the script's last three inputs, shown in the EMA cross over VWAP group; its last plot). A line only; not the band the cross itself uses, and not v42's removed BASIS cross. Checked on TradingView before the paste (§18.8). **Paste and Save; no reset, and the alerts can stay as they are.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -2842,6 +2843,47 @@ endpoint spreads it into the setup info.
   `EMA_STAGES` holds the four, `LINE_CROSS_STAGES` the three crosses.
 - Dashboard: a maroon **BAND** pill and an olive **BASIS** pill (the chart marks' colours), each
   its own thread per line; History has BAND and BASIS filters and counts.
+
+### 18.8 The band cross's basis line (script v46, 2026-11-24)
+
+**The ask.** "Now, please, add own BollingerBands basis row to the BB setups, as we did for
+Pullback." I started it as one line shared by the VWAP + BB cross and the band cross, in the
+VWAP + BB cross group; the operator stopped that with the "EMA cross over VWAP" settings open
+(the line set to "BB upper"): "I mean, bb basis for this bb setups of EMA Cross Over VWAP."
+
+**What it is.** The pullback's basis line (§13.8) again, for the EMA cross setup: the basis
+(middle line) of a Bollinger Band of its own timeframe and length, which is the SMA of that
+timeframe's closes, read at each chart bar's close. A line only: no alert, no marker, no message
+field, nothing on the server. The alerts need not be recreated for it.
+
+| Input (group "EMA cross over VWAP", the script's last three) | Default |
+|---|---|
+| Band cross basis line (v46) | on |
+| Band cross basis: its band's timeframe | 15S |
+| Band cross basis: its band's length (the closes it averages) | 20 |
+
+Drawn teal while the EMA cross setup and its own switch are on ("Band cross basis (v46)", the
+script's last plot), whichever line the setup runs (EMA, BB upper or both). Script section 7:
+the code of section 6 under `bbBs…` names, with two more requests at the end (ten in all).
+
+**Not to be confused with** the band the cross itself uses. That one is the VWAP + BB cross's
+band (its BB timeframe, length and StdDev), and its middle line is what the v41 test reads
+(§18.5, the hidden plot "BB middle"). The new line is a separate band, so its timeframe and
+length can be anything; and it is unrelated to v42's BASIS cross (§18.6, removed in v44), which
+was a setup that alerted when such a line crossed the VWAP. With the pullback line's timeframe
+and length the two lines are the same line drawn twice.
+
+**Checked on TradingView before the paste** (through the MCP; NASDAQ:CIGL, a 30s chart, 1,000
+bars of 11-20 and 11-23, on the exchange feed the operator bought on 11-23): v46 compiles with
+no errors and the same six cosmetic warnings, 60 inputs and 33 plots, the new ones last; all 32
+plots the saved v45 has are equal on the 997 bars the two runs share (3 VB crosses, 2 retests,
+2 band crosses, 3 PULLBACKs among them); and the new line equals the pullback's line on all
+1,000 bars, as it must with the same timeframe and length.
+
+**Not measured** for the band cross. §13.9 measured the same idea for PULLBACKs (the basis's
+direction at the alert separates them; entering at the close above the basis does not beat the
+alert's price). The band cross can be measured the same way with
+`research/ema-vwap/band_cross_study.py`'s crosses.
 
 ## 19. The 30s alert's year line, found through TradingView's MCP (script v43, 2026-11-18)
 

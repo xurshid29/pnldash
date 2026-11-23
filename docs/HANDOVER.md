@@ -10,8 +10,14 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v45 (2026-11-22).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v46 (2026-11-24).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
+- **⚠ Data break 2026-11-23 ~06:45 ET:** the operator bought real-time exchange data on TradingView.
+  Nasdaq names went from the Cboe One feed (6–18% of the volume) to the exchange feed; setup rows
+  before and after are not like for like (session log, 11-23).
+- **v46 (11-24) draws the band cross's basis line**, the pullback's line again for the EMA cross
+  setup (teal; its own switch, timeframe and length in the EMA cross over VWAP group). Chart only
+  (`docs/vwap-setup.md` §18.8).
 - **v45 (11-22) draws the pullback's basis line**: the SMA of the last 20 closes of 15-second
   bars, white, for the operator's entry experiment (a close above it after a pullback). Chart
   only: no alert, nothing server-side (`docs/vwap-setup.md` §13.8). The operator runs v44 in
@@ -291,6 +297,23 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-23 (Mon, ~15:00 ET; 11-24 on the operator's clock) — SCRIPT v46: THE BAND CROSS'S BASIS LINE (chart only).** The
+operator: "add own BollingerBands basis row to the BB setups, as we did for Pullback". I began it as one line for the VWAP +
+BB cross and the band cross together, in the VB group; they interrupted with the "EMA cross over VWAP" settings open: "I
+mean, bb basis for this bb setups of EMA Cross Over VWAP". `docs/vwap-setup.md` §18.8.
+- **v46:** a teal line, the SMA of the last 20 closes of 15-second bars, with its own switch, timeframe and length
+  (`bbBsOn`, `bbBsTf`, `bbBsLen`: the script's last three inputs, shown in the EMA cross over VWAP group; the last plot),
+  drawn while the EMA cross setup is on. Section 7 = section 6's code under new names. A separate band from the one the
+  cross uses (the VB's, whose middle the v41 test reads), and not v42's removed BASIS cross. No alert, no server change;
+  two sentences of dashboard help. 60 inputs, 33 plots, 10 requests; `verify-tv-setups.ts` 612 checks.
+- **Checked through the MCP before the paste:** compiles; all 32 plots of the saved v45 equal on NASDAQ:CIGL 30s; the new
+  line equals the pullback's line on every bar (same defaults).
+- **For the operator:** paste v46 and Save. No Reset settings; the alerts can stay as they are.
+- **What their settings window showed (11-24 00:45 their time):** EMA candle 5 minutes, session + month + year lines ticked,
+  the v36 filter off, the line "BB upper", the v41 test on. So the band cross's candle is now 5m (rows said 1m at 08:24 ET).
+- **Lesson:** "the BB setups" meant the band cross under the EMA cross's settings, not the VWAP + BB cross. When a request
+  names a settings group loosely, check which group before building.
 
 **2026-11-23 (Mon, ~06:45 ET) — THE OPERATOR BOUGHT REAL-TIME EXCHANGE DATA ON TRADINGVIEW: NASDAQ NAMES ARE ON THE FULL FEED
 FROM HERE (no code change).** "I decided to purchase US exchange data" (after asking whether to take Ultimate in the Black

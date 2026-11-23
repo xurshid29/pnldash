@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v45 (2026-11-22). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v46 (2026-11-24). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -17,6 +17,8 @@
 // and the BASIS cross (v42). All are in git history (v43, 97546dd) and docs/vwap-setup.md §17 / §18.6.
 // v45 draws one more line for the PULLBACK (section 6, at the end): the basis of a Bollinger Band
 // of its own timeframe (15S by default). A line only, with no alert.
+// v46 draws the same kind of line for the EMA cross setup's band cross (section 7), with its own
+// switch, timeframe and length in the "EMA cross over VWAP" group.
 // 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
@@ -1614,3 +1616,33 @@ if pbBsUpper
 else if array.size(pbBsIn) > 0
     pbBasis := array.get(pbBsIn, array.size(pbBsIn) - 1)
 plot(pbOn and pbBsOn ? pbBasis : na, "Pullback basis (v45)", color.white)
+
+// ── 7) THE BAND CROSS'S BASIS LINE (v46) ──────────────────────────────────────
+// Operator, 11-24: "add own BollingerBands basis row to the BB setups, as we did for Pullback";
+// then, with the "EMA cross over VWAP" settings open (the line set to "BB upper"): "I mean, bb
+// basis for this bb setups of EMA Cross Over VWAP".
+// One more line, built like the pullback's (section 6): the basis (middle line) of a Bollinger
+// Band of its own timeframe and length, which is the SMA of that timeframe's closes, read at each
+// chart bar's close. It belongs to the EMA cross setup, whose line the operator runs as the band
+// ("BB upper"), and is drawn while that setup is on. A line only: no alert, no marker, nothing
+// sent, so the alerts need not be recreated for it. It is not the band cross's own band (the
+// VB's, whose middle line the v41 test reads): it has its own switch, timeframe and length, so
+// it can differ from that band and from the pullback's line; with the pullback's timeframe and
+// length the two lines sit on top of each other.
+// Its three inputs are the script's last and show in the "EMA cross over VWAP" group; its two
+// requests and its plot are the script's last.
+bbBsOn  = input.bool(true,       "Band cross basis line (v46): the basis (middle line) of a Bollinger Band of its own timeframe — a line to time an entry after a band cross, no alert", group = "EMA cross over VWAP (v35)")
+bbBsTf  = input.timeframe("15S", "Band cross basis: its band's timeframe", group = "EMA cross over VWAP (v35)")
+bbBsLen = input.int(20,          "Band cross basis: its band's length (the closes it averages)", minval = 1, group = "EMA cross over VWAP (v35)")
+bbBsUse   = emOn and bbBsOn
+bbBsSec   = timeframe.in_seconds(bbBsTf)
+bbBsLower = bbBsUse and bbBsSec < chartSec
+bbBsUpper = bbBsUse and bbBsSec > chartSec
+bbBsIn    = request.security_lower_tf(syminfo.tickerid, bbBsLower ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))
+bbBsHtf   = request.security(syminfo.tickerid, bbBsUpper ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))
+var float bbBasis = na
+if bbBsUpper
+    bbBasis := bbBsHtf
+else if array.size(bbBsIn) > 0
+    bbBasis := array.get(bbBsIn, array.size(bbBsIn) - 1)
+plot(bbBsUse ? bbBasis : na, "Band cross basis (v46)", color.teal)

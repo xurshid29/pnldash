@@ -839,7 +839,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("2",     "VB: candle timeframe',
     'input.timeframe("30S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    'Script version: v45', 'Three setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross)', '"RETEST "', '" | stop "', '" | retest "',
+    'Script version: v46', 'Three setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross)', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -1023,11 +1023,11 @@ console.log('Contract — the Pine script still emits what the parser reads');
       code.includes('\nvbCandleTf = input.timeframe("2",') && code.includes('\nvbBbTf     = input.timeframe("30S",')
         && code.includes('\nemTf      = input.timeframe("2",') && code.includes('\nemSrc   = input.string("BB upper",'));
     const inputs = lines.map((l) => /^([A-Za-z_]\w*)\s*=\s*input\.(?:bool|int|float|string|timeframe|session|source)\(/.exec(l)?.[1]).filter((x): x is string => x != null);
-    check('v44 / v45: the 57 inputs, in order (TradingView keeps a saved value by position; v44 took 19 out, so it needed Reset settings once; v45 adds the pullback basis line\'s three at the end, so it needs none)',
+    check('v44 / v45 / v46: the 60 inputs, in order (TradingView keeps a saved value by position; v44 took 19 out, so it needed Reset settings once; v45 and v46 each add a basis line\'s three at the end, so they need none)',
       inputs.join(' ') === 'minDayGain runnerDays useAhGain alertWin pbOn pbSession pbMonth pbYear pbArm pbNear pbLowMY pbBreak pbWin pbMax pbCapMark pbTimeout'
         + ' vbOn vbCandleTf vbBbTf vbLen vbMult vbTol vbGainOn vbSession vbMonth vbYear vbRtOn vbRtCancel vbTf vbShow vwSrc vbRtNear vbRtWait vbRtWhen mvSrc'
         + ' emOn emTf emLen emSession emMonth emYear emGainOn emShow emFilterOn emMinUnder emMaxFlips emFromHour emBncOn emBncFrom emBncWait emBncTolE emBncTolV'
-        + ' emSrc bbMidOn pbBsOn pbBsTf pbBsLen', inputs.join(' '));
+        + ' emSrc bbMidOn pbBsOn pbBsTf pbBsLen bbBsOn bbBsTf bbBsLen', inputs.join(' '));
     // v45 (operator, 11-22, with TradingView's own BB 15S on a 1m chart, its middle line only: "add own BollingerBand to
     // Pullback section, with configurable timeframe, only basis row is enough … I'm going to experiment entering when price
     // closes above it after the pullback"): a line and nothing else. Its inputs sit last in the code and carry the Pullback
@@ -1043,6 +1043,22 @@ console.log('Contract — the Pine script still emits what the parser reads');
         && code.includes('plot(pbOn and pbBsOn ? pbBasis : na, "Pullback basis (v45)", color.white)'));
     check('v45: …and it is a line only: no alert() and no message names it',
       lines.filter((l) => /pbBasis|pbBs[A-Z]/.test(l)).every((l) => !/alert\(|str\.tostring|msg/.test(l)));
+    // v46 (operator, 11-24: "add own BollingerBands basis row to the BB setups, as we did for Pullback"; then, with the
+    // "EMA cross over VWAP" settings open: "I mean, bb basis for this bb setups of EMA Cross Over VWAP"): the same kind of
+    // line for the EMA cross setup, whose line the operator runs as the band. Its own switch, timeframe and length, in the
+    // EMA cross over VWAP group. A line only. (Not the band cross's own band, whose middle line the v41 test reads.)
+    check('v46: the band cross\'s basis line — a switch, a timeframe (15S) and a length (20) in the EMA cross over VWAP group; the SMA of that timeframe\'s closes, built like the pullback\'s',
+      code.includes('\nbbBsOn  = input.bool(true,') && code.includes('\nbbBsTf  = input.timeframe("15S", "Band cross basis: its band\'s timeframe", group = "EMA cross over VWAP (v35)")')
+        && code.includes('\nbbBsLen = input.int(20,') && lines.filter((l) => /^bbBs(On|Tf|Len)\s*=/.test(l)).every((l) => l.includes('group = "EMA cross over VWAP (v35)"'))
+        && code.includes('request.security_lower_tf(syminfo.tickerid, bbBsLower ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))')
+        && code.includes('request.security(syminfo.tickerid, bbBsUpper ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))')
+        && code.includes('\nvar float bbBasis = na\nif bbBsUpper\n    bbBasis := bbBsHtf\nelse if array.size(bbBsIn) > 0\n    bbBasis := array.get(bbBsIn, array.size(bbBsIn) - 1)\n'));
+    check('v46: …drawn while the EMA cross setup and its own switch are on',
+      code.includes('bbBsUse   = emOn and bbBsOn') && code.includes('bbBsLower = bbBsUse and bbBsSec < chartSec')
+        && code.includes('bbBsUpper = bbBsUse and bbBsSec > chartSec') && code.includes('plot(bbBsUse ? bbBasis : na, "Band cross basis (v46)", color.teal)'));
+    check('v46: …and it is a line only: no alert() and no message names it, and the v41 middle-line test still reads the band\'s own middle',
+      lines.filter((l) => /bbBasis|bbBs[A-Z]/.test(l)).every((l) => !/alert\(|str\.tostring|msg|bbSample/.test(l))
+        && code.includes('emBbMid'));
   }
   check('v44: 11 alert() calls — three PULLBACK, the VB and its RETEST, four EMA / BOUNCE, two band crosses',
     (pine.match(/^\s*alert\(/gm) ?? []).length === 11, String((pine.match(/^\s*alert\(/gm) ?? []).length));
@@ -1068,9 +1084,9 @@ console.log('Contract — the Pine script still emits what the parser reads');
       hourly.length === 2 && hourly.some((l) => l.includes('vbAnchors()')), String(hourly.length));
     const plainAfter = code.slice(firstLower).filter((l) => /request\.security\(/.test(l))
       .map((l) => (l.includes('session.extended), "60", ') ? '"60"' : /request\.security\((?:rsSym|syminfo\.tickerid),\s*([^,]+),/.exec(l)?.[1]?.trim()));
-    check('v43: every other plain request after it is for the hourly bars or a short-lookback timeframe (the EMA\'s; v44: the RSI\'s and the MACD\'s are gone; v45: the pullback basis\'s 20 closes)',
-      plainAfter.join(', ') === '"60", emTf, pbBsUpper ? pbBsTf : timeframe.period', plainAfter.join(', '));
-    // v44: with the RSI's, the MACD's and the basis's requests gone, six were left; v45's pullback basis line adds two, last
+    check('v43: every other plain request after it is for the hourly bars or a short-lookback timeframe (the EMA\'s; v44: the RSI\'s and the MACD\'s are gone; v45 / v46: a basis line\'s 20 closes)',
+      plainAfter.join(', ') === '"60", emTf, pbBsUpper ? pbBsTf : timeframe.period, bbBsUpper ? bbBsTf : timeframe.period', plainAfter.join(', '));
+    // v44: with the RSI's, the MACD's and the basis's requests gone, six were left; v45's and v46's basis lines add two each, last
     const reqs = code.filter((l) => /request\.[a-z_]+\(/.test(l));
     const want = ['request.security(ticker.new(syminfo.prefix, syminfo.ticker, session.extended), "60", anchorsBefore()',
       'request.security_lower_tf(syminfo.tickerid, need30 ? "30S" : timeframe.period, [hlc3 * volume, volume])',
@@ -1079,8 +1095,10 @@ console.log('Contract — the Pine script still emits what the parser reads');
       'request.security(rsSym, emTf, ta.ema(close, emLen)[1]',
       'request.security_lower_tf(syminfo.tickerid, emBbLower ? vbTf : timeframe.period, emBand(vbBbTf))',
       'request.security_lower_tf(syminfo.tickerid, pbBsLower ? pbBsTf : timeframe.period, ta.sma(close, pbBsLen))',
-      'request.security(syminfo.tickerid, pbBsUpper ? pbBsTf : timeframe.period, ta.sma(close, pbBsLen))'];
-    check('v44 / v45: the script\'s eight requests, in order: the hourly anchors, the 30s bars, the VB\'s hourly anchors, the VB\'s view, the EMA, the EMA\'s band, the pullback basis\'s two',
+      'request.security(syminfo.tickerid, pbBsUpper ? pbBsTf : timeframe.period, ta.sma(close, pbBsLen))',
+      'request.security_lower_tf(syminfo.tickerid, bbBsLower ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))',
+      'request.security(syminfo.tickerid, bbBsUpper ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))'];
+    check('v44 / v45 / v46: the script\'s ten requests, in order: the hourly anchors, the 30s bars, the VB\'s hourly anchors, the VB\'s view, the EMA, the EMA\'s band, the pullback basis\'s two, the band cross basis\'s two',
       reqs.length === want.length && want.every((w, i) => reqs[i].includes(w)), reqs.map((l) => l.trim().slice(0, 70)).join(' ¦ '));
   }
   check('v28: the new inputs come after the last v27 one', at('vbShow     = input.bool') > 0 && at('vbShow     = input.bool') < at('vwSrc      = input.string')
@@ -1099,12 +1117,13 @@ console.log('Contract — the Pine script still emits what the parser reads');
   check('v37: the five EMA bounce inputs come after the filter ones, in order', at('emFromHour = input.int') < at('emBncOn   = input.bool')
     && at('emBncOn   = input.bool') < at('emBncFrom = input.string') && at('emBncFrom = input.string') < at('emBncWait = input.int')
     && at('emBncWait = input.int') < at('emBncTolE = input.float') && at('emBncTolE = input.float') < at('emBncTolV = input.float'));
-  check('v40 / v41 / v45: their inputs come last, in order — emSrc, bbMidOn, then the pullback basis line\'s three, nothing after (v44: the MACD\'s six before them and the basis\'s three after them are gone) — the first two before the EMA section\'s code that reads them',
+  check('v40 / v41 / v45 / v46: their inputs come last, in order — emSrc, bbMidOn, the pullback basis line\'s three, then the band cross basis line\'s three, nothing after (v44: the MACD\'s six before them and the basis\'s three after them are gone) — the first two before the EMA section\'s code that reads them',
     at('emBncTolV = input.float') > 0 && at('emBncTolV = input.float') < at('emSrc   = input.string') && at('emSrc   = input.string') < at('bbMidOn = input.bool')
     && at('bbMidOn = input.bool') < at('emPrevE = request.security')
     && at('bbMidOn = input.bool') < at('pbBsOn  = input.bool') && at('pbBsOn  = input.bool') < at('pbBsTf  = input.timeframe') && at('pbBsTf  = input.timeframe') < at('pbBsLen = input.int')
-    && (pine.slice(at('pbBsLen = input.int') + 'pbBsLen = input.int'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0
-    && (pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 57,
+    && at('pbBsLen = input.int') < at('bbBsOn  = input.bool') && at('bbBsOn  = input.bool') < at('bbBsTf  = input.timeframe') && at('bbBsTf  = input.timeframe') < at('bbBsLen = input.int')
+    && (pine.slice(at('bbBsLen = input.int') + 'bbBsLen = input.int'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0
+    && (pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 60,
     String((pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length));
   // New plots go last (TradingView keeps a plot's style by position too)
   check('v40 / v41 / v45: the band\'s line and its four marks, its middle line, then the pullback basis line are the script\'s last plots, after the bounce\'s four (v44: the MACD\'s two before them and the basis\'s five after them are gone)',
@@ -1115,13 +1134,14 @@ console.log('Contract — the Pine script still emits what the parser reads');
     && at('"BB upper cross, filtered (v40)"') < at('"BB upper cross, filtered, late close (v40)"')
     && at('"BB upper cross, filtered, late close (v40)"') < at('"BB middle (EMA cross, v41)"')
     && at('"BB middle (EMA cross, v41)"') < at('"Pullback basis (v45)"')
-    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"Pullback basis (v45)"'))));
+    && at('"Pullback basis (v45)"') < at('"Band cross basis (v46)"')
+    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"Band cross basis (v46)"'))));
   {
     const titles = pine.split('\n').filter((l) => /^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/.test(l)).map((l) => /"([^"]*)"/.exec(l)?.[1] ?? '?');
-    check('v44 / v45: 32 plots, the last seven the band\'s six (its line, its four marks, its middle line) and the pullback basis line, right after the bounce\'s last mark',
-      titles.length === 32 && JSON.stringify(titles.slice(-8)) === JSON.stringify(['EMA bounce, filtered, late close (v37)', 'BB upper (EMA cross, v40)',
+    check('v44 / v45 / v46: 33 plots, the last eight the band\'s six (its line, its four marks, its middle line), the pullback basis line and the band cross basis line, right after the bounce\'s last mark',
+      titles.length === 33 && JSON.stringify(titles.slice(-9)) === JSON.stringify(['EMA bounce, filtered, late close (v37)', 'BB upper (EMA cross, v40)',
         'BB upper cross over VWAP (v40)', 'BB upper cross, late close (v40)', 'BB upper cross, filtered (v40)', 'BB upper cross, filtered, late close (v40)',
-        'BB middle (EMA cross, v41)', 'Pullback basis (v45)']), `${titles.length}: ${titles.slice(-8).join(' ¦ ')}`);
+        'BB middle (EMA cross, v41)', 'Pullback basis (v45)', 'Band cross basis (v46)']), `${titles.length}: ${titles.slice(-9).join(' ¦ ')}`);
   }
   check('v36 / v37: the gray "filtered" marks, then the four bounce marks, in order',
     at('"yVWAP (EMA cross, v35)"') > 0 && at('"yVWAP (EMA cross, v35)"') < at('"EMA cross, filtered (v36)"')
