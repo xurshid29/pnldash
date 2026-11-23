@@ -292,6 +292,23 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-23 (Mon, ~06:45 ET) — THE OPERATOR BOUGHT REAL-TIME EXCHANGE DATA ON TRADINGVIEW: NASDAQ NAMES ARE ON THE FULL FEED
+FROM HERE (no code change).** "I decided to purchase US exchange data" (after asking whether to take Ultimate in the Black
+Friday sale: advised Premium plus the data); then "done. That badge disappeared" (MSS, a Nasdaq name).
+- **⚠ A break in the data: `tier_events` rows before 2026-11-23 ~06:45 ET were computed from the Cboe One feed (6–18% of the
+  volume), rows after it from the exchange feed, for Nasdaq-listed names (85% of the watchlist).** VWAP lines, bands and
+  candles shift; don't grade across the date without splitting on it. The purchase happened between 06:33 and 06:49 ET.
+- **Measured through the MCP** (`get-ohlcv`, 1h bars, regular session, against Finviz daily volume), LXEO, the same five
+  days as on 11-19: 79% (11-12), 62% (11-13), 66% (11-16), 79% (11-17), 84% (11-18), where the Cboe feed gave 18 / 8 / 6 /
+  7 / 10%. The rest is pre-market and after-hours volume, which the MCP's bars leave out. Past days' intraday bars were
+  replaced too, so the script's hourly sums (month, year) and today's bars are still one feed.
+- **NYSE and AMEX names are still on the limited feed** as of 06:55 ET: NYSE:AHT 15% / 5% and AMEX:AEON 11% / 19% on 11-19 /
+  11-20. Either the purchase was Nasdaq only, or the other feeds aren't active yet. Told the operator.
+- **Not verified:** that the two running watchlist alerts use the new feed without being recreated. Suggested recreating
+  them once. To check from rows: the alert's `price` against the nearest Finviz snapshot, before and after.
+- Their non-professional declaration form: advised to fill it with their real job details, and that sending these prices to
+  the dashboard is personal use only while the dashboard is their own tool.
+
 **2026-11-22 (Sun, ~08:00 ET) — THE BASIS LINE AS AN ENTRY RULE, MEASURED (research only, nothing built).** The operator,
 with VWAV charts: measure the PULLBACKs where the basis is going down at the alert and a candle then closes above it; not
 those where no candle closes above it; not those where the basis is going up at the alert ("such setups often drop"), or
