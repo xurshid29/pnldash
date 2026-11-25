@@ -320,6 +320,12 @@ Cross, with its own bb basis settings (macd usually standart)" (read: a setup of
 - **Checked through the MCP before the paste:** compiles; every plot of the saved v46 equal on NRSN 1m; the script's 7
   TURN markers there (fall 3%, gainers off) are the replica's 7 on the same candles (`get_ohlcv` bars).
 - **Built with four subagents** (server + checks, dashboard, replica, the compile run) while I wrote the script and docs.
+- **Deployed `eaf4e33` at 10:57 ET (market open) and checked on prod:** `GET /api/tv/settings` lists TURN and announces
+  it (announced: pullback, ema, band, turn — the operator has EMA on again); the example TURN message through
+  `?dry=1` parses to every field; the bundle carries v47; setups arriving again at 10:58:00 ET. **Postgres restarted with
+  this deploy too** (as on 11-22): the rollout runs `docker compose pull` + `up -d` and the compose file uses the floating
+  `postgres:18` tag, so a newer upstream image recreates the database container, about 10 seconds, at whatever hour the
+  deploy runs. Not changed; pinning the image would stop it.
 - **For the operator:** paste v47, Save, recreate both alerts (this one alerts); no Reset settings. TURN is on in ⚙.
 - **To grade** in 2–3 weeks: §21.7. Expect about 20 a day at the default 10% fall (from our bars; the chart sees more
   touches, so possibly more).
