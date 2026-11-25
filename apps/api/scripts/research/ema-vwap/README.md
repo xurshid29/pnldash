@@ -339,3 +339,59 @@ Limits as above; in particular a pop's wicks are where our 1m bars from snapshot
 
 **Not built.** It would be TURN's state machine with the run in the fall's place and a longer
 wait.
+
+### Chasing the pop itself (2026-11-26, `pop_study.py`)
+
+The operator's follow-up: "but, now, I'm thinking how to catch them up, while the initial pop is
+moveing too fast". Measured: buying the pop's first candle, against waiting for its first
+pullback, and whether a faster trigger helps.
+
+    python pop_study.py rows.csv.gz [--up 2] [--flat 6]
+
+**Pop** = the first green 1m candle that closes at least 2% above the basis (as it stood a
+candle before) off a flat base (the 15 candles before ranged at most 6% of the basis). About 230
+a day on Momentum names; 16,307 in 71 days. In sample / out of sample; "reach" = before a close
+under the basis; "fails fast" = that close comes within 5 candles.
+
+| buying the pop candle's close | a day | reach +5% | reach +10% | fails fast | ride, average | median further high |
+|---|---:|---:|---:|---:|---:|---:|
+| all pops | 226 / 234 | 15.5% / 13.6% | 6.1% / 4.8% | 35% / 38% | −1.04% / −1.40% | +0.8% / +0.5% |
+| the candle closed 3–5% above the basis | 64 / 70 | 18.0% / 15.6% | 7.7% / 5.7% | 31% / 35% | −1.26% / −1.74% | +1.1% / +0.5% |
+| 5–8% above | 12 / 15 | 24.6% / 17.8% | 9.7% / 7.5% | 26% / 31% | −2.22% / −2.60% | +1.2% / +0.2% |
+| 8% and over | 3.0 / 3.5 | 40.3% / 32.7% | 21.8% / 17.8% | 23% / 29% | −1.50% / −4.44% | +1.8% / +0.1% |
+| volume 3–10× the 20 candles before | 51 / 49 | 18.9% / 15.7% | 7.6% / 5.8% | 27% / 31% | −0.92% / −1.32% | +1.2% / +0.9% |
+| day change +60% and over | 26 / 19 | 24.0% / 22.2% | 9.2% / 9.6% | 32% / 37% | −0.50% / −1.24% | +1.6% / +1.4% |
+
+| the same pops, entered at the first pullback's bounce | share with one | reach +5% | reach +10% | ride, average | entry vs the pop close |
+|---|---:|---:|---:|---:|---:|
+| all pops | 50% / 46% | 12.8% / 11.1% | 4.8% / 4.1% | −0.63% / −0.83% | +0.0% / +0.0% (median) |
+
+| a faster trigger: the first ~20-second snapshot at the level | a day | reach +5% | fails fast | ride, average |
+|---|---:|---:|---:|---:|
+| at 2% above the basis, every trigger | 377 / 393 | 13.9% / 12.7% | 40% / 42% | −1.13% / −1.42% |
+| …of which the minute then closed as a pop (60%) | 226 / 234 | 17.1% / 15.4% | 35% / 37% | −0.79% / −1.18% |
+| …of which it did not (40%) | 151 / 159 | 9.2% / 8.7% | 48% / 48% | −1.63% / −1.78% |
+| at 5% above the basis, every trigger | 43 / 53 | 27.0% / 20.1% | 25% / 30% | −2.00% / −2.85% |
+
+**Read:**
+
+- **By the time a candle confirms a pop, the typical pop is spent.** The median further high
+  before a close back under the basis is under 1%; over a third close back under it within 5
+  candles; buying the pop candle's close loses 1.0–1.4% on average. Bigger pop candles go on more
+  often (a third to 40% reach another +5% after an 8% candle) and lose more on average.
+- **A faster trigger doesn't fix it** at the speed our data can see (~20 seconds): it fires 60%
+  more often, the extra triggers are the pops that didn't hold (ride −1.6% to −1.8%), and where
+  the minute did hold, its close is a median 0% above the snapshot that triggered.
+- **The first pullback costs nothing in price and loses less.** Half the pops give one, a median
+  4 candles later, at a median 0% from the pop candle's close; its average is −0.6% / −0.8%
+  against −1.0% / −1.4% for the chase. Of the pops that never pull back, about one in ten goes
+  +5% (5% of all pops): that is all the chase gains.
+- Volume on the pop candle (3×+) and a name up 60%+ on the day cut the fast failures a little;
+  neither makes the chase positive.
+
+**Limits:** ~20-second snapshots (a pop's first seconds are invisible here, and so is anything a
+hotkey could do inside them); names already on the Momentum screen (a first pop from nowhere is
+not in the data); ideal fills at a moment when spreads are widest.
+
+**Not built.** What it supports: a POP alert as a heads-up (open the chart, be ready), and the
+first pullback's bounce as the entry.

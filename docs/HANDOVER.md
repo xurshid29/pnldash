@@ -313,6 +313,13 @@ how to catch such pullbacks?" `research/ema-vwap/basis_bounce_study.py --wait 20
   −0.19R. More hits than TURN, a little worse on risk. Not an edge.
 - **Proposed, awaiting the operator:** a fifth setup next to TURN (TURN's state machine, the run as its condition, a
   20-candle wait), or a second trigger inside TURN.
+- **Their follow-up: "how to catch them up, while the initial pop is moveing too fast" → measured the chase**
+  (`research/ema-vwap/pop_study.py`, README): pop = first green 1m close 2%+ above the basis off a flat base, about 230 a
+  day. Buying that close: +5% for 15.5% / 13.6%, over a third close back under the basis within 5 candles, −1.0% / −1.4%
+  a trade, median further high under 1%. A ~20-second trigger fires 60% more often and the extra ones are the pops that
+  didn't hold. The first pullback comes for half the pops, a median 4 candles later, at a median 0% from the pop close,
+  and loses less (−0.6% / −0.8%); only 5% of all pops run +5% without one. **So: a POP alert as a heads-up, the first
+  pullback's bounce as the entry.** Proposed that two-step setup; awaiting the operator.
 
 **2026-11-25 (Wed, ~11:30 ET) — SCRIPT v47: A FOURTH SETUP, TURN (the bounce off a basis that fell and turned up).** After
 the measurement in the entry below, the operator: "I want to experiment with it, let's build it. Make a seprate setup EMA
