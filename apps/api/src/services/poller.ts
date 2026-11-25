@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { emaByBand, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, turnFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
+import { emaByBand, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, popFields, turnFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3946,7 +3946,7 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
-  // tv_cross / tv_retest / tv_ema / tv_bounce / tv_band / tv_turn, and tv_year for a message about the year line alone).
+  // tv_cross / tv_retest / tv_ema / tv_bounce / tv_band / tv_turn / tv_pop / tv_back, and tv_year for a message about the year line alone).
   // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
   // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
@@ -3964,6 +3964,9 @@ class PollerService {
   // v37 BOUNCE (tv_bounce): limited like the EMA cross; why 'weak' = its cross was weak.
   // v47 TURN (tv_turn): why 'capped' = past TV_SETUP.tn_cap TURNs on the ticker today; why
   // 'offlist' = not on our Momentum list. Rows carry the basis, the fall and the MACD reading.
+  // v48 POP (tv_pop) and BACK (tv_back): limited like the TURN, each on its own day's number
+  // (why 'capped' = past TV_SETUP.pp_cap on `pop N` / `back N`). Rows carry the basis and how far
+  // the run's high got above it; a BACK's also the stop, the candles after the POP and the MACD.
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist' | 'weak', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
@@ -3994,6 +3997,7 @@ class PollerService {
         ...vbFields(sig),
         ...emaFields(sig),
         ...turnFields(sig),
+        ...popFields(sig),
         vwap_src: sig.vwap_src ?? null,
         on_screen: row != null, notified: mode === 'notify',
       },
@@ -4011,6 +4015,7 @@ class PollerService {
       ...vbFields(sig),
       ...emaFields(sig),
       ...turnFields(sig),
+      ...popFields(sig),
       vwap_src: sig.vwap_src ?? null,
     });
     if (sig.stage === 'ema' || sig.stage === 'band') {
@@ -4045,6 +4050,19 @@ class PollerService {
         ` · day ${sig.day_gain ?? '?'}% · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
         (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: turn ${sig.turn_n} today)`
+          : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
+    } else if (sig.stage === 'pop' || sig.stage === 'back') {
+      const back = sig.stage === 'back';
+      const n = back ? sig.back_n : sig.pop_n;
+      console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'}` + (back ? ` · stop ${sig.stop ?? '?'}` : '') +
+        ` · ${sig.candle_tf ?? '?'} candle · basis SMA ${sig.sma_len ?? '?'} ${sig.sma ?? '?'} (${sig.sma_pct ?? '?'}%)` +
+        ` · the run's high ${sig.ran_pct ?? '?'}% above it` +
+        ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
+        ` · ${back ? 'back' : 'pop'} ${n ?? '?'}` + (back ? ` · ${sig.since_n ?? '?'} candles after the POP` : '') +
+        (back && sig.macd_green != null ? ` · MACD ${sig.macd_green ? 'green' : 'not green'}` : '') +
+        ` · day ${sig.day_gain ?? '?'}% · tf ${sig.tf ?? '?'}` +
+        `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
+        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: ${back ? 'back' : 'pop'} ${n} today)`
           : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
     } else if (VB_STAGES.has(sig.stage)) {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +

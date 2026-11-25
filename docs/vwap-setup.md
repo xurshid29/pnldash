@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v47** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18), and (v47) TURN, the bounce off a basis line that fell and turned up (§21). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v48** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18), (v47) TURN, the bounce off a basis line that fell and turned up (§21), and (v48) POP with its BACK, a pop off the basis as a heads-up and its first pullback's bounce as the entry (§22). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1146,6 +1146,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-22 | v45 | `e1667a4` | Operator, after updating to v44, with TradingView's own BB (timeframe 15S, middle line only) on a 1m chart: "add own BollingerBand to Pullback section, with configurable timeframe, only basis row is enough … I'm going to experiment entering when price closes above it after the pullback". **The pullback's basis line** (§13.8): a white line, the SMA of the last 20 closes of 15-second bars (`pbBsOn`, `pbBsTf`, `pbBsLen`: the script's last three inputs, shown in the Pullback group; its last plot). From a lower-timeframe request, read at each chart bar's close, as TradingView's built-in does. A line only: no alert, no message field, nothing on the server or the dashboard but two sentences of help text. Measured the same day with our 20-second snapshots in the line's place (§13.9). Checked on TradingView before the paste: compiles; on a 30s chart all 31 plots v44 had are equal bar by bar, and the new line equals a 15s chart's SMA(20). **Paste and Save; no reset, and the alerts can stay as they are.** |
 | 2026-11-24 | v46 | `06f2af2` | Operator: "add own BollingerBands basis row to the BB setups, as we did for Pullback", then, pointing at the "EMA cross over VWAP" settings: "I mean, bb basis for this bb setups of EMA Cross Over VWAP". **The band cross's basis line** (§18.8): the pullback's line again for the EMA cross setup — a teal line, the SMA of the last 20 closes of 15-second bars, with its own switch, timeframe and length (`bbBsOn`, `bbBsTf`, `bbBsLen`: the script's last three inputs, shown in the EMA cross over VWAP group; its last plot). A line only; not the band the cross itself uses, and not v42's removed BASIS cross. Checked on TradingView before the paste (§18.8). **Paste and Save; no reset, and the alerts can stay as they are.** |
 | 2026-11-25 | v47 | `eaf4e33` | Operator, with v46's line at 1 minute / 15 closes and a MACD under a 1m chart, on moves of NIVF and APUS: "How can I catch such moves? … candle breaks the bb basis, the bb basis moving up, macd turned green, and price pulls back to bb basis line and bounces"; "The most important part is, bb basis goes down (usually big drop), and after that, it starts moving up"; after the measurement: "I want to experiment with it, let's build it. Make a seprate setup … with its own bb basis settings (macd usually standart)". **A fourth setup, TURN** (§21): on the basis's own candles (1m, SMA 15), after the basis fell at least 10% and turned up, a close above it, a low back at it within 10 candles, then a green close above it with the basis rising and the MACD green. Script section 8, thirteen inputs in their own group (last; 73), two plots (last; 35), one `alert()` (12), no request; message `TURN … | sma 15 … | fall …% | turn N | since N | green 1`. Server stage `turn` (own ⚙ switch, on by default; Momentum names; `tn_cap` 3), dashboard pill, `pinesim.simulate_turn`. Measured first (`research/ema-vwap/basis_bounce_study.py`): the fall is what counts, about 20 a day after a 10% fall, one in five reach +5%, about break-even — an experiment. **Paste, Save, recreate both alerts; no Reset settings.** |
+| 2026-11-26 | v48 | `tbd` | Operator, with a basis line at 1 minute / 15 closes on 1m charts of SVRE, ZNB, APUS and WHLR: "these moves are initial pop, and their first pullback to bb basis row … how to catch such pullbacks?"; then "I'm thinking how to catch them up, while the initial pop is moveing too fast"; to a two-step proposal (a heads-up, then the pullback's bounce as the entry): "yes, lets do that". **A fifth setup in two steps, POP and BACK** (§22): on the basis's own candles (1m, SMA 15), POP is the first candle of a run above the basis by which a high has reached 10% above it (a heads-up, no entry); BACK is the first pullback after it: a low back at the basis, then a green close above it with the basis rising and the MACD green, within 20 candles, with a stop under the pullback's low. Script section 9, twelve inputs in their own group (last; 85), three plots (last; 38), two `alert()` calls (14), no request; messages `POP … | sma 15 … | ran …% | pop N` and `BACK … | stop … | sma 15 … | ran …% | back N | since N | green 1`. Server stages `pop` and `back` (each its own ⚙ switch, on by default; Momentum names; `pp_cap` 3 each), dashboard pills sharing one thread, `pinesim.simulate_pop`. Measured first (`research/ema-vwap/pop_study.py`, `pop_back_study.py`): buying the pop's candle loses; at 10% about 35 POPs and 10 BACKs a day, the BACK about break-even (at 5% over a hundred POPs a day and worse BACKs) — an experiment. **Paste, Save, recreate both alerts; no Reset settings.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -3244,3 +3245,167 @@ After two or three weeks of rows: TURNs by `fall_pct` (does the live split match
 `macd_green` if the switch gets turned off, by time of day, and against the stop in `stop`. The
 rows are from the exchange feed the operator bought on 11-23 (Nasdaq names), where §21.2's bars
 are ours.
+
+## 22. POP and BACK: a pop off the basis and its first pullback (script v48, 2026-11-26)
+
+### 22.1 The operator's definition
+
+With a basis line at 1 minute / 15 closes on 1m charts of SVRE, ZNB, APUS and WHLR:
+
+> these moves are initial pop, and their first pullback to bb basis row … how to catch such
+> pullbacks?
+
+and, after that was measured:
+
+> but, now, I'm thinking how to catch them up, while the initial pop is moveing too fast
+
+Buying the pop's own candle was measured and loses (§22.2), so the proposal was a setup in two
+steps, like CROSS and RETEST: a **POP** alert as a heads-up (open the chart, be ready, no entry)
+and the first pullback's bounce, **BACK**, as the entry. The operator: "yes, lets do that".
+
+### 22.2 Measured before building
+
+Three studies on 71 trading days of our 1m bars on Momentum names, split at 10-09
+(`research/ema-vwap/`, README's last three sections):
+
+- **The first pullback after a pop** (`basis_bounce_study.py --wait 20`): the further the price
+  ran above the basis before coming back, the more often the bounce goes on: +5% for 22.5% after
+  a run of 5–10%, for 29–34% after 10–20%. The failures are bigger too (−0.03R to −0.19R).
+- **Chasing the pop** (`pop_study.py`): buying the first candle that closes 2%+ above a flat
+  basis loses 1.0–1.4% a trade; over a third of those pops close back under the basis within 5
+  candles; a ~20-second trigger fires 60% more often and doesn't help. Only 5% of pops go +5%
+  without giving a pullback first.
+- **The rule as built** (`pop_back_study.py`), in sample / out of sample:
+
+| the POP's threshold | POPs a day | after 3 a day per ticker | a BACK follows | BACKs a day | reach +5% | reach +10% | 2R with the stop |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 5% | 109 / 129 | 66 / 72 | 34% / 32% | 38 / 42 | 20.8% / 23.1% | 10.6% / 10.9% | −0.22R / −0.22R |
+| 8% | 50 / 57 | 38 / 40 | 31% / 29% | 15 / 17 | 27.0% / 28.1% | 14.0% / 15.6% | −0.11R / −0.14R |
+| **10%** (the default) | 33 / 37 | 28 / 29 | 28% / 27% | 9.5 / 9.8 | 28.7% / 34.9% | 15.5% / 20.4% | −0.08R / −0.05R |
+
+("Reach" = a bar high that far above the BACK's close before a close back under the basis.) The
+threshold is 10% because of this table: at 5% the heads-up fires over a hundred times a day and
+its BACKs lose a fifth of the risk. At 10% a BACK follows a little over a quarter of the POPs, a
+median 7 candles later and 1–2% under the POP candle's close, and it is about break-even. Not an
+edge; built as the operator's experiment. The counts are a floor (a name's first 15 candles on
+our screen have no basis in that data).
+
+### 22.3 The rule and its inputs (group "POP and BACK: a pop off the basis and its first pullback (v48)")
+
+Like TURN it reads the candles of the basis's own timeframe, so it runs on a chart of that
+timeframe: its markers show there and its alerts come from the alert on that timeframe (1m by
+default). No request.
+
+1. **Run:** starts at a close above the basis after a close at or under it (or at the day's
+   first candle, if it closes above the basis); ends at a close under the basis.
+2. **POP:** the first candle of a run by which a high of the run has reached the threshold %
+   above the basis (each high against its own candle's basis). One POP per run.
+3. **Touch:** on a candle after the POP candle, the low comes down to the basis (at or under it,
+   or within the tolerance above it).
+4. **BACK:** that candle or a later one closes green and above the basis, with the basis rising
+   and, if the switch is on, the MACD above its signal line, within N candles of the POP candle.
+   The run's end ends the wait. One BACK per POP.
+5. **Stop:** a tick under the lowest low after the candle of the run's highest high, the bounce
+   candle's own low included.
+
+The gainer filter and the alert window are read at each alert's own candle: a BACK can be sent
+after a POP that was not (the ticker became a gainer in between), and a POP can have no BACK
+sent. A POP or a bounce that the filters keep quiet still uses up its run. A TURN (§21) and a
+BACK can fire on one candle (a fall, then a pop, then the bounce); they are separate setups and
+both are sent.
+
+| Input | Default |
+|---|---|
+| POP setup on (v48) | on |
+| POP: the basis's timeframe (its candles are the ones judged) | 1 minute |
+| POP: the basis's length (the closes it averages) | 15 |
+| POP: a candle's high at least this % above the basis, in a run of closes above it | 10 |
+| BACK: a low within this % above the basis counts as the pullback reaching it | 1 |
+| BACK: the bounce comes within N candles after the POP candle (0 = until a close under the basis) | 20 |
+| BACK: the MACD must be green at the bounce | on |
+| BACK: the MACD's fast / slow / signal length | 12 / 26 / 9 |
+| POP and BACK: gainers only (the gainer filter at the top) | on |
+| POP and BACK: draw the markers | on |
+
+Twelve inputs, the script's last (85 in all), so nothing shifts and no Reset settings. On the
+chart: a yellow **POP** label above the POP candle ("POP (v48)") and an aqua **BK** label under
+the bounce candle ("BACK (v48)"); the basis ("POP basis (v48)") is hidden until switched on in
+Style, because with TURN's settings it is TURN's fuchsia line. Three plots, the script's last
+(38).
+
+### 22.4 The messages
+
+    POP SVRE 1.85 | sVWAP 1.62 (+14.2%) | mVWAP 1.4 (+32.1%) | sma 15 1.66 (+11.4%) | ran 12.6% | candle 1 | pop 1 | day high +38% | vwap 30s | tf 1
+    BACK SVRE 1.92 | stop 1.84 | sVWAP 1.7 (+12.9%) | mVWAP 1.41 (+36.2%) | sma 15 1.88 (+2.1%) | ran 18.4% | candle 1 | back 1 | since 6 | green 1 | day high +45% | vwap 30s | tf 1
+
+`sma N` = the basis and the price against it; `ran` = the furthest a high of the run got above
+the basis so far (at the POP it is the POP's own size; at the BACK it is the whole run's);
+`candle` = the basis's timeframe; `pop N` / `back N` = the day's POPs / BACKs sent on this
+ticker; `stop` = §22.3's; `since N` = candles after the POP candle; `green` = the MACD above its
+signal at the bounce (1 / 0; 0 only with the MACD switch off). Both are sent with
+`alert.freq_once_per_bar_close` from the chart whose timeframe is the basis's, so `tf 1`. A POP
+has no stop: it is not an entry.
+
+### 22.5 Our side
+
+Stages `pop` and `back`, labels **POP** and **BACK**, after TURN in the stage order. New fields
+`ran_pct`, `pop_n` and `back_n`, with TURN's `sma_len`, `sma`, `sma_pct` and `candle_tf`, and for
+a BACK the existing `stop`, `since_n` and `macd_green` (`popFields()`; a POP's row carries no
+stop). Stored always; announced when the stage's own ⚙ switch is on (both on by default; a list
+saved before v48 gives both the default; BACK's switch does not follow POP's), the ticker is on
+the Momentum list (the ⚙ rule now reads "EMA / BAND / BOUNCE / TURN / POP / BACK: Momentum list
+only"; unticked, a day high of +30% or more also counts) and it is not past `TV_SETUP.pp_cap` (3
+a day per ticker, POPs by `pop N` and BACKs by `back N`, each on its own number). A BACK is
+announced on its own conditions, whether or not its POP was. The gate keys both by stage, so a
+POP, a BACK and a TURN of one ticker never stand in each other's way (`BASIS_STAGES`). Telegram
+slugs `tv_pop` and `tv_back`, icons 💥 and 🎯; the POP's text says it is a heads-up and that the
+entry is the BACK. A POP on a Momentum name is an ordinary push, about 28 a day by §22.2's count:
+the ⚙ POP switch (or `ALERTS_DISABLED=tv_pop` for the phone alone) turns it off.
+
+Dashboard: a gold POP pill and a purple BACK pill with the timeframe and length (`1m·15`) and
+the day's number; a POP's row reads `pop · ran +12.6%`, a BACK's `back · stop $1.84 (−4.2%)`.
+The two share one thread per ticker (`pp:`): the BACK takes its POP's place as the ticker's row
+and the POP stays in the day trail, as RETEST does with CROSS; a BACK with no POP before it shows
+on its own. A POP stays "live" for 20 minutes (the script's wait). History has a filter for
+each. Replica: `pinesim.simulate_pop` with `pop_rule_direct` and `selftest_pop`.
+
+### 22.6 Checked before the paste
+
+- **It compiles on TradingView** (the comment-free copy through the MCP, one call): no errors,
+  the same six cosmetic warnings, 85 inputs and 38 plots, POP's and BACK's last.
+- **Nothing else moved.** Against the operator's saved v47 on NASDAQ:SVRE's 1m chart, every plot
+  v47 has is equal on the 996 closed bars the two runs share (the one bar that differs was still
+  forming during the first run).
+- **Its markers are the rule's.** The same run (threshold set to 5%, gainers off) drew 11 POPs
+  and 3 BACKs in its 1,000 bars. `pinesim.simulate_pop`, run on the same symbol's 1m bars from
+  `get_ohlcv`, gives the same 11 and 3 on the same candles, and its basis equals the script's on
+  all 996 closed bars. One of the POPs is a day's first candle (11-25 09:30, a gap 24.7% above
+  the basis), so the day-start rule is among the things that agree.
+- **The replica against the rule:** `selftest_pop` runs the state machine and the rule stated
+  from its definitions on 30 hand-built cases and on 44 generated tapes × 14 settings, 4,632
+  POPs and 894 BACKs, field for field; 43 of 44 one-line changes to either one make it fail, and
+  the 44th changes nothing (a reset that is done twice).
+- **The server and the dashboard:** `verify-tv-setups.ts` 825 checks (700 before), the web build
+  and the API type check pass. Not exercised before the deploy: live delivery (row, SSE,
+  Telegram) and how the new pills look in a browser.
+- Two things the replica's author found in the rule, both kept and now stated in the script's
+  comments: a run ends with the day (the next day's first candle starts a new one if it closes
+  above the basis), and the touch is remembered until the bounce, so where the MACD turns green
+  a few candles after the low the BACK comes at that later close, above the basis.
+
+### 22.7 To grade
+
+After two or three weeks of rows:
+
+- POPs: how many a day really arrive (§22.2 says about 28 after the cap; the study's counts are a
+  floor), and what share get a BACK (28% there).
+- BACKs by `ran_pct` (10–20% against 20% and over), by `since_n`, by time of day, and against the
+  stop in `stop`.
+- **BACKs by `sma_pct`, the close against the basis.** In the study a BACK closing under 2%
+  above the basis had a stop a median 1.9% away and came to +0.01R / +0.27R; one closing 5% or
+  more above it had a stop 7.5–8% away and came to −0.25R / −0.27R. If the live rows repeat that,
+  a ceiling on the BACK's distance from the basis is the input to add.
+- Whether the POP heads-up is worth its pushes: if the operator mutes it, the BACK stands alone
+  as a second TURN-like entry.
+
+The rows are from the exchange feed bought on 11-23 (Nasdaq names), where §22.2's bars are ours.

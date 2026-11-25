@@ -198,7 +198,7 @@ function fmtAlertPrice(p: number | null): string {
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', ema: 'EMA',
-  bounce: 'BOUNCE', band: 'BAND', turn: 'TURN',
+  bounce: 'BOUNCE', band: 'BAND', turn: 'TURN', pop: 'POP', back: 'BACK',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -245,6 +245,16 @@ export function opportunityTitle(a: OpportunityAlert): string {
       return `${s.on_screen ? '⭐ ' : ''}📐 TURN ${a.ticker} — bounced off the ${shortTf(s.candle_tf)} basis ${s.sma_len ?? '?'} after it turned up`
         + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.turn_n != null ? ` · #${s.turn_n}` : ''}`;
     }
+    // v48: "📐 POP SVRE — ran +12.6% above the 1m basis 15 · a heads-up, no entry yet · #1"
+    if (s.stage === 'pop') {
+      return `${s.on_screen ? '⭐ ' : ''}📐 POP ${a.ticker} — ran ${fmtSignedPct(s.ran_pct ?? null)} above the ${shortTf(s.candle_tf)} basis ${s.sma_len ?? '?'}`
+        + ` · a heads-up, no entry yet${s.pop_n != null ? ` · #${s.pop_n}` : ''}`;
+    }
+    // v48: "📐 BACK SVRE — bounced off the 1m basis 15 after the pop · stop $1.84 · #1"
+    if (s.stage === 'back') {
+      return `${s.on_screen ? '⭐ ' : ''}📐 BACK ${a.ticker} — bounced off the ${shortTf(s.candle_tf)} basis ${s.sma_len ?? '?'} after the pop`
+        + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.back_n != null ? ` · #${s.back_n}` : ''}`;
+    }
     // PULLBACK / BROKEN / HELD (the reclaim setup's stages went with script v27)
     const tokens = lineTokens(s.stage, s.line);
     const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
@@ -263,8 +273,13 @@ export function opportunityBody(a: OpportunityAlert): string {
   if (a.kinds.includes('tv_setup') && a.setup) {
     const s = a.setup;
     const bits = [fmtAlertPrice(a.price)];
-    if ((s.stage === 'bounce' || s.stage === 'turn') && s.stop != null && a.price != null && a.price > 0) bits.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the pullback's low`);
+    if ((s.stage === 'bounce' || s.stage === 'turn' || s.stage === 'back') && s.stop != null && a.price != null && a.price > 0) bits.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the pullback's low`);
     if (s.stage === 'bounce' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the cross`);
+    // v48 POP / BACK: how far the run's highs got above the basis, the basis, and for a BACK how
+    // long after the POP candle. A POP has no stop.
+    if (s.stage === 'back' && s.ran_pct != null) bits.push(`ran ${fmtSignedPct(s.ran_pct)} above the basis`);
+    if ((s.stage === 'pop' || s.stage === 'back') && s.sma != null) bits.push(`basis ${fmtAlertPrice(s.sma)}`);
+    if (s.stage === 'back' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the pop`);
     // v47 TURN: how far the basis fell before it turned, the basis, how long after the close above it
     if (s.stage === 'turn' && s.fall_pct != null) bits.push(`fall ${fmtSignedPct(-Math.abs(s.fall_pct))}`);
     if (s.stage === 'turn' && s.sma != null) bits.push(`basis ${fmtAlertPrice(s.sma)}`);
@@ -370,8 +385,8 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        // (a v35 EMA cross, its v37 BOUNCE, a v40 BAND cross and a v47 TURN sound like a CROSS)
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce') || tvStage('band') || tvStage('turn')) crossConfirmPing();
+        // (a v35 EMA cross, its v37 BOUNCE, a v40 BAND cross, a v47 TURN and a v48 POP or BACK sound like a CROSS)
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce') || tvStage('band') || tvStage('turn') || tvStage('pop') || tvStage('back')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('pullback')) setupReadyPing();
         else if (audible.some((a) => a.kinds.includes('news'))) chime();

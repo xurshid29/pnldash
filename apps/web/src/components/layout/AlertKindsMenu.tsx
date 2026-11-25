@@ -13,10 +13,11 @@ const KINDS: Array<{ kind: AlertKind; label: string; hint: string }> = [
 ].filter((k) => DASHBOARD_KINDS.includes(k.kind as AlertKind)) as Array<{ kind: AlertKind; label: string; hint: string }>;
 
 // The EMA switch also covers its v37 BOUNCE (the server lists no switch for 'bounce'). Since
-// 2026-11-16 the band's cross (BAND, v40) has its own; it rode the EMA's. TURN (v47) has its own.
+// 2026-11-16 the band's cross (BAND, v40) has its own; it rode the EMA's. TURN (v47) has its own,
+// and so do POP and BACK (v48), one each. The server's list sets the order: POP and BACK after TURN.
 const STAGE_LABEL: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST',
-  ema: 'EMA + BOUNCE', bounce: 'BOUNCE', band: 'BAND (BB upper)', turn: 'TURN',
+  ema: 'EMA + BOUNCE', bounce: 'BOUNCE', band: 'BAND (BB upper)', turn: 'TURN', pop: 'POP', back: 'BACK',
 };
 
 // Click-to-open switches for which opportunity alerts make a sound and a
@@ -55,7 +56,7 @@ export function AlertKindsMenu() {
           server-side like the switches above. Off = the VWAP + BB cross's rule (a +30% day high pings off the list too). */}
       {settings && (
         <Checkbox checked={settings.ema_momo_only} onChange={(e) => saveEmaMomoOnly(e.target.checked)}>
-          <span style={{ fontWeight: 600 }}>EMA / BAND / BOUNCE / TURN: Momentum list only</span>
+          <span style={{ fontWeight: 600 }}>EMA / BAND / BOUNCE / TURN / POP / BACK: Momentum list only</span>
           <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
             off = also pings off the list when the day high is +30% or more
           </Text>

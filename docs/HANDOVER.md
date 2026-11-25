@@ -10,8 +10,17 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v47 (2026-11-25).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v48 (2026-11-26).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
+- **v48 (11-26) adds a fifth setup in two steps, POP and BACK** (stages `pop` and `back`,
+  `docs/vwap-setup.md` §22): on its own basis (SMA 15 of 1m closes), POP is the first candle of a
+  run above the basis by which a high has reached 10% above it, a heads-up with no entry; BACK is
+  the first pullback after it (a low back at the basis, then a green close above it with the
+  basis rising and the MACD green, within 20 candles), the entry, with a stop. Both from the 1m
+  alert; each its own ⚙ switch (on); Momentum names; 3 a day per ticker each. Measured first:
+  buying the pop's candle loses, the BACK is about break-even (about 35 POPs and 10 BACKs a
+  day). The operator's experiment. Grade from its rows in two or three weeks, the BACKs by
+  `sma_pct` first (§22.7).
 - **v47 (11-25) adds a fourth setup, TURN** (stage `turn`, `docs/vwap-setup.md` §21): after its
   basis (SMA 15 of 1m closes) fell at least 10% and turned up, a close above it, a low back at
   it, then a green close above it with the MACD green. Sent from the 1m alert; own ⚙ switch (on);
@@ -302,6 +311,33 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-25 (Wed, ~15:30 ET; 11-26 on the operator's clock) — SCRIPT v48: A FIFTH SETUP IN TWO STEPS, POP AND BACK.** The
+operator to the two-step proposal in the entry below: "yes, lets do that". `docs/vwap-setup.md` §22.
+- **Measured the exact rule first** (`research/ema-vwap/pop_back_study.py`, README): the POP's threshold is 10% because at
+  5% there are 109 / 129 POPs a day (66 / 72 after a 3-a-day cap) and the BACKs come to −0.22R; at 10% 33 / 37 POPs
+  (28 / 29 capped), a BACK after 28% / 27% of them a median 7 candles later, 9.5 / 9.8 BACKs a day, +5% for 28.7% /
+  34.9%, +10% for 15.5% / 20.4%, −0.08R / −0.05R. BACKs closing under 2% above the basis: +0.01R / +0.27R with a 1.9%
+  stop; 5% and more above it: −0.25R / −0.27R with a 7.5–8% stop (grade the live rows by `sma_pct`).
+- **Rule** (script section 9, on the basis's own candles, 1m / SMA 15): a run = closes above the basis from the close that
+  crossed it (or the day's first candle) to the first close under it (or the day's end); POP = the first candle by which
+  a high of the run is 10% above the basis; BACK = after the POP candle a low within 1% above the basis, then a green
+  close above it with the basis rising and the MACD 12 26 9 green, within 20 candles; stop = a tick under the lowest low
+  after the run's highest high. Twelve inputs in their own group (last; 85), three plots (last; 38; the basis hidden),
+  two `alert()` calls (14), no request. From the 1m alert: `POP … | sma 15 … | ran …% | candle 1 | pop N | … | tf 1`,
+  `BACK … | stop … | sma 15 … | ran …% | candle 1 | back N | since N | green 1 | … | tf 1`.
+- **Server / dashboard:** stages `pop` and `back` (icons 💥 🎯, slugs `tv_pop` / `tv_back`), each its own ⚙ switch on by
+  default, Momentum names by the rule now labelled "EMA / BAND / BOUNCE / TURN / POP / BACK: Momentum list only",
+  `pp_cap` 3 a day per ticker each, a BACK announced whether or not its POP was; gold POP and purple BACK pills in one
+  thread per ticker (`pp:`), History filters, help text. `verify-tv-setups.ts` 825 checks. `pinesim.simulate_pop` +
+  `pop_rule_direct` + `selftest_pop` (39 self-test lines).
+- **Checked through the MCP before the paste** (3 calls): compiles (85 inputs, 38 plots, the six old warnings); every plot
+  of the saved v47 equal on SVRE 1m (996 closed bars); the script's 11 POPs and 3 BACKs there (threshold 5%, gainers off)
+  are the replica's on the same candles.
+- **Built with four subagents** again (server + checks, dashboard, replica, the compile run).
+- **For the operator:** paste v48, Save, recreate both alerts (this one alerts); no Reset settings. POP and BACK are on
+  in ⚙. A POP on a Momentum name is a normal push (about 28 a day by the study): ⚙ → POP off if that is too many.
+- **To grade** in 2–3 weeks: §22.7.
 
 **2026-11-25 (Wed, ~11:15 ET; 11-26 on the operator's clock) — THE FIRST PULLBACK AFTER A POP, MEASURED (research only).**
 The operator, with SVRE, ZNB, APUS and WHLR on 1m: "these moves are initial pop, and their first pullback to bb basis row …

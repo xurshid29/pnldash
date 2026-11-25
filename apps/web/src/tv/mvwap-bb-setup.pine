@@ -1,11 +1,11 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v47 (2026-11-25). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v48 (2026-11-26). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
-// Four setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross, TURN), so the same two
-// watchlist alerts carry them all (the VWAP + BB cross and the EMA cross only send from the 30s
-// alert, TURN from the 1m one). Each has its own "… setup on" switch: off
+// Five setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross, TURN, POP with its BACK),
+// so the same two watchlist alerts carry them all (the VWAP + BB cross and the EMA cross only send
+// from the 30s alert, TURN and POP / BACK from the 1m one). Each has its own "… setup on" switch: off
 // = no markers and no alerts from it, and a VWAP line no setup uses isn't drawn.
 // v27 removed the RECLAIM setup (FORMING / READY / GO, v1–v26) and the BB breakout
 // (TOUCH / BREAKOUT / TRIGGERED, v17–v26): the operator tested all four and kept these
@@ -22,6 +22,9 @@
 // v47 adds a fourth setup, TURN (section 8, at the end): after a basis fell and turned up, price
 // closes above it, comes back to it and bounces. Its own basis and MACD settings; sent from the
 // alert on the basis's timeframe (1m).
+// v48 adds a fifth setup in two steps (section 9, at the end): POP, a heads-up when a run's high
+// gets well above its basis, and BACK, the entry, when the price then comes back to the basis and
+// bounces. Its own basis and MACD settings; sent from the alert on the basis's timeframe (1m).
 // 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
@@ -1763,3 +1766,158 @@ if tnFire
     alert(tnMsg(), alert.freq_once_per_bar_close)
 plot(tnRun and tnShow ? tnB : na, "TURN basis (v47)", color.fuchsia)
 plotshape(tnShow and tnFire, "TURN (v47)", shape.labelup, location.belowbar, color.fuchsia, text = "TN", textcolor = color.white, size = size.small)
+
+// ── 9) POP AND BACK: A POP OFF THE BASIS AND ITS FIRST PULLBACK (v48) ─────────
+// Operator, 11-26, with a basis line at 1 minute / 15 closes on 1m charts of SVRE, ZNB, APUS and
+// WHLR: "these moves are initial pop, and their first pullback to bb basis row … how to catch such
+// pullbacks?"; then: "I'm thinking how to catch them up, while the initial pop is moveing too
+// fast". Buying the pop's own candle was measured first and loses (research/ema-vwap/pop_study.py:
+// a third of the pops are back under the basis within 5 candles), so the setup has two steps, like
+// CROSS and RETEST, and the operator said "yes, lets do that":
+//   POP    a heads-up, no entry: open the chart and be ready
+//   BACK   the entry: the first pullback to the basis after the POP, at its bounce
+// The rule, on the candles of the basis's own timeframe (the chart must be on it):
+//   run      starts at a close above the basis after a close at or under it (or at the day's
+//            first candle, if it closes above the basis) and ends at a close under the basis,
+//            or with the day: a run never carries over into the next day
+//   POP      the first candle of a run by which a high of the run has reached `ppUp` % above the
+//            basis. One POP per run.
+//   touch    on a candle after the POP candle, the low comes down to the basis (at or under it, or
+//            within the tolerance above it)
+//   BACK     that candle or a later one closes green and above the basis, with the basis rising
+//            and (a switch) the MACD above its signal line, within `ppWaitN` candles of the POP
+//            candle. The run's end (a close under the basis) ends the wait. One BACK per POP.
+//            The touch is remembered until the bounce: where the MACD turns green a few candles
+//            after the low, the BACK comes at that later close, above the basis (the message's
+//            `sma N … (+x%)` says how far; measured, a BACK 5% or more above the basis has the
+//            far stop and is the worse kind)
+//   stop     a tick under the lowest low after the candle of the run's highest high as it stood
+//            before the bounce candle, the bounce candle's own low included (so a bounce candle
+//            that makes the new high itself keeps the pullback's low)
+// The gainer filter and the alert window are read at each alert's own candle, so a BACK can be
+// sent after a POP that was not (the ticker became a gainer in between), and the other way round.
+// Measured on the built rule (research/ema-vwap/pop_back_study.py, 71 days of our 1m bars, both
+// halves): at 10% about 35 POPs a day on Momentum names (28 after the dashboard's 3 a day per
+// ticker); a BACK follows 28% of them, a median 7 candles later and 1–2% under the POP candle's
+// close; about 10 BACKs a day; +5% before a close back under the basis for 29–35% of them, +10%
+// for 16–20%; −0.05R to −0.08R with the stop and a 2R target, so about break-even. At 5% there are
+// 110–130 POPs a day and the BACKs do worse (−0.22R). An experiment, as the operator asked.
+// A TURN (section 8) and a BACK can fire on one candle (a fall, then a pop, then the bounce): they
+// are separate setups and both are sent.
+// It reads the chart's own candles, so it runs where the chart's timeframe is the basis's: its
+// markers on that chart, its alerts from the alert on that timeframe (1m by default). No request.
+// Messages (the contract with parseTvMessage):
+//   POP SVRE 1.85 | sVWAP 1.62 (+14.2%) | mVWAP 1.4 (+32.1%) | sma 15 1.66 (+11.4%) | ran 12.6% | candle 1 | pop 1 | day high +38% | vwap 30s | tf 1
+//   BACK SVRE 1.92 | stop 1.84 | sVWAP 1.7 (+12.9%) | mVWAP 1.41 (+36.2%) | sma 15 1.88 (+2.1%) | ran 18.4% | candle 1 | back 1 | since 6 | green 1 | day high +45% | vwap 30s | tf 1
+// `sma N` = the basis and the price against it, `ran` = the furthest a high of the run got above
+// the basis so far, `pop N` / `back N` = the day's POPs / BACKs sent on this ticker, `stop` = see
+// above, `since N` = candles after the POP candle, `green` = the MACD above its signal at the
+// bounce (1 / 0).
+// Its twelve inputs are the script's last; its three plots are the script's last. Its basis line
+// is hidden until switched on in Style (with TURN's settings it is TURN's line).
+ppOn     = input.bool(true,      "POP setup on (v48): a run pops well above its basis (POP, a heads-up), then comes back to the basis and bounces (BACK, the entry)", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppTf     = input.timeframe("1",  "POP: the basis's timeframe — its candles are the ones judged; the markers show on that chart, the alerts come from the alert on it", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppLen    = input.int(15,         "POP: the basis's length (the closes it averages)", minval = 2, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppUp     = input.float(10.0,     "POP: a candle's high at least this % above the basis, in a run of closes above it", minval = 0.5, step = 0.5, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppTol    = input.float(1.0,      "BACK: a low within this % above the basis counts as the pullback reaching it", minval = 0, step = 0.1, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppWaitN  = input.int(20,         "BACK: the bounce comes within N candles after the POP candle (0 = until a close under the basis)", minval = 0, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppMacdOn = input.bool(true,      "BACK: the MACD must be green at the bounce (above its signal line)", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppFast   = input.int(12,         "BACK: the MACD's fast length", minval = 1, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppSlow   = input.int(26,         "BACK: the MACD's slow length", minval = 2, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppSig    = input.int(9,          "BACK: the MACD's signal length", minval = 1, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppGainOn = input.bool(true,      "POP and BACK: gainers only (the gainer filter at the top)", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppShow   = input.bool(true,      "POP and BACK: draw the markers (the basis line is hidden until switched on in Style)", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppRun    = ppOn and timeframe.in_seconds(ppTf) == chartSec
+ppB      = ta.sma(close, ppLen)
+[ppMacdLine, ppSignalLine, ppHist] = ta.macd(close, ppFast, ppSlow, ppSig)
+ppGreen  = ppHist > 0
+var bool  ppIn      = false   // inside a run: no close under the basis since the close that crossed above it
+var float ppRan     = 0.0     // the furthest a high of the run got above the basis, %
+var float ppTop     = na      // the run's highest high
+var float ppPbLow   = na      // the lowest low after the candle of that high
+var bool  ppPopped  = false   // the run has had its POP
+var bool  ppWaiting = false   // waiting for the POP's BACK
+var int   ppPopBar  = na
+var bool  ppTouched = false
+var int   ppPopN    = 0       // the day's POPs sent on this ticker
+var int   ppBackN   = 0       // the day's BACKs sent on this ticker
+if newDay
+    ppPopN    := 0
+    ppBackN   := 0
+    ppIn      := false
+    ppWaiting := false
+bool  ppPopFire  = false
+bool  ppBackFire = false
+float ppStop     = na
+int   ppAge      = na
+if ppRun and not na(ppB) and not na(ppB[1])
+    if ppIn and close < ppB
+        ppIn      := false
+        ppWaiting := false
+    else if not ppIn and close > ppB and (close[1] <= ppB[1] or newDay)
+        ppIn      := true
+        ppRan     := 0.0
+        ppTop     := na
+        ppPbLow   := na
+        ppPopped  := false
+        ppWaiting := false
+    if ppIn
+        ppRan := math.max(ppRan, (high / ppB - 1) * 100)
+        // the pullback's low with this candle in it (read before a new high starts it over)
+        float ppLowNow = na(ppPbLow) ? low : math.min(ppPbLow, low)
+        if not ppPopped
+            if ppRan >= ppUp
+                // the POP: it uses up the run, whether or not the filters let it send
+                ppPopped  := true
+                ppWaiting := true
+                ppTouched := false
+                ppPopBar  := bar_index
+                if inWindow and (not ppGainOn or gainer)
+                    ppPopFire := true
+                    ppPopN    += 1
+        else if ppWaiting
+            if low <= ppB * (1 + ppTol / 100)
+                ppTouched := true
+            if ppTouched and close > open and close > ppB and ppB > ppB[1] and (not ppMacdOn or ppGreen)
+                // the bounce: it uses up the POP, whether or not the filters let it send
+                ppWaiting := false
+                if inWindow and (not ppGainOn or gainer)
+                    ppBackFire := true
+                    ppStop     := ppLowNow - syminfo.mintick
+                    ppAge      := bar_index - ppPopBar
+                    ppBackN    += 1
+            else if ppWaitN > 0 and bar_index - ppPopBar >= ppWaitN
+                ppWaiting := false
+        if na(ppTop) or high > ppTop
+            ppTop   := high
+            ppPbLow := na
+        else
+            ppPbLow := ppLowNow
+ppMsg(bool isBack) =>
+    string msg = (isBack ? "BACK " : "POP ") + syminfo.ticker + " " + str.tostring(close, format.mintick)
+    if isBack
+        msg += " | stop " + str.tostring(ppStop, format.mintick)
+    if not na(svwap)
+        msg += " | sVWAP " + str.tostring(svwap, format.mintick) + " (" + pctVs(svwap) + "%)"
+    if not na(mvwap)
+        msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + pctVs(mvwap) + "%)"
+    if not na(yvwap)
+        msg += " | yVWAP " + str.tostring(yvwap, format.mintick) + " (" + pctVs(yvwap) + "%)"
+    msg += " | sma " + str.tostring(ppLen) + " " + str.tostring(ppB, format.mintick) + " (" + pctVs(ppB) + "%)"
+    msg += " | ran " + str.tostring(ppRan, "#.0") + "% | candle " + ppTf
+    if isBack
+        msg += " | back " + str.tostring(ppBackN) + " | since " + str.tostring(ppAge) + " | green " + (ppGreen ? "1" : "0")
+    else
+        msg += " | pop " + str.tostring(ppPopN)
+    if not na(dayHighGain)
+        msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
+    if not na(ahGain)
+        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
+    msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
+if ppPopFire
+    alert(ppMsg(false), alert.freq_once_per_bar_close)
+if ppBackFire
+    alert(ppMsg(true), alert.freq_once_per_bar_close)
+plot(ppRun and ppShow ? ppB : na, "POP basis (v48)", color.orange, display = display.none)
+plotshape(ppShow and ppPopFire, "POP (v48)", shape.labeldown, location.abovebar, color.yellow, text = "POP", textcolor = color.black, size = size.small)
+plotshape(ppShow and ppBackFire, "BACK (v48)", shape.labelup, location.belowbar, color.aqua, text = "BK", textcolor = color.black, size = size.small)

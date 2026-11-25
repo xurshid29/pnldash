@@ -346,8 +346,13 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // TURN (script v47): a setup of its own, from the 1m alert. On the candles of a basis line (the
 // average of the last 15 closes of 1m candles), after the basis fell and turned up: a close above
 // it, a low back at it, then a green close above it — the bounce. Its own ⚙ switch.
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band' | 'turn';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'ema', 'bounce', 'band', 'turn'];
+// POP and BACK (script v48): a setup of two steps, from the 1m alert, on the candles of its own
+// basis line (the average of the last 15 closes of 1m candles). A run starts at a close above the
+// basis and ends at a close under it. POP, a heads-up with no entry: the first candle of a run by
+// which a high has reached 10% above the basis. BACK, the entry: after the POP candle a low comes
+// back to the basis, then a green close above it. Each has its own ⚙ switch.
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band' | 'turn' | 'pop' | 'back';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'ema', 'bounce', 'band', 'turn', 'pop', 'back'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'bounce' ? 'ema' : stage;
@@ -419,6 +424,12 @@ export interface TvSetupInfo {
   fall_pct?: number | null;   // how far the basis fell before it turned, %
   turn_n?: number | null;     // the day's TURNs on the ticker, this one included
   macd_green?: boolean | null;   // the MACD was above its signal line at the bounce
+  // POP and BACK (script v48): candle_tf = the basis's timeframe; sma_len / sma / sma_pct = the
+  // basis, as on a TURN. A BACK also has stop (a tick under the pullback's lowest low), since_n
+  // (candles after the POP candle) and macd_green. A POP has no stop.
+  ran_pct?: number | null;    // how far the run's highs got above the basis so far, %
+  pop_n?: number | null;      // POP: the day's POPs on the ticker, this one included
+  back_n?: number | null;     // BACK: the day's BACKs on the ticker, this one included
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

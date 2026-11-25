@@ -395,3 +395,63 @@ not in the data); ideal fills at a moment when spreads are widest.
 
 **Not built.** What it supports: a POP alert as a heads-up (open the chart, be ready), and the
 first pullback's bounce as the entry.
+
+### POP and BACK as built (script v48, 2026-11-26, `pop_back_study.py`)
+
+The operator's answer to that: "yes, lets do that". Before writing the script section, the rule
+it would use was run on the same bars, to choose the POP's threshold and to know how many alerts
+a day it sends. The script's section 9 (`docs/vwap-setup.md` §22) is this rule.
+
+    python pop_back_study.py rows.csv.gz [--up 10] [--wait 20] [--tol 1] [--macd 1] [--cap 3]
+
+**Run** = closes above the basis (SMA 15 of 1m closes), from the close that crossed above it to
+the first close under it. **POP** = the first candle of a run by which a high has reached `up` %
+above the basis; one per run. **BACK** = after the POP candle, a low within 1% above the basis,
+then that candle or a later one closing green above the basis with the basis rising and the MACD
+(12 26 9) above its signal, within 20 candles of the POP. Stop = a tick under the lowest low
+after the run's highest high. In sample / out of sample; "capped" = after 3 a day per ticker.
+
+| the POP's threshold | POPs a day | capped | a BACK follows | BACKs a day | reach +5% | reach +10% | stopped | 2R, average |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 5% | 109 / 129 | 66 / 72 | 34% / 32% | 38 / 42 | 20.8% / 23.1% | 10.6% / 10.9% | 33% / 27% | −0.22R / −0.22R |
+| 8% | 50 / 57 | 38 / 40 | 31% / 29% | 15 / 17 | 27.0% / 28.1% | 14.0% / 15.6% | 30% / 24% | −0.11R / −0.14R |
+| **10%** (built) | 33 / 37 | 28 / 29 | 28% / 27% | 9.5 / 9.8 | 28.7% / 34.9% | 15.5% / 20.4% | 32% / 23% | −0.08R / −0.05R |
+
+At 10%, by what the run did and when the BACK came:
+
+| BACKs at 10% | a day | reach +5% | reach +10% | 2R, average | the stop's distance, median |
+|---|---:|---:|---:|---:|---:|
+| the run's high got 10–20% above the basis | 8.2 / 8.3 | 29.3% / 34.6% | 14.9% / 18.3% | −0.07R / −0.05R | 3.3% / 3.8% |
+| 20% and over | 1.3 / 1.5 | 25.0% / 36.2% | 19.2% / 31.9% | −0.19R / −0.08R | 3.9% / 6.5% |
+| 1–3 candles after the POP | 1.4 / 2.1 | 36.8% / 37.5% | 22.8% / 18.8% | +0.05R / −0.07R | 4.1% / 4.7% |
+| 4–8 candles after | 5.2 / 4.6 | 27.4% / 32.4% | 13.9% / 19.0% | −0.10R / −0.05R | 3.2% / 3.5% |
+| 9 and later | 2.9 / 3.2 | 27.0% / 36.7% | 14.8% / 23.5% | −0.12R / −0.05R | 3.5% / 4.4% |
+| 09:30–11:00 New York | 2.5 / 2.2 | 33.7% / 37.7% | 17.3% / 21.7% | −0.08R / +0.02R | 3.9% / 3.4% |
+| 16:00–20:00 | 1.4 / 1.6 | 25.9% / 24.5% | 13.8% / 20.4% | −0.19R / −0.17R | 2.9% / 3.9% |
+
+**Read:**
+
+- **10% is the threshold.** At 5% the heads-up fires over a hundred times a day and its BACKs
+  lose a fifth of the risk on average; at 10% there are about 35 POPs a day (28 after the cap),
+  about 10 BACKs, and the BACKs are near break-even in both halves (−0.05R to −0.08R), with +5%
+  reached by 29–35% and +10% by 16–20%. This is the 10–20% row of "The first pullback after a
+  pop" again, from a rule that counts the wait from the POP candle.
+- **A BACK follows a little over a quarter of the POPs**, a median 7 candles later, at a median
+  1–2% under the POP candle's close. Three POPs in four get no BACK: the run ends under the basis
+  first, or it never comes back to the basis within 20 candles.
+- **Not an edge.** No row is clearly positive in both halves. After hours is the weakest.
+- **How far above the basis the BACK closes sorts them by risk.** A BACK that closes under 2%
+  above the basis (3.0 / 2.4 a day) has a stop a median 1.9% away and comes to +0.01R / +0.27R;
+  one that closes 5% or more above it (2.0 / 2.8 a day: a big bounce candle, or the MACD turning
+  green a few candles after the low) reaches +5% more often (41%) but its stop is a median 7.5–8%
+  away and it comes to −0.25R / −0.27R. The message carries it (`sma N … (+x%)`), so the live
+  rows can be graded by it.
+- The touch is remembered until the bounce, so a BACK could come after the run has already made
+  a new high: 9 of 684 BACKs. Not worth a rule.
+- The MACD condition: with it off and no limit on the wait (`--macd 0 --wait 0`) there are 11.5
+  BACKs a day and the extra ones do about the same (the not-green BACKs: +5% for 23% / 27%). It
+  costs little and adds little; it is a switch because the operator reads the MACD.
+
+**Limits:** as above; and a name's first 15 candles on our screen have no basis here, so pops in
+them are missed: the counts are a floor. The gainer filter is approximated by the day's change
+(10% and over), the alert window by 04:00–20:00.

@@ -77,6 +77,11 @@ export interface TvSetupInfo {
   turn_n?: number | null;     // the day's TURNs on the ticker, this one included
   since_n?: number | null;    // candles after the close above the basis (a BOUNCE: after its cross)
   macd_green?: boolean | null; // the MACD above its signal line at the bounce
+  // POP and BACK (script v48): candle_tf / sma_len / sma / sma_pct as the TURN's; a BACK also has
+  // stop, since_n (candles after the POP candle) and macd_green, a POP none of the three
+  ran_pct?: number | null;    // the furthest a high of the run got above the basis so far, %
+  pop_n?: number | null;      // POP: the day's POPs sent on the ticker, this one included
+  back_n?: number | null;     // BACK: the day's BACKs sent on the ticker, this one included
   vwap_src?: '30s' | 'chart' | null; // v28: which bars the script built its VWAP lines from (null = before v28)
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe

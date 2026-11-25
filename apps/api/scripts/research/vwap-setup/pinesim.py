@@ -4,8 +4,9 @@ PULLBACK setup (script v10) in PullbackLine / simulate_pullback(), the BB breako
 simulate_breakout() / simulate_breakout_1m(), and the VWAP + BB cross (v21) in simulate_vb_cross().
 Further down, each with the rule stated a second time, independently, and a self-test that holds
 the two against each other: the RSI cross with its DIP, LIFT and MACD (v32–v39) in simulate_rsi(),
-the EMA / band / basis cross over VWAP with its BOUNCE (v35–v42) in simulate_ema(), and TURN, the
-bounce off a basis that fell and turned up (v47), in simulate_turn() / turn_rule_direct().
+the EMA / band / basis cross over VWAP with its BOUNCE (v35–v42) in simulate_ema(), TURN, the
+bounce off a basis that fell and turned up (v47), in simulate_turn() / turn_rule_direct(), and POP
+and BACK, a pop off the basis and its first pullback (v48), in simulate_pop() / pop_rule_direct().
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -2537,6 +2538,508 @@ def selftest_turn():
     return ok
 
 
+# ── POP and BACK: a pop off the basis and its first pullback (script v48, its section 9) ─
+# On the candles of the basis's own timeframe, like TURN (no request and no sampling: the bars given
+# here are the candles):
+#   run      starts at a close above the basis (the SMA of the last `len` closes) when the close before
+#            was at or under the basis before, or on a day's first candle that closes above it; ends at
+#            a close under the basis, and at a new day
+#   POP      the first candle of a run by which a high of the run has stood `up` % above its own
+#            candle's basis (the run's first candle can be it). One per run; a heads-up, no entry
+#   touch    on a candle after the POP candle, a low at or under basis × (1 + `tol` %)
+#   BACK     that candle or a later one, at most `wait` candles after the POP candle (`wait` 0 = up to
+#            the run's end): a green close above the basis, the basis above its value a candle before
+#            and (`macd_on`) the MACD's histogram above zero. One per POP; the entry
+#   stop     a tick under the lowest low after the candle of the run's highest high, the bounce
+#            candle's low included. That high is the one standing before the bounce candle (the first
+#            candle to reach it): a bounce candle that makes a new high keeps the lows before it
+# The gainer filter and the alert window are the caller's (gainer_of / in_window_of, default: always),
+# read at each alert's own candle: a POP or a bounce they stop is used up all the same, and only the
+# alerts sent are returned and numbered (`pop_n` / `back_n`, from 1 each day).
+# The built-ins are TURN's (ta.sma, ta.macd, timeframe.change("D")): see the list above TURN_DEFAULTS.
+POP_DEFAULTS = dict(len=15, up=10.0, tol=1.0, wait=20, macd_on=True, fast=12, slow=26, sig=9)
+
+
+def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
+    """The script's POP and BACK section (v48), statement for statement, on the bars of the setup's
+    own timeframe (dicts with 't', 'o', 'h', 'l', 'c'; the script's ppRun is taken as true).
+    `tick` = syminfo.mintick; gainer_of(bar) / in_window_of(bar) → bool stand for the script's
+    `(not ppGainOn or gainer)` and `inWindow` (default: always true).
+    → the alerts in order, the messages' fields:
+      {'kind': 'pop', 't', 'close', 'basis', 'ran_pct', 'pop_n'}
+      {'kind': 'back', 't', 'close', 'stop', 'basis', 'ran_pct', 'back_n', 'since', 'green'}"""
+    p = dict(POP_DEFAULTS, **(p or {}))
+    closes = [b['c'] for b in bars]
+    basis = sma_series(closes, p['len'])                                    # ppB
+    hist = macd_hist_series(closes, p['fast'], p['slow'], p['sig'])         # ppHist
+    in_run, ran, top, pb_low, popped = False, 0.0, None, None, False        # the script's `var`s
+    waiting, pop_bar, touched, pop_n, back_n = False, None, False, 0, 0
+    out, prev_day = [], None
+    for i, b in enumerate(bars):
+        o, h, low, c, pb = b['o'], b['h'], b['l'], b['c'], basis[i]
+        green = hist[i] is not None and hist[i] > 0                         # ppGreen
+        gainer = True if gainer_of is None else bool(gainer_of(b))
+        in_window = True if in_window_of is None else bool(in_window_of(b))
+        new_day = prev_day is not None and b['t'].date() != prev_day        # newDay
+        prev_day = b['t'].date()
+        if new_day:
+            pop_n = 0
+            back_n = 0
+            in_run = False
+            waiting = False
+        pop_fire, back_fire, stop, age = False, False, None, None
+        if pb is not None and i >= 1 and basis[i - 1] is not None:
+            if in_run and c < pb:
+                in_run = False
+                waiting = False
+            elif not in_run and c > pb and (closes[i - 1] <= basis[i - 1] or new_day):
+                in_run, ran, top, pb_low, popped, waiting = True, 0.0, None, None, False, False
+            if in_run:
+                ran = max(ran, (h / pb - 1) * 100)
+                # the pullback's low with this candle in it (read before a new high starts it over)
+                low_now = low if pb_low is None else min(pb_low, low)
+                if not popped:
+                    if ran >= p['up']:
+                        # the POP: it uses up the run, whether or not the filters let it send
+                        popped, waiting, touched, pop_bar = True, True, False, i
+                        if in_window and gainer:
+                            pop_fire = True
+                            pop_n += 1
+                elif waiting:
+                    if low <= pb * (1 + p['tol'] / 100):
+                        touched = True
+                    if touched and c > o and c > pb and pb > basis[i - 1] and (not p['macd_on'] or green):
+                        # the bounce: it uses up the POP, whether or not the filters let it send
+                        waiting = False
+                        if in_window and gainer:
+                            back_fire = True
+                            stop = low_now - tick
+                            age = i - pop_bar
+                            back_n += 1
+                    elif p['wait'] > 0 and i - pop_bar >= p['wait']:
+                        waiting = False
+                if top is None or h > top:
+                    top = h
+                    pb_low = None
+                else:
+                    pb_low = low_now
+        if pop_fire:
+            out.append({'kind': 'pop', 't': b['t'], 'close': c, 'basis': pb, 'ran_pct': ran, 'pop_n': pop_n})
+        if back_fire:
+            out.append({'kind': 'back', 't': b['t'], 'close': c, 'stop': stop, 'basis': pb, 'ran_pct': ran,
+                        'back_n': back_n, 'since': age, 'green': green})
+    return out
+
+
+def pop_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
+    """The POP and BACK rule from its definitions, with none of the script's variables: the basis and
+    the MACD are worked out again here, the runs are found first, and each run is then read whole.
+      a start    a close above the basis on a candle that is its day's first, or whose close before
+                 was at or under the basis before
+      a run      from a start that is in no earlier run, to the candle before the first one after it
+                 that closes under its basis or opens a new day
+      its POP    the first candle of the run by which a high of the run stood `up` % above its own
+                 candle's basis
+      a bounce   a green close above a basis that is above its value a candle before, the MACD's
+                 histogram above zero (`macd_on`), a low at or under basis × (1 + `tol` %) on that
+                 candle or an earlier one after the POP candle
+      its BACK   the run's first bounce after the POP candle, when it comes within `wait` candles of
+                 it (`wait` 0: whenever)
+      the stop   a tick under the lowest low from the candle after the top to the BACK candle; the top
+                 is the first candle with the highest high of the run's candles before the BACK candle
+    An alert is sent in the window, on a gainer; the ones sent are numbered per day.
+    → the same list as simulate_pop."""
+    p = dict(POP_DEFAULTS, **(p or {}))
+    n, length = len(bars), p['len']
+    o, h, lows, c = [b['o'] for b in bars], [b['h'] for b in bars], [b['l'] for b in bars], [b['c'] for b in bars]
+    day = [b['t'].date() for b in bars]
+    gain = [True if gainer_of is None else bool(gainer_of(b)) for b in bars]
+    inw = [True if in_window_of is None else bool(in_window_of(b)) for b in bars]
+    basis = [sum(c[i + 1 - length:i + 1]) / length if i + 1 >= length else None for i in range(n)]
+
+    def ema(vals, m):
+        """Of a list with no gaps, its values from the m-th on: the mean of the first m, then each
+        value weighted 2 / (m + 1)."""
+        if len(vals) < m:
+            return []
+        got, a = [sum(vals[:m]) / m], 2.0 / (m + 1)
+        for v in vals[m:]:
+            got.append(a * v + (1 - a) * got[-1])
+        return got
+
+    fast_e, slow_e = ema(c, p['fast']), ema(c, p['slow'])                  # from candles fast − 1 and slow − 1
+    both = max(p['fast'], p['slow']) - 1                                   # the first candle with both
+    line = [fast_e[i - (p['fast'] - 1)] - slow_e[i - (p['slow'] - 1)] for i in range(both, n)]
+    signal = ema(line, p['sig'])                                           # from candle both + sig − 1
+    lit = both + p['sig'] - 1
+    green = [i >= lit and line[i - both] - signal[i - lit] > 0 for i in range(n)]
+
+    def start(k):
+        return c[k] > basis[k] and (day[k] != day[k - 1] or c[k - 1] <= basis[k - 1])
+
+    runs, free = [], 0                     # `free`: the first candle after the runs found so far
+    for k in range(length, n):             # candle `length` is the first with a basis on the candle before it
+        if k < free or not start(k):
+            continue
+        e = k
+        while e + 1 < n and day[e + 1] == day[k] and c[e + 1] >= basis[e + 1]:
+            e += 1
+        runs.append((k, e))
+        free = e + 1
+
+    out = []
+
+    def number(kind, k):
+        return 1 + sum(1 for x in out if x['kind'] == kind and x['t'].date() == day[k])
+
+    for k, e in runs:
+        reach = [(h[m] / basis[m] - 1) * 100 for m in range(k, e + 1)]      # each candle's high against its own basis
+
+        def ran(j):
+            return max(0.0, max(reach[:j - k + 1]))
+
+        pop = next((j for j in range(k, e + 1) if ran(j) >= p['up']), None)
+        if pop is None:
+            continue
+        if inw[pop] and gain[pop]:
+            out.append({'kind': 'pop', 't': bars[pop]['t'], 'close': c[pop], 'basis': basis[pop], 'ran_pct': ran(pop),
+                        'pop_n': number('pop', pop)})
+        last = e if p['wait'] <= 0 else min(e, pop + p['wait'])
+        touch = next((j for j in range(pop + 1, last + 1) if lows[j] <= basis[j] * (1 + p['tol'] / 100)), None)
+        if touch is None:
+            continue
+        back = next((j for j in range(touch, last + 1) if c[j] > o[j] and c[j] > basis[j] and basis[j] > basis[j - 1]
+                     and (green[j] or not p['macd_on'])), None)
+        if back is None or not (inw[back] and gain[back]):
+            continue
+        highs = h[k:back]
+        top = k + highs.index(max(highs))
+        out.append({'kind': 'back', 't': bars[back]['t'], 'close': c[back], 'stop': min(lows[top + 1:back + 1]) - tick,
+                    'basis': basis[back], 'ran_pct': ran(back), 'back_n': number('back', back), 'since': back - pop,
+                    'green': green[back]})
+    return out
+
+
+def _pop_tape(seed, days, day_bars, grid=None, gap=True):
+    """A generated 1m tape for selftest_pop: quiet stretches and chop around the basis, fast pops (one
+    to six candles), pullbacks after them that come down to the 15-close basis (to a little over it,
+    or through it), second legs, and fades back under it, so runs come with and without a POP, and
+    POPs with and without a BACK. `grid` and `gap` as in _turn_tape (on a grid a quiet stretch is
+    often perfectly flat: its closes stand on the basis)."""
+    import datetime as dt, math, random
+    rnd = random.Random(seed)
+    t0 = dt.datetime(2026, 11, 2, 4, 0, tzinfo=ET)
+    snap = (lambda x: max(grid, round(x / grid) * grid)) if grid else (lambda x: x)
+    bars, px, phase, left, drift, vol, aim = [], snap(4.0), 'quiet', 0, 0.0, 0.0, 0.0
+    for day in range(days):
+        if gap:
+            px = snap(rnd.uniform(3.0, 6.0))
+        for m in range(day_bars):
+            while left == 0:
+                phase = (rnd.choice(['back', 'back', 'back', 'pop', 'fade']) if phase == 'pop'
+                         else rnd.choice(['leg', 'leg', 'leg', 'quiet', 'fade']) if phase == 'back'
+                         else rnd.choice(['quiet', 'chop', 'chop', 'pop', 'pop', 'fade']))
+                if px < 1.5 and phase == 'fade':
+                    phase = 'pop'
+                if px > 15 and phase in ('pop', 'leg'):
+                    phase = 'fade'
+                if phase == 'quiet':
+                    left, drift = rnd.randrange(4, 18), 0.0
+                    vol = 0.0 if grid and rnd.random() < 0.5 else 0.003
+                elif phase == 'chop':
+                    left, drift, vol = rnd.randrange(8, 30), rnd.uniform(-0.001, 0.002), 0.012
+                elif phase == 'pop':
+                    left = rnd.randrange(1, 7)
+                    drift, vol = math.log(1 + rnd.uniform(0.06, 0.45)) / left, 0.01
+                elif phase == 'back':                       # the pullback: to `aim` over (or under) the basis, see below
+                    left, aim, vol = rnd.randrange(1, 12), rnd.uniform(-0.01, 0.025), 0.005
+                elif phase == 'leg':
+                    left = rnd.randrange(3, 12)
+                    drift, vol = rnd.uniform(0.02, 0.2) / left, 0.01
+                else:                                       # the fade: back under the basis
+                    left = rnd.randrange(8, 30)
+                    drift, vol = math.log(1 - rnd.uniform(0.05, 0.25)) / left, 0.008
+            if phase == 'back':                             # each candle heads for where the basis now is
+                tail = [b['c'] for b in bars[-15:]] or [px]
+                drift = math.log(sum(tail) / len(tail) * (1 + aim) / px) / left
+            left -= 1
+            o = snap(px * math.exp(rnd.gauss(0, vol * 0.3)))   # a candle can open off the close before
+            c = snap(px * math.exp(drift + rnd.gauss(0, vol)))
+            h = max(o, c, snap(max(o, c) * (1 + abs(rnd.gauss(0, vol * 0.6)))))
+            low = min(o, c, snap(min(o, c) * (1 - abs(rnd.gauss(0, vol * 0.8)))))
+            bars.append({'t': t0 + dt.timedelta(days=day, minutes=m), 'o': o, 'h': h, 'l': low, 'c': c})
+            px = c
+    return bars
+
+
+def selftest_pop():
+    """POP and BACK (v48). First on hand-built candles, each case's alerts worked out by hand in the
+    comments: `lead` candles standing on 10.00 (the basis is 10.00 and every close is on it), then the
+    case's own rows (open, high, low, close); with the default 15-close basis, m rows in it is
+    (10 × (15 − m) + those m closes) / 15. Then the script's state machine (simulate_pop) against the
+    rule from its definitions (pop_rule_direct) — the same alerts, field for field — on generated
+    tapes like selftest_turn's (continuous prices and a 1/64 grid with its exact ties, tapes cut into
+    many short days, short tapes for the warm-up), under the script's defaults and with each dial moved."""
+    import datetime as dt
+    t0 = dt.datetime(2026, 11, 2, 9, 30, tzinfo=ET)
+    near = {'basis': 1e-4, 'ran_pct': 1e-3, 'stop': 1e-9}      # the figures below are written to 4 and 3 decimals
+
+    def check(rows, want, q=None, lead=40, new_day_at=None, gain=None, window=None, **cb):
+        """simulate_pop and pop_rule_direct on `lead` flat candles + rows, against the alerts worked
+        out: ('pop', row, pop_n, basis, ran_pct) / ('back', row, back_n, since, stop, green, basis,
+        ran_pct). `new_day_at`: the row that opens the next day; gain / window: row → bool (the
+        gainer filter and the alert window); `tick` is passed on."""
+        bars = [{'t': t0 + dt.timedelta(minutes=i), 'o': 10.0, 'h': 10.0, 'l': 10.0, 'c': 10.0} for i in range(lead)]
+        for r, (o, h, low, c) in enumerate(rows):
+            t = t0 + dt.timedelta(minutes=lead + r, days=1 if new_day_at is not None and r >= new_day_at else 0)
+            bars.append({'t': t, 'o': o, 'h': h, 'l': low, 'c': c})
+        row_of = {b['t']: i - lead for i, b in enumerate(bars)}
+        if gain is not None:
+            cb['gainer_of'] = lambda b: gain(row_of[b['t']])
+        if window is not None:
+            cb['in_window_of'] = lambda b: window(row_of[b['t']])
+        exp = []
+        for kind, r, n, *more in want:
+            x = {'kind': kind, 't': bars[lead + r]['t'], 'close': rows[r][3], 'basis': more[-2], 'ran_pct': more[-1]}
+            x.update({'pop_n': n} if kind == 'pop' else {'back_n': n, 'since': more[0], 'stop': more[1], 'green': more[2]})
+            exp.append(x)
+
+        def as_worked_out(got):
+            return len(got) == len(exp) and all(
+                g.keys() == x.keys() and all(abs(g[k] - x[k]) <= near[k] if k in near else g[k] == x[k] for k in x)
+                for g, x in zip(got, exp))
+
+        return as_worked_out(simulate_pop(bars, q, **cb)) and as_worked_out(pop_rule_direct(bars, q, **cb))
+
+    # a candle that starts a run and is its POP: the close before is on the basis (10.00), this one is
+    # above it, basis (140 + 11.5) / 15 = 10.10, high 11.6 = +14.851%
+    pop0 = (10.0, 11.6, 10.0, 11.5)
+    first = ('pop', 0, 1, 10.1, 14.851)
+    plain = [(10.0, 10.5, 10.0, 10.4),    # basis 150.4 / 15 = 10.0267: the run starts; high +4.72%, no POP yet
+             (10.4, 11.6, 10.4, 11.5),    # basis 151.9 / 15 = 10.1267, high +14.549%: the POP
+             (11.5, 11.5, 10.2, 10.6),    # basis 152.5 / 15 = 10.1667: the low 10.2 is within 1% of it (≤ 10.268), the touch; red
+             (10.6, 11.0, 10.5, 10.9),    # basis 153.4 / 15 = 10.2267, up; green and above it: the BACK, 2 after the POP;
+                                          # the top is row 1, the lows after it 10.2 and 10.5 → stop 10.19
+             (10.9, 11.3, 10.3, 11.2)]    # basis 154.6 / 15 = 10.3067, up; green, low ≤ 10.41: a bounce, if the POP still had its BACK to give
+    plain_pop, plain_back = ('pop', 1, 1, 10.1267, 14.549), ('back', 3, 1, 2, 10.19, True, 10.2267, 14.549)
+    # one POP per run: row 1's high is further out (+26.377% over 154.3 / 15) and sends nothing; row 2 touches (10.25 ≤ 10.43,
+    # basis 10.3267), row 3 is the BACK (basis 156 / 15 = 10.40, 3 after the POP; the top is row 1, the lows after it 10.25
+    # and 10.5); row 4 runs to +27% and sends nothing; row 5 closes under the basis (10.6267): the run is over; row 6 starts
+    # the next one and is its POP (basis 161.9 / 15 = 10.7933, high +16.739%), the day's second; row 7 touches (11.0 ≤ 11.036),
+    # is green above a rising basis (163.9 / 15 = 10.9267): the day's second BACK, stop under its own low
+    two_runs = [pop0, (11.5, 13.0, 11.5, 12.8), (12.8, 12.8, 10.25, 10.6), (10.6, 11.2, 10.5, 11.1), (11.1, 13.5, 11.1, 13.4),
+                (13.4, 13.4, 10.0, 10.0), (10.0, 12.6, 10.0, 12.5), (11.0, 12.1, 11.0, 12.0)]
+    # the wait: rows 1–3 stay far above the basis (no touch), row 4 comes down to it (10.4 ≤ 10.524, basis 156.3 / 15 = 10.42,
+    # up from 10.36) and closes green above it, 4 candles after the POP; the top is row 0, the lowest low after it 10.4
+    late = [pop0, (11.5, 11.5, 11.3, 11.4), (11.4, 11.5, 11.2, 11.3), (11.3, 11.4, 11.1, 11.2), (10.4, 11.0, 10.4, 10.9)]
+    late_back = ('back', 4, 1, 4, 10.39, True, 10.42, 14.851)
+    # the bounce on the candle after the POP candle, which is the top: basis 152.3 / 15 = 10.1533 (up), low 10.2 ≤ 10.255
+    at_once = [pop0, (10.3, 10.9, 10.2, 10.8)]
+    at_once_back = ('back', 1, 1, 1, 10.19, True, 10.1533, 14.851)
+    # the MACD: after the POP nine closes slide down onto the rising basis (touch at row 7: 10.8 ≤ 10.824); row 9 is green
+    # above the basis (162.47 / 15 = 10.8313) with the histogram under zero, row 10 (163.87 / 15 = 10.9247) with it above
+    slide = [(10.0, 12.2, 10.0, 12.0), (12.0, 12.0, 11.7, 11.8), (11.8, 11.8, 11.5, 11.6), (11.6, 11.6, 11.3, 11.4),
+             (11.4, 11.4, 11.1, 11.2), (11.2, 11.2, 10.9, 11.0), (11.0, 11.0, 10.85, 10.9), (10.9, 10.9, 10.8, 10.85),
+             (10.85, 10.86, 10.8, 10.82), (10.82, 10.92, 10.8, 10.9), (10.9, 11.5, 10.9, 11.4)]
+    slide_pop = ('pop', 0, 1, 10.1333, 20.395)                  # basis 152 / 15, high 12.2
+    hist = macd_hist_series([10.0] * 40 + [r[3] for r in slide], 12, 26, 9)
+    # a new day: rows 0–1 are a POP and its BACK; row 2 stays above the basis; row 3 closes above it again (no crossing) with
+    # a high +15.236% over 154.9 / 15 = 10.3267; row 4 touches (10.45 ≤ 10.49) and is green above 155.8 / 15 = 10.3867
+    two_days = [pop0, (10.3, 10.9, 10.2, 10.8), (10.8, 10.9, 10.7, 10.8), (10.8, 11.9, 10.8, 11.8), (10.5, 11.0, 10.45, 10.9)]
+    # a 2-close basis: row 0 is the POP (basis 11, high +13.636%); row 1 closes exactly on the basis ((12 + 12) / 2), green,
+    # the basis up, its low a touch — the run goes on, and it is no bounce (the close is not above the basis); row 2 is
+    # (basis 12.25): the top before it is row 0, the lows after that 11.9 and 12.0. Its high is +10.2% out, but it is a
+    # candle of the same run (a close above the basis after a close on it starts nothing while a run is on)
+    on_it = [(10.0, 12.5, 10.0, 12.0), (11.9, 12.0, 11.9, 12.0), (12.0, 13.5, 12.0, 12.5)]
+    len2 = dict(len=2, macd_on=False)
+    on_it_pop = ('pop', 0, 1, 11.0, 13.636)
+    # a 3-close basis (and a histogram of 0, see below): row 0 is the POP (basis 33 / 3 = 11, high +18.182%); row 1 touches
+    # (11.5 ≤ 11.70, basis 34.75 / 3); row 2 is red (basis 37.25 / 3 = 12.4167); row 3 is green above the basis, but the basis
+    # is 37.25 / 3 again: not above its value a candle before, no bounce; row 4 is (basis 38.75 / 3 = 12.9167). Row 3's
+    # high only equals the top (row 0's 13.0), so the stop is still under the lowest low after row 0: 11.5
+    level = [(10.0, 13.0, 10.0, 13.0), (13.0, 13.0, 11.5, 11.75), (12.75, 12.75, 12.25, 12.5), (12.5, 13.0, 12.5, 13.0),
+             (13.0, 13.25, 13.0, 13.25)]
+    len3 = dict(len=3, macd_on=False, fast=1, slow=2, sig=1)
+    hand = [
+        ('a POP, a touch, the BACK on the candle after',
+         check(plain[:4], [plain_pop, plain_back])),
+        ('the stop is one tick under the low, whatever the tick',
+         check(plain[:4], [plain_pop, plain_back[:4] + (10.1999,) + plain_back[5:]], tick=0.0001)),
+        # row 1 is green above a rising basis (153.3 / 15 = 10.22) with a low far over it: no touch, though the POP candle's
+        # own low (10.0) was at the basis
+        ("a POP on the run's first candle, whose own low is no touch",
+         check([pop0, (11.5, 11.9, 11.4, 11.8)], [first])),
+        ('one POP per run, the next run is POP 2 and BACK 2',
+         check(two_runs, [first, ('back', 3, 1, 3, 10.24, True, 10.4, 26.377), ('pop', 6, 2, 10.7933, 16.739),
+                          ('back', 7, 2, 1, 10.99, True, 10.9267, 16.739)])),
+        ('a 15% pop asked: none', check(plain[:4], [], dict(up=15.0))),
+        ('tol 0: a low above the basis is no touch', check(plain[:4], [plain_pop], dict(tol=0.0))),
+        ('the wait runs out (wait 3, the bounce 4 after)', check(late, [first], dict(wait=3))),
+        ('the bounce on the last candle allowed (wait 4)', check(late, [first, late_back], dict(wait=4))),
+        ('wait 0: no limit', check(late, [first, late_back], dict(wait=0))),
+        ('wait 1, the bounce on the next candle', check(at_once, [first, at_once_back], dict(wait=1))),
+        # row 1 closes under the basis (151.5 / 15 = 10.10): the run and the wait are over; row 2 starts a run that only gets to +8.3%
+        ('the run ends before the bounce', check([pop0, (11.5, 11.5, 10.0, 10.0), (10.0, 11.0, 10.0, 10.9)], [first])),
+        # …with row 1 closing above it (10.3 over 151.8 / 15 = 10.12) the same bounce is the BACK: basis 152.7 / 15, lows 10.1 and 10.2
+        ('the same with the close above the basis: a BACK',
+         check([pop0, (11.5, 11.5, 10.1, 10.3), (10.3, 11.0, 10.2, 10.9)], [first, ('back', 2, 1, 2, 10.09, True, 10.18, 14.851)])),
+        # row 1 touches (10.15 ≤ 10.228) and closes above the basis, row 2 closes under it (151.9 / 15 = 10.1267): the run is
+        # over with no bounce. Row 3 starts the next run and is its POP (basis 153.7 / 15 = 10.2467, high +16.135%), the day's
+        # second; row 4 is green above a rising basis but its low is far over it: the touch before this POP does not count
+        ('a touch, then the run ends; the next POP starts with no touch',
+         check([pop0, (11.5, 11.5, 10.15, 10.4), (10.4, 10.4, 10.0, 10.0), (10.0, 11.9, 10.0, 11.8), (11.8, 12.2, 11.7, 12.1)],
+               [first, ('pop', 3, 2, 10.2467, 16.135)])),
+        # row 1 comes down to the basis and closes where it opened, above a rising basis: not green, no bounce; row 2 is green
+        # (basis 153.2 / 15 = 10.2133): the BACK, the lows after the top 10.2 and 10.7
+        ('a close equal to the open is not green',
+         check([pop0, (10.8, 10.9, 10.2, 10.8), (10.8, 11.0, 10.7, 10.9)], [first, ('back', 2, 1, 2, 10.19, True, 10.2133, 14.851)])),
+        # row 1 pulls back to 10.15; row 2 bounces and makes the run's new high (12.0, +17.035% over 153.8 / 15 = 10.2533):
+        # the top before it is row 0, so the stop is under row 1's low, not under its own 10.35
+        ('the stop under a deeper low before a bounce candle that makes a new high',
+         check([pop0, (11.5, 11.5, 10.15, 10.4), (10.4, 12.0, 10.35, 11.9)], [first, ('back', 2, 1, 2, 10.14, True, 10.2533, 17.035)])),
+        # row 1 touches; row 2 is red with a new high (11.8, +15.611% over 153.1 / 15); row 3 bounces (basis 154.5 / 15 = 10.30):
+        # the top is row 2, the only low after it row 3's own 11.1; row 1's 10.15 is before the top
+        ('the stop after a new high between the touch and the bounce',
+         check([pop0, (11.5, 11.5, 10.15, 10.4), (11.5, 11.8, 11.0, 11.2), (11.2, 11.5, 11.1, 11.4)],
+               [first, ('back', 3, 1, 3, 11.09, True, 10.3, 15.611)])),
+        ('the stop when the bounce is the candle after the top', check(at_once, [first, at_once_back])),
+        ('MACD on: the bounce waits for a green histogram',
+         hist[49] < 0 < hist[50] and check(slide, [slide_pop, ('back', 10, 1, 10, 10.79, True, 10.9247, 20.395)])),
+        ('MACD off: the bounce before it, green 0',
+         check(slide, [slide_pop, ('back', 9, 1, 9, 10.79, False, 10.8313, 20.395)], dict(macd_on=False))),
+        # a signal length of 1: the signal line is the MACD line, the histogram 0 on every candle, never green
+        ('a histogram of 0 is not green', check(plain[:4], [plain_pop], dict(fast=1, slow=2, sig=1))
+         and check(plain[:4], [plain_pop, plain_back[:5] + (False,) + plain_back[6:]], dict(fast=1, slow=2, sig=1, macd_on=False))),
+        ("a new day: the counts start over and its first candle starts a run",
+         check(two_days, [first, at_once_back, ('pop', 3, 1, 10.3267, 15.236), ('back', 4, 1, 1, 10.44, True, 10.3867, 15.236)],
+               new_day_at=3)),
+        ('the same candles on one day: nothing after the first BACK', check(two_days, [first, at_once_back])),
+        # the gainer filter stops the POP (row 1): the run has had its POP all the same (row 2 is still +14.5% out and
+        # sends none), and the BACK is the day's first
+        ('a POP not sent, its BACK sent as BACK 1', check(plain, [plain_back], gain=lambda r: r > 1)
+         and check(plain, [plain_back], window=lambda r: r > 1)),
+        ('a bounce not sent uses up the POP (the next bounce sends nothing)', check(plain, [plain_pop], gain=lambda r: r != 3)),
+        ('a green close on the basis keeps the run and is no bounce', check(on_it, [on_it_pop, ('back', 2, 1, 2, 11.89, True, 12.25, 13.636)], len2)),
+        # …with row 1 closing at 11.99, under its basis (11.995), the run is over; row 2 starts the next one and is its POP
+        # (basis 12.245, high +10.249%), not the first one's BACK
+        ('a close a cent under it ends the run: the next candle is a new run',
+         check([on_it[0], (12.0, 12.0, 11.9, 11.99), on_it[2]], [on_it_pop, ('pop', 2, 2, 12.245, 10.249)], len2)),
+        # tol 0, the 2-close basis: row 1 stands on 12.0, its low exactly on its basis (12.0), the touch; row 2 opens over its
+        # basis (12.4) and never comes down to it, so its BACK needs that touch; the lows after the top (row 0) are 12.0 and 12.6
+        ('tol 0: a low exactly on the basis is a touch',
+         check([on_it[0], (12.0, 12.0, 12.0, 12.0), (12.6, 12.9, 12.6, 12.8)], [on_it_pop, ('back', 2, 1, 2, 11.99, True, 12.4, 13.636)],
+               dict(len2, tol=0.0))),
+        # the 2-close basis is 12 and the high 15: exactly 25% out
+        ('a high exactly `up` % out is a POP', check([(10.0, 15.0, 10.0, 14.0)], [('pop', 0, 1, 12.0, 25.0)], dict(len=2, up=25.0))),
+        ('a level basis is not a rising one, a high equal to the top is no new top',
+         check(level, [('pop', 0, 1, 11.0, 18.182), ('back', 4, 1, 4, 11.49, False, 12.9167, 18.182)], len3)),
+        # 15 flat candles: row 0 is the first with a basis on the candle before it. 14: its own basis is the first, so it is
+        # skipped, and row 1 is no crossing (row 0 closed above its basis)
+        ('the warm-up: a candle with no basis before it is skipped',
+         check([pop0, (11.5, 11.6, 11.4, 11.5)], [first], lead=15) and check([pop0, (11.5, 11.6, 11.4, 11.5)], [], lead=14)),
+    ]
+    off = [label for label, good in hand if not good]
+    ok_hand = not off
+    print(f"POP and BACK (v48), a pop off the basis and its first pullback, on hand-built candles: {len(hand) - len(off)} of {len(hand)} "
+          f"cases give the alerts worked out by hand, from the script's state machine and from the rule's definitions alike (a POP and "
+          f"its BACK, on the run's first candle and later; one POP per run; the wait running out, its last candle, wait 0; the run "
+          f"ending first; the stop after a new high, on the bounce candle and before it; the MACD on and off; a new day; a POP or a "
+          f"bounce the gainer filter stops; closes, lows and highs exactly on a line; the warm-up)"
+          + (f" — NOT: {'; '.join(off)}" if off else ''), '→', 'OK' if ok_hand else 'UNEXPECTED')
+
+    g = 1 / 64
+    tapes = ([('two days', None, _pop_tape(s, 2, 600)) for s in (1, 2, 3, 4, 5, 6)]                # (kind, its grid, bars)
+             + [('two days', g, _pop_tape(s, 2, 600, g)) for s in (11, 12, 13, 14, 15, 16)]
+             + [('short days', None, _pop_tape(21, 100, 24, gap=False)), ('short days', g, _pop_tape(22, 100, 24, g, gap=False))]
+             + [('short', None, _pop_tape(40 + s, 1, 20 + 3 * s)) for s in range(0, 30, 2)]
+             + [('short', g, _pop_tape(40 + s, 1, 20 + 3 * s, g)) for s in range(1, 30, 2)])
+    cases = [('the defaults', {}), ('MACD off', dict(macd_on=False)), ('a 5% pop', dict(up=5.0)), ('a 20% pop', dict(up=20.0)),
+             ('len 10', dict(len=10)), ('len 20', dict(len=20)), ('wait 6', dict(wait=6)), ('no limit', dict(wait=0)),
+             ('tol 0', dict(tol=0.0)), ('tol 3', dict(tol=3.0)), ('MACD 5 13 4', dict(fast=5, slow=13, sig=4)),
+             ('MACD 26 12 9 (upside down)', dict(fast=26, slow=12)),
+             ('len 2 + a 3% pop + wait 1 + tol 0 + MACD off', dict(len=2, up=3.0, wait=1, tol=0.0, macd_on=False)),
+             ('len 5 + a 5% pop + no limit + MACD off', dict(len=5, up=5.0, wait=0, macd_on=False))]
+    same, got = True, {}
+    at_start = on_last = deeper = over = 0          # situations the tapes must hold, counted from the alerts
+    for label, q in cases:
+        pq = dict(POP_DEFAULTS, **q)
+        got[label] = []
+        for _, _, bars in tapes:
+            a = simulate_pop(bars, q)
+            same = same and a == pop_rule_direct(bars, q)
+            got[label].append(a)
+            at = {b['t']: i for i, b in enumerate(bars)}
+            line = sma_series([b['c'] for b in bars], pq['len'])
+            for x in a:
+                i = at[x['t']]
+                if x['kind'] == 'pop':              # a POP on the first close above the basis
+                    at_start += bars[i - 1]['c'] <= line[i - 1]
+                    continue
+                on_last += x['since'] == pq['wait'] > 1                   # a BACK on the last candle allowed (of several)
+                under = x['stop'] < bars[i]['l'] - 0.01 - 1e-9            # its stop under an earlier candle's low…
+                deeper += under
+                since_pop = [b['h'] for b in bars[i - x['since']:i]]      # …where its own high is the highest since the POP
+                over += under and bool(since_pop) and bars[i]['h'] > max(since_pop)
+    base = got['the defaults']
+    count = {label: (sum(1 for a in runs for x in a if x['kind'] == 'pop'), sum(1 for a in runs for x in a if x['kind'] == 'back'))
+             for label, runs in got.items()}
+    pops, backs = sum(n for n, _ in count.values()), sum(n for _, n in count.values())
+    moved_dial = all(n_pop > 0 and n_back > 0 and (label == 'the defaults' or got[label] != base) for label, (n_pop, n_back) in count.items())
+    # the day's numbers: 1, 2, … for the POPs and for the BACKs on each day of each tape; alerts on both days of a two-day tape
+    numbered, second, twice = True, 0, 0
+    for runs in got.values():
+        for (kind, _, bars), a in zip(tapes, runs):
+            by_day = {}
+            for x in a:
+                by_day.setdefault((x['t'].date(), x['kind']), []).append(x['pop_n'] if x['kind'] == 'pop' else x['back_n'])
+            numbered = numbered and all(ns == list(range(1, len(ns) + 1)) for ns in by_day.values())
+            twice += sum(1 for (_, k), ns in by_day.items() if k == 'back' and len(ns) > 1)
+            if kind == 'two days':
+                second += sum(1 for x in a if x['t'].date() != bars[0]['t'].date())
+    # a gainer filter and an alert window, applied where the script applies them: a POP they stop still uses up its run
+    # (its BACK can be sent: `lone`), and a bounce they stop still uses up its POP
+    cb = dict(gainer_of=lambda b: b['t'].minute % 3 != 0, in_window_of=lambda b: b['t'].minute % 7 != 0)
+    n_cb = n_open = lone = 0
+    for q in ({}, dict(macd_on=False), dict(len=2, up=3.0, wait=3, tol=0.0, macd_on=False)):
+        for _, _, bars in tapes:
+            a = simulate_pop(bars, q, **cb)
+            same = same and a == pop_rule_direct(bars, q, **cb)
+            n_cb += len(a)
+            n_open += len(simulate_pop(bars, q))
+            at = {b['t']: i for i, b in enumerate(bars)}
+            sent = {at[x['t']] for x in a if x['kind'] == 'pop'}
+            lone += sum(1 for x in a if x['kind'] == 'back' and at[x['t']] - x['since'] not in sent)
+    # a new day ends a run and can start one on its first candle: the short-day tapes against the same candles all on one day
+    new = cut = 0
+    for kind, _, bars in tapes:
+        if kind != 'short days':
+            continue
+        one_day = [dict(b, t=bars[0]['t'] + dt.timedelta(seconds=i)) for i, b in enumerate(bars)]
+        for q in ({}, dict(macd_on=False)):
+            dated, undated = simulate_pop(bars, q), simulate_pop(one_day, q)
+            same = same and undated == pop_rule_direct(one_day, q)
+            at = {b['t']: i for i, b in enumerate(bars)}
+            with_days = {(at[x['t']], x['kind'], x.get('since'), x.get('stop')) for x in dated}
+            without = {((x['t'] - bars[0]['t']).seconds, x['kind'], x.get('since'), x.get('stop')) for x in undated}
+            new += len(with_days - without)
+            cut += len(without - with_days)
+    # ties on the grid tapes: closes exactly on the 15-close basis (a run starts after one, and does not end at one)
+    on_basis = sum(1 for _, grid, bars in tapes if grid
+                   for b, v in zip(bars, sma_series([x['c'] for x in bars], POP_DEFAULTS['len'])) if v is not None and b['c'] == v)
+    ok = (same and count['the defaults'][0] >= 100 and count['the defaults'][1] >= 20 and pops >= 2000 and backs >= 400 and moved_dial
+          and numbered and second > 0 and twice > 0 and 0 < n_cb < n_open and lone > 0 and new > 0 and cut > 0 and on_basis > 0
+          and at_start > 0 and on_last > 0 and deeper > 0 and over > 0)
+    shown = ', '.join(f'{label} {n_pop} + {n_back}' for label, (n_pop, n_back) in count.items())
+    print(f"…and on {len(tapes)} generated tapes × {len(cases)} settings: {pops} POPs + {backs} BACKs ({shown}); the script's state machine "
+          f"and the rule from its definitions {'give the same ones, field for field, also' if same else 'DO NOT give the same ones, or not'} "
+          f"with a gainer filter and a window ({n_cb} alerts, {n_open} without them; {lone} BACKs sent after a POP that was not); "
+          f"numbered 1, 2, … per day, POPs and BACKs apart ({second} alerts on a tape's second day); a new day: {new} alerts it made and "
+          f"{cut} it cut, against the same candles on one day; {at_start} POPs on the first close above the basis, {on_last} BACKs on the "
+          f"last candle allowed, {deeper} stops under an earlier candle's low ({over} of them on a bounce candle with the highest high "
+          f"since the POP); {on_basis} closes exactly on the basis on the grid tapes", '→', 'OK' if ok else 'UNEXPECTED')
+    return ok_hand and ok
+
+
 if __name__ == '__main__':
     raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb() & selftest_rsi() & selftest_ema()
-                           & selftest_turn()) else 1)
+                           & selftest_turn() & selftest_pop()) else 1)

@@ -13,6 +13,9 @@
 // rejected, a saved switch of theirs is dropped, and the script had three setups (PULLBACK, the
 // VWAP + BB cross, the EMA cross). v47 (2026-11-25) added a fourth, TURN (stage `turn`, from the 1m
 // alert): after a basis fell and turned up, price closes above it, comes back to it and bounces.
+// v48 (2026-11-26) added a fifth in two steps, POP and BACK (stages `pop` and `back`, from the 1m
+// alert): a run's high gets well above its basis (a heads-up), then the price comes back to the basis
+// and bounces (the entry).
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -22,9 +25,11 @@ import {
   parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, stageSwitch, readStoredStages, storedStages,
   emaByBand, emaFields, EMA_BAND_LABEL, readStoredRules, emaLineStage, storedSetupFields, storedStage,
   EMA_STAGES, LINE_CROSS_STAGES, TV_STAGE_LABEL, turnFields, vbFields, VB_STAGES, PULLBACK_STAGES,
+  popFields, BASIS_STAGES,
   type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 import * as tvSetups from '../src/services/tv-setups.js';
+import { alertDisabled } from '../src/services/telegram.js';
 
 let failures = 0;
 function check(name: string, cond: boolean, detail = ''): void {
@@ -212,12 +217,12 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
     stage: 'pullback', ticker: 'NAUT', price: 2, mvwap: 2.1, px_pct: -4.8, day_gain: 25, ah_gain: null,
     tf: '1', vol_x: null, run_pct: null, svwap: 1.95, spx_pct: 2.6, line: 'session', touch: 1, fails: 0, ...over,
   });
-  check('default switches: PULLBACK, CROSS, RETEST, EMA, BAND and (v47) TURN on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","ema","band","turn"]');
+  check('default switches: PULLBACK, CROSS, RETEST, EMA, BAND, (v47) TURN and (v48) POP and BACK on', JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","ema","band","turn","pop","back"]');
   check('parseStageList keeps known stages in menu order, drops the rest (v27: a saved go / ready / forming too)',
     JSON.stringify(parseStageList(['held', 'GO', 'bogus', 'pullback', 'ready', 7])) === '["pullback","held"]'
       && parseStageList('pullback') === null && JSON.stringify(parseStageList([])) === '[]');
-  check('menu order lists the eight stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v35 EMA; 11-16 BAND after it; v44: RSI, DIP, MACD and BASIS left, a saved one is dropped like a saved "lift"; v47: TURN after BAND)',
-    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","ema","band","turn","broken","held"]'
+  check('menu order lists the ten stages (v28: RETEST in BREAK\'s place; a saved "break" is dropped; v35 EMA; 11-16 BAND after it; v44: RSI, DIP, MACD and BASIS left, a saved one is dropped like a saved "lift"; v47: TURN after BAND; v48: POP and BACK after TURN)',
+    JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","ema","band","turn","pop","back","broken","held"]'
       && JSON.stringify(parseStageList(['pullback', 'cross', 'break'])) === '["pullback","cross"]'
       && JSON.stringify(parseStageList(['dip', 'lift', 'macd'])) === '[]'
       && JSON.stringify(parseStageList(['rsi', 'basis', 'band', 'ema'])) === '["ema","band"]');
@@ -226,43 +231,45 @@ console.log('Gate — the ⚙ stage switches (2026-10-06)');
   // DIP, MACD or BASIS is dropped and switches nothing on or off.
   // v47: TURN follows no switch and is on by default, so every list saved before v47 (none of them knew it) reads back
   // with TURN on. The expectations below were the same lists without "turn" until v47.
+  // v48: the same for POP and BACK, two switches that follow none: every list saved before v48 reads back with both on
+  // (the expectations below were the same lists without "pop","back" until v48).
   const legacy = readStoredStages(['pullback', 'cross', 'rsi', 'ema']);
-  check('v44: an old saved list (a plain array) with RSI in it → the RSI is dropped, the rest as saved; EMA on → BAND with it (v47: and TURN at its default, on)',
-    JSON.stringify(legacy) === '["pullback","cross","ema","band","turn"]', JSON.stringify(legacy));
-  check('…with EMA off → BAND off; an RSI alone, or an empty old list, leaves nothing on but (v47) the TURN it never knew',
-    JSON.stringify(readStoredStages(['pullback', 'cross', 'ema'])) === '["pullback","cross","ema","band","turn"]'
-      && JSON.stringify(readStoredStages(['pullback', 'cross'])) === '["pullback","cross","turn"]'
-      && JSON.stringify(readStoredStages(['rsi'])) === '["turn"]' && JSON.stringify(readStoredStages([])) === '["turn"]');
+  check('v44: an old saved list (a plain array) with RSI in it → the RSI is dropped, the rest as saved; EMA on → BAND with it (v47: and TURN at its default, on; v48: POP and BACK too)',
+    JSON.stringify(legacy) === '["pullback","cross","ema","band","turn","pop","back"]', JSON.stringify(legacy));
+  check('…with EMA off → BAND off; an RSI alone, or an empty old list, leaves nothing on but (v47) the TURN and (v48) the POP and the BACK it never knew',
+    JSON.stringify(readStoredStages(['pullback', 'cross', 'ema'])) === '["pullback","cross","ema","band","turn","pop","back"]'
+      && JSON.stringify(readStoredStages(['pullback', 'cross'])) === '["pullback","cross","turn","pop","back"]'
+      && JSON.stringify(readStoredStages(['rsi'])) === '["turn","pop","back"]' && JSON.stringify(readStoredStages([])) === '["turn","pop","back"]');
   check('a new saved list is read as saved: EMA on and BAND off stays so; BAND on alone',
     JSON.stringify(readStoredStages(storedStages(['pullback', 'ema']))) === '["pullback","ema"]'
       && JSON.stringify(readStoredStages(storedStages(['band']))) === '["band"]'
       && JSON.stringify(readStoredStages(storedStages(['ema', 'band']))) === '["ema","band"]'
       && JSON.stringify(readStoredStages(storedStages([]))) === '[]');
-  check('…a stage the saved list didn\'t know takes the switch it follows (BAND ← EMA), any other its default (v47: TURN, on)',
-    JSON.stringify(readStoredStages({ announced: ['ema'], known: ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'] })) === '["ema","band","turn"]'
-      && JSON.stringify(readStoredStages({ announced: ['rsi'], known: ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'] })) === '["turn"]'
-      && JSON.stringify(readStoredStages({ announced: [], known: ['pullback'] })) === '["cross","retest","ema","band","turn"]');
+  check('…a stage the saved list didn\'t know takes the switch it follows (BAND ← EMA), any other its default (v47: TURN, on; v48: POP and BACK, on)',
+    JSON.stringify(readStoredStages({ announced: ['ema'], known: ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'] })) === '["ema","band","turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ announced: ['rsi'], known: ['pullback', 'cross', 'retest', 'rsi', 'ema', 'broken', 'held'] })) === '["turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ announced: [], known: ['pullback'] })) === '["cross","retest","ema","band","turn","pop","back"]');
   // 2026-11-16: BAND got a switch; a list saved before starts it at the EMA's value (the saved DIP and MACD are dropped)
   const v42 = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'broken', 'held'], announced: ['pullback', 'dip', 'macd', 'ema'] };
-  check('a list saved before 11-16 with EMA on → BAND on; with EMA off → BAND off (v47: TURN on either way)',
-    JSON.stringify(readStoredStages(v42)) === '["pullback","ema","band","turn"]'
-      && JSON.stringify(readStoredStages({ ...v42, announced: ['pullback', 'dip', 'macd'] })) === '["pullback","turn"]');
+  check('a list saved before 11-16 with EMA on → BAND on; with EMA off → BAND off (v47: TURN on either way; v48: POP and BACK too)',
+    JSON.stringify(readStoredStages(v42)) === '["pullback","ema","band","turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ ...v42, announced: ['pullback', 'dip', 'macd'] })) === '["pullback","turn","pop","back"]');
   // the operator's switches as saved on 11-13 (PULLBACK and DIP on), and under v38, which knew LIFT
   const saved = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'ema', 'broken', 'held'], announced: ['pullback', 'dip'] };
   const v38 = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'lift', 'ema', 'broken', 'held'], announced: ['pullback', 'dip', 'lift'] };
-  check('…lists saved on 11-13 and under v38: the DIP, the RSI and the LIFT are dropped, PULLBACK stays, nothing else comes on but (v47) the TURN',
-    JSON.stringify(readStoredStages(saved)) === '["pullback","turn"]'
-      && JSON.stringify(readStoredStages({ ...saved, announced: ['pullback', 'rsi'] })) === '["pullback","turn"]'
-      && JSON.stringify(readStoredStages(v38)) === '["pullback","turn"]'
-      && JSON.stringify(readStoredStages({ ...v38, announced: ['pullback', 'lift', 'ema'] })) === '["pullback","ema","band","turn"]');
+  check('…lists saved on 11-13 and under v38: the DIP, the RSI and the LIFT are dropped, PULLBACK stays, nothing else comes on but (v47) the TURN and (v48) the POP and the BACK',
+    JSON.stringify(readStoredStages(saved)) === '["pullback","turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ ...saved, announced: ['pullback', 'rsi'] })) === '["pullback","turn","pop","back"]'
+      && JSON.stringify(readStoredStages(v38)) === '["pullback","turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ ...v38, announced: ['pullback', 'lift', 'ema'] })) === '["pullback","ema","band","turn","pop","back"]');
   // the operator's switches as saved on 2026-11-22, before v44: every stage v44 kept is in `known`, so none of those changes;
-  // v47's TURN is not, so it comes on (its default)
+  // v47's TURN is not, so it comes on (its default), and v48's POP and BACK likewise
   const today = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'band', 'basis', 'broken', 'held'], announced: ['pullback', 'band'] };
-  check('v44: the operator\'s saved switches (PULLBACK and BAND on, the list knowing all eleven stages) read back as PULLBACK, BAND (v47: and TURN)',
-    JSON.stringify(readStoredStages(today)) === '["pullback","band","turn"]', JSON.stringify(readStoredStages(today)));
+  check('v44: the operator\'s saved switches (PULLBACK and BAND on, the list knowing all eleven stages) read back as PULLBACK, BAND (v47: and TURN; v48: and POP, BACK)',
+    JSON.stringify(readStoredStages(today)) === '["pullback","band","turn","pop","back"]', JSON.stringify(readStoredStages(today)));
   check('…with a removed stage switched on there too, the same; with EMA on and BAND off, BAND stays off',
-    JSON.stringify(readStoredStages({ ...today, announced: ['pullback', 'rsi', 'dip', 'macd', 'band', 'basis'] })) === '["pullback","band","turn"]'
-      && JSON.stringify(readStoredStages({ ...today, announced: ['ema', 'basis'] })) === '["ema","turn"]');
+    JSON.stringify(readStoredStages({ ...today, announced: ['pullback', 'rsi', 'dip', 'macd', 'band', 'basis'] })) === '["pullback","band","turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ ...today, announced: ['ema', 'basis'] })) === '["ema","turn","pop","back"]');
   check('…stored as { announced, known }; anything else is no list',
     JSON.stringify(storedStages(['band'])) === `{"announced":["band"],"known":${JSON.stringify(TV_STAGE_ORDER)}}`
       && readStoredStages('pullback') === null && readStoredStages({ announced: ['ema'] }) === null && readStoredStages(null) === null);
@@ -542,15 +549,15 @@ console.log('Removed in v44 (2026-11-22): the RSI cross, its DIP, the MACD cross
     emaLineStage({ stage: 'ema', bb_tf: '1', basis: 8.03 }) === null && emaLineStage({ stage: 'ema', basis: 8.03 }) === null
       && emaLineStage({ stage: 'ema', ema: 8.03 }) === 'ema' && emaLineStage({ stage: 'ema', bb_tf: '45S' }) === 'band'
       && emaLineStage({ stage: 'ema' }) === 'ema');
-  check('v44: the stage lists carry the eight kept stages only (and v47\'s TURN, the ninth)', JSON.stringify(Object.keys(TV_STAGE_LABEL).sort()) === '["band","bounce","broken","cross","ema","held","pullback","retest","turn"]'
-    && JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","ema","band","turn","broken","held"]'
+  check('v44: the stage lists carry the eight kept stages only (and v47\'s TURN, the ninth, and v48\'s POP and BACK)', JSON.stringify(Object.keys(TV_STAGE_LABEL).sort()) === '["back","band","bounce","broken","cross","ema","held","pop","pullback","retest","turn"]'
+    && JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","ema","band","turn","pop","back","broken","held"]'
     && JSON.stringify([...EMA_STAGES]) === '["ema","bounce","band"]' && JSON.stringify([...LINE_CROSS_STAGES]) === '["ema","band"]');
   check('v44: the module no longer exports the removed stages\' helpers',
     ['RSI_STAGES', 'rsiFields', 'emaByBasis', 'EMA_BASIS_LABEL', 'fmtMinutes'].every((name) => !(name in tvSetups))
       && 'emaByBand' in tvSetups && 'EMA_BAND_LABEL' in tvSetups && 'emaFields' in tvSetups && 'vbFields' in tvSetups);
   const g = new TvSetupGate();
   check('v44: the default switches and a gate\'s announced stages name no removed stage',
-    JSON.stringify(g.announcedStages()) === '["pullback","cross","retest","ema","band","turn"]'
+    JSON.stringify(g.announcedStages()) === '["pullback","cross","retest","ema","band","turn","pop","back"]'
       && [...DEFAULT_ANNOUNCED, ...TV_STAGE_ORDER].every((s) => !['rsi', 'dip', 'macd', 'basis', 'lift'].includes(s)));
 }
 
@@ -884,28 +891,29 @@ console.log('TURN: the bounce off a basis that turned up (v47, 2026-11-25)');
       && parseTvMessage('CROSS FALL 12 | upper 11.9 (+0.8%) | candle 5 | bb 2 | cross 1 | tf 30S')?.fall_pct === null);
 
   // The stage lists and the ⚙ switch
-  check('v47: the stage lists — nine stages; the menu\'s eight with TURN after BAND, before BROKEN / HELD; six on by default; label TURN',
-    Object.keys(TV_STAGE_LABEL).length === 9 && TV_STAGE_LABEL.turn === 'TURN'
-      && JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","ema","band","turn","broken","held"]'
-      && JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","ema","band","turn"]'
-      && JSON.stringify(new TvSetupGate().announcedStages()) === '["pullback","cross","retest","ema","band","turn"]');
+  check('v47: the stage lists — TURN in the menu after BAND, before (v48) POP / BACK and BROKEN / HELD; on by default; label TURN (v48: eleven stages, ten in the menu, eight on)',
+    Object.keys(TV_STAGE_LABEL).length === 11 && TV_STAGE_LABEL.turn === 'TURN'
+      && JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","ema","band","turn","pop","back","broken","held"]'
+      && JSON.stringify(DEFAULT_ANNOUNCED) === '["pullback","cross","retest","ema","band","turn","pop","back"]'
+      && JSON.stringify(new TvSetupGate().announcedStages()) === '["pullback","cross","retest","ema","band","turn","pop","back"]');
   check('v47: TURN has its own switch (not the EMA\'s) and is none of the EMA family\'s, the VB\'s or the PULLBACK\'s stages',
     stageSwitch('turn') === 'turn' && new TvSetupGate().announces('turn') && !EMA_STAGES.has('turn') && !LINE_CROSS_STAGES.has('turn')
       && !VB_STAGES.has('turn') && !PULLBACK_STAGES.has('turn') && !emaByBand(t!) && emaLineStage({ stage: 'turn', bb_tf: '45S' }) === 'turn');
   const saved = { known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'band', 'basis', 'broken', 'held'], announced: ['pullback', 'band'] };
-  check('v47: the operator\'s saved switches (PULLBACK and BAND on; the list never knew TURN) read back as PULLBACK, BAND, TURN',
-    JSON.stringify(readStoredStages(saved)) === '["pullback","band","turn"]', JSON.stringify(readStoredStages(saved)));
+  check('v47: the operator\'s saved switches (PULLBACK and BAND on; the list never knew TURN) read back as PULLBACK, BAND, TURN (v48: and POP, BACK, which it never knew either)',
+    JSON.stringify(readStoredStages(saved)) === '["pullback","band","turn","pop","back"]', JSON.stringify(readStoredStages(saved)));
   check('v47: a saved list that knows TURN and doesn\'t announce it keeps it off; one that announces it keeps it on',
-    JSON.stringify(readStoredStages({ known: [...saved.known, 'turn'], announced: ['pullback', 'band'] })) === '["pullback","band"]'
+    JSON.stringify(readStoredStages({ known: [...saved.known, 'turn', 'pop', 'back'], announced: ['pullback', 'band'] })) === '["pullback","band"]'
+      && JSON.stringify(readStoredStages({ known: [...saved.known, 'turn'], announced: ['pullback', 'band'] })) === '["pullback","band","pop","back"]'
       && JSON.stringify(readStoredStages(storedStages(['pullback', 'band']))) === '["pullback","band"]'
       && JSON.stringify(readStoredStages(storedStages(['pullback', 'band', 'turn']))) === '["pullback","band","turn"]'
       && JSON.stringify(readStoredStages(storedStages(['turn']))) === '["turn"]' && JSON.stringify(readStoredStages(storedStages([]))) === '[]'
       && storedStages(['pullback']).known.includes('turn'));
   check('v47: TURN split from no other switch: unknown to a saved list it is on, whatever the EMA\'s or the BAND\'s switch says',
-    JSON.stringify(readStoredStages({ ...saved, announced: [] })) === '["turn"]'
-      && JSON.stringify(readStoredStages({ ...saved, announced: ['ema'] })) === '["ema","turn"]'
-      && JSON.stringify(readStoredStages({ ...saved, announced: ['ema', 'band', 'broken'] })) === '["ema","band","turn","broken"]'
-      && JSON.stringify(readStoredStages(['pullback'])) === '["pullback","turn"]');
+    JSON.stringify(readStoredStages({ ...saved, announced: [] })) === '["turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ ...saved, announced: ['ema'] })) === '["ema","turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ ...saved, announced: ['ema', 'band', 'broken'] })) === '["ema","band","turn","pop","back","broken"]'
+      && JSON.stringify(readStoredStages(['pullback'])) === '["pullback","turn","pop","back"]');
   check('v47: a posted list keeps TURN, in menu order', JSON.stringify(parseStageList(['held', 'TURN', 'pullback'])) === '["pullback","turn","held"]');
 
   // The gate: stored always; announced with its switch on, on Momentum (the EMA family's ⚙ rule), up to the cap
@@ -1002,6 +1010,404 @@ console.log('TURN: the bounce off a basis that turned up (v47, 2026-11-25)');
       && storedStage({ stage: 'turn', ...row }) === 'turn');
 }
 
+// v48 (operator, 2026-11-26, with a 1m / 15-close basis line on SVRE, ZNB, APUS and WHLR: "these moves are initial pop,
+// and their first pullback to bb basis row … how to catch such pullbacks?"; buying the pop's own candle was measured
+// first and loses, so: "yes, lets do that"): the script's fifth setup, in two steps, both from the 1m alert alone.
+// POP is a heads-up with no entry and no stop; BACK is the entry, the first pullback to the basis at its bounce. Two
+// stages, each with its own ⚙ switch (on by default; neither follows another switch, BACK not POP's either), its own
+// day's number (`pop N`, `back N`) against TV_SETUP.pp_cap, its own Telegram slug and text. Announced like the TURN:
+// the ⚙ rule "Momentum list only" governs both. A BACK is announced on its own conditions, whatever became of its POP.
+const POP_MSG = 'POP SVRE 1.85 | sVWAP 1.62 (+14.2%) | mVWAP 1.4 (+32.1%) | sma 15 1.66 (+11.4%) | ran 12.6% | candle 1 | pop 1 | day high +38% | vwap 30s | tf 1';
+const BACK_MSG = 'BACK SVRE 1.92 | stop 1.84 | sVWAP 1.7 (+12.9%) | mVWAP 1.41 (+36.2%) | sma 15 1.88 (+2.1%) | ran 18.4% | candle 1 | back 1 | since 6 | green 1 | day high +45% | vwap 30s | tf 1';
+console.log('POP and BACK: a pop off the basis and its first pullback (v48, 2026-11-26)');
+{
+  const T0 = 1_795_690_000;
+  const p = parseTvMessage(POP_MSG);
+  const b = parseTvMessage(BACK_MSG);
+  // The two messages of the contract
+  check('v48: POP parses — the head (no stop follows it)', p?.stage === 'pop' && p.ticker === 'SVRE' && p.price === 1.85, JSON.stringify(p));
+  check('v48: …the VWAP lines it carries (no year line here)', p?.svwap === 1.62 && p.spx_pct === 14.2 && p.mvwap === 1.4 && p.px_pct === 32.1
+    && p.yvwap === null && p.ypx_pct === null, JSON.stringify(p));
+  check('v48: …the basis (`sma <length> <value> (<price vs it>%)`), how far the run\'s high got above it, its timeframe', p?.sma_len === 15 && p.sma === 1.66
+    && p.sma_pct === 11.4 && p.ran_pct === 12.6 && p.candle_tf === '1', JSON.stringify(p));
+  check('v48: …the day\'s number, the day high, the VWAP source, and `tf 1` (the 1m alert sends it)', p?.pop_n === 1 && p.day_gain === 38 && p.ah_gain === null
+    && p.vwap_src === '30s' && p.tf === '1', JSON.stringify(p));
+  check('v48: a POP has no stop, no `since`, no MACD reading and no BACK number', p?.stop === null && p.since_n === null && p.macd_green === null && p.back_n === null,
+    JSON.stringify(p));
+  check('v48: …and nothing of the other setups: no line, no TURN reading, no cross / retest / bounce number, no EMA or band, not weak, not late',
+    p?.line === null && p.turn_n === null && p.fall_pct === null && p.cross_n === null && p.retest_n === null && p.bounce_n === null && p.bounce_from === null
+      && p.ema === null && p.ema_len === null && p.upper === null && p.bb_tf === null && p.bb_mid === null && p.touch === null && p.fails === null
+      && p.weak === false && p.late === false && JSON.stringify(lineTokens('pop', null)) === '[]', JSON.stringify(p));
+  check('v48: BACK parses — the head and the stop', b?.stage === 'back' && b.ticker === 'SVRE' && b.price === 1.92 && b.stop === 1.84, JSON.stringify(b));
+  check('v48: …the VWAP lines it carries', b?.svwap === 1.7 && b.spx_pct === 12.9 && b.mvwap === 1.41 && b.px_pct === 36.2 && b.yvwap === null && b.ypx_pct === null,
+    JSON.stringify(b));
+  check('v48: …the basis, how far the run\'s high got above it, its timeframe', b?.sma_len === 15 && b.sma === 1.88 && b.sma_pct === 2.1 && b.ran_pct === 18.4
+    && b.candle_tf === '1', JSON.stringify(b));
+  check('v48: …the day\'s number, the candles after the POP candle, the MACD green', b?.back_n === 1 && b.since_n === 6 && b.macd_green === true, JSON.stringify(b));
+  check('v48: …the day high, the VWAP source, and `tf 1`', b?.day_gain === 45 && b.ah_gain === null && b.vwap_src === '30s' && b.tf === '1', JSON.stringify(b));
+  check('v48: …no POP number, and nothing of the other setups', b?.pop_n === null && b.line === null && b.turn_n === null && b.fall_pct === null && b.cross_n === null
+    && b.retest_n === null && b.bounce_n === null && b.bounce_from === null && b.ema === null && b.upper === null && b.bb_tf === null && b.touch === null
+    && b.fails === null && b.weak === false && b.late === false && JSON.stringify(lineTokens('back', null)) === '[]', JSON.stringify(b));
+
+  // Variants: the year line and an after-hours gain, another basis, `green 0`, a ".5" percent, no VWAP fields
+  const pFull = parseTvMessage('POP OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | yVWAP 9.2 (-12.1%) | sma 20 7.3 (+10.8%) | ran 11.0% | candle 2 | pop 3 | day high +41% | ah +12% | vwap chart | tf 2');
+  check('v48: a POP with all three VWAP lines and an after-hours gain, another basis (2m, 20 closes)', pFull?.stage === 'pop' && pFull.ticker === 'OMH'
+    && pFull.price === 8.09 && pFull.svwap === 8.01 && pFull.spx_pct === 1 && pFull.mvwap === 7.5 && pFull.px_pct === 7.9 && pFull.yvwap === 9.2
+    && pFull.ypx_pct === -12.1 && pFull.sma_len === 20 && pFull.sma === 7.3 && pFull.sma_pct === 10.8 && pFull.ran_pct === 11 && pFull.candle_tf === '2'
+    && pFull.pop_n === 3 && pFull.day_gain === 41 && pFull.ah_gain === 12 && pFull.vwap_src === 'chart' && pFull.tf === '2' && pFull.stop === null
+    && pFull.back_n === null, JSON.stringify(pFull));
+  const bFull = parseTvMessage('BACK OMH 8.09 | stop 7.95 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | yVWAP 9.2 (-12.1%) | sma 20 8.05 (+.5%) | ran .5% | candle 2 | back 3 | since 20 | green 0 | day high +41% | ah +12% | vwap chart | tf 2');
+  check('v48: a BACK with all three VWAP lines and an after-hours gain, `green 0`, and ".5" percents (what a "#.0" format prints for 0.5)', bFull?.stage === 'back'
+    && bFull.stop === 7.95 && bFull.svwap === 8.01 && bFull.mvwap === 7.5 && bFull.px_pct === 7.9 && bFull.yvwap === 9.2 && bFull.ypx_pct === -12.1
+    && bFull.sma_len === 20 && bFull.sma === 8.05 && bFull.sma_pct === 0.5 && bFull.ran_pct === 0.5 && bFull.candle_tf === '2' && bFull.back_n === 3
+    && bFull.since_n === 20 && bFull.macd_green === false && bFull.day_gain === 41 && bFull.ah_gain === 12 && bFull.vwap_src === 'chart' && bFull.tf === '2'
+    && bFull.pop_n === null, JSON.stringify(bFull));
+  check('v48: the optional fields one by one — a yVWAP field without an mVWAP one, an `ah` field (after the day high, or alone), a negative day high',
+    parseTvMessage(POP_MSG.replace(' | mVWAP 1.4 (+32.1%)', ' | yVWAP 2.2 (-15.9%)'))?.yvwap === 2.2
+      && parseTvMessage(POP_MSG.replace(' | mVWAP 1.4 (+32.1%)', ' | yVWAP 2.2 (-15.9%)'))?.ypx_pct === -15.9
+      && parseTvMessage(POP_MSG.replace(' | mVWAP 1.4 (+32.1%)', ' | yVWAP 2.2 (-15.9%)'))?.mvwap === null
+      && parseTvMessage(POP_MSG.replace(' | day high +38%', ' | ah +7%'))?.ah_gain === 7
+      && parseTvMessage(POP_MSG.replace(' | day high +38%', ' | ah +7%'))?.day_gain === null
+      && parseTvMessage(BACK_MSG.replace('day high +45%', 'day high +45% | ah -3%'))?.ah_gain === -3
+      && parseTvMessage(BACK_MSG.replace('day high +45%', 'day high -2%'))?.day_gain === -2);
+  const red = parseTvMessage(BACK_MSG.replace('green 1', 'green 0'));
+  check('v48: `green 0` reads as the MACD not green; a BACK that doesn\'t say reads null', red?.macd_green === false && red.stage === 'back' && red.back_n === 1
+    && red.since_n === 6 && parseTvMessage(BACK_MSG.replace(' | green 1', ''))?.macd_green === null, JSON.stringify(red));
+  const pBare = parseTvMessage('POP APUS 1.52 | sma 15 1.38 (+10.1%) | ran 10.4% | candle 1 | pop 2 | vwap chart | tf 1');
+  const bBare = parseTvMessage('BACK APUS 1.5 | stop 1.47 | sma 15 1.48 (+1.4%) | ran 14.0% | candle 1 | back 2 | since 1 | green 1 | vwap chart | tf 1');
+  check('v48: a POP and a BACK without the VWAP fields or a day high still parse', pBare?.stage === 'pop' && pBare.ticker === 'APUS' && pBare.price === 1.52
+    && pBare.sma === 1.38 && pBare.sma_pct === 10.1 && pBare.ran_pct === 10.4 && pBare.pop_n === 2 && pBare.svwap === null && pBare.mvwap === null
+    && pBare.yvwap === null && pBare.day_gain === null && pBare.vwap_src === 'chart' && bBare?.stage === 'back' && bBare.price === 1.5 && bBare.stop === 1.47
+    && bBare.sma === 1.48 && bBare.ran_pct === 14 && bBare.back_n === 2 && bBare.since_n === 1 && bBare.macd_green === true && bBare.svwap === null
+    && bBare.day_gain === null, `${JSON.stringify(pBare)} ${JSON.stringify(bBare)}`);
+  check('v48: a sub-dollar POP keeps its decimals, a unicode minus reads as negative, and lower case parses',
+    parseTvMessage('POP NIVF 0.0251 | sVWAP 0.0262 (−4.2%) | sma 15 0.0227 (+10.6%) | ran 11.9% | candle 1 | pop 1 | tf 1')?.price === 0.0251
+      && parseTvMessage('POP NIVF 0.0251 | sVWAP 0.0262 (−4.2%) | sma 15 0.0227 (+10.6%) | ran 11.9% | candle 1 | pop 1 | tf 1')?.spx_pct === -4.2
+      && parseTvMessage('POP NIVF 0.0251 | sVWAP 0.0262 (−4.2%) | sma 15 0.0227 (+10.6%) | ran 11.9% | candle 1 | pop 1 | tf 1')?.sma === 0.0227
+      && parseTvMessage(POP_MSG.toLowerCase())?.stage === 'pop' && parseTvMessage(POP_MSG.toLowerCase())?.ran_pct === 12.6
+      && parseTvMessage(BACK_MSG.toLowerCase())?.stage === 'back' && parseTvMessage(BACK_MSG.toLowerCase())?.back_n === 1
+      && parseTvMessage('POP NASDAQ:SVRE 1.85 | ran 12.6% | pop 1 | tf 1')?.ticker === 'SVRE');
+
+  // The head word: PULLBACK ends in "BACK" and must stay a PULLBACK; POP and BACK are whole words
+  const pb = parseTvMessage('PULLBACK AIXI 1.48 | sVWAP 1.45 (+2.1%) | mVWAP 1.57 (-5.7%) | line session | touch 1 | day high +41% | tf 1')!;
+  check('v48: PULLBACK still parses as a PULLBACK (not a BACK), with no POP / BACK reading', pb?.stage === 'pullback' && pb.ticker === 'AIXI' && pb.price === 1.48
+    && pb.line === 'session' && pb.touch === 1 && pb.back_n === null && pb.pop_n === null && pb.ran_pct === null
+    && parseTvMessage('pullback aixi 1.48 | line session | touch 1 | tf 1')?.stage === 'pullback'
+    && parseTvMessage({ stage: 'pullback', ticker: 'AIXI' })?.stage === 'pullback', JSON.stringify(pb));
+  check('v48: POP, BACK and RAN as another stage\'s ticker are tickers (BACK is a listed one), with no POP / BACK reading',
+    parseTvMessage('PULLBACK BACK 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.stage === 'pullback'
+      && parseTvMessage('PULLBACK BACK 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.ticker === 'BACK'
+      && parseTvMessage('PULLBACK BACK 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.back_n === null
+      && parseTvMessage('PULLBACK POP 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.ticker === 'POP'
+      && parseTvMessage('PULLBACK POP 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1')?.pop_n === null
+      && parseTvMessage('CROSS RAN 12 | upper 11.9 (+0.8%) | candle 5 | bb 2 | cross 1 | tf 30S')?.ran_pct === null
+      && parseTvMessage('TURN BACK 2 | stop 1.9 | sma 15 1.95 (+2.6%) | candle 1 | turn 1 | since 2 | green 1 | tf 1')?.stage === 'turn'
+      && parseTvMessage('TURN BACK 2 | stop 1.9 | sma 15 1.95 (+2.6%) | candle 1 | turn 1 | since 2 | green 1 | tf 1')?.back_n === null);
+  check('v48: a POP or a BACK on a ticker named like a head word still parses, and stays what it is (`pop` / `back` are read after a "|" only)',
+    ['EMA', 'BOUNCE', 'CROSS', 'RETEST', 'PULLBACK', 'BROKEN', 'HELD', 'TURN', 'POP', 'BACK', 'RAN'].every((name) => {
+      const s = parseTvMessage(POP_MSG.replace('SVRE', name));
+      const t = parseTvMessage(BACK_MSG.replace('SVRE', name));
+      return s?.stage === 'pop' && s.ticker === name && s.price === 1.85 && s.pop_n === 1 && s.back_n === null && s.ran_pct === 12.6 && s.turn_n === null
+        && s.cross_n === null && s.bounce_n === null && s.retest_n === null && s.ema === null
+        && t?.stage === 'back' && t.ticker === name && t.price === 1.92 && t.back_n === 1 && t.pop_n === null && t.ran_pct === 18.4 && t.stop === 1.84
+        && t.turn_n === null && t.cross_n === null && t.bounce_n === null && t.retest_n === null;
+    }));
+  check('v48: the other stages\' messages carry no POP / BACK reading', [pb,
+    parseTvMessage(TURN_MSG)!,
+    parseTvMessage('BOUNCE OMH 8.2 | stop 8.0 | sVWAP 8.01 (+2.4%) | ema 9 8.1 | line session | from ema | candle 1 | bounce 1 | since 3 | vwap 30s | tf 30S')!,
+    parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.13 (-0.5%) | bb 30S | mid 8.02 (+0.9%) | line session | candle 2 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S')!,
+    parseTvMessage('CROSS X 1.0 | sVWAP 0.98 (+2.0%) | upper 0.99 (+1.0%) | open 0.97 | candle 5 | bb 2 | cross 1 | tf 30S')!,
+    parseTvMessage('RETEST X 1.0 | stop 0.97 | sVWAP 0.99 (+1.0%) | line session | candle 5 | bb 45S | retest 1 | vwap 30s | tf 30S')!]
+    .every((s) => s.ran_pct === null && s.pop_n === null && s.back_n === null));
+
+  // Malformed
+  check('v48: malformed — a head word that only starts with POP or BACK, or sits elsewhere, is no message',
+    parseTvMessage('POPS SVRE 1.85 | pop 1 | tf 1') === null && parseTvMessage('POPULAR SVRE 1.85') === null && parseTvMessage('BACKS SVRE 1.92') === null
+      && parseTvMessage('BACKTEST SVRE 1.92 | back 1') === null && parseTvMessage('POP') === null && parseTvMessage('BACK') === null
+      && parseTvMessage('POP | pop 1 | tf 1') === null && parseTvMessage('the POP SVRE 1.85') === null && parseTvMessage('| BACK SVRE 1.92') === null
+      && parseTvMessage('POPSVRE 1.85') === null);
+  check('v48: malformed — an implausible ticker is rejected for a POP and a BACK alike',
+    parseTvMessage('POP 123ABC 1.0 | pop 1') === null && parseTvMessage('BACK TOO-LONG-TICKER 1.0 | back 1') === null
+      && parseTvMessage({ stage: 'pop' }) === null && parseTvMessage({ stage: 'back', ticker: '9X' }) === null
+      && parseTvMessage('{"stage":"pop","ticker":"SVRE"') === null && parseTvMessage({ stage: 'pops', ticker: 'SVRE' }) === null);
+  const junk = parseTvMessage('POP SVRE x | sma fifteen 1.66 | ran NaN% | candle ? | pop one | day high NaN% | tf 1');
+  check('v48: malformed — unreadable fields read as null, the message still a POP (stored for what it has)', junk?.stage === 'pop' && junk.ticker === 'SVRE'
+    && junk.price === null && junk.sma_len === null && junk.sma === null && junk.sma_pct === null && junk.ran_pct === null && junk.candle_tf === null
+    && junk.pop_n === null && junk.day_gain === null && junk.tf === '1' && !pastCap(junk), JSON.stringify(junk));
+  const junkB = parseTvMessage('BACK SVRE 1.92 | stop | sma 15 | ran % | back | since x | green 2 | tf 1');
+  check('v48: malformed — a BACK with empty fields: no stop, basis, `ran`, number, `since` or MACD reading (`green 2` is no reading)', junkB?.stage === 'back'
+    && junkB.price === 1.92 && junkB.stop === null && junkB.sma_len === null && junkB.sma === null && junkB.ran_pct === null && junkB.back_n === null
+    && junkB.since_n === null && junkB.macd_green === null && !pastCap(junkB), JSON.stringify(junkB));
+  check('v48: malformed — `ran` needs its "%", `pop` / `back` a number, and each its "|" (a "pullback 2" field is no `back 2`)',
+    parseTvMessage('POP SVRE 1.85 | ran 12.6 | pop x | tf 1')?.ran_pct === null && parseTvMessage('POP SVRE 1.85 | ran 12.6 | pop x | tf 1')?.pop_n === null
+      && parseTvMessage('POP SVRE 1.85 ran 12.6% pop 2 tf 1')?.ran_pct === null && parseTvMessage('POP SVRE 1.85 ran 12.6% pop 2 tf 1')?.pop_n === null
+      && parseTvMessage('BACK SVRE 1.92 back 2 | since 3')?.back_n === null && parseTvMessage('BACK SVRE 1.92 | pullback 2 | since 3')?.back_n === null);
+
+  // A JSON body: `stage: "pop"` / `"back"` and the signal's field names; the message's short names are read too.
+  const pJs = parseTvMessage({ stage: 'pop', ticker: 'SVRE', price: 1.85, svwap: 1.62, spx_pct: 14.2, mvwap: 1.4, px_pct: 32.1, sma_len: 15, sma: 1.66,
+    sma_pct: 11.4, ran_pct: 12.6, candle_tf: '1', pop_n: 1, day_gain: 38, vwap_src: '30s', tf: '1' });
+  const bJs = parseTvMessage({ stage: 'back', ticker: 'SVRE', price: 1.92, stop: 1.84, svwap: 1.7, spx_pct: 12.9, mvwap: 1.41, px_pct: 36.2, sma_len: 15,
+    sma: 1.88, sma_pct: 2.1, ran_pct: 18.4, candle_tf: '1', back_n: 1, since_n: 6, macd_green: true, day_gain: 45, vwap_src: '30s', tf: '1' });
+  check('v48: the JSON bodies (stage "pop" / "back", the same field names) read field for field as the messages do',
+    pJs != null && p != null && (Object.keys(p) as Array<keyof TvSetupSignal>).every((k) => pJs[k] === p[k]) && Object.keys(pJs).length === Object.keys(p).length
+      && bJs != null && b != null && (Object.keys(b) as Array<keyof TvSetupSignal>).every((k) => bJs[k] === b[k]) && Object.keys(bJs).length === Object.keys(b).length,
+    `${JSON.stringify(pJs)} ${JSON.stringify(bJs)}`);
+  const pShort = parseTvMessage('{"stage":"POP","ticker":"nasdaq:svre","price":"1.85","sma_len":15,"sma":1.66,"ran":12.6,"pop":2,"candle":1,"vwap":"chart","tf":1}');
+  const bShort = parseTvMessage({ stage: 'BACK', ticker: 'svre', stop: '1.84', ran: '18.4', back: 2, since: 6, green: 0, candle: '1' });
+  check('v48: …JSON text, an exchange prefix and the message\'s short names (ran, pop, back, since, green, candle)', pShort?.stage === 'pop' && pShort.ticker === 'SVRE'
+    && pShort.price === 1.85 && pShort.ran_pct === 12.6 && pShort.pop_n === 2 && pShort.back_n === null && pShort.candle_tf === '1' && pShort.vwap_src === 'chart'
+    && pShort.tf === '1' && bShort?.stage === 'back' && bShort.ticker === 'SVRE' && bShort.stop === 1.84 && bShort.ran_pct === 18.4 && bShort.back_n === 2
+    && bShort.pop_n === null && bShort.since_n === 6 && bShort.macd_green === false && bShort.candle_tf === '1', `${JSON.stringify(pShort)} ${JSON.stringify(bShort)}`);
+
+  // The stage lists and the two ⚙ switches
+  check('v48: the stage lists — eleven stages; the menu\'s ten with POP then BACK after TURN, before BROKEN / HELD; both on by default; labels POP and BACK',
+    Object.keys(TV_STAGE_LABEL).length === 11 && TV_STAGE_LABEL.pop === 'POP' && TV_STAGE_LABEL.back === 'BACK'
+      && JSON.stringify(TV_STAGE_ORDER) === '["pullback","cross","retest","ema","band","turn","pop","back","broken","held"]'
+      && TV_STAGE_ORDER.indexOf('pop') === TV_STAGE_ORDER.indexOf('turn') + 1 && TV_STAGE_ORDER.indexOf('back') === TV_STAGE_ORDER.indexOf('pop') + 1
+      && TV_STAGE_ORDER.indexOf('broken') === TV_STAGE_ORDER.indexOf('back') + 1
+      && DEFAULT_ANNOUNCED.includes('pop') && DEFAULT_ANNOUNCED.includes('back') && !TV_SETUP.quiet_stages.includes('pop') && !TV_SETUP.quiet_stages.includes('back')
+      && JSON.stringify(new TvSetupGate().announcedStages()) === '["pullback","cross","retest","ema","band","turn","pop","back"]');
+  check('v48: POP and BACK each have their own switch and are none of the EMA family\'s, the VB\'s or the PULLBACK\'s stages; with TURN they are the basis setups',
+    stageSwitch('pop') === 'pop' && stageSwitch('back') === 'back' && new TvSetupGate().announces('pop') && new TvSetupGate().announces('back')
+      && (['pop', 'back'] as const).every((s) => !EMA_STAGES.has(s) && !LINE_CROSS_STAGES.has(s) && !VB_STAGES.has(s) && !PULLBACK_STAGES.has(s))
+      && JSON.stringify([...BASIS_STAGES]) === '["turn","pop","back"]' && !emaByBand(p!) && !emaByBand(b!)
+      && emaLineStage({ stage: 'pop', bb_tf: '45S' }) === 'pop' && emaLineStage({ stage: 'back', bb_tf: '45S' }) === 'back');
+  // the operator's switches as v47 stored them (the menu's eight stages then): it never knew POP or BACK
+  const v47 = { known: ['pullback', 'cross', 'retest', 'ema', 'band', 'turn', 'broken', 'held'], announced: ['pullback', 'band'] };
+  check('v48: a list saved before v48 (it knew TURN, not POP or BACK) gives both their default, on — whatever TURN\'s switch says',
+    JSON.stringify(readStoredStages(v47)) === '["pullback","band","pop","back"]'
+      && JSON.stringify(readStoredStages({ ...v47, announced: ['pullback', 'band', 'turn'] })) === '["pullback","band","turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ ...v47, announced: [] })) === '["pop","back"]'
+      && JSON.stringify(readStoredStages({ ...v47, announced: ['turn', 'held'] })) === '["turn","pop","back","held"]', JSON.stringify(readStoredStages(v47)));
+  check('v48: …a plain list from before 11-13, and a list from before v47, too',
+    JSON.stringify(readStoredStages(['pullback'])) === '["pullback","turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ known: ['pullback', 'cross', 'retest', 'rsi', 'dip', 'macd', 'ema', 'band', 'basis', 'broken', 'held'], announced: ['pullback', 'band'] }))
+        === '["pullback","band","turn","pop","back"]');
+  check('v48: a saved list that knows POP and BACK keeps them as saved: both off, POP alone, BACK alone (BACK does not follow POP\'s switch), both',
+    JSON.stringify(readStoredStages(storedStages(['pullback', 'band']))) === '["pullback","band"]'
+      && JSON.stringify(readStoredStages(storedStages(['pullback', 'pop']))) === '["pullback","pop"]'
+      && JSON.stringify(readStoredStages(storedStages(['back']))) === '["back"]'
+      && JSON.stringify(readStoredStages(storedStages(['turn', 'pop', 'back']))) === '["turn","pop","back"]'
+      && JSON.stringify(readStoredStages({ known: [...v47.known, 'pop', 'back'], announced: ['pullback'] })) === '["pullback"]'
+      && storedStages(['pullback']).known.includes('pop') && storedStages(['pullback']).known.includes('back'));
+  check('v48: …each is unknown on its own: a list that knows POP and not BACK leaves POP as saved and BACK on, and the other way round',
+    JSON.stringify(readStoredStages({ known: [...v47.known, 'pop'], announced: [] })) === '["back"]'
+      && JSON.stringify(readStoredStages({ known: [...v47.known, 'back'], announced: [] })) === '["pop"]'
+      && JSON.stringify(readStoredStages({ known: [...v47.known, 'pop'], announced: ['pop'] })) === '["pop","back"]');
+  check('v48: a posted list keeps POP and BACK, in menu order', JSON.stringify(parseStageList(['held', 'BACK', 'pop', 'pullback'])) === '["pullback","pop","back","held"]'
+    && JSON.stringify(parseStageList(['back'])) === '["back"]');
+
+  // The gate: stored always; announced with its switch on, on Momentum (the EMA family's ⚙ rule), up to the cap
+  check('v48: the cap is 3 a day on a ticker — a POP by its `pop N`, a BACK by its own `back N`, neither by the other\'s or another setup\'s number',
+    TV_SETUP.pp_cap === 3 && !pastCap(p!) && !pastCap({ ...p!, pop_n: 3 }) && pastCap({ ...p!, pop_n: 4 }) && !pastCap({ ...p!, pop_n: null })
+      && !pastCap({ ...p!, pop_n: 1, back_n: 9, turn_n: 9, cross_n: 9, bounce_n: 9, retest_n: 9, fails: 9 })
+      && !pastCap(b!) && !pastCap({ ...b!, back_n: 3 }) && pastCap({ ...b!, back_n: 4 }) && !pastCap({ ...b!, back_n: null })
+      && !pastCap({ ...b!, back_n: 1, pop_n: 9, turn_n: 9, cross_n: 9, bounce_n: 9, retest_n: 9, fails: 9 }));
+  check('v48: gate — on Momentum → a POP is announced, a BACK is announced', new TvSetupGate().admit(p!, T0, false, true) === 'notify'
+    && new TvSetupGate().admit(b!, T0, false, true) === 'notify');
+  const g = new TvSetupGate();
+  check('v48: gate — a re-delivery within 20 s is dropped; the next POP three minutes later is a new event (one alert sends it: no copy to merge, no 5-min spacing)',
+    g.admit(p!, T0, false, true) === 'notify' && g.admit(p!, T0 + 5, false, true) === 'drop'
+      && g.admit({ ...p!, pop_n: 2 }, T0 + 180, false, true) === 'notify' && g.admit({ ...p!, pop_n: 3 }, T0 + 360, false, true) === 'notify');
+  check('v48: gate — …the same for a BACK', (() => { const k = new TvSetupGate();
+    return k.admit(b!, T0, false, true) === 'notify' && k.admit(b!, T0 + 5, false, true) === 'drop'
+      && k.admit({ ...b!, back_n: 2 }, T0 + 180, false, true) === 'notify' && k.admit({ ...b!, back_n: 3 }, T0 + 360, false, true) === 'notify'; })());
+  const sameCandle = { ticker: 'SVRE', tf: '1', candle_tf: '1' };
+  check('v48: gate — a POP does not dedupe a BACK: one ticker\'s POP and BACK in the same second are both admitted, and each again is its own re-delivery',
+    (() => { const k = new TvSetupGate();
+      return k.admit({ ...p!, ...sameCandle }, T0, false, true) === 'notify' && k.admit({ ...b!, ...sameCandle }, T0, false, true) === 'notify'
+        && k.admit({ ...p!, ...sameCandle }, T0 + 3, false, true) === 'drop' && k.admit({ ...b!, ...sameCandle }, T0 + 3, false, true) === 'drop'; })()
+      && (() => { const k = new TvSetupGate();   // the other order
+        return k.admit(b!, T0, false, true) === 'notify' && k.admit(p!, T0, false, true) === 'notify'; })());
+  const turnSame = { ...parseTvMessage(TURN_MSG)!, ...sameCandle };
+  check('v48: gate — a TURN and a BACK on the same candle (same ticker, timeframe and basis timeframe) are both admitted, in either order; with a POP there too',
+    (() => { const k = new TvSetupGate();
+      return k.admit(turnSame, T0, false, true) === 'notify' && k.admit({ ...b!, ...sameCandle }, T0, false, true) === 'notify'
+        && k.admit(turnSame, T0 + 2, false, true) === 'drop' && k.admit({ ...b!, ...sameCandle }, T0 + 2, false, true) === 'drop'; })()
+      && (() => { const k = new TvSetupGate();
+        return k.admit({ ...b!, ...sameCandle }, T0, false, true) === 'notify' && k.admit(turnSame, T0, false, true) === 'notify'
+          && k.admit({ ...p!, ...sameCandle }, T0, false, true) === 'notify'; })());
+  check('v48: gate — off Momentum with the rule on (the default) → quiet, though both examples say a day high over +30%',
+    new TvSetupGate().emaMomentumOnly() && p!.day_gain! >= TV_SETUP.vb_fresh_gain && b!.day_gain! >= TV_SETUP.vb_fresh_gain
+      && new TvSetupGate().admit(p!, T0, false, false) === 'quiet' && new TvSetupGate().admit(b!, T0, false, false) === 'quiet'
+      && new TvSetupGate().admit({ ...p!, day_gain: 300 }, T0, false, false) === 'quiet' && new TvSetupGate().admit({ ...b!, day_gain: 300 }, T0, false, false) === 'quiet');
+  const lax = () => { const x = new TvSetupGate(); x.setEmaMomentumOnly(false); return x; };
+  check(`v48: gate — off Momentum, the rule off, a day high ≥ +${TV_SETUP.vb_fresh_gain}% → announced; under it or without one, quiet; on the list either way`,
+    (['pop', 'back'] as const).every((stage) => { const s = stage === 'pop' ? p! : b!;
+      return lax().admit({ ...s, day_gain: TV_SETUP.vb_fresh_gain }, T0, false, false) === 'notify' && lax().admit(s, T0, false, false) === 'notify'
+        && lax().admit({ ...s, day_gain: TV_SETUP.vb_fresh_gain - 1 }, T0, false, false) === 'quiet'
+        && lax().admit({ ...s, day_gain: null }, T0, false, false) === 'quiet' && lax().admit({ ...s, day_gain: 5 }, T0, false, true) === 'notify'
+        && new TvSetupGate().admit({ ...s, day_gain: 5 }, T0, false, true) === 'notify'; }));
+  check('v48: gate — `pop 4` → quiet (past the cap): on Momentum, as a fresh runner with the rule off, and with a grade exemption alike; `pop 3` announces',
+    new TvSetupGate().admit({ ...p!, pop_n: 4 }, T0, false, true) === 'quiet' && lax().admit({ ...p!, pop_n: 4, day_gain: 264 }, T0, false, false) === 'quiet'
+      && new TvSetupGate().admit({ ...p!, pop_n: 4 }, T0, true, true) === 'quiet' && new TvSetupGate().admit({ ...p!, pop_n: 3 }, T0, false, true) === 'notify');
+  check('v48: gate — `back 4` → quiet the same way; `back 3` announces; a BACK is not capped by a `pop` number, nor a POP by a `back` number',
+    new TvSetupGate().admit({ ...b!, back_n: 4 }, T0, false, true) === 'quiet' && lax().admit({ ...b!, back_n: 4, day_gain: 264 }, T0, false, false) === 'quiet'
+      && new TvSetupGate().admit({ ...b!, back_n: 4 }, T0, true, true) === 'quiet' && new TvSetupGate().admit({ ...b!, back_n: 3 }, T0, false, true) === 'notify'
+      && new TvSetupGate().admit({ ...b!, pop_n: 9 }, T0, false, true) === 'notify' && new TvSetupGate().admit({ ...p!, back_n: 9 }, T0, false, true) === 'notify');
+  const only = (stages: Parameters<TvSetupGate['setAnnounced']>[0]) => { const x = new TvSetupGate(); x.setAnnounced(stages); return x; };
+  const allBut = (off: string) => only(TV_STAGE_ORDER.filter((s) => s !== off));
+  check('v48: gate — the POP switch off → a POP is quiet, on Momentum too; the BACK and the TURN still announce',
+    allBut('pop').admit(p!, T0, false, true) === 'quiet' && !allBut('pop').announces('pop') && allBut('pop').announces('back')
+      && allBut('pop').admit(b!, T0, false, true) === 'notify' && allBut('pop').admit(parseTvMessage(TURN_MSG)!, T0, false, true) === 'notify');
+  check('v48: gate — the BACK switch off → a BACK is quiet, on Momentum too; the POP and the TURN still announce',
+    allBut('back').admit(b!, T0, false, true) === 'quiet' && !allBut('back').announces('back') && allBut('back').announces('pop')
+      && allBut('back').admit(p!, T0, false, true) === 'notify' && allBut('back').admit(parseTvMessage(TURN_MSG)!, T0, false, true) === 'notify');
+  check('v48: gate — no other switch announces them: TURN\'s, the EMA\'s, the BAND\'s and PULLBACK\'s on, POP\'s and BACK\'s off → both quiet; everything off → quiet',
+    only(['pullback', 'cross', 'retest', 'ema', 'band', 'turn']).admit(p!, T0, false, true) === 'quiet'
+      && only(['pullback', 'cross', 'retest', 'ema', 'band', 'turn']).admit(b!, T0, false, true) === 'quiet'
+      && only([]).admit(p!, T0, false, true) === 'quiet' && only([]).admit(b!, T0, false, true) === 'quiet');
+  check('v48: gate — the POP switch alone on → only the POP announces; the BACK switch alone on → only the BACK (and no TURN with either)',
+    only(['pop']).admit(p!, T0, false, true) === 'notify' && only(['pop']).admit(b!, T0, false, true) === 'quiet'
+      && only(['pop']).admit(parseTvMessage(TURN_MSG)!, T0, false, true) === 'quiet' && !only(['pop']).announces('turn')
+      && only(['back']).admit(b!, T0, false, true) === 'notify' && only(['back']).admit(p!, T0, false, true) === 'quiet'
+      && only(['back']).admit(parseTvMessage(TURN_MSG)!, T0, false, true) === 'quiet' && only(['turn']).admit(p!, T0, false, true) === 'quiet'
+      && only(['turn']).admit(b!, T0, false, true) === 'quiet');
+  check('v48: gate — a BACK is announced on its own conditions: after a POP that was quiet (off the list, switched off, or past the cap), and with no POP at all',
+    (() => { const k = new TvSetupGate();   // the POP came while the ticker was off the list
+      return k.admit(p!, T0, false, false) === 'quiet' && k.admit(b!, T0 + 360, false, true) === 'notify'; })()
+      && (() => { const k = only(TV_STAGE_ORDER.filter((s) => s !== 'pop'));   // the POP switch is off
+        return k.admit(p!, T0, false, true) === 'quiet' && k.admit(b!, T0 + 360, false, true) === 'notify'; })()
+      && (() => { const k = new TvSetupGate();   // the day's fourth POP, then the day's first BACK
+        return k.admit({ ...p!, pop_n: 4 }, T0, false, true) === 'quiet' && k.admit(b!, T0 + 360, false, true) === 'notify'; })()
+      && new TvSetupGate().admit(b!, T0, false, true) === 'notify');   // the script never sent the POP (not a gainer then)
+  check('v48: gate — …and the other way round: a quiet BACK takes nothing from the next POP or BACK',
+    (() => { const k = new TvSetupGate();
+      return k.admit(b!, T0, false, false) === 'quiet' && k.admit({ ...p!, pop_n: 2 }, T0 + 240, false, true) === 'notify'
+        && k.admit({ ...b!, back_n: 2 }, T0 + 480, false, true) === 'notify'; })());
+  check('v48: gate — the key carries the ticker, the stage and the basis\'s timeframe: another basis timeframe or another ticker is its own event',
+    (() => { const k = new TvSetupGate();
+      return k.admit(p!, T0, false, true) === 'notify' && k.admit({ ...p!, candle_tf: '2' }, T0, false, true) === 'notify'
+        && k.admit({ ...p!, ticker: 'APUS' }, T0, false, true) === 'notify' && k.admit(b!, T0, false, true) === 'notify'
+        && k.admit({ ...b!, candle_tf: '2' }, T0, false, true) === 'notify'
+        && k.admit(p!, T0 + 1, false, true) === 'drop' && k.admit({ ...p!, candle_tf: '2' }, T0 + 1, false, true) === 'drop'
+        && k.admit({ ...b!, candle_tf: '2' }, T0 + 1, false, true) === 'drop'
+        && k.admit(p!, T0 + TV_SETUP.vb_dup_sec + 1, false, true) === 'notify' && k.admit(b!, T0 + TV_SETUP.vb_dup_sec + 1, false, true) === 'notify'; })());
+  check('v48: the other stages\' gates are as they were: a TURN on Momentum announces and off it is quiet; a CROSS off the list with a +30% day high announces; a PULLBACK announces',
+    new TvSetupGate().admit(parseTvMessage(TURN_MSG)!, T0, false, true) === 'notify' && new TvSetupGate().admit(parseTvMessage(TURN_MSG)!, T0, false, false) === 'quiet'
+      && new TvSetupGate().admit(parseTvMessage('CROSS OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.0 (+1.1%) | open 7.9 | line session | candle 5 | bb 45S | cross 1 | day high +31% | tf 30S')!, T0, false, false) === 'notify'
+      && new TvSetupGate().admit(pb, T0, false, false) === 'notify');
+
+  // Telegram: the texts for the two example messages, whole
+  const momo = { change_pct: 24.1, grade: 'B+', float_m: 3.2 };
+  const links = '<a href="https://www.tradingview.com/chart/?symbol=NASDAQ%3ASVRE">TradingView</a> · <a href="https://finviz.com/quote.ashx?t=SVRE">Finviz</a>';
+  const popHtml = formatTvSetupAlert(p!, 'NASDAQ:SVRE', momo);
+  check('v48: Telegram — the POP example\'s text, whole: a heads-up with no entry (the entry is the BACK), the price, how far the run\'s high got, the basis, the day high',
+    popHtml === ['⭐ 📐 💥 <b>POP</b>  <b>SVRE</b>  $1.85',
+      '<i>a pop: the run\'s high got 12.6% above its 1m basis (SMA 15) — a heads-up, no entry: the entry is the BACK, the first pullback to the basis</i>',
+      'pop 1 today (first)',
+      'basis $1.66 (+11.4%) · sVWAP $1.62 (+14.2%) · mVWAP $1.40 (+32.1%)',
+      '⭐ <b>on Momentum</b> · grade B+ · now +24.1% · float 3.2M',
+      'day high +38% · tf 1',
+      links].join('\n'), popHtml);
+  const backHtml = formatTvSetupAlert(b!, 'NASDAQ:SVRE', momo);
+  check('v48: Telegram — the BACK example\'s text, whole: the entry, the stop with its distance, the day\'s number, how far the run\'s high got, the candles after the POP, the MACD, the basis',
+    backHtml === ['⭐ 📐 🎯 <b>BACK</b>  <b>SVRE</b>  $1.92',
+      '<i>the first pullback after the pop: price came back to its 1m basis (SMA 15) and bounced (at the 1m close) — the entry</i>',
+      'stop $1.84 (-4.2%, under the pullback\'s low) · back 1 today (first) · the run\'s high got 18.4% above the basis · 6 candles after the POP · MACD green',
+      'basis $1.88 (+2.1%) · sVWAP $1.70 (+12.9%) · mVWAP $1.41 (+36.2%)',
+      '⭐ <b>on Momentum</b> · grade B+ · now +24.1% · float 3.2M',
+      'day high +45% · tf 1',
+      links].join('\n'), backHtml);
+  check('v48: Telegram — a POP names no stop and no MACD, and says it is not the entry; a BACK does not call itself a heads-up',
+    !popHtml.includes('stop') && !popHtml.includes('MACD') && !popHtml.includes('candles after') && popHtml.includes('a heads-up, no entry')
+      && popHtml.includes('the entry is the BACK') && !backHtml.includes('heads-up') && backHtml.includes('— the entry</i>')
+      && [popHtml, backHtml].every((h) => !h.includes('null') && !h.includes('undefined') && !h.includes('weak') && !h.includes('EMA') && !h.includes('yVWAP')));
+  check('v48: Telegram — the icons are POP 💥 and BACK 🎯, each unlike every other stage\'s',
+    (() => { const sample: Record<string, string> = {
+      pullback: 'PULLBACK X 1.0 | sVWAP 1 (+0%) | line session | touch 1 | tf 1', broken: 'BROKEN X 1.0 | line session | touch 1 | tf 1',
+      held: 'HELD X 1.0 | line session | touch 1 | tf 1', cross: 'CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S',
+      retest: 'RETEST X 1.0 | stop 0.97 | line session | candle 5 | bb 45S | retest 1 | tf 30S', ema: 'EMA X 1.0 | ema 9 1.0 | line session | candle 3 | cross 1 | tf 30S',
+      bounce: 'BOUNCE X 1.0 | stop 0.9 | ema 9 0.99 | line session | from ema | candle 3 | bounce 1 | since 2 | tf 30S', turn: TURN_MSG };
+      const icon = (m: string) => /^📐 (\S+) <b>/.exec(formatTvSetupAlert(parseTvMessage(m)!, 'X', null))?.[1] ?? '?';
+      const others = Object.values(sample).map(icon);
+      return icon(POP_MSG) === '💥' && icon(BACK_MSG) === '🎯' && !others.includes('💥') && !others.includes('🎯') && !others.includes('?'); })());
+  const popCap = formatTvSetupAlert({ ...pFull!, pop_n: 4 }, 'NASDAQ:OMH', null);
+  check('v48: Telegram — a POP past the cap, with the year line and an after-hours gain, a 2m basis, off Momentum (no ⭐)',
+    popCap.startsWith('📐 💥 <b>POP</b>  <b>OMH</b>  $8.09\n') && popCap.includes('the run\'s high got 11.0% above its 2m basis (SMA 20)')
+      && popCap.includes('\npop 4 today — past the cap\n')
+      && popCap.includes('\nbasis $7.30 (+10.8%) · sVWAP $8.01 (+1.0%) · mVWAP $7.50 (+7.9%) · yVWAP $9.20 (-12.1%)\n')
+      && popCap.includes('not on our Momentum list') && popCap.includes('day high +41% · after hours +12% · tf 2') && !popCap.includes('⭐'), popCap);
+  const backCap = formatTvSetupAlert({ ...bFull!, back_n: 4 }, 'NASDAQ:OMH', null);
+  check('v48: Telegram — a BACK past the cap, the MACD not green, the year line, a 2m basis, off Momentum',
+    backCap.startsWith('📐 🎯 <b>BACK</b>  <b>OMH</b>  $8.09\n') && backCap.includes('price came back to its 2m basis (SMA 20) and bounced (at the 2m close)')
+      && backCap.includes('\nstop $7.95 (-1.7%, under the pullback\'s low) · back 4 today — past the cap · the run\'s high got 0.5% above the basis · 20 candles after the POP · MACD not green\n')
+      && backCap.includes('\nbasis $8.05 (+0.5%) · sVWAP $8.01 (+1.0%) · mVWAP $7.50 (+7.9%) · yVWAP $9.20 (-12.1%)\n')
+      && backCap.includes('not on our Momentum list') && backCap.includes('day high +41% · after hours +12% · tf 2') && !backCap.includes('⭐'), backCap);
+  const pBareHtml = formatTvSetupAlert(pBare!, 'APUS', null);
+  const bBareHtml = formatTvSetupAlert(bBare!, 'APUS', null);
+  check('v48: Telegram — without VWAP lines or a day high: the basis alone, "pop 2 today", "1 candle"',
+    pBareHtml.includes('\npop 2 today\n') && pBareHtml.includes('\nbasis $1.38 (+10.1%)\n') && !pBareHtml.includes('VWAP $') && !pBareHtml.includes('day high')
+      && bBareHtml.includes('back 2 today · the run\'s high got 14.0% above the basis · 1 candle after the POP · MACD green')
+      && bBareHtml.includes('\nbasis $1.48 (+1.4%)\n') && !bBareHtml.includes('VWAP $')
+      && [pBareHtml, bBareHtml].every((h) => !h.includes('null') && !h.includes('undefined')), `${pBareHtml}\n${bBareHtml}`);
+  const pJsHtml = formatTvSetupAlert(parseTvMessage({ stage: 'pop', ticker: 'SVRE' })!, 'SVRE', null);
+  const bJsHtml = formatTvSetupAlert(parseTvMessage({ stage: 'back', ticker: 'SVRE' })!, 'SVRE', null);
+  check('v48: Telegram — a bare JSON POP / BACK renders without levels, numbers, null or undefined; the POP still says it is no entry',
+    pJsHtml.includes('<b>POP</b>  <b>SVRE</b>') && pJsHtml.includes('the run\'s high got well above its ? basis (SMA ?)') && pJsHtml.includes('a heads-up, no entry')
+      && !pJsHtml.includes('today') && !pJsHtml.includes('basis $') && bJsHtml.includes('<b>BACK</b>  <b>SVRE</b>') && !bJsHtml.includes('stop')
+      && !bJsHtml.includes('MACD') && !bJsHtml.includes('basis $') && !bJsHtml.includes('today') && !bJsHtml.includes('got')
+      && [pJsHtml, bJsHtml].every((h) => !h.includes('null') && !h.includes('undefined')), `${pJsHtml}\n${bJsHtml}`);
+  check('v48: Telegram — the TURN\'s text is as it was (it shares the levels line with the POP and the BACK)',
+    formatTvSetupAlert(parseTvMessage(TURN_MSG)!, 'NASDAQ:NIVF', momo).includes('\nbasis $0.0207 (+2.9%) · sVWAP $0.0211 (+0.9%) · mVWAP $0.0230 (-7.4%)\n'));
+
+  // The Telegram slugs: the poller mutes a stage's push by `tv_<stage>` (ALERTS_DISABLED), so the two new ones are tv_pop and tv_back
+  process.env.ALERTS_DISABLED = 'tv_pop, TV_BACK';
+  check('v48: the slugs tv_pop and tv_back are muted one by one through ALERTS_DISABLED (the others are not touched)',
+    alertDisabled('tv_pop') && alertDisabled('tv_back') && !alertDisabled('tv_turn') && !alertDisabled('tv_setup') && !alertDisabled('tv_pullback'));
+  {
+    const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src/services');
+    const telegramSrc = readFileSync(resolve(srcDir, 'telegram.ts'), 'utf8');
+    const pollerSrc = readFileSync(resolve(srcDir, 'poller.ts'), 'utf8');
+    check('v48: …AlertComponent names both, and the poller builds a setup\'s slug from its stage (`tv_${sig.stage}`) and stores popFields in both the alert and its row',
+      /\|\s*'tv_pop'/.test(telegramSrc) && /\|\s*'tv_back'/.test(telegramSrc) && /\|\s*'tv_turn'/.test(telegramSrc)
+        && pollerSrc.includes('const stageSlug = `tv_${sig.stage}` as AlertComponent;') && pollerSrc.includes('!alertDisabled(stageSlug)')
+        && (pollerSrc.match(/\.\.\.popFields\(sig\),/g) ?? []).length === 2 && (pollerSrc.match(/\.\.\.turnFields\(sig\),/g) ?? []).length === 2);
+  }
+
+  // What a POP row and a BACK row store (tier_events meta), and what a reloaded page reads back (GET /api/screener/alerts)
+  const pRow = popFields(p!);
+  const bRow = popFields(b!);
+  check('v48: a POP row stores its six fields (popFields) — no stop, `since` or MACD reading',
+    JSON.stringify(pRow) === JSON.stringify({ candle_tf: '1', sma_len: 15, sma: 1.66, sma_pct: 11.4, ran_pct: 12.6, pop_n: 1 })
+      && !('stop' in pRow) && !('since_n' in pRow) && !('macd_green' in pRow) && !('back_n' in pRow), JSON.stringify(pRow));
+  check('v48: a BACK row stores its nine fields',
+    JSON.stringify(bRow) === JSON.stringify({ candle_tf: '1', stop: 1.84, since_n: 6, sma_len: 15, sma: 1.88, sma_pct: 2.1, ran_pct: 18.4, back_n: 1, macd_green: true })
+      && !('pop_n' in bRow), JSON.stringify(bRow));
+  check('v48: …other stages store none of them (popFields), and a POP or a BACK none of the TURN\'s, the VB\'s or the EMA family\'s',
+    Object.keys(popFields(pb)).length === 0 && Object.keys(popFields(parseTvMessage(TURN_MSG)!)).length === 0
+      && Object.keys(popFields(parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S')!)).length === 0
+      && [p!, b!].every((s) => Object.keys(turnFields(s)).length === 0 && Object.keys(vbFields(s)).length === 0 && Object.keys(emaFields(s)).length === 0));
+  check('v48: …a POP row has no stop even if a stop were read off the message',
+    !('stop' in popFields({ ...p!, stop: 1.7, since_n: 2, macd_green: true })) && !('since_n' in popFields({ ...p!, stop: 1.7, since_n: 2, macd_green: true }))
+      && !('macd_green' in popFields({ ...p!, stop: 1.7, since_n: 2, macd_green: true })));
+  const pStored = storedSetupFields({ stage: 'pop', price: 1.85, svwap: 1.62, tf: '1', ...pRow });
+  const bStored = storedSetupFields({ stage: 'back', price: 1.92, svwap: 1.7, tf: '1', ...bRow });
+  check('v48: storedSetupFields copies a POP row\'s fields back — ran_pct and pop_n as numbers, with the basis and its timeframe — and nothing else',
+    pStored.ran_pct === 12.6 && pStored.pop_n === 1 && pStored.sma_len === 15 && pStored.sma === 1.66 && pStored.sma_pct === 11.4 && pStored.candle_tf === '1'
+      && Object.keys(pStored).length === 6 && !('stop' in pStored) && !('back_n' in pStored) && !('macd_green' in pStored), JSON.stringify(pStored));
+  check('v48: …and a BACK row\'s — ran_pct and back_n as numbers, macd_green as a boolean, with stop, since_n, the basis and its timeframe',
+    bStored.ran_pct === 18.4 && bStored.back_n === 1 && bStored.stop === 1.84 && bStored.since_n === 6 && bStored.macd_green === true && bStored.sma_len === 15
+      && bStored.sma === 1.88 && bStored.sma_pct === 2.1 && bStored.candle_tf === '1' && Object.keys(bStored).length === 9 && !('pop_n' in bStored), JSON.stringify(bStored));
+  check('v48: …the round trip is exact: what each row stored is what the reloaded page reads, field for field',
+    Object.keys(pRow).length === Object.keys(pStored).length && Object.keys(pRow).every((k) => pStored[k] === (pRow as Record<string, unknown>)[k])
+      && Object.keys(bRow).length === Object.keys(bStored).length && Object.keys(bRow).every((k) => bStored[k] === (bRow as Record<string, unknown>)[k]),
+    `${JSON.stringify(pStored)} ${JSON.stringify(bStored)}`);
+  check('v48: …`green 0` comes back false; a row without a reading has it as null; junk reads as null',
+    storedSetupFields({ stage: 'back', ...popFields(red!) }).macd_green === false
+      && storedSetupFields({ stage: 'back', ...popFields(parseTvMessage(BACK_MSG.replace(' | green 1', ''))!) }).macd_green === null
+      && storedSetupFields({ stage: 'pop', ...popFields(junk!) }).ran_pct === null && 'ran_pct' in storedSetupFields({ stage: 'pop', ...popFields(junk!) })
+      && storedSetupFields({ ran_pct: '12.6', pop_n: 'x', back_n: null }).ran_pct === null && storedSetupFields({ ran_pct: '12.6', pop_n: 'x', back_n: null }).pop_n === null
+      && storedSetupFields({ ran_pct: '12.6', pop_n: 'x', back_n: null }).back_n === null);
+  const popOnly = ['ran_pct', 'pop_n', 'back_n'] as const;
+  check('v48: …a row of another stage gets none of the three, and a stored row\'s stage reads `pop` / `back`',
+    popOnly.every((k) => !(k in storedSetupFields({ stage: 'turn', ...turnFields(parseTvMessage(TURN_MSG)!) })))
+      && popOnly.every((k) => !(k in storedSetupFields({ stage: 'pullback', touch: 1, line: 'session' })))
+      && popOnly.every((k) => !(k in storedSetupFields({ stage: 'cross', ...vbFields(parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S')!) })))
+      && storedStage({ stage: 'pop', ...pRow }) === 'pop' && storedStage({ stage: 'back', ...bRow }) === 'back'
+      && storedStage({ stage: 'back', bb_tf: '45S' }) === 'back' && storedStage({ stage: 'pop', basis: 1.66 }) === 'pop');
+}
+
 console.log('Contract — the Pine script still emits what the parser reads');
 {
   const here = dirname(fileURLToPath(import.meta.url));
@@ -1037,8 +1443,9 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'if pbOn and inWindow', 'input.float(10.0, "Up at least %', 'input.timeframe("2",     "VB: candle timeframe',
     'input.timeframe("30S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
-    // (the header: the script's version, and since v47 four setups — it was "Three setups … the EMA cross)")
-    'Script version: v47 (2026-11-25)', 'Four setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross, TURN)', '"RETEST "', '" | stop "', '" | retest "',
+    // (the header: the script's version, and since v48 five setups — v47 had "Four setups … the EMA cross, TURN)",
+    // before it "Three setups … the EMA cross)")
+    'Script version: v48 (2026-11-26)', 'Five setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross, TURN, POP with its BACK)', '"RETEST "', '" | stop "', '" | retest "',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -1222,12 +1629,15 @@ console.log('Contract — the Pine script still emits what the parser reads');
       code.includes('\nvbCandleTf = input.timeframe("2",') && code.includes('\nvbBbTf     = input.timeframe("30S",')
         && code.includes('\nemTf      = input.timeframe("2",') && code.includes('\nemSrc   = input.string("BB upper",'));
     const inputs = lines.map((l) => /^([A-Za-z_]\w*)\s*=\s*input\.(?:bool|int|float|string|timeframe|session|source)\(/.exec(l)?.[1]).filter((x): x is string => x != null);
-    check('v44 / v45 / v46 / v47: the 73 inputs, in order (TradingView keeps a saved value by position; v44 took 19 out, so it needed Reset settings once; v45 and v46 each add a basis line\'s three at the end and v47 the TURN\'s thirteen after them, so they need none)',
+    check('v44 / v45 / v46 / v47 / v48: the 85 inputs, in order (TradingView keeps a saved value by position; v44 took 19 out, so it needed Reset settings once; v45 and v46 each add a basis line\'s three at the end, v47 the TURN\'s thirteen after them and v48 the POP\'s twelve after those, so they need none)',
       inputs.join(' ') === 'minDayGain runnerDays useAhGain alertWin pbOn pbSession pbMonth pbYear pbArm pbNear pbLowMY pbBreak pbWin pbMax pbCapMark pbTimeout'
         + ' vbOn vbCandleTf vbBbTf vbLen vbMult vbTol vbGainOn vbSession vbMonth vbYear vbRtOn vbRtCancel vbTf vbShow vwSrc vbRtNear vbRtWait vbRtWhen mvSrc'
         + ' emOn emTf emLen emSession emMonth emYear emGainOn emShow emFilterOn emMinUnder emMaxFlips emFromHour emBncOn emBncFrom emBncWait emBncTolE emBncTolV'
         + ' emSrc bbMidOn pbBsOn pbBsTf pbBsLen bbBsOn bbBsTf bbBsLen'
-        + ' tnOn tnTf tnLen tnFallMin tnLowBars tnTol tnWaitN tnMacdOn tnFast tnSlow tnSig tnGainOn tnShow', inputs.join(' '));
+        + ' tnOn tnTf tnLen tnFallMin tnLowBars tnTol tnWaitN tnMacdOn tnFast tnSlow tnSig tnGainOn tnShow'
+        + ' ppOn ppTf ppLen ppUp ppTol ppWaitN ppMacdOn ppFast ppSlow ppSig ppGainOn ppShow', `${inputs.length}: ${inputs.join(' ')}`);
+    check('v48: …85 of them, the last twelve the POP\'s', inputs.length === 85
+      && inputs.slice(-12).join(' ') === 'ppOn ppTf ppLen ppUp ppTol ppWaitN ppMacdOn ppFast ppSlow ppSig ppGainOn ppShow', String(inputs.length));
     // v45 (operator, 11-22, with TradingView's own BB 15S on a 1m chart, its middle line only: "add own BollingerBand to
     // Pullback section, with configurable timeframe, only basis row is enough … I'm going to experiment entering when price
     // closes above it after the pullback"): a line and nothing else. Its inputs sit last in the code and carry the Pullback
@@ -1288,9 +1698,12 @@ console.log('Contract — the Pine script still emits what the parser reads');
       check(`v47: script has ${part}`, pine.includes(part));
     }
     const code = pine.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
-    const turn = code.slice(code.indexOf('\ntnOn      = input.bool('));
-    check('v47: the TURN section is the script\'s last code, after the band cross\'s basis line', code.indexOf('\ntnOn      = input.bool(') > code.indexOf('"Band cross basis (v46)"')
-      && code.indexOf('"Band cross basis (v46)"') > 0 && turn.trimEnd().endsWith('text = "TN", textcolor = color.white, size = size.small)'));
+    // v48: the POP section follows it, so the TURN section ends where that one's first input starts
+    const popAt = code.indexOf('\nppOn     = input.bool(');
+    const turn = code.slice(code.indexOf('\ntnOn      = input.bool('), popAt);
+    check('v47: the TURN section comes after the band cross\'s basis line and (v48) right before the POP section; it ends with its mark', code.indexOf('\ntnOn      = input.bool(') > code.indexOf('"Band cross basis (v46)"')
+      && code.indexOf('"Band cross basis (v46)"') > 0 && popAt > code.indexOf('\ntnOn      = input.bool(')
+      && turn.trimEnd().endsWith('text = "TN", textcolor = color.white, size = size.small)'));
     const body = turn.slice(turn.indexOf('tnMsg() =>'), turn.indexOf('\nif tnFire'));
     const order = ['"TURN "', '" | stop "', '" | sVWAP "', '" | mVWAP "', '" | yVWAP "', '" | sma "', '" | fall "', '" | candle "', '" | turn "', '" | since "',
       '" | green "', '" | day high "', '" | ah "', '" | vwap "', '" | tf "'];
@@ -1310,9 +1723,10 @@ console.log('Contract — the Pine script still emits what the parser reads');
         && turn.includes('\ntnWaitN   = input.int(10,') && turn.includes('\ntnMacdOn  = input.bool(true,') && turn.includes('\ntnFast    = input.int(12,')
         && turn.includes('\ntnSlow    = input.int(26,') && turn.includes('\ntnSig     = input.int(9,') && turn.includes('\ntnGainOn  = input.bool(true,')
         && turn.includes('\ntnShow    = input.bool(true,'));
-    check('v47: one alert, at the bar\'s close, when a TURN fires — the script\'s last alert()',
+    check('v47: one alert, at the bar\'s close, when a TURN fires — the last alert() before (v48) the POP section\'s two',
       turn.includes('\nif tnFire\n    alert(tnMsg(), alert.freq_once_per_bar_close)\n') && (turn.match(/^\s*alert\(/gm) ?? []).length === 1
-        && code.lastIndexOf('alert(') === code.indexOf('alert(tnMsg(), alert.freq_once_per_bar_close)'));
+        && code.lastIndexOf('alert(', popAt) === code.indexOf('alert(tnMsg(), alert.freq_once_per_bar_close)')
+        && (code.slice(popAt).match(/^\s*alert\(/gm) ?? []).length === 2);
     check('v47: the day\'s number and an open wait are reset at the day\'s start', turn.includes('\nif newDay\n    tnCount   := 0\n    tnWaiting := false\n'));
     check('v47: TURN makes no request (it reads the chart\'s own candles)', !turn.includes('request.') && turn.length > 0
       && code.split('\n').filter((l) => /\btn[A-Z]\w*/.test(l)).every((l) => !l.includes('request.')));
@@ -1320,11 +1734,14 @@ console.log('Contract — the Pine script still emits what the parser reads');
       turn.includes('\nplot(tnRun and tnShow ? tnB : na, "TURN basis (v47)", color.fuchsia)\n')
         && turn.includes('\nplotshape(tnShow and tnFire, "TURN (v47)", shape.labelup, location.belowbar, color.fuchsia, text = "TN"'));
     // The examples in the script's comments ("Message (the contract with parseTvMessage)") are read by the parser itself.
-    const examples = pine.split('\n').map((l) => /^\/\/\s+((?:PULLBACK|BROKEN|HELD|CROSS|RETEST|EMA|BOUNCE|TURN) [A-Z]+ [0-9.]+ \|.*)$/.exec(l)?.[1].trim())
+    const examples = pine.split('\n').map((l) => /^\/\/\s+((?:PULLBACK|BROKEN|HELD|CROSS|RETEST|EMA|BOUNCE|TURN|POP|BACK) [A-Z]+ [0-9.]+ \|.*)$/.exec(l)?.[1].trim())
       .filter((x): x is string => x != null);
-    check('v47: every example message in the script\'s comments parses, each to its own stage (the EMA example about the band to BAND)',
-      JSON.stringify(examples.map((m) => parseTvMessage(m)?.stage ?? null)) === '["pullback","cross","retest","ema","band","bounce","turn"]',
+    check('v47 / v48: every example message in the script\'s comments parses, each to its own stage (the EMA example about the band to BAND; v48: the POP\'s and the BACK\'s, last)',
+      JSON.stringify(examples.map((m) => parseTvMessage(m)?.stage ?? null)) === '["pullback","cross","retest","ema","band","bounce","turn","pop","back"]',
       examples.map((m) => `${m.split(' ')[0]}→${parseTvMessage(m)?.stage ?? 'null'}`).join(' '));
+    check('v48: …the POP example and the BACK example there are the two messages pinned above',
+      examples.filter((m) => m.startsWith('POP ')).join('\n') === POP_MSG && examples.filter((m) => m.startsWith('BACK ')).join('\n') === BACK_MSG,
+      examples.filter((m) => /^(POP|BACK) /.test(m)).join(' ¦ '));
     const ex = examples.find((m) => m.startsWith('TURN NIVF '));
     const exSig = ex ? parseTvMessage(ex) : null;
     check('v47: …the TURN example there is the message pinned above, read to every field',
@@ -1333,8 +1750,116 @@ console.log('Contract — the Pine script still emits what the parser reads');
         && exSig.fall_pct === 12.3 && exSig.candle_tf === '1' && exSig.turn_n === 1 && exSig.since_n === 3 && exSig.macd_green === true && exSig.day_gain === 25
         && exSig.vwap_src === '30s' && exSig.tf === '1', ex ?? 'no TURN example in the script\'s comments');
   }
-  check('v44 / v47: 12 alert() calls — three PULLBACK, the VB and its RETEST, four EMA / BOUNCE, two band crosses, and (v47) the TURN',
-    (pine.match(/^\s*alert\(/gm) ?? []).length === 12, String((pine.match(/^\s*alert\(/gm) ?? []).length));
+  // v48 (operator, 11-26): POP and BACK, section 9 at the end of the script, modelled on the TURN's. It reads the chart's
+  // own candles, so it runs where the chart's timeframe is the basis's (its alerts come from the 1m alert) and makes no
+  // request. Pinned: the rule's key lines, both messages' pieces and their order, and its inputs, alerts and plots (all
+  // last; the counts are checked below).
+  {
+    for (const part of ['" | ran "', '" | pop "', '" | back "',
+      'ppRun    = ppOn and timeframe.in_seconds(ppTf) == chartSec',
+      // the basis and the MACD, from the chart's own closes
+      'ppB      = ta.sma(close, ppLen)', '[ppMacdLine, ppSignalLine, ppHist] = ta.macd(close, ppFast, ppSlow, ppSig)', 'ppGreen  = ppHist > 0',
+      // the run: from a close above the basis after one at or under it (or the day's first candle) to a close under it
+      'if ppRun and not na(ppB) and not na(ppB[1])', 'if ppIn and close < ppB', 'else if not ppIn and close > ppB and (close[1] <= ppB[1] or newDay)',
+      // how far a high of the run got above the basis, and the POP at ppUp %
+      'ppRan := math.max(ppRan, (high / ppB - 1) * 100)', 'if ppRan >= ppUp', 'ppPopBar  := bar_index',
+      // the touch, the bounce, the wait's end; the pullback's low starts over at a new high of the run
+      'if low <= ppB * (1 + ppTol / 100)', 'if ppTouched and close > open and close > ppB and ppB > ppB[1] and (not ppMacdOn or ppGreen)',
+      'else if ppWaitN > 0 and bar_index - ppPopBar >= ppWaitN', 'float ppLowNow = na(ppPbLow) ? low : math.min(ppPbLow, low)',
+      'if na(ppTop) or high > ppTop', 'ppPbLow := ppLowNow',
+      // what lets either send, the stop a tick under the pullback's low, the day's numbers
+      'if inWindow and (not ppGainOn or gainer)', 'ppStop     := ppLowNow - syminfo.mintick', 'ppAge      := bar_index - ppPopBar',
+      'ppPopN    += 1', 'ppBackN    += 1',
+      // the message: one function for both
+      'ppMsg(bool isBack) =>',
+      'string msg = (isBack ? "BACK " : "POP ") + syminfo.ticker + " " + str.tostring(close, format.mintick)',
+      'msg += " | stop " + str.tostring(ppStop, format.mintick)',
+      'msg += " | sma " + str.tostring(ppLen) + " " + str.tostring(ppB, format.mintick) + " (" + pctVs(ppB) + "%)"',
+      'msg += " | ran " + str.tostring(ppRan, "#.0") + "% | candle " + ppTf',
+      'msg += " | back " + str.tostring(ppBackN) + " | since " + str.tostring(ppAge) + " | green " + (ppGreen ? "1" : "0")',
+      'msg += " | pop " + str.tostring(ppPopN)']) {
+      check(`v48: script has ${part}`, pine.includes(part));
+    }
+    const code = pine.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    const popAt = code.indexOf('\nppOn     = input.bool(');
+    const pop = code.slice(popAt);
+    check('v48: the POP section is the script\'s last code, after the TURN\'s mark; it ends with the BACK\'s mark',
+      popAt > code.indexOf('"TURN (v47)"') && code.indexOf('"TURN (v47)"') > 0
+        && pop.trimEnd().endsWith('text = "BK", textcolor = color.black, size = size.small)'));
+    check('v48: the run starts over at a close back above the basis and ends, with any wait for a BACK, at a close under it',
+      pop.includes('\n    if ppIn and close < ppB\n        ppIn      := false\n        ppWaiting := false\n'
+        + '    else if not ppIn and close > ppB and (close[1] <= ppB[1] or newDay)\n        ppIn      := true\n        ppRan     := 0.0\n        ppTop     := na\n'
+        + '        ppPbLow   := na\n        ppPopped  := false\n        ppWaiting := false\n'));
+    check('v48: one POP per run — it uses up the run whether or not the filters let it send, and only a sent one takes a day\'s number',
+      pop.includes('\n        if not ppPopped\n            if ppRan >= ppUp\n                ppPopped  := true\n                ppWaiting := true\n                ppTouched := false\n'
+        + '                ppPopBar  := bar_index\n                if inWindow and (not ppGainOn or gainer)\n                    ppPopFire := true\n                    ppPopN    += 1\n'));
+    check('v48: the BACK is judged on a candle after the POP candle (the `else` of "not popped yet"), one per POP, sent on its own candle\'s filters',
+      pop.includes('\n        else if ppWaiting\n            if low <= ppB * (1 + ppTol / 100)\n                ppTouched := true\n'
+        + '            if ppTouched and close > open and close > ppB and ppB > ppB[1] and (not ppMacdOn or ppGreen)\n                ppWaiting := false\n'
+        + '                if inWindow and (not ppGainOn or gainer)\n                    ppBackFire := true\n                    ppStop     := ppLowNow - syminfo.mintick\n'
+        + '                    ppAge      := bar_index - ppPopBar\n                    ppBackN    += 1\n'
+        + '            else if ppWaitN > 0 and bar_index - ppPopBar >= ppWaitN\n                ppWaiting := false\n'));
+    check('v48: the stop\'s low is the lowest low after the candle of the run\'s highest high (a new high starts it over), read with the bounce candle\'s own low in it',
+      pop.includes('\n        if na(ppTop) or high > ppTop\n            ppTop   := high\n            ppPbLow := na\n        else\n            ppPbLow := ppLowNow\n')
+        && pop.indexOf('float ppLowNow = na(ppPbLow) ? low : math.min(ppPbLow, low)') < pop.indexOf('ppStop     := ppLowNow - syminfo.mintick')
+        && pop.indexOf('ppStop     := ppLowNow - syminfo.mintick') < pop.indexOf('if na(ppTop) or high > ppTop'));
+    const body = pop.slice(pop.indexOf('ppMsg(bool isBack) =>'), pop.indexOf('\nif ppPopFire'));
+    const inOrder = (pieces: string[]) => pieces.every((x, i) => body.indexOf(x) >= 0 && (i === 0 || body.indexOf(pieces[i - 1]) < body.indexOf(x)));
+    const popOrder = ['"POP "', '" | sVWAP "', '" | mVWAP "', '" | yVWAP "', '" | sma "', '" | ran "', '% | candle "', '" | pop "', '" | day high "', '" | ah "',
+      '" | vwap "', '" | tf "'];
+    const backOrder = ['"BACK "', '" | stop "', '" | sVWAP "', '" | mVWAP "', '" | yVWAP "', '" | sma "', '" | ran "', '% | candle "', '" | back "', '" | since "',
+      '" | green "', '" | day high "', '" | ah "', '" | vwap "', '" | tf "'];
+    check('v48: the POP message\'s pieces come in the order the parser\'s example has them (the VWAP lines, sma, ran, candle, pop, day high, ah, vwap, tf)',
+      pop.indexOf('ppMsg(bool isBack) =>') > 0 && inOrder(popOrder), popOrder.map((x) => `${x}@${body.indexOf(x)}`).join(' '));
+    check('v48: the BACK message\'s pieces too (stop, the VWAP lines, sma, ran, candle, back, since, green, day high, ah, vwap, tf)',
+      inOrder(backOrder), backOrder.map((x) => `${x}@${body.indexOf(x)}`).join(' '));
+    check('v48: the stop, the `back` number, `since` and `green` go into a BACK alone, the `pop` number into a POP alone',
+      body.includes('\n    if isBack\n        msg += " | stop "') && body.includes('\n    if isBack\n        msg += " | back "')
+        && body.includes('\n    else\n        msg += " | pop " + str.tostring(ppPopN)\n') && (body.match(/" \| stop "/g) ?? []).length === 1
+        && (body.match(/" \| (?:since|green|back) "/g) ?? []).length === 3 && (body.match(/" \| pop "/g) ?? []).length === 1);
+    check('v48: the VWAP lines are left out when they are na, the day high and the after-hours gain too',
+      body.includes('if not na(svwap)\n        msg += " | sVWAP "') && body.includes('if not na(mvwap)\n        msg += " | mVWAP "')
+        && body.includes('if not na(yvwap)\n        msg += " | yVWAP "') && body.includes('if not na(dayHighGain)\n        msg += " | day high "')
+        && body.includes('if not na(ahGain)\n        msg += " | ah "'));
+    const ppInputs = pop.split('\n').filter((l) => /^pp\w+\s*=\s*input\./.test(l));
+    check('v48: the POP\'s twelve inputs, every one in its own group',
+      ppInputs.length === 12 && ppInputs.every((l) => l.includes('group = "POP and BACK: a pop off the basis and its first pullback (v48)")'))
+        && (code.match(/group = "POP and BACK: a pop off the basis and its first pullback \(v48\)"/g) ?? []).length === 12, String(ppInputs.length));
+    check('v48: its defaults — on, a 1m basis of 15 closes, a high 10% above it, a low within 1% of the basis, the bounce within 20 candles, a MACD 12 26 9 that must be green, gainers only',
+      pop.startsWith('\nppOn     = input.bool(true,') && pop.includes('\nppTf     = input.timeframe("1",') && pop.includes('\nppLen    = input.int(15,')
+        && pop.includes('\nppUp     = input.float(10.0,') && pop.includes('\nppTol    = input.float(1.0,') && pop.includes('\nppWaitN  = input.int(20,')
+        && pop.includes('\nppMacdOn = input.bool(true,') && pop.includes('\nppFast   = input.int(12,') && pop.includes('\nppSlow   = input.int(26,')
+        && pop.includes('\nppSig    = input.int(9,') && pop.includes('\nppGainOn = input.bool(true,') && pop.includes('\nppShow   = input.bool(true,'));
+    check('v48: two alerts, each at the bar\'s close — the POP\'s, then the BACK\'s, the script\'s last alert()',
+      pop.includes('\nif ppPopFire\n    alert(ppMsg(false), alert.freq_once_per_bar_close)\nif ppBackFire\n    alert(ppMsg(true), alert.freq_once_per_bar_close)\n')
+        && (pop.match(/^\s*alert\(/gm) ?? []).length === 2
+        && code.lastIndexOf('alert(') === code.indexOf('alert(ppMsg(true), alert.freq_once_per_bar_close)'));
+    check('v48: the day\'s numbers, the run and an open wait are reset at the day\'s start',
+      pop.includes('\nif newDay\n    ppPopN    := 0\n    ppBackN   := 0\n    ppIn      := false\n    ppWaiting := false\n'));
+    check('v48: POP / BACK make no request (they read the chart\'s own candles)', !pop.includes('request.') && pop.length > 0
+      && code.split('\n').filter((l) => /\bpp[A-Z]\w*/.test(l)).every((l) => !l.includes('request.')));
+    check('v48: the section keeps to its own names: no code line before it names a pp… variable, and it names none of the TURN\'s (tn…)',
+      !/\bpp[A-Z]\w*/.test(code.slice(0, popAt)) && !/\btn[A-Z]\w*/.test(pop));
+    check('v48: its three plots — the basis line (hidden until switched on in Style), the POP\'s mark above the bar, the BACK\'s under it',
+      pop.includes('\nplot(ppRun and ppShow ? ppB : na, "POP basis (v48)", color.orange, display = display.none)\n')
+        && pop.includes('\nplotshape(ppShow and ppPopFire, "POP (v48)", shape.labeldown, location.abovebar, color.yellow, text = "POP"')
+        && pop.includes('\nplotshape(ppShow and ppBackFire, "BACK (v48)", shape.labelup, location.belowbar, color.aqua, text = "BK"'));
+    // The two examples in the script's comments, read by the parser to every field
+    const exPop = parseTvMessage(pine.split('\n').find((l) => /^\/\/\s+POP SVRE /.test(l))?.replace(/^\/\/\s+/, '').trim() ?? '');
+    const exBack = parseTvMessage(pine.split('\n').find((l) => /^\/\/\s+BACK SVRE /.test(l))?.replace(/^\/\/\s+/, '').trim() ?? '');
+    check('v48: the POP example in the script\'s comments reads to every field',
+      exPop?.stage === 'pop' && exPop.ticker === 'SVRE' && exPop.price === 1.85 && exPop.stop === null && exPop.svwap === 1.62 && exPop.spx_pct === 14.2
+        && exPop.mvwap === 1.4 && exPop.px_pct === 32.1 && exPop.sma_len === 15 && exPop.sma === 1.66 && exPop.sma_pct === 11.4 && exPop.ran_pct === 12.6
+        && exPop.candle_tf === '1' && exPop.pop_n === 1 && exPop.back_n === null && exPop.day_gain === 38 && exPop.vwap_src === '30s' && exPop.tf === '1',
+      JSON.stringify(exPop));
+    check('v48: the BACK example there too',
+      exBack?.stage === 'back' && exBack.ticker === 'SVRE' && exBack.price === 1.92 && exBack.stop === 1.84 && exBack.svwap === 1.7 && exBack.spx_pct === 12.9
+        && exBack.mvwap === 1.41 && exBack.px_pct === 36.2 && exBack.sma_len === 15 && exBack.sma === 1.88 && exBack.sma_pct === 2.1 && exBack.ran_pct === 18.4
+        && exBack.candle_tf === '1' && exBack.back_n === 1 && exBack.pop_n === null && exBack.since_n === 6 && exBack.macd_green === true && exBack.day_gain === 45
+        && exBack.vwap_src === '30s' && exBack.tf === '1', JSON.stringify(exBack));
+  }
+  check('v44 / v47 / v48: 14 alert() calls — three PULLBACK, the VB and its RETEST, four EMA / BOUNCE, two band crosses, (v47) the TURN, and (v48) the POP and the BACK',
+    (pine.match(/^\s*alert\(/gm) ?? []).length === 14, String((pine.match(/^\s*alert\(/gm) ?? []).length));
   // v28: the VB break (LEVEL / BREAK) is gone; the new inputs went last (after vbShow).
   for (const gone of ['"LEVEL"', '"BREAK"', 'vbLvMsg', '" | level "', '" | break "', 'text = "BRK"']) {
     check(`v28: script no longer has ${gone}`, !pine.includes(gone));
@@ -1371,7 +1896,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
       'request.security(syminfo.tickerid, pbBsUpper ? pbBsTf : timeframe.period, ta.sma(close, pbBsLen))',
       'request.security_lower_tf(syminfo.tickerid, bbBsLower ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))',
       'request.security(syminfo.tickerid, bbBsUpper ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))'];
-    check('v44 / v45 / v46: the script\'s ten requests, in order: the hourly anchors, the 30s bars, the VB\'s hourly anchors, the VB\'s view, the EMA, the EMA\'s band, the pullback basis\'s two, the band cross basis\'s two',
+    check('v44 / v45 / v46: the script\'s ten requests, in order: the hourly anchors, the 30s bars, the VB\'s hourly anchors, the VB\'s view, the EMA, the EMA\'s band, the pullback basis\'s two, the band cross basis\'s two (v47\'s TURN and v48\'s POP / BACK add none)',
       reqs.length === want.length && want.every((w, i) => reqs[i].includes(w)), reqs.map((l) => l.trim().slice(0, 70)).join(' ¦ '));
   }
   check('v28: the new inputs come after the last v27 one', at('vbShow     = input.bool') > 0 && at('vbShow     = input.bool') < at('vwSrc      = input.string')
@@ -1390,7 +1915,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
   check('v37: the five EMA bounce inputs come after the filter ones, in order', at('emFromHour = input.int') < at('emBncOn   = input.bool')
     && at('emBncOn   = input.bool') < at('emBncFrom = input.string') && at('emBncFrom = input.string') < at('emBncWait = input.int')
     && at('emBncWait = input.int') < at('emBncTolE = input.float') && at('emBncTolE = input.float') < at('emBncTolV = input.float'));
-  check('v40 / v41 / v45 / v46 / v47: their inputs come last, in order — emSrc, bbMidOn, the pullback basis line\'s three, the band cross basis line\'s three, then the TURN\'s thirteen, nothing after (v44: the MACD\'s six before them and the basis\'s three after them are gone) — the first two before the EMA section\'s code that reads them',
+  check('v40 / v41 / v45 / v46 / v47 / v48: their inputs come last, in order — emSrc, bbMidOn, the pullback basis line\'s three, the band cross basis line\'s three, the TURN\'s thirteen, then the POP\'s twelve, nothing after (v44: the MACD\'s six before them and the basis\'s three after them are gone) — the first two before the EMA section\'s code that reads them',
     at('emBncTolV = input.float') > 0 && at('emBncTolV = input.float') < at('emSrc   = input.string') && at('emSrc   = input.string') < at('bbMidOn = input.bool')
     && at('bbMidOn = input.bool') < at('emPrevE = request.security')
     && at('bbMidOn = input.bool') < at('pbBsOn  = input.bool') && at('pbBsOn  = input.bool') < at('pbBsTf  = input.timeframe') && at('pbBsTf  = input.timeframe') < at('pbBsLen = input.int')
@@ -1402,11 +1927,17 @@ console.log('Contract — the Pine script still emits what the parser reads');
     && at('tnMacdOn  = input.bool') < at('tnFast    = input.int') && at('tnFast    = input.int') < at('tnSlow    = input.int')
     && at('tnSlow    = input.int') < at('tnSig     = input.int') && at('tnSig     = input.int') < at('tnGainOn  = input.bool')
     && at('tnGainOn  = input.bool') < at('tnShow    = input.bool')
-    && (pine.slice(at('tnShow    = input.bool') + 'tnShow    = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0
-    && (pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 73,
+    && at('tnShow    = input.bool') < at('ppOn     = input.bool') && at('ppOn     = input.bool') < at('ppTf     = input.timeframe')
+    && at('ppTf     = input.timeframe') < at('ppLen    = input.int') && at('ppLen    = input.int') < at('ppUp     = input.float')
+    && at('ppUp     = input.float') < at('ppTol    = input.float') && at('ppTol    = input.float') < at('ppWaitN  = input.int')
+    && at('ppWaitN  = input.int') < at('ppMacdOn = input.bool') && at('ppMacdOn = input.bool') < at('ppFast   = input.int')
+    && at('ppFast   = input.int') < at('ppSlow   = input.int') && at('ppSlow   = input.int') < at('ppSig    = input.int')
+    && at('ppSig    = input.int') < at('ppGainOn = input.bool') && at('ppGainOn = input.bool') < at('ppShow   = input.bool')
+    && (pine.slice(at('ppShow   = input.bool') + 'ppShow   = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0
+    && (pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 85,
     String((pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length));
   // New plots go last (TradingView keeps a plot's style by position too)
-  check('v40 / v41 / v45 / v46 / v47: the band\'s line and its four marks, its middle line, the pullback basis line, the band cross basis line, then the TURN\'s basis and mark are the script\'s last plots, after the bounce\'s four (v44: the MACD\'s two before them and the basis\'s five after them are gone)',
+  check('v40 / v41 / v45 / v46 / v47 / v48: the band\'s line and its four marks, its middle line, the pullback basis line, the band cross basis line, the TURN\'s basis and mark, then the POP\'s basis and the POP\'s and the BACK\'s marks are the script\'s last plots, after the bounce\'s four (v44: the MACD\'s two before them and the basis\'s five after them are gone)',
     at('"EMA bounce, filtered, late close (v37)"') > 0 && at('"EMA bounce, filtered, late close (v37)"') < at('"BB upper (EMA cross, v40)"')
     && at('"BB upper (EMA cross, v40)"') < at('"BB upper cross over VWAP (v40)"')
     && at('"BB upper cross over VWAP (v40)"') < at('"BB upper cross, late close (v40)"')
@@ -1416,13 +1947,15 @@ console.log('Contract — the Pine script still emits what the parser reads');
     && at('"BB middle (EMA cross, v41)"') < at('"Pullback basis (v45)"')
     && at('"Pullback basis (v45)"') < at('"Band cross basis (v46)"')
     && at('"Band cross basis (v46)"') < at('"TURN basis (v47)"') && at('"TURN basis (v47)"') < at('"TURN (v47)"')
-    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"TURN (v47)"'))));
+    && at('"TURN (v47)"') < at('"POP basis (v48)"') && at('"POP basis (v48)"') < at('"POP (v48)"') && at('"POP (v48)"') < at('"BACK (v48)"')
+    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"BACK (v48)"'))));
   {
     const titles = pine.split('\n').filter((l) => /^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/.test(l)).map((l) => /"([^"]*)"/.exec(l)?.[1] ?? '?');
-    check('v44 / v45 / v46 / v47: 35 plots, the last ten the band\'s six (its line, its four marks, its middle line), the pullback basis line, the band cross basis line and the TURN\'s two (its basis, its mark), right after the bounce\'s last mark',
-      titles.length === 35 && JSON.stringify(titles.slice(-11)) === JSON.stringify(['EMA bounce, filtered, late close (v37)', 'BB upper (EMA cross, v40)',
+    check('v44 / v45 / v46 / v47 / v48: 38 plots, the last thirteen the band\'s six (its line, its four marks, its middle line), the pullback basis line, the band cross basis line, the TURN\'s two (its basis, its mark) and the POP\'s three (its basis, the POP\'s mark, the BACK\'s mark), right after the bounce\'s last mark',
+      titles.length === 38 && JSON.stringify(titles.slice(-14)) === JSON.stringify(['EMA bounce, filtered, late close (v37)', 'BB upper (EMA cross, v40)',
         'BB upper cross over VWAP (v40)', 'BB upper cross, late close (v40)', 'BB upper cross, filtered (v40)', 'BB upper cross, filtered, late close (v40)',
-        'BB middle (EMA cross, v41)', 'Pullback basis (v45)', 'Band cross basis (v46)', 'TURN basis (v47)', 'TURN (v47)']), `${titles.length}: ${titles.slice(-11).join(' ¦ ')}`);
+        'BB middle (EMA cross, v41)', 'Pullback basis (v45)', 'Band cross basis (v46)', 'TURN basis (v47)', 'TURN (v47)',
+        'POP basis (v48)', 'POP (v48)', 'BACK (v48)']), `${titles.length}: ${titles.slice(-14).join(' ¦ ')}`);
   }
   check('v36 / v37: the gray "filtered" marks, then the four bounce marks, in order',
     at('"yVWAP (EMA cross, v35)"') > 0 && at('"yVWAP (EMA cross, v35)"') < at('"EMA cross, filtered (v36)"')
