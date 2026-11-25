@@ -335,6 +335,12 @@ operator to the two-step proposal in the entry below: "yes, lets do that". `docs
   of the saved v47 equal on SVRE 1m (996 closed bars); the script's 11 POPs and 3 BACKs there (threshold 5%, gainers off)
   are the replica's on the same candles.
 - **Built with four subagents** again (server + checks, dashboard, replica, the compile run).
+- **Deployed `116a91f` at 15:22 ET (market open) and checked on prod:** `GET /api/tv/settings` lists POP and BACK and
+  announces both (announced: pullback, ema, band, turn, pop, back: the saved list from before v48 gave them their
+  default); the two example messages through `?dry=1` parse to every field, TURN's still does, `POPULAR …` gets 400; the
+  bundle carries v48; setup rows kept arriving through 15:21 and from 15:22 ET. Postgres was not restarted this time (its
+  image had not moved since the morning's deploy). No POP or BACK rows yet: they start when the operator pastes v48 and
+  recreates the alerts. Not checked: the pills in a browser, and a real POP / BACK delivery (row, SSE, Telegram).
 - **For the operator:** paste v48, Save, recreate both alerts (this one alerts); no Reset settings. POP and BACK are on
   in ⚙. A POP on a Momentum name is a normal push (about 28 a day by the study): ⚙ → POP off if that is too many.
 - **To grade** in 2–3 weeks: §22.7.
