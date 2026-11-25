@@ -298,6 +298,24 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-25 (Wed, ~10:45 ET) — THE BOUNCE OFF THE BASIS LINE AFTER IT TURNS UP, MEASURED (research only, nothing built).**
+The operator runs v46's band cross basis line at 1 minute / 15 closes with a MACD under a 1m chart, and showed three moves
+of NIVF and one of APUS: "How can I catch such moves? … candle breaks the bb basis, the bb basis moving up, macd turned
+green, and price pulls back to bb basis line and bounces and this bounce is a signal"; then: "The most important part is, bb
+basis goes down (usually big drop), and after that, it starts moving up, price crosses it, and bounces".
+`apps/api/scripts/research/ema-vwap/basis_bounce_study.py` + README (last section).
+- **Rule measured** (1m bars, basis SMA 15): a close above the basis after one at or under it; a later low within 1% of it
+  (within 10 bars); then a green close above it with the basis rising and the MACD above its signal = BOUNCE. 23,475 of
+  them in 71 days of Momentum names (about 330 a day), split at 10-09.
+- **The fall is what counts** (both halves): +5% before a close under the basis comes for 3–5% of BOUNCEs after no fall,
+  19–21% after a fall of 10% or more (about 20 a day); +10% for 1–2% against 9%. The MACD and the rising basis add nothing
+  measurable. Waiting for the pullback beats buying the break a little.
+- **Not an edge:** after a 10% fall, four in five close back under the basis before +5%; riding the line loses 0.5–0.9% a
+  trade; a stop under the pullback's low with a 2R target is about break-even.
+- **Proposed, awaiting the operator:** an alert for it (fall ≥ 10% as the main input, MACD optional, Momentum names), or
+  chart markers first.
+- Limits: wicks understated in our 1m bars (touches undercounted); NIVF and APUS themselves aren't in the data.
+
 **2026-11-23 (Mon, ~15:00 ET; 11-24 on the operator's clock) — SCRIPT v46: THE BAND CROSS'S BASIS LINE (chart only).** The
 operator: "add own BollingerBands basis row to the BB setups, as we did for Pullback". I began it as one line for the VWAP +
 BB cross and the band cross together, in the VB group; they interrupted with the "EMA cross over VWAP" settings open: "I

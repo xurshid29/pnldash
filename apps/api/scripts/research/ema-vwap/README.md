@@ -239,3 +239,62 @@ ones may be the ones worth an alert of their own; that is for the live rows to s
 Limits as above, plus: a 1m band in the 45s band's place; the bounce after a dip is measured from
 the cross candle's close with ideal fills on thin names; 20 minutes of a run are needed before the
 first cross.
+
+## The bounce off the basis line after it turns up (2026-11-25)
+
+The operator, with the band cross's basis line (v46) set to 1 minute / 15 closes and a MACD
+12 26 9 under a 1m chart, on three moves of NIVF and one of APUS: "How can I catch such moves? …
+candle breaks the bb basis, the bb basis moving up, macd turned green, and price pulls back to bb
+basis line and bounces and this bounce is a signal"; then: "The most important part is, bb basis
+goes down (usually big drop), and after that, it starts moving up, price crosses it, and bounces
+(also, macd turns green)".
+
+    python basis_bounce_study.py rows.csv.gz [--len 15] [--wait 10] [--tol 1.0] [--cut 2026-10-09]
+
+**The rule as measured** (1m bars; basis = SMA 15 of the closes): a close above the basis after a
+close at or under it (the break); on a later bar within 10, the low comes within 1% of the basis;
+that bar or a later one closes green above the basis with the basis rising and the MACD above
+its signal: the BOUNCE, entry at that close. A close under the basis first ends the wait. The
+fall = the basis's lowest value in the 30 bars before the signal against its highest in the 45
+bars before that low.
+
+**Outcomes:** a bar high +5% / +10% above the entry before a close under the basis; "ride" =
+hold until the first close under the basis; 2R = stop a tick under the pullback's low, target
+twice the distance, 30 bars.
+
+**Data:** 08-14 → 11-20, 71 trading days of Momentum names, 23,475 BOUNCEs (about 330 a day). In
+sample before 10-09 / out of sample from it.
+
+| | a day | reach +5% | reach +10% | ride, average | 2R, average |
+|---|---:|---:|---:|---:|---:|
+| every BOUNCE | 313 / 353 | 10.8% / 9.1% | 4.4% / 3.4% | −0.64% / −0.77% | −0.09R / −0.13R |
+| buying the break itself, same conditions | 319 / 376 | 8.0% / 7.3% | 3.2% / 2.6% | −0.79% / −1.06% | −0.18R / −0.23R |
+| BOUNCE without the MACD condition | 344 / 391 | 10.5% / 8.7% | 4.2% / 3.4% | −0.62% / −0.72% | −0.10R / −0.13R |
+| BOUNCE without the rising basis | 364 / 408 | 10.1% / 8.5% | 4.0% / 3.1% | −0.63% / −0.77% | −0.11R / −0.14R |
+| **by the basis's fall before its low (low within 15 bars):** under 2% | 48 / 69 | 4.9% / 3.2% | 1.6% / 0.8% | −0.64% / −0.49% | −0.19R / −0.16R |
+| 2% – 5% | 63 / 67 | 8.3% / 7.5% | 3.3% / 2.3% | −0.63% / −0.84% | −0.13R / −0.19R |
+| 5% – 10% | 38 / 32 | 11.5% / 11.1% | 4.3% / 3.4% | −0.59% / −1.18% | −0.02R / −0.12R |
+| **10% and over** | 24 / 21 | **18.7% / 20.5%** | **8.7% / 8.7%** | −0.51% / −0.86% | −0.01R / +0.03R |
+| fall of 5%+, day change +60% and over | 15 / 10 | 21.9% / 22.3% | 11.0% / 11.1% | −0.30% / −0.94% | −0.03R / +0.01R |
+
+**Read:**
+
+- **The fall is the condition that counts**, as the operator said. The share of BOUNCEs that go
+  on to +5% rises with it in both halves, from 3–5% after no fall to 19–21% after a fall of 10%
+  or more, and +10% from 1–2% to 9%.
+- **The MACD and the rising basis add nothing measurable**: without either the numbers are the
+  same. A green close above a 15-bar average nearly implies both.
+- **Waiting for the pullback beats buying the break**, a little, in both halves.
+- **It is still not an edge.** After a 10% fall four in five BOUNCEs close back under the basis
+  before +5%; riding the line loses 0.5–0.9% on average (a fifth of the rides end up); with a
+  stop under the pullback's low and a 2R target it is about break-even.
+- 09:30–11:00 and the pre-market do better than midday on +5% (14–18% against 6–8%) and no
+  better in R; price above or under the VWAP, the signal bar's volume, and how long the price
+  sat under the basis make no consistent difference.
+
+**Limits:** 1m bars from ~20-second snapshots, so wicks are understated and touches undercounted
+(the chart sees more BOUNCEs than this); names already on the Momentum screen (NIVF at $0.02 and
+APUS that day are not in the data); ideal fills at the close; no spread.
+
+**Not built.** If it becomes an alert: the fall as its main input (10% by default), the MACD
+optional, about 20 a day on Momentum names.
