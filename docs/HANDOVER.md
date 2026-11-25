@@ -303,6 +303,17 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-25 (Wed, ~11:15 ET; 11-26 on the operator's clock) — THE FIRST PULLBACK AFTER A POP, MEASURED (research only).**
+The operator, with SVRE, ZNB, APUS and WHLR on 1m: "these moves are initial pop, and their first pullback to bb basis row …
+how to catch such pullbacks?" `research/ema-vwap/basis_bounce_study.py --wait 20` (tables 12–15) + README.
+- The same break → touch → bounce as TURN, with a run in the fall's place. **The size of the run counts** (both halves):
+  after the price ran 5–10% above the basis before the pullback, 22.5% of bounces reach +5% and 11% +10%; after 10–20%,
+  29–34% and 18%; from a flat base and 10%+, 29–40% and 19–24%. About 13 a day at 5%+, 3 at 10%+.
+- **Bigger failures:** riding the basis loses 1–1.7% a trade; a stop under the pullback's low with a 2R target is −0.03R to
+  −0.19R. More hits than TURN, a little worse on risk. Not an edge.
+- **Proposed, awaiting the operator:** a fifth setup next to TURN (TURN's state machine, the run as its condition, a
+  20-candle wait), or a second trigger inside TURN.
+
 **2026-11-25 (Wed, ~11:30 ET) — SCRIPT v47: A FOURTH SETUP, TURN (the bounce off a basis that fell and turned up).** After
 the measurement in the entry below, the operator: "I want to experiment with it, let's build it. Make a seprate setup EMA
 Cross, with its own bb basis settings (macd usually standart)" (read: a setup of its own, apart from the EMA cross).

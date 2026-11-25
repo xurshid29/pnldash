@@ -296,5 +296,46 @@ sample before 10-09 / out of sample from it.
 (the chart sees more BOUNCEs than this); names already on the Momentum screen (NIVF at $0.02 and
 APUS that day are not in the data); ideal fills at the close; no spread.
 
-**Not built.** If it becomes an alert: the fall as its main input (10% by default), the MACD
-optional, about 20 a day on Momentum names.
+**Built the same day as TURN** (script v47, `docs/vwap-setup.md` §21): the fall as its main
+input (10% by default), the MACD a switch, about 20 a day on Momentum names.
+
+### The first pullback after a pop (2026-11-26)
+
+The operator's next question, with SVRE, ZNB, APUS and WHLR on 1m charts: "these moves are
+initial pop, and their first pullback to bb basis row … how to catch such pullbacks?" The same
+break → touch → bounce, with a different thing before it: no fall, but a run. Two measures of the
+run between the break and the pullback: `stretch`, the furthest a high got above the basis, and
+`pop`, the highest high against the break candle's open. Tables 12–15 of the script.
+
+    python basis_bounce_study.py rows.csv.gz --wait 20
+
+(20 bars: the first pullback after a pop comes later than after a turn.) 24,468 BOUNCEs, in
+sample / out of sample:
+
+| the price ran above the basis before the pullback | a day | reach +5% | reach +10% | ride, average | 2R, average |
+|---|---:|---:|---:|---:|---:|
+| under 2% | 245 / 283 | 8.7% / 6.7% | 3.1% / 2.1% | −0.58% / −0.61% | −0.09R / −0.13R |
+| 2% – 5% | 64 / 68 | 15.9% / 14.6% | 7.5% / 6.4% | −0.88% / −1.27% | −0.08R / −0.14R |
+| 5% – 10% | 13 / 16 | 22.5% / 22.5% | 11.2% / 10.8% | −1.19% / −1.72% | −0.19R / −0.13R |
+| 10% – 20% | 3.0 / 3.4 | 29.4% / 34.0% | 17.6% / 17.9% | −1.00% / −1.69% | −0.05R / −0.11R |
+| **from a flat base** (no 5% fall before), ran 5% – 10% | 9 / 11 | 24.5% / 22.9% | 11.1% / 11.3% | −1.30% / −1.57% | −0.17R / −0.15R |
+| from a flat base, ran 10% and more | 2.6 / 2.7 | 29.1% / 39.8% | 19.4% / 24.1% | −1.21% / −1.67% | −0.03R / −0.15R |
+| from a flat base, ran 5%+, day change +60% and over | 4.1 / 3.9 | 32.5% / 38.5% | 17.2% / 24.6% | −0.77% / −0.43% | −0.13R / −0.01R |
+
+**Read:**
+
+- **The size of the pop counts, as the fall did for TURN**: the further the price ran above the
+  basis before coming back, the more often the bounce goes on, in both halves. After a run of
+  5%+ about a quarter reach +5% and one in nine +10%; after 10%+ about a third and one in five.
+  That is more often than after a 10% fall (one in five and one in eleven).
+- **The failures are bigger too.** Riding the basis loses 1–1.7% on average (median −2% to −3%),
+  and with a stop under the pullback's low and a 2R target it is −0.03R to −0.19R. More hits,
+  larger losses: not an edge either, and a little worse than TURN on risk.
+- 09:30–11:00 and names up 60%+ on the day do best on +5% (a third and more); a pullback more
+  than 10 bars after the break is stopped less often (a third against a half) and no better in R.
+- About 13 a day at a 5% run on Momentum names, about 3 at 10%.
+
+Limits as above; in particular a pop's wicks are where our 1m bars from snapshots are weakest.
+
+**Not built.** It would be TURN's state machine with the run in the fall's place and a longer
+wait.

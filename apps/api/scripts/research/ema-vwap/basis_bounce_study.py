@@ -174,16 +174,21 @@ def do_run(ticker, day, run_raw):
                         if ok and name not in wait['fired']:
                             wait['fired'].add(name)
                             EV[name].append({**base, 'wait': i - wait['i0'], 'under_n': wait['under_n'], 'brk_rvol': wait['brk_rvol'],
+                                             'stretch': wait['stretch'], 'pop': wait['peak'] / wait['open0'] - 1,
                                              **fall(i), **outcome(run, i, c, wait['low'])})
                 if i - wait['i0'] >= args.wait or len(wait['fired']) == 3:
                     wait = None
+                else:                             # the run so far, up to the bar before a bounce
+                    wait['peak'] = max(wait['peak'], h)
+                    wait['stretch'] = max(wait['stretch'], h / b - 1)
         prev_c = run[i - 1][4]
         if wait is None and c > b and prev_c <= pb:   # a break
             f = fall(i)
             EV['break'].append({**base, 'wait': 0, **f, **outcome(run, i, c, min(l, b))})
             if rising and green_macd:
                 EV['break+'].append({**base, 'wait': 0, **f, **outcome(run, i, c, min(l, b))})
-            wait = dict(i0=i, low=c, touched=False, fired=set(), under_n=under, brk_rvol=rvol(i))   # the pullback's low starts after the break bar
+            wait = dict(i0=i, low=c, touched=False, fired=set(), under_n=under, brk_rvol=rvol(i),   # the pullback's low starts after the break bar
+                        peak=h, stretch=h / b - 1, open0=o)   # the pop: the highest high since the break bar's open, and the furthest above the basis
         under = under + 1 if c <= b else 0
 
 
@@ -308,6 +313,38 @@ table("11) After a fall of 5% or more: the BOUNCE against the plain break, and b
     ('BOUNCE 16:00–20:00', [e for e in BIG if e['t'] >= 960]),
     ('BOUNCE, day change +60% and over', [e for e in BIG if e['chg'] is not None and e['chg'] >= 60]),
     ('BOUNCE, day change under +60%', [e for e in BIG if e['chg'] is not None and e['chg'] < 60])])
+# 2026-11-26, the operator's next question (SVRE, ZNB, APUS, WHLR on 1m): "these moves are initial pop, and their first
+# pullback to bb basis row … how to catch such pullbacks?" The pop = how far the price ran between the break and the
+# pullback: `stretch` its furthest high above the basis, `pop` its highest high against the break candle's open. Run with
+# --wait 20: the first pullback after a pop comes later than after a turn.
+STRETCH = (('under 2%', -9, 0.02), ('2% – 5%', 0.02, 0.05), ('5% – 10%', 0.05, 0.10), ('10% – 20%', 0.10, 0.20), ('20% and over', 0.20, 9))
+table("12) The BOUNCE by how far the price ran above the basis before the pullback",
+      [(lab, [e for e in B if a <= e['stretch'] < b]) for lab, a, b in STRETCH])
+table("13) The BOUNCE by the pop: the highest high before the pullback against the break candle's open", [
+    ('under 5%', [e for e in B if e['pop'] < 0.05]),
+    ('5% – 10%', [e for e in B if 0.05 <= e['pop'] < 0.10]),
+    ('10% – 20%', [e for e in B if 0.10 <= e['pop'] < 0.20]),
+    ('20% – 40%', [e for e in B if 0.20 <= e['pop'] < 0.40]),
+    ('40% and over', [e for e in B if e['pop'] >= 0.40])])
+FLAT = [e for e in B if not (e['since_low'] <= 15 and e['fall'] >= 0.05)]      # not after a fall: the base was flat or rising
+POPF = [e for e in FLAT if e['stretch'] >= 0.05]
+table("14) A pop from a flat base (no 5% fall before): the first pullback's BOUNCE", [
+    ('no fall, ran under 5% above the basis', [e for e in FLAT if e['stretch'] < 0.05]),
+    ('no fall, ran 5% – 10% above', [e for e in FLAT if 0.05 <= e['stretch'] < 0.10]),
+    ('no fall, ran 10% and more above', [e for e in FLAT if e['stretch'] >= 0.10]),
+    ('after a 5%+ fall, ran 5%+ above', [e for e in B if e['since_low'] <= 15 and e['fall'] >= 0.05 and e['stretch'] >= 0.05]),
+    ('after a 5%+ fall, ran under 5% above', [e for e in B if e['since_low'] <= 15 and e['fall'] >= 0.05 and e['stretch'] < 0.05])])
+table("15) The pop's first pullback (no fall, ran 5%+ above the basis) by the time of day, the wait and the day's change", [
+    ('04:00–09:30', [e for e in POPF if e['t'] < 570]),
+    ('09:30–11:00', [e for e in POPF if 570 <= e['t'] < 660]),
+    ('11:00–16:00', [e for e in POPF if 660 <= e['t'] < 960]),
+    ('16:00–20:00', [e for e in POPF if e['t'] >= 960]),
+    ('pullback 1–5 bars after the break', [e for e in POPF if e['wait'] <= 5]),
+    ('6–10 bars', [e for e in POPF if 6 <= e['wait'] <= 10]),
+    ('11–20 bars', [e for e in POPF if e['wait'] >= 11]),
+    ('day change under +30%', [e for e in POPF if e['chg'] is not None and e['chg'] < 30]),
+    ('+30% – +60%', [e for e in POPF if e['chg'] is not None and 30 <= e['chg'] < 60]),
+    ('+60% and over', [e for e in POPF if e['chg'] is not None and e['chg'] >= 60])])
 table("5) The BOUNCE by how long the pullback took", [
     ('1–2 bars after the break', [e for e in B if e['wait'] <= 2]),
     ('3–5 bars', [e for e in B if 3 <= e['wait'] <= 5]),
