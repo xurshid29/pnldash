@@ -45,6 +45,7 @@ export type AlertComponent =
   | 'tv_ema'        // 📐 EMA cross (script v35): the EMA of a timeframe's closes crossed above a VWAP line
   | 'tv_bounce'     // 📐 EMA bounce (script v37): after an EMA cross, a pullback to the EMA or the VWAP, then a green close above the EMA
   | 'tv_band'       // 📐 BAND (script v40; its own stage since 2026-11-16): the BB upper band crossed above a VWAP line
+  | 'tv_turn'       // 📐 TURN (script v47): after its basis fell and turned up, price closed above it, came back to it and bounced
   | 'tv_year';      // 📐 any setup message about the year VWAP alone (PULLBACK v14, VB v22)
 // (tv_rsi / tv_dip / tv_macd / tv_basis went with their stages on 2026-11-22, script v44.)
 let disabledAlerts: Set<string> | null = null;

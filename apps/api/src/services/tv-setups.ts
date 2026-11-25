@@ -21,6 +21,9 @@
 // v27 removed the RECLAIM setup (FORMING / READY / GO, v1–v26) and the BB breakout
 // (TOUCH / BREAKOUT / TRIGGERED, v17–v26); their rows stay in tier_events, and a
 // message of theirs is now rejected as unrecognised (400).
+// TURN (script v47, 2026-11-25), a fourth setup: on the candles of a basis's own timeframe (the
+// SMA of 15 one-minute closes), after the basis fell and turned up, price closes above it, comes
+// back to it and bounces. Sent from the alert on that timeframe (1m) alone.
 //
 // Why TradingView computes it and we don't: the lines are VWAPs anchored at the
 // session, month and year INCLUDING pre-market volume. Yahoo's extended-hours bars
@@ -35,7 +38,7 @@
 
 import { escapeHtml } from './telegram.js';
 
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band';
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band' | 'turn';
 // The PULLBACK setup's stages (script v10).
 export const PULLBACK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pullback', 'broken', 'held']);
 // The VWAP + BB cross (script v21): one stage, CROSS, on the candle timeframe's
@@ -99,6 +102,16 @@ export function emaLineStage(sig: { stage: TvStage; ema?: number | null; bb_tf?:
   if (sig.basis != null) return null;
   return sig.bb_tf != null ? 'band' : 'ema';
 }
+// v47 TURN (operator, 2026-11-25: "bb basis goes down (usually big drop), and after that, it starts
+// moving up, price crosses it, and bounces (also, macd turns green)"): a fourth setup, judged on
+// the candles of a basis's own timeframe (the SMA of 15 one-minute closes by default). After the
+// basis fell and turned up, a candle closes above it, a later one comes back down to it, and that
+// one or a later one closes green above it with the basis rising: that bounce is the TURN, with a
+// stop a tick under the pullback's low. The script sends it from the alert on the basis's
+// timeframe (1m) alone, so there is no other timeframe's copy to merge. It names no VWAP line and
+// has no weak filter, so it is not one of EMA_STAGES. Announced behind its own ⚙ switch (on by
+// default), for Momentum names (the ⚙ rule "Momentum list only" that governs the EMA family
+// governs it too), up to TV_SETUP.tn_cap a day on the message's `turn N`.
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
 // e.g. "session+month". The legacy 'both' (v10–v13) meant session + month.
@@ -165,6 +178,14 @@ export interface TvSetupSignal {
   since_n?: number | null;    // candles after the cross candle
   bounce_n?: number | null;   // the day's bounces on the line, this one included (a weak one isn't counted)
   bounce_from?: TvBounceFrom | null;  // what the pullback came down to
+  // TURN (script v47): candle_tf = the basis's timeframe, stop = a tick under the pullback's low,
+  // since_n = candles after the close above the basis
+  sma_len?: number | null;    // the basis's length (15)
+  sma?: number | null;        // the basis (the SMA of its timeframe's closes) at the bounce
+  sma_pct?: number | null;    // price vs the basis, %
+  fall_pct?: number | null;   // how far the basis fell before its low, % (null = the script had no reading)
+  turn_n?: number | null;     // the day's TURNs on this ticker, this one included
+  macd_green?: boolean | null; // the MACD above its signal line at the bounce (null = the message doesn't say)
 }
 export type TvBounceFrom = 'ema' | 'vwap' | 'ema+vwap';
 
@@ -217,7 +238,11 @@ export const TV_SETUP = {
   // whatever its day high. This is the default of the ⚙ menu's "EMA / BAND / BOUNCE: Momentum
   // list only" (app_settings `tv_alert_rules`, TvSetupGate.setEmaMomentumOnly); switched off,
   // they follow the VB's rule again (a day high ≥ vb_fresh_gain still announces).
+  // v47: a TURN follows the same rule and the same switch.
   em_momentum_only: true,
+  // v47 TURN: past this many TURNs on a ticker in a day (the message's `turn N`), a TURN is stored
+  // and shown, not announced. Untested, like the other caps.
+  tn_cap: 3,
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
@@ -228,16 +253,17 @@ export const TV_SETUP = {
 // "EMA" (emaLineStage sorts it out); a JSON body may name `band` itself.
 const STAGES: Record<string, TvStage> = {
   pullback: 'pullback', broken: 'broken', held: 'held', cross: 'cross', retest: 'retest', ema: 'ema',
-  bounce: 'bounce', band: 'band',
+  bounce: 'bounce', band: 'band', turn: 'turn',
 };
 
 // v16: a PULLBACK past the day's cap on every line it names. Older scripts
 // (no `fails`) capped themselves, so they're never capped here.
 // v21: a CROSS past the day's TV_SETUP.vb_cap crosses on its ticker. v35: an EMA cross past em_cap
-// (v37: its BOUNCE on its own `bounce N`).
+// (v37: its BOUNCE on its own `bounce N`). v47: a TURN past tn_cap on its `turn N`.
 export function pastCap(sig: TvSetupSignal): boolean {
   if (LINE_CROSS_STAGES.has(sig.stage)) return sig.cross_n != null && sig.cross_n > TV_SETUP.em_cap;   // each line its own `cross N`
   if (sig.stage === 'bounce') return sig.bounce_n != null && sig.bounce_n > TV_SETUP.em_cap;
+  if (sig.stage === 'turn') return sig.turn_n != null && sig.turn_n > TV_SETUP.tn_cap;
   if (sig.stage === 'cross') return sig.cross_n != null && sig.cross_n > TV_SETUP.vb_cap;
   if (sig.stage === 'retest') return sig.retest_n != null && sig.retest_n > TV_SETUP.vb_cap;
   return sig.stage === 'pullback' && sig.fails != null && sig.fails >= TV_SETUP.pb_cap;
@@ -288,16 +314,34 @@ export function emaFields(sig: TvSetupSignal): {
   };
 }
 
-// A stored tv_setup row's stage-specific fields (what vbFields / emaFields put in its meta) → the
-// same fields for the alert's setup info, each kept only when the row has it. GET
+// The v47 TURN's fields for the alert's setup info and its tier_events row; none on other stages.
+export function turnFields(sig: TvSetupSignal): {
+  candle_tf?: string | null; stop?: number | null; since_n?: number | null;
+  sma_len?: number | null; sma?: number | null; sma_pct?: number | null; fall_pct?: number | null;
+  turn_n?: number | null; macd_green?: boolean | null;
+} {
+  if (sig.stage !== 'turn') return {};
+  return {
+    candle_tf: sig.candle_tf ?? null, stop: sig.stop ?? null, since_n: sig.since_n ?? null,
+    sma_len: sig.sma_len ?? null, sma: sig.sma ?? null, sma_pct: sig.sma_pct ?? null, fall_pct: sig.fall_pct ?? null,
+    turn_n: sig.turn_n ?? null, macd_green: sig.macd_green ?? null,
+  };
+}
+
+// A stored tv_setup row's stage-specific fields (what vbFields / emaFields / turnFields put in its
+// meta) → the same fields for the alert's setup info, each kept only when the row has it. GET
 // /api/screener/alerts builds a reloaded page's rows from this. Until 2026-11-16 that endpoint
 // copied the VB's fields alone, so after a reload an EMA row lost its length ("1m/?") and a weak
 // cross its `weak`. The fields of the stages removed 2026-11-22 (the RSI's, the DIP's, the MACD's,
 // the basis's) are no longer copied: their rows aren't listed.
 const STORED_NUM_FIELDS = ['upper', 'upper_pct', 'candle_open', 'cross_n', 'stop', 'retest_n',
-  'since_n', 'ema_len', 'ema', 'under_n', 'flips_n', 'bounce_n', 'bb_mid', 'bb_mid_pct'] as const;
+  'since_n', 'ema_len', 'ema', 'under_n', 'flips_n', 'bounce_n', 'bb_mid', 'bb_mid_pct',
+  'sma_len', 'sma', 'sma_pct', 'fall_pct', 'turn_n'] as const;   // the last five: the TURN's (v47)
 const STORED_STR_FIELDS = ['candle_tf', 'bb_tf', 'bounce_from'] as const;
 const STORED_BOOL_FIELDS = ['late', 'weak'] as const;
+// A reading a message may leave out (the TURN's `green 1|0`): true / false as stored, null when the
+// row has the field without a reading.
+const STORED_FLAG_FIELDS = ['macd_green'] as const;
 export function storedSetupFields(meta: Record<string, unknown>): Record<string, number | string | boolean | null> {
   const out: Record<string, number | string | boolean | null> = {};
   for (const k of STORED_NUM_FIELDS) {
@@ -305,6 +349,7 @@ export function storedSetupFields(meta: Record<string, unknown>): Record<string,
   }
   for (const k of STORED_STR_FIELDS) if (k in meta) out[k] = typeof meta[k] === 'string' ? (meta[k] as string) : null;
   for (const k of STORED_BOOL_FIELDS) if (k in meta) out[k] = meta[k] === true;
+  for (const k of STORED_FLAG_FIELDS) if (k in meta) out[k] = typeof meta[k] === 'boolean' ? (meta[k] as boolean) : null;
   return out;
 }
 
@@ -330,7 +375,7 @@ export function gradeAtLeast(grade: string | null | undefined, min: string): boo
 
 // Every stage, in the order the ⚙ menu lists them, and the stages announced
 // until the operator changes the switches.
-export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'ema', 'band', 'broken', 'held'];
+export const TV_STAGE_ORDER: readonly TvStage[] = ['pullback', 'cross', 'retest', 'ema', 'band', 'turn', 'broken', 'held'];
 export const DEFAULT_ANNOUNCED: readonly TvStage[] = TV_STAGE_ORDER.filter((s) => !TV_SETUP.quiet_stages.includes(s));
 
 // A stored or posted stage list → known stages in menu order; null if it isn't a list.
@@ -346,7 +391,8 @@ export function parseStageList(v: unknown): TvStage[] | null {
 // list saved before the split keeps announcing what it did: BAND, which rode the EMA's switch on
 // 2026-11-15 / 11-16, starts with its value. A parent comes before its child in TV_STAGE_ORDER,
 // so it is settled first. (DIP from RSI, MACD from DIP and BASIS from EMA went with their stages
-// on 2026-11-22.)
+// on 2026-11-22.) TURN (v47) is a new setup that rode no switch: a list saved before it gives it
+// its default, on.
 const SPLIT_FROM: Partial<Record<TvStage, TvStage>> = { band: 'ema' };
 // The menu's stages while the switches were stored as a plain array (before 2026-11-13), without
 // the RSI cross it also had then (removed 2026-11-22).
@@ -381,7 +427,7 @@ export function readStoredStages(v: unknown): TvStage[] | null {
 // The ⚙ menu's alert rules beside the stage switches (app_settings `tv_alert_rules`), as stored →
 // each rule's value, a missing or malformed one at its default.
 export interface TvAlertRules {
-  ema_momo_only: boolean;   // EMA / BAND / BOUNCE announce on Momentum names only (TV_SETUP.em_momentum_only)
+  ema_momo_only: boolean;   // EMA / BAND / BOUNCE and (v47) TURN announce on Momentum names only (TV_SETUP.em_momentum_only)
 }
 export function readStoredRules(v: unknown): TvAlertRules {
   const o = v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -460,8 +506,20 @@ function fromJson(o: Record<string, unknown>): TvMessageAsSent | null {
     weak: o.weak === true,
     bounce_n: toNum(o.bounce_n ?? o.bounce),
     bounce_from: toBounceFrom(o.bounce_from ?? o.from),
+    sma_len: toNum(o.sma_len),
+    sma: toNum(o.sma),
+    sma_pct: toNum(o.sma_pct),
+    fall_pct: toNum(o.fall_pct ?? o.fall),
+    turn_n: toNum(o.turn_n ?? o.turn),
+    macd_green: toFlag(o.macd_green ?? o.green),
     basis: toNum(o.basis),
   };
+}
+
+// A JSON body's yes / no reading: true / false, or the message's 1 / 0; anything else → null.
+function toFlag(v: unknown): boolean | null {
+  if (typeof v === 'boolean') return v;
+  return v === 1 || v === '1' ? true : v === 0 || v === '0' ? false : null;
 }
 
 function toBounceFrom(v: unknown): TvBounceFrom | null {
@@ -499,6 +557,7 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 //   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | mVWAP 7.5 (+7.9%) | ema 9 8.03 | line session | candle 3 | cross 1 | day high +25% | vwap 30s | tf 30S   (v35; `ema` its length and value, `candle` its timeframe)
 //   EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 0 | under 3 | flips 4 | weak | day high +25% | vwap 30s | tf 30S   (v36; the filter's readings, `| weak` when it calls the cross weak)
 //   BOUNCE PARA 0.1021 | stop 0.0985 | sVWAP 0.0975 (+4.7%) | ema 9 0.099 | line session | from ema+vwap | candle 3 | bounce 1 | since 3 | day high +25% | vwap 30s | tf 30S   (v37; `from` what the pullback came down to, `since` candles after the cross, `| weak` after a weak cross)
+//   TURN NIVF 0.0213 | stop 0.0206 | sVWAP 0.0211 (+0.9%) | mVWAP 0.023 (-7.4%) | sma 15 0.0207 (+2.9%) | fall 12.3% | candle 1 | turn 1 | since 3 | green 1 | day high +25% | vwap 30s | tf 1   (v47; `sma` the basis's length, value and the price against it, `fall` how far it fell before its low (may be missing), `candle` its timeframe, `since` candles after the close above it, `green` the MACD above its signal: 1 / 0)
 // (v28 adds `vwap 30s|chart` to every message.)
 // (a negative day high is written "-2%"; scripts before v3 wrote "+-2%"), or a JSON
 // object with the TvSetupSignal field names. Express hands us the raw text for
@@ -527,7 +586,7 @@ function parseTvMessageAsSent(body: unknown): TvMessageAsSent | null {
       return null;
     }
   }
-  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST|EMA|BOUNCE)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
+  const head = /^(PULLBACK|BROKEN|HELD|CROSS|RETEST|EMA|BOUNCE|TURN)\s+([A-Za-z0-9_.:-]+)(?:\s+\$?(\d*\.?\d+))?/i.exec(text);
   if (!head) return null;
   const ticker = normTicker(head[2]);
   if (!ticker) return null;
@@ -565,6 +624,12 @@ function parseTvMessageAsSent(body: unknown): TvMessageAsSent | null {
   const flipsN = /\|\s*flips\s+(\d+)\b/i.exec(text);
   const bounceN = /\|\s*bounce\s+(\d+)\b/i.exec(text);   // v37
   const bounceFrom = /\|\s*from\s+(ema\+vwap|ema|vwap)\b/i.exec(text);
+  // v47 TURN: "| sma 15 0.0207 (+2.9%)" — the basis's length, its value and the price against it;
+  // "| fall 12.3%", "| turn 1", "| green 1"
+  const sma = /\|\s*sma\s+(\d+)\s+\$?(\d*\.?\d+)(?:\s*\(\s*([-+]?\d*\.?\d+)\s*%\s*\))?/i.exec(text);
+  const fall = /\|\s*fall\s+([-+]?\d*\.?\d+)\s*%/i.exec(text);
+  const turnN = /\|\s*turn\s+(\d+)\b/i.exec(text);
+  const green = /\|\s*green\s+([01])\b/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -604,6 +669,12 @@ function parseTvMessageAsSent(body: unknown): TvMessageAsSent | null {
     weak: /\|\s*weak\b/i.test(text),
     bounce_n: toNum(bounceN?.[1]),
     bounce_from: toBounceFrom(bounceFrom?.[1]),
+    sma_len: toNum(sma?.[1]),
+    sma: toNum(sma?.[2]),
+    sma_pct: toNum(sma?.[3]),
+    fall_pct: toNum(fall?.[1]),
+    turn_n: toNum(turnN?.[1]),
+    macd_green: green ? green[1] === '1' : null,
     basis: toNum(bsLine?.[1]),
   };
 }
@@ -615,6 +686,7 @@ function parseTvMessageAsSent(body: unknown): TvMessageAsSent | null {
 // sidebar, not announced) for a stage switched off in the ⚙ menu, a PULLBACK
 // past the cap, or a CROSS / RETEST off our Momentum list, else announced — a
 // PULLBACK at most once per ticker and line per 5 min; the rest are logged.
+// (The VB's stages, the EMA family and the TURN each come from one alert only: no copy to log.)
 export type TvVerdict = 'notify' | 'quiet' | 'log' | 'drop' | 'flood';
 
 export class TvSetupGate {
@@ -622,11 +694,11 @@ export class TvSetupGate {
   private lastEvent = new Map<string, number>();   // ticker|stage|line → epoch sec of the event's first copy
   private lastNotify = new Map<string, number>();  // ticker|stage (PULLBACK: ticker|pullback|line) → last announcement
   private announced = new Set<TvStage>(DEFAULT_ANNOUNCED);  // the ⚙ stage switches
-  private emaMomoOnly: boolean = TV_SETUP.em_momentum_only;  // the ⚙ rule: EMA / BAND / BOUNCE on Momentum names only
+  private emaMomoOnly: boolean = TV_SETUP.em_momentum_only;  // the ⚙ rule: EMA / BAND / BOUNCE and (v47) TURN on Momentum names only
   private recent: number[] = [];
 
   // The ⚙ menu's "EMA / BAND / BOUNCE: Momentum list only". Off = a day high ≥ vb_fresh_gain
-  // announces off the list too, as for a CROSS.
+  // announces off the list too, as for a CROSS. v47: a TURN follows it too.
   setEmaMomentumOnly(on: boolean): void {
     this.emaMomoOnly = on;
   }
@@ -650,7 +722,8 @@ export class TvSetupGate {
   // `capExempt`: a PULLBACK past the cap may still announce (v16 — the caller
   // knows the ticker's Momentum row and grade). `onMomentum`: the ticker is on
   // our Momentum list now; off it, a CROSS or RETEST is quiet (vb_momentum_only)
-  // unless its day high is ≥ vb_fresh_gain %.
+  // unless its day high is ≥ vb_fresh_gain %. An EMA cross, a band cross, a BOUNCE or
+  // a TURN off the list is quiet whatever its day high, unless the ⚙ rule is off.
   admit(sig: TvSetupSignal, nowSec: number, capExempt = false, onMomentum = true): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
     if (this.recent.length >= TV_SETUP.max_per_min) return 'flood';
@@ -665,12 +738,24 @@ export class TvSetupGate {
     // The candle timeframe is part of a VB event's key (a changed VB candle is another event), and
     // of an EMA cross's, a band cross's or a BOUNCE's: the timeframe it is judged at.
     const ema = EMA_STAGES.has(sig.stage);   // the EMA cross, (v37) its bounce, and the band's cross
+    // v47: a TURN's key carries its basis's timeframe the same way (the candles it is judged on).
+    const turn = sig.stage === 'turn';
     // v40: a band cross and an EMA cross of one candle are two events (`|bb`).
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || ema ? `|${sig.candle_tf ?? ''}` : ''}`;   // the stage tells an EMA and a band cross of one candle apart
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || ema || turn ? `|${sig.candle_tf ?? ''}` : ''}`;   // the stage tells an EMA and a band cross of one candle apart
     const prev = this.lastExact.get(exact);
-    const dupSec = vb || ema ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
+    const dupSec = vb || ema || turn ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
     this.lastExact.set(exact, nowSec);
+    // v47 TURN: one per bounce from the alert on the basis's timeframe alone, so a later one is a
+    // new event (no copy to merge, no 5-min spacing). Limited by its own ⚙ switch, the day's cap
+    // on `turn N`, and Momentum names only — the EMA family's ⚙ rule: switched off, a day high
+    // ≥ vb_fresh_gain announces off the list too. It has no weak filter.
+    if (turn) {
+      const fresh = !this.emaMomoOnly && sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
+      const quiet = !this.announced.has(sig.stage) || pastCap(sig)
+        || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
+      return quiet ? 'quiet' : 'notify';
+    }
     // v35 EMA cross: one per candle and line from the 30s alert alone, limited like a CROSS —
     // its ⚙ switch, the day's cap, and Momentum names only (or a day high ≥ vb_fresh_gain).
     // v36: a cross the script's filter calls weak is quiet. v37: its BOUNCE follows the same rules
@@ -723,13 +808,14 @@ export class TvSetupGate {
 
 export const TV_STAGE_LABEL: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', ema: 'EMA',
-  bounce: 'BOUNCE', band: 'BAND',
+  bounce: 'BOUNCE', band: 'BAND', turn: 'TURN',
 };
 // The band's (v40) label, as the checks have named it.
 export const EMA_BAND_LABEL = TV_STAGE_LABEL.band;
 const STAGE_ICON: Record<TvStage, string> = {
   pullback: '↩️', broken: '✖️', held: '✅', cross: '⏫', retest: '🔁', ema: '〽️', bounce: '🏀',
   band: '〽️',   // the EMA cross's sign: the same setup with another line
+  turn: '⤴️',
 };
 const STAGE_HINT: Record<TvStage, string> = {
   pullback: 'back near VWAP after the run — be ready',
@@ -740,6 +826,7 @@ const STAGE_HINT: Record<TvStage, string> = {
   ema: 'the EMA crossed above the VWAP line',
   bounce: 'after the EMA cross, price pulled back and bounced',
   band: 'the BB upper band crossed above the VWAP line',
+  turn: 'after its basis fell and turned up, price closed above it, came back to it and bounced',
 };
 // A TradingView interval, short: "5" → "5m", "60" → "1h", "30S" → "30s".
 export function fmtTf(tf: string | null | undefined): string {
@@ -780,6 +867,7 @@ export function formatTvSetupAlert(
   if (sig.stage === 'retest') return formatRetest(sig, tvSym, row);
   if (LINE_CROSS_STAGES.has(sig.stage)) return formatEma(sig, tvSym, row);   // the EMA's, the band's
   if (sig.stage === 'bounce') return formatBounce(sig, tvSym, row);
+  if (sig.stage === 'turn') return formatTurn(sig, tvSym, row);
   // PULLBACK / BROKEN / HELD. PULLBACK and BROKEN name the line: "back near the
   // session VWAP after the run — be ready".
   const tokens = lineTokens(sig.stage, sig.line);
@@ -961,6 +1049,44 @@ function formatBounce(
   };
   const lvl = [...tokens, ...LINE_ORDER.filter((t) => !tokens.includes(t))].map((t) => lvlOf[t]).filter((x): x is string => x != null);
   if (sig.ema != null) lvl.unshift(`EMA ${fmtPx(sig.ema)}`);
+  if (lvl.length > 0) lines.push(lvl.join(' · '));
+  lines.push(momentumLine(row));
+  const ctx = contextParts(sig);
+  if (ctx.length > 0) lines.push(ctx.join(' · '));
+  lines.push(linksLine(sig, tvSym));
+  return lines.join('\n');
+}
+
+// v47 TURN: "after its 1m basis (SMA 15) fell 12.3% and turned up, price closed above it, came back
+// to it and bounced (at the 1m close)", then the stop under the pullback's low, the basis and the
+// VWAP lines the message carries (a TURN is about no VWAP line, so they come in script order).
+function formatTurn(
+  sig: TvSetupSignal,
+  tvSym: string,
+  row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
+): string {
+  const tf = fmtTf(sig.candle_tf);
+  const fell = sig.fall_pct != null ? ` fell ${sig.fall_pct.toFixed(1)}% and` : '';
+  const lines = [
+    `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.turn} <b>${TV_STAGE_LABEL.turn}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
+    `<i>after its ${tf} basis (SMA ${sig.sma_len ?? '?'})${fell} turned up, price closed above it, came back to it and bounced (at the ${tf} close)</i>`,
+  ];
+  const what: string[] = [];
+  if (sig.stop != null) {
+    const risk = sig.price != null && sig.price > 0 ? `${fmtSigned((sig.stop / sig.price - 1) * 100)}, ` : '';
+    what.push(`stop ${fmtPx(sig.stop)} (${risk}under the pullback's low)`);
+  }
+  if (sig.turn_n != null) {
+    what.push(`turn ${sig.turn_n} today${sig.turn_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
+  }
+  if (sig.since_n != null) what.push(`${sig.since_n} candle${sig.since_n === 1 ? '' : 's'} after the close above the basis`);
+  if (sig.macd_green != null) what.push(sig.macd_green ? 'MACD green' : 'MACD not green');
+  if (what.length > 0) lines.push(what.join(' · '));
+  const lvl: string[] = [];
+  if (sig.sma != null) lvl.push(`basis ${fmtPx(sig.sma)}${sig.sma_pct != null ? ` (${fmtSigned(sig.sma_pct)})` : ''}`);
+  if (sig.svwap != null) lvl.push(`sVWAP ${fmtPx(sig.svwap)} (${fmtSigned(sig.spx_pct ?? null)})`);
+  if (sig.mvwap != null) lvl.push(`mVWAP ${fmtPx(sig.mvwap)} (${fmtSigned(sig.px_pct)})`);
+  if (sig.yvwap != null) lvl.push(`yVWAP ${fmtPx(sig.yvwap)} (${fmtSigned(sig.ypx_pct ?? null)})`);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
   lines.push(momentumLine(row));
   const ctx = contextParts(sig);

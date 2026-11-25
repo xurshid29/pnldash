@@ -25,6 +25,8 @@ const gate = new TvSetupGate();
 // (readStoredStages).
 // 2026-11-15: a second row, `tv_alert_rules` — the menu's rules beside the switches (so far one:
 // EMA / BAND / BOUNCE on Momentum names only, on by default). Missing = the defaults.
+// v47 (2026-11-25): TURN has a switch of its own, on unless a saved list knows it and leaves it
+// off; the Momentum-names rule governs it too.
 const STAGES_KEY = 'tv_alert_stages';
 const RULES_KEY = 'tv_alert_rules';
 let settingsLoad: Promise<void> | null = null;
@@ -39,7 +41,7 @@ function loadSettings(): Promise<void> {
       console.log(`[tv-setup] announced stages: ${gate.announcedStages().join(', ') || 'none'}${stages ? '' : ' (default)'}`);
       const rulesRow = rows.find((r) => r.key === RULES_KEY);
       gate.setEmaMomentumOnly(readStoredRules(rulesRow?.value).ema_momo_only);
-      console.log(`[tv-setup] EMA / BAND / BOUNCE: ${gate.emaMomentumOnly() ? 'Momentum names only' : 'Momentum names, or a +30% day high'}${rulesRow ? '' : ' (default)'}`);
+      console.log(`[tv-setup] EMA / BAND / BOUNCE / TURN: ${gate.emaMomentumOnly() ? 'Momentum names only' : 'Momentum names, or a +30% day high'}${rulesRow ? '' : ' (default)'}`);
     })
     .catch((err) => {
       console.error('[tv-setup] stage settings load failed (defaults in use):', err instanceof Error ? err.message : err);
@@ -82,7 +84,7 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     const capped = pastCap(sig);
     const capExempt = capped && sig.stage === 'pullback' && poller.tvCapExempt(sig.ticker);
     // A CROSS / RETEST pings only for a ticker on our Momentum list (or a fresh runner); an EMA
-    // cross, a band cross or a BOUNCE only for one on the list (the ⚙ rule, 2026-11-15).
+    // cross, a band cross, a BOUNCE or (v47) a TURN only for one on the list (the ⚙ rule, 2026-11-15).
     const onMomentum = poller.tvOnMomentum(sig.ticker);
     const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt, onMomentum);
     if (verdict === 'flood') {
@@ -92,6 +94,7 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     if (verdict === 'drop') return res.json({ data: { duplicate: true } });
     // A quiet CROSS / RETEST that isn't muted or capped is off our Momentum list (under vb_fresh_gain).
     // v36: an EMA cross the script's filter calls weak is quiet for that (v37: and its BOUNCE).
+    // v47: a quiet TURN is muted, capped (`turn N` past tn_cap) or off the list, in that order.
     const why = verdict !== 'quiet' ? undefined
       : !gate.announces(sig.stage) ? 'muted'
         : EMA_STAGES.has(sig.stage) && sig.weak ? 'weak'
@@ -107,8 +110,9 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
 // GET /api/tv/settings — the 📐 stage switches: which stages are announced
 // (Telegram + dashboard toast/sound/notification). Off = quiet: still stored,
 // graded and shown in the 📐 sidebar.
-// `ema_momo_only` (2026-11-15): the menu's rule — an EMA cross, a band cross or a BOUNCE announces
-// on Momentum names only (true, the default), or also off the list with a +30% day high (false).
+// `ema_momo_only` (2026-11-15): the menu's rule — an EMA cross, a band cross, a BOUNCE or (v47) a
+// TURN announces on Momentum names only (true, the default), or also off the list with a +30% day
+// high (false).
 const settingsBody = () => ({
   announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED, ema_momo_only: gate.emaMomentumOnly(),
 });
@@ -147,7 +151,7 @@ router.put('/settings', authMiddleware, async (req, res) => {
       const rules: TvAlertRules = { ema_momo_only: parsed.data.ema_momo_only };
       await saveSetting(RULES_KEY, JSON.stringify(rules));
       gate.setEmaMomentumOnly(rules.ema_momo_only);
-      console.log(`[tv-setup] EMA / BAND / BOUNCE set to: ${rules.ema_momo_only ? 'Momentum names only' : 'Momentum names, or a +30% day high'}`);
+      console.log(`[tv-setup] EMA / BAND / BOUNCE / TURN set to: ${rules.ema_momo_only ? 'Momentum names only' : 'Momentum names, or a +30% day high'}`);
     }
   } catch (err) {
     console.error('[tv-setup] alert settings save failed:', err instanceof Error ? err.message : err);

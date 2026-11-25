@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { emaByBand, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
+import { emaByBand, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, turnFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3946,7 +3946,7 @@ class PollerService {
   // Alerts / 📐 tabs and the row badge), an SSE 'alert' event so the toast
   // and sound land now instead of at the next cycle, and Telegram
   // (ALERTS_DISABLED tv_setup, or per stage tv_pullback / tv_broken / tv_held /
-  // tv_cross / tv_retest / tv_ema / tv_bounce / tv_band, and tv_year for a message about the year line alone).
+  // tv_cross / tv_retest / tv_ema / tv_bounce / tv_band / tv_turn, and tv_year for a message about the year line alone).
   // BROKEN and HELD — a pullback's outcome — are quiet by default; switched on
   // in the ⚙ menu they go out as silent messages.
   // mode 'log' = a copy from another timeframe within 5 min (or the ticker
@@ -3962,6 +3962,8 @@ class PollerService {
   // the line today; why 'offlist' = not on our Momentum list (vb_momentum_only, 2026-10-20).
   // v36 EMA cross: why 'weak' = the script's filter called the cross weak (rows carry `weak`).
   // v37 BOUNCE (tv_bounce): limited like the EMA cross; why 'weak' = its cross was weak.
+  // v47 TURN (tv_turn): why 'capped' = past TV_SETUP.tn_cap TURNs on the ticker today; why
+  // 'offlist' = not on our Momentum list. Rows carry the basis, the fall and the MACD reading.
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist' | 'weak', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
@@ -3991,6 +3993,7 @@ class PollerService {
         fails: sig.fails ?? null, capped: pastCap(sig),
         ...vbFields(sig),
         ...emaFields(sig),
+        ...turnFields(sig),
         vwap_src: sig.vwap_src ?? null,
         on_screen: row != null, notified: mode === 'notify',
       },
@@ -4007,6 +4010,7 @@ class PollerService {
       fails: sig.fails ?? null, capped: pastCap(sig), cap_exempt: capExempt,
       ...vbFields(sig),
       ...emaFields(sig),
+      ...turnFields(sig),
       vwap_src: sig.vwap_src ?? null,
     });
     if (sig.stage === 'ema' || sig.stage === 'band') {
@@ -4031,6 +4035,17 @@ class PollerService {
         (mode === 'quiet' ? (why === 'weak' ? ' · quiet (after a weak cross)'
           : why === 'capped' ? ` · quiet (past the cap: bounce ${sig.bounce_n} today)`
           : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (the EMA stage is switched off)') : ''));
+    } else if (sig.stage === 'turn') {
+      console.log(`[tv-setup] TURN ${sig.ticker} $${sig.price ?? '?'} · stop ${sig.stop ?? '?'}` +
+        ` · ${sig.candle_tf ?? '?'} candle · basis SMA ${sig.sma_len ?? '?'} ${sig.sma ?? '?'} (${sig.sma_pct ?? '?'}%)` +
+        (sig.fall_pct != null ? ` · fell ${sig.fall_pct}%` : '') +
+        ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
+        ` · turn ${sig.turn_n ?? '?'} · ${sig.since_n ?? '?'} candles after the close above the basis` +
+        (sig.macd_green != null ? ` · MACD ${sig.macd_green ? 'green' : 'not green'}` : '') +
+        ` · day ${sig.day_gain ?? '?'}% · tf ${sig.tf ?? '?'}` +
+        `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
+        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: turn ${sig.turn_n} today)`
+          : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
     } else if (VB_STAGES.has(sig.stage)) {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +

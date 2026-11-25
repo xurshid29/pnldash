@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v46** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setup: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v47** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18), and (v47) TURN, the bounce off a basis line that fell and turned up (§21). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1145,6 +1145,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-22 | v44 | `4e2a969` | Operator: "I think we should remove some of our experimental setups. Let's remove RSI Cross and Basis Cross. Pullback, VWAP + BB Cross, EMA Cross Over VWAP and it's Upper Band cross will be kept". **Removed** (§20): the RSI cross with its DIP (v32–v34) and the MACD cross after a DIP (v39), which hangs off the DIP; and the BASIS cross (v42). Script sections 3, 4c and 5, 19 inputs (73 → 54), 12 plots (43 → 31) and 5 `alert()` calls (16 → 11) are gone; `rsSym` and `rsChartSec`, which the EMA section uses, stay under their names. Server and dashboard: stages `rsi`, `dip`, `macd` and `basis` are gone (their messages get 400, saved switches are dropped, stored rows aren't listed). **Four defaults became the operator's live settings**, because the reset this version needs would otherwise undo them: VB candle 5m → 2m, VB band 45S → 30S, EMA candle 3m → 2m, the EMA cross's line Both → BB upper. Kept unchanged: PULLBACK, the VWAP + BB cross with its RETEST, the EMA cross with its filter and BOUNCE, the band's cross with the middle-line test. Compiled on TradingView through the MCP before the paste and compared with v43 bar by bar (§20.3). **Paste, Settings → Defaults → Reset settings, recreate both alerts.** |
 | 2026-11-22 | v45 | `e1667a4` | Operator, after updating to v44, with TradingView's own BB (timeframe 15S, middle line only) on a 1m chart: "add own BollingerBand to Pullback section, with configurable timeframe, only basis row is enough … I'm going to experiment entering when price closes above it after the pullback". **The pullback's basis line** (§13.8): a white line, the SMA of the last 20 closes of 15-second bars (`pbBsOn`, `pbBsTf`, `pbBsLen`: the script's last three inputs, shown in the Pullback group; its last plot). From a lower-timeframe request, read at each chart bar's close, as TradingView's built-in does. A line only: no alert, no message field, nothing on the server or the dashboard but two sentences of help text. Measured the same day with our 20-second snapshots in the line's place (§13.9). Checked on TradingView before the paste: compiles; on a 30s chart all 31 plots v44 had are equal bar by bar, and the new line equals a 15s chart's SMA(20). **Paste and Save; no reset, and the alerts can stay as they are.** |
 | 2026-11-24 | v46 | `06f2af2` | Operator: "add own BollingerBands basis row to the BB setups, as we did for Pullback", then, pointing at the "EMA cross over VWAP" settings: "I mean, bb basis for this bb setups of EMA Cross Over VWAP". **The band cross's basis line** (§18.8): the pullback's line again for the EMA cross setup — a teal line, the SMA of the last 20 closes of 15-second bars, with its own switch, timeframe and length (`bbBsOn`, `bbBsTf`, `bbBsLen`: the script's last three inputs, shown in the EMA cross over VWAP group; its last plot). A line only; not the band the cross itself uses, and not v42's removed BASIS cross. Checked on TradingView before the paste (§18.8). **Paste and Save; no reset, and the alerts can stay as they are.** |
+| 2026-11-25 | v47 | (this commit) | Operator, with v46's line at 1 minute / 15 closes and a MACD under a 1m chart, on moves of NIVF and APUS: "How can I catch such moves? … candle breaks the bb basis, the bb basis moving up, macd turned green, and price pulls back to bb basis line and bounces"; "The most important part is, bb basis goes down (usually big drop), and after that, it starts moving up"; after the measurement: "I want to experiment with it, let's build it. Make a seprate setup … with its own bb basis settings (macd usually standart)". **A fourth setup, TURN** (§21): on the basis's own candles (1m, SMA 15), after the basis fell at least 10% and turned up, a close above it, a low back at it within 10 candles, then a green close above it with the basis rising and the MACD green. Script section 8, thirteen inputs in their own group (last; 73), two plots (last; 35), one `alert()` (12), no request; message `TURN … | sma 15 … | fall …% | turn N | since N | green 1`. Server stage `turn` (own ⚙ switch, on by default; Momentum names; `tn_cap` 3), dashboard pill, `pinesim.simulate_turn`. Measured first (`research/ema-vwap/basis_bounce_study.py`): the fall is what counts, about 20 a day after a 10% fall, one in five reach +5%, about break-even — an experiment. **Paste, Save, recreate both alerts; no Reset settings.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -3127,3 +3128,119 @@ new defaults and v44's reset.
 3. Delete and recreate both alerts (1 minute and 30 seconds).
 
 Until then the v43 alerts keep sending BASIS messages, about 1,000 a day, and each gets 400.
+
+## 21. TURN: the bounce off a basis that turned up (script v47, 2026-11-25)
+
+### 21.1 The operator's definition
+
+With v46's basis line set to 1 minute / 15 closes and a MACD 12 26 9 under a 1m chart, on three
+moves of NIVF (14:55, 16:00 and 16:55 their time) and one of APUS:
+
+> How can I catch such moves? If you closely look at them, you notice that for all of them, candle
+> breaks the bb basis, the bb basis moving up, macd turned green, and price pulls back to bb basis
+> line and bounces and this bounce is a signal.
+
+> The most important part is, bb basis goes down (usually big drop), and after that, it starts
+> moving up, price crosses it, and bounces (also, macd turns green).
+
+After the measurement (§21.2): "I want to experiment with it, let's build it. Make a seprate setup
+EMA Cross, with its own bb basis settings (macd usually standart)" — a setup of its own, apart
+from the EMA cross, with its own basis settings and a standard MACD.
+
+### 21.2 Measured before building
+
+`research/ema-vwap/basis_bounce_study.py` (README, last section): 71 trading days of our 1m bars
+on Momentum names, 23,475 bounces by the rule below without any fall condition, split at 10-09.
+
+| the basis's fall before it turned | a day | reach +5% | reach +10% | 2R with a stop under the pullback's low |
+|---|---:|---:|---:|---:|
+| under 2% | 48 / 69 | 4.9% / 3.2% | 1.6% / 0.8% | −0.19R / −0.16R |
+| 2% – 5% | 63 / 67 | 8.3% / 7.5% | 3.3% / 2.3% | −0.13R / −0.19R |
+| 5% – 10% | 38 / 32 | 11.5% / 11.1% | 4.3% / 3.4% | −0.02R / −0.12R |
+| 10% and over | 24 / 21 | 18.7% / 20.5% | 8.7% / 8.7% | −0.01R / +0.03R |
+
+("Reach" = a bar high that far above the entry before a close back under the basis.) The fall is
+the condition that counts, in both halves; the MACD and the rising basis change nothing
+measurable; waiting for the bounce beats buying the break a little. Even after a 10% fall it is
+about break-even. Built as the operator's experiment, with the fall as its main input.
+
+### 21.3 The rule and its inputs (group "TURN: the bounce off a basis that turned up (v47)")
+
+It reads the candles of the basis's own timeframe, so it runs on a chart of that timeframe: its
+markers show there, and its alert comes from the alert on that timeframe (1m by default). No
+request.
+
+1. **Break:** a close above the basis after a close at or under it.
+2. **Touch:** on a later candle, within N, the low comes down to the basis (at or under it, or
+   within the tolerance above it).
+3. **Bounce:** that candle or a later one, still within N, closes green and above the basis,
+   with the basis rising (above its value a candle before) and, if the switch is on, the MACD
+   above its signal line. A close under the basis first ends the wait. One bounce per break.
+4. **TURN:** a bounce after the basis fell. The basis's lowest value in the 31 candles to the
+   bounce must be no older than "within the last N candles" and at least the fall % under its
+   highest value in the 46 candles up to that low. A bounce without that fall uses up its break
+   and sends nothing.
+
+| Input | Default |
+|---|---|
+| TURN setup on (v47) | on |
+| the basis's timeframe (its candles are the ones judged) | 1 minute |
+| the basis's length (the closes it averages) | 15 |
+| the basis fell at least this % before its low (0 = no fall needed) | 10 |
+| …and that low is within the last N candles | 15 |
+| a low within this % above the basis counts as the pullback reaching it | 1 |
+| the bounce comes within N candles after the close above the basis | 10 |
+| the MACD must be green at the bounce | on |
+| the MACD's fast / slow / signal length | 12 / 26 / 9 |
+| gainers only (the gainer filter at the top) | on |
+| draw its basis line and the markers | on |
+
+Thirteen inputs, the script's last (73 in all), so nothing shifts and no Reset settings. On the
+chart: the basis in fuchsia ("TURN basis (v47)") and a fuchsia **TN** label under the bounce
+candle ("TURN (v47)"), the script's last two plots (35). With the band cross's basis line (§18.8)
+on the same timeframe and length, that teal line and this one are the same line.
+
+### 21.4 The message
+
+    TURN NIVF 0.0213 | stop 0.0206 | sVWAP 0.0211 (+0.9%) | mVWAP 0.023 (-7.4%) | sma 15 0.0207 (+2.9%) | fall 12.3% | candle 1 | turn 1 | since 3 | green 1 | day high +25% | vwap 30s | tf 1
+
+`stop` = a tick under the pullback's lowest low (which starts at the break candle's close);
+`sma N` = the basis and the price against it; `fall` = how far the basis fell before its low;
+`candle` = the basis's timeframe; `turn N` = the day's TURNs on this ticker; `since N` = candles
+after the break; `green` = the MACD above its signal at the bounce (1 / 0; it can be 0 only with
+the MACD switch off). Sent with `alert.freq_once_per_bar_close` from the chart whose timeframe is
+the basis's, so `tf 1`.
+
+### 21.5 Our side
+
+Stage `turn`, label **TURN**, after BAND in the stage order. Fields `sma_len`, `sma`, `sma_pct`,
+`fall_pct`, `turn_n`, `macd_green`, with the existing `stop`, `since_n` and `candle_tf`. Stored
+always; announced when its ⚙ switch is on (on by default; a saved list that doesn't know it gives
+it the default), the ticker is on the Momentum list (the ⚙ rule now reads "EMA / BAND / BOUNCE /
+TURN: Momentum list only"; unticked, a day high of +30% or more also counts) and it is not past
+`TV_SETUP.tn_cap` (3 a day per ticker, on the script's `turn N`). Telegram slug `tv_turn`.
+Dashboard: a fuchsia TURN pill with the timeframe and length (`1m·15`), the stop and the fall;
+its own thread per ticker; a History filter. Replica: `pinesim.simulate_turn` with
+`turn_rule_direct` and `selftest_turn`.
+
+### 21.6 Checked before the paste
+
+- **It compiles on TradingView** (the comment-free copy through the MCP): no errors, the same
+  six cosmetic warnings, 73 inputs and 35 plots, TURN's last.
+- **Nothing else moved.** Against the operator's saved v46 on NASDAQ:NRSN's 1m chart, every plot
+  v46 has is equal on the 996 closed bars the two runs share.
+- **Its markers are the rule's.** The same run (fall set to 3%, gainers off) drew 7 TURNs in its
+  1,000 bars. `pinesim.simulate_turn`, run on the same symbol's 1m bars from `get_ohlcv`, gives
+  the same 7 on the same candles, and its basis equals the script's on all 995 closed bars.
+- **The replica against the rule:** `selftest_turn` runs the state machine and the rule stated
+  from its definitions on 40 generated tapes × 15 settings, 4,117 TURNs, field for field.
+- Not settled by the 7 markers: what `ta.lowestbars` returns when the basis has two equal lows
+  (the replica takes the most recent). It can only matter on a price grid coarse enough for
+  exact ties.
+
+### 21.7 To grade
+
+After two or three weeks of rows: TURNs by `fall_pct` (does the live split match §21.2's?), by
+`macd_green` if the switch gets turned off, by time of day, and against the stop in `stop`. The
+rows are from the exchange feed the operator bought on 11-23 (Nasdaq names), where §21.2's bars
+are ours.

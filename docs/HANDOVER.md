@@ -10,8 +10,13 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v46 (2026-11-24).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v47 (2026-11-25).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
+- **v47 (11-25) adds a fourth setup, TURN** (stage `turn`, `docs/vwap-setup.md` §21): after its
+  basis (SMA 15 of 1m closes) fell at least 10% and turned up, a close above it, a low back at
+  it, then a green close above it with the MACD green. Sent from the 1m alert; own ⚙ switch (on);
+  Momentum names; 3 a day per ticker. Measured first: about break-even, the operator's
+  experiment. Grade it from its rows in two or three weeks.
 - **⚠ Data break 2026-11-23 ~06:45 ET:** the operator bought real-time exchange data on TradingView.
   Nasdaq names went from the Cboe One feed (6–18% of the volume) to the exchange feed; setup rows
   before and after are not like for like (session log, 11-23).
@@ -297,6 +302,27 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-25 (Wed, ~11:30 ET) — SCRIPT v47: A FOURTH SETUP, TURN (the bounce off a basis that fell and turned up).** After
+the measurement in the entry below, the operator: "I want to experiment with it, let's build it. Make a seprate setup EMA
+Cross, with its own bb basis settings (macd usually standart)" (read: a setup of its own, apart from the EMA cross).
+`docs/vwap-setup.md` §21.
+- **Rule** (script section 8, on the basis's own candles, 1m / SMA 15): a close above the basis after one at or under it;
+  within 10 candles a low back at it (1% tolerance); then a green close above it with the basis rising and the MACD
+  12 26 9 above its signal = a bounce; it is a TURN when the basis's low is within 15 candles and at least 10% under its
+  high in the 46 candles before. Thirteen inputs in their own group (last; 73), two plots (last; 35), one `alert()` (12),
+  no request. Sent from the 1m alert: `TURN … | sma 15 … | fall …% | candle 1 | turn N | since N | green 1 | … | tf 1`.
+- **Server / dashboard:** stage `turn` (label TURN, icon ⤴️, slug `tv_turn`), own ⚙ switch on by default (a saved list
+  that doesn't know it turns it on), Momentum names by the "EMA / BAND / BOUNCE / TURN: Momentum list only" rule,
+  `tn_cap` 3 a day per ticker; fuchsia pill `TURN 1m·15`, thread, History filter, help text. `verify-tv-setups.ts` 700
+  checks (it now also parses every example message in the Pine comments). `pinesim.simulate_turn` + `turn_rule_direct` +
+  `selftest_turn`.
+- **Checked through the MCP before the paste:** compiles; every plot of the saved v46 equal on NRSN 1m; the script's 7
+  TURN markers there (fall 3%, gainers off) are the replica's 7 on the same candles (`get_ohlcv` bars).
+- **Built with four subagents** (server + checks, dashboard, replica, the compile run) while I wrote the script and docs.
+- **For the operator:** paste v47, Save, recreate both alerts (this one alerts); no Reset settings. TURN is on in ⚙.
+- **To grade** in 2–3 weeks: §21.7. Expect about 20 a day at the default 10% fall (from our bars; the chart sees more
+  touches, so possibly more).
 
 **2026-11-25 (Wed, ~10:45 ET) — THE BOUNCE OFF THE BASIS LINE AFTER IT TURNS UP, MEASURED (research only, nothing built).**
 The operator runs v46's band cross basis line at 1 minute / 15 closes with a MACD under a 1m chart, and showed three moves

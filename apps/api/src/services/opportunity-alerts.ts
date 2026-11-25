@@ -69,6 +69,14 @@ export interface TvSetupInfo {
   // VB retest (script v28)
   stop?: number | null;       // a tick under the pullback's low
   retest_n?: number | null;   // v28 RETEST: the day's retests on the ticker
+  // TURN (script v47): candle_tf = the basis's timeframe, stop = a tick under the pullback's low
+  sma_len?: number | null;    // the basis's length (15)
+  sma?: number | null;        // the basis (the SMA of its timeframe's closes) at the bounce
+  sma_pct?: number | null;    // price vs the basis, %
+  fall_pct?: number | null;   // how far the basis fell before its low, %
+  turn_n?: number | null;     // the day's TURNs on the ticker, this one included
+  since_n?: number | null;    // candles after the close above the basis (a BOUNCE: after its cross)
+  macd_green?: boolean | null; // the MACD above its signal line at the bounce
   vwap_src?: '30s' | 'chart' | null; // v28: which bars the script built its VWAP lines from (null = before v28)
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe

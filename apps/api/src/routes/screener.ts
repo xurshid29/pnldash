@@ -169,8 +169,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
     if (r.event === 'tv_setup' && str(m.stage)) {
       a.setup = {
         // 2026-11-16: every stage-specific field the row stored (the EMA cross's, the BOUNCE's, the
-        // band's), not the VB's alone; the explicit ones below keep their null defaults. A band
-        // cross stored as `ema` reads `band`.
+        // band's, since v47 the TURN's), not the VB's alone; the explicit ones below keep their
+        // null defaults. A band cross stored as `ema` reads `band`.
         ...storedSetupFields(m),
         stage: storedStage(m)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct),
         day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf),

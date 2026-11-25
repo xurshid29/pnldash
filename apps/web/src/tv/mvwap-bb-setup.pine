@@ -1,11 +1,11 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v46 (2026-11-24). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v47 (2026-11-25). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
-// Three setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross), so the same two
+// Four setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross, TURN), so the same two
 // watchlist alerts carry them all (the VWAP + BB cross and the EMA cross only send from the 30s
-// alert). Each has its own "… setup on" switch: off
+// alert, TURN from the 1m one). Each has its own "… setup on" switch: off
 // = no markers and no alerts from it, and a VWAP line no setup uses isn't drawn.
 // v27 removed the RECLAIM setup (FORMING / READY / GO, v1–v26) and the BB breakout
 // (TOUCH / BREAKOUT / TRIGGERED, v17–v26): the operator tested all four and kept these
@@ -19,6 +19,9 @@
 // of its own timeframe (15S by default). A line only, with no alert.
 // v46 draws the same kind of line for the EMA cross setup's band cross (section 7), with its own
 // switch, timeframe and length in the "EMA cross over VWAP" group.
+// v47 adds a fourth setup, TURN (section 8, at the end): after a basis fell and turned up, price
+// closes above it, comes back to it and bounces. Its own basis and MACD settings; sent from the
+// alert on the basis's timeframe (1m).
 // 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
@@ -1646,3 +1649,117 @@ if bbBsUpper
 else if array.size(bbBsIn) > 0
     bbBasis := array.get(bbBsIn, array.size(bbBsIn) - 1)
 plot(bbBsUse ? bbBasis : na, "Band cross basis (v46)", color.teal)
+
+// ── 8) TURN: THE BOUNCE OFF A BASIS THAT HAS TURNED UP (v47) ──────────────────
+// Operator, 11-25, with section 7's line at 1 minute / 15 closes and a MACD 12 26 9 under a 1m
+// chart, on three moves of NIVF and one of APUS: "How can I catch such moves? … candle breaks the
+// bb basis, the bb basis moving up, macd turned green, and price pulls back to bb basis line and
+// bounces and this bounce is a signal"; "The most important part is, bb basis goes down (usually
+// big drop), and after that, it starts moving up, price crosses it, and bounces (also, macd turns
+// green)". Then: "I want to experiment with it, let's build it … a separate setup … with its own
+// bb basis settings (macd usually standart)".
+// The rule, on the candles of the basis's own timeframe (the chart must be on it):
+//   break    a close above the basis after a close at or under it
+//   touch    on a later candle, within N, the low comes down to the basis (at or under it, or
+//            within the tolerance above it)
+//   bounce   that candle or a later one (still within N) closes green and above the basis, with
+//            the basis rising and (a switch) the MACD above its signal line. A close under the
+//            basis first ends the wait. One bounce per break.
+//   TURN     a bounce after the basis fell: its lowest value in the 31 candles to the bounce is no
+//            older than `tnLowBars` candles and at least `tnFallMin` % under its highest value in
+//            the 46 candles up to that low. A bounce without that fall uses up its break and
+//            sends nothing.
+// Measured before building (research/ema-vwap/basis_bounce_study.py, 71 days of our 1m bars): the
+// fall is the condition that counts (+5% before a close back under the basis for 3–5% of bounces
+// after no fall, 19–21% after a fall of 10% or more, about 20 a day on Momentum names); the MACD
+// and the rising basis add nothing measurable; about break-even with a stop under the pullback's
+// low. An experiment, as the operator asked.
+// It reads the chart's own candles, so it runs where the chart's timeframe is the basis's: its
+// markers on that chart, its alert from the alert on that timeframe (1m by default). No request.
+// Message (the contract with parseTvMessage):
+//   TURN NIVF 0.0213 | stop 0.0206 | sVWAP 0.0211 (+0.9%) | mVWAP 0.023 (-7.4%) | sma 15 0.0207 (+2.9%) | fall 12.3% | candle 1 | turn 1 | since 3 | green 1 | day high +25% | vwap 30s | tf 1
+// `stop` = a tick under the pullback's lowest low, `sma N` = the basis and the price against it,
+// `fall` = how far the basis fell before its low, `turn N` = the day's TURNs on this ticker,
+// `since N` = candles after the break, `green` = the MACD above its signal at the bounce (1 / 0).
+// Its thirteen inputs are the script's last; its two plots are the script's last.
+tnOn      = input.bool(true,      "TURN setup on (v47): after its basis fell and turned up, price closes above the basis, comes back to it and bounces", group = "TURN: the bounce off a basis that turned up (v47)")
+tnTf      = input.timeframe("1",  "TURN: the basis's timeframe — its candles are the ones judged; the markers show on that chart, the alert comes from the alert on it", group = "TURN: the bounce off a basis that turned up (v47)")
+tnLen     = input.int(15,         "TURN: the basis's length (the closes it averages)", minval = 2, group = "TURN: the bounce off a basis that turned up (v47)")
+tnFallMin = input.float(10.0,     "TURN: the basis fell at least this % before its low (0 = no fall needed)", minval = 0, step = 0.5, group = "TURN: the bounce off a basis that turned up (v47)")
+tnLowBars = input.int(15,         "TURN: …and that low is within the last N candles", minval = 1, maxval = 30, group = "TURN: the bounce off a basis that turned up (v47)")
+tnTol     = input.float(1.0,      "TURN: a low within this % above the basis counts as the pullback reaching it", minval = 0, step = 0.1, group = "TURN: the bounce off a basis that turned up (v47)")
+tnWaitN   = input.int(10,         "TURN: the bounce comes within N candles after the close above the basis", minval = 1, group = "TURN: the bounce off a basis that turned up (v47)")
+tnMacdOn  = input.bool(true,      "TURN: the MACD must be green at the bounce (above its signal line)", group = "TURN: the bounce off a basis that turned up (v47)")
+tnFast    = input.int(12,         "TURN: the MACD's fast length", minval = 1, group = "TURN: the bounce off a basis that turned up (v47)")
+tnSlow    = input.int(26,         "TURN: the MACD's slow length", minval = 2, group = "TURN: the bounce off a basis that turned up (v47)")
+tnSig     = input.int(9,          "TURN: the MACD's signal length", minval = 1, group = "TURN: the bounce off a basis that turned up (v47)")
+tnGainOn  = input.bool(true,      "TURN: gainers only (the gainer filter at the top)", group = "TURN: the bounce off a basis that turned up (v47)")
+tnShow    = input.bool(true,      "TURN: draw its basis line and the markers", group = "TURN: the bounce off a basis that turned up (v47)")
+tnRun     = tnOn and timeframe.in_seconds(tnTf) == chartSec
+tnB       = ta.sma(close, tnLen)
+[tnMacdLine, tnSignalLine, tnHist] = ta.macd(close, tnFast, tnSlow, tnSig)
+tnGreen   = tnHist > 0
+// The fall: the basis's lowest value in the 31 candles to this one, how many candles ago it was,
+// and its highest value in the 46 candles up to that low.
+tnLowAgo  = -ta.lowestbars(tnB, 31)
+tnLowVal  = ta.lowest(tnB, 31)
+tnHigh46  = ta.highest(tnB, 46)
+tnPeak    = tnHigh46[tnLowAgo]
+tnFallPct = not na(tnPeak) and tnPeak > 0 ? (1 - tnLowVal / tnPeak) * 100 : na
+tnFell    = tnFallMin <= 0 or (not na(tnFallPct) and tnLowAgo <= tnLowBars and tnFallPct >= tnFallMin)
+var bool  tnWaiting  = false   // a break is open: waiting for the touch and the bounce
+var int   tnBreakBar = na
+var float tnPbLow    = na      // the pullback's lowest low (it starts at the break candle's close)
+var bool  tnTouched  = false
+var int   tnCount    = 0       // the day's TURNs on this ticker
+if newDay
+    tnCount   := 0
+    tnWaiting := false
+bool  tnFire = false
+float tnStop = na
+int   tnAge  = na
+if tnRun and not na(tnB) and not na(tnB[1])
+    bool tnRising = tnB > tnB[1]
+    if tnWaiting
+        if close < tnB
+            tnWaiting := false
+        else
+            tnPbLow := math.min(tnPbLow, low)
+            if low <= tnB * (1 + tnTol / 100)
+                tnTouched := true
+            if tnTouched and close > open and close > tnB and tnRising and (not tnMacdOn or tnGreen)
+                // the bounce: it uses up the break, whether or not the fall and the filters let it send
+                tnWaiting := false
+                if tnFell and inWindow and (not tnGainOn or gainer)
+                    tnFire  := true
+                    tnStop  := tnPbLow - syminfo.mintick
+                    tnAge   := bar_index - tnBreakBar
+                    tnCount += 1
+            else if bar_index - tnBreakBar >= tnWaitN
+                tnWaiting := false
+    if not tnWaiting and not tnFire and close > tnB and close[1] <= tnB[1]
+        tnWaiting  := true
+        tnBreakBar := bar_index
+        tnPbLow    := close
+        tnTouched  := false
+tnMsg() =>
+    string msg = "TURN " + syminfo.ticker + " " + str.tostring(close, format.mintick) + " | stop " + str.tostring(tnStop, format.mintick)
+    if not na(svwap)
+        msg += " | sVWAP " + str.tostring(svwap, format.mintick) + " (" + pctVs(svwap) + "%)"
+    if not na(mvwap)
+        msg += " | mVWAP " + str.tostring(mvwap, format.mintick) + " (" + pctVs(mvwap) + "%)"
+    if not na(yvwap)
+        msg += " | yVWAP " + str.tostring(yvwap, format.mintick) + " (" + pctVs(yvwap) + "%)"
+    msg += " | sma " + str.tostring(tnLen) + " " + str.tostring(tnB, format.mintick) + " (" + pctVs(tnB) + "%)"
+    if not na(tnFallPct)
+        msg += " | fall " + str.tostring(tnFallPct, "#.0") + "%"
+    msg += " | candle " + tnTf + " | turn " + str.tostring(tnCount) + " | since " + str.tostring(tnAge) + " | green " + (tnGreen ? "1" : "0")
+    if not na(dayHighGain)
+        msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
+    if not na(ahGain)
+        msg += " | ah " + (ahGain >= 0 ? "+" : "") + str.tostring(ahGain, "#") + "%"
+    msg + " | vwap " + (use30 ? "30s" : "chart") + " | tf " + timeframe.period
+if tnFire
+    alert(tnMsg(), alert.freq_once_per_bar_close)
+plot(tnRun and tnShow ? tnB : na, "TURN basis (v47)", color.fuchsia)
+plotshape(tnShow and tnFire, "TURN (v47)", shape.labelup, location.belowbar, color.fuchsia, text = "TN", textcolor = color.white, size = size.small)

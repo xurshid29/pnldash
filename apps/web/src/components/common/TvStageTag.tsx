@@ -12,6 +12,7 @@ export const TV_STAGE_STYLE: Record<TvStage, { label: string; color: string; bg:
   ema: { label: 'EMA', color: '#1f1f1f', bg: '#fa8c16' },   // v35, orange like its chart marker
   bounce: { label: 'BOUNCE', color: '#1f1f1f', bg: '#a0d911' },   // v37, lime like its chart marker
   band: { label: 'BAND', color: '#ffffff', bg: '#a8071a' },       // v40, maroon like its chart marker (the BB upper band over the VWAP)
+  turn: { label: 'TURN', color: '#ffffff', bg: '#c41d7f' },       // v47, fuchsia like its chart marker (the bounce off a basis that turned up)
 };
 
 // The VWAP + BB cross's stages: CROSS (v21) and RETEST (v28).
@@ -60,6 +61,8 @@ export function fmtTf(tf: string | null | undefined): string {
 
 // v21 CROSS / v28 RETEST: "5m/45s" — the candle's timeframe over the band's.
 export function crossTfText(s: TvSetupInfo): string | null {
+  // v47 TURN: "1m·15" — the basis's timeframe and its length
+  if (s.stage === 'turn') return s.candle_tf ? `${fmtTf(s.candle_tf)}·${s.sma_len ?? '?'}` : null;
   // v40, the band as the line: "3m/45s" — the judged candle's timeframe over the band's, like a CROSS
   if (isBandCross(s)) return s.candle_tf ? `${fmtTf(s.candle_tf)}/${fmtTf(s.bb_tf ?? null) || '?'}` : null;
   // v35 EMA cross: "3m/9" — the EMA's timeframe over its length (its v37 BOUNCE the same)
@@ -109,17 +112,18 @@ export function emaEventKey(s: TvSetupInfo): string {
 }
 
 // The number beside a stage tag: a pullback's touch, a CROSS's or an EMA cross's number today, a
-// RETEST's, a BOUNCE's. A weak EMA cross or bounce has none (the script doesn't count it).
+// RETEST's, a BOUNCE's, a TURN's. A weak EMA cross or bounce has none (the script doesn't count it).
 export function tagNumber(s: TvSetupInfo): number | null {
   if (isLineCross(s.stage)) return s.weak ? null : s.cross_n ?? null;   // the EMA's and the band's: each its own count
   if (s.stage === 'bounce') return s.weak ? null : s.bounce_n ?? null;
+  if (s.stage === 'turn') return s.turn_n ?? null;
   if (s.stage === 'cross') return s.cross_n ?? null;
   if (s.stage === 'retest') return s.retest_n ?? null;
   return s.touch ?? null;
 }
 
 // Trail arrows: → while a setup advances, · when a new one starts.
-export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, ema: 1, bounce: 2, band: 1 };
+export const TV_STAGE_RANK: Record<TvStage, number> = { pullback: 1, broken: 2, held: 2, cross: 1, retest: 2, ema: 1, bounce: 2, band: 1, turn: 1 };   // a TURN is a setup of one stage
 
 export function fmtSignedPct(p: number | null | undefined): string {
   return p == null ? '—' : `${p > 0 ? '+' : ''}${p.toFixed(1)}%`;
@@ -151,11 +155,12 @@ export function TvStageTag({ stage, dim, line, touch, tfs }: {
 
 // v28 RETEST: "retest · stop $17.09 (−1.1%)" — the stop under the pullback's low,
 // against the RETEST price. v37 BOUNCE: "bounce · stop $0.0985 (−3.5%)", under the pullback's low.
+// v47 TURN: "turn · stop $0.0206 (−3.3%)", the same.
 export function retestStopText(s: TvSetupInfo, price: number | null | undefined): string | null {
   if (s.stop == null) return null;
   const px = (p: number) => `$${p < 1 ? p.toFixed(4) : p.toFixed(2)}`;
   const pct = price != null && price > 0 ? ` (${fmtSignedPct((s.stop / price - 1) * 100).replace('-', '−')})` : '';
-  return `${s.stage === 'bounce' ? 'bounce' : 'retest'} · stop ${px(s.stop)}${pct}`;
+  return `${s.stage === 'bounce' ? 'bounce' : s.stage === 'turn' ? 'turn' : 'retest'} · stop ${px(s.stop)}${pct}`;
 }
 
 // v37 BOUNCE: the stop, where price sat against its line, the EMA, what the pullback came down to,
@@ -170,10 +175,29 @@ export function bounceText(s: TvSetupInfo, price?: number | null): string {
   return parts.filter((p): p is string => p != null).join(' · ');
 }
 
+// v47 TURN: "turn · stop $0.0206 (−3.3%) · fall −12.3% · basis 15 $0.0207 (+2.9%) · 3 candles
+// after the break · MACD green · at the 1m close · +0.9% vs sVWAP" — the stop, how far the basis
+// fell before it turned, the basis and the price against it, how long after the close above it,
+// then the VWAP lines (a TURN has no line of its own: session, then month).
+export function turnText(s: TvSetupInfo, price?: number | null): string {
+  const parts: Array<string | null> = [retestStopText(s, price)];
+  if (s.fall_pct != null) parts.push(`fall −${Math.abs(s.fall_pct).toFixed(1)}%`);
+  if (s.sma != null) {
+    const vs = s.sma_pct != null ? ` (${fmtSignedPct(s.sma_pct).replace('-', '−')})` : '';
+    parts.push(`basis ${s.sma_len ?? '?'} $${s.sma < 1 ? s.sma.toFixed(4) : s.sma.toFixed(2)}${vs}`);
+  }
+  if (s.since_n != null) parts.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the break`);
+  if (s.macd_green != null) parts.push(s.macd_green ? 'MACD green' : 'MACD not green');
+  if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close`);
+  parts.push(lineDistanceText(s, 'session'), lineDistanceText(s, 'month'));
+  return parts.filter((p): p is string => p != null).join(' · ');
+}
+
 // Where price sat at the signal. PULLBACK setup: "+0.7% vs sVWAP · +51.2% vs mVWAP ·
 // ran +17%", its own line first.
 export function tvLevelsText(s: TvSetupInfo, price?: number | null): string {
   if (s.stage === 'bounce') return bounceText(s, price);
+  if (s.stage === 'turn') return turnText(s, price);
   // v35 EMA cross: "+1.0% vs sVWAP · EMA 9 $8.03 · at the 3m close · 12 candles under · 1 flip" (v36: the filter's readings)
   if (isLineCross(s.stage)) {   // …and the band's cross, with its line in the EMA's place
     const parts = lineTokens(s.stage, s.line).map((t) => lineDistanceText(s, t));

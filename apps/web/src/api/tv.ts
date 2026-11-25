@@ -18,8 +18,8 @@ export interface TvAlertSettings {
   announced: TvStage[];
   stages: TvStage[];     // every stage, in menu order
   defaults: TvStage[];
-  // 2026-11-15, the menu's rule: an EMA cross, a band cross or a BOUNCE announces on Momentum
-  // names only (true, the default) — false also lets a +30% day high announce off the list.
+  // 2026-11-15, the menu's rule: an EMA cross, a band cross, a BOUNCE or (v47) a TURN announces on
+  // Momentum names only (true, the default) — false also lets a +30% day high announce off the list.
   ema_momo_only: boolean;
 }
 

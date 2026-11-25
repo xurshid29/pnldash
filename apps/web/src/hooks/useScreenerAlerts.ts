@@ -198,7 +198,7 @@ function fmtAlertPrice(p: number | null): string {
 
 const TV_STAGE_TITLE: Record<TvStage, string> = {
   pullback: 'PULLBACK', broken: 'BROKEN', held: 'HELD', cross: 'CROSS', retest: 'RETEST', ema: 'EMA',
-  bounce: 'BOUNCE', band: 'BAND',
+  bounce: 'BOUNCE', band: 'BAND', turn: 'TURN',
 };
 // "5" → "5m", "60" → "1h", "30S" → "30s"
 function shortTf(tf: string | null | undefined): string {
@@ -240,6 +240,11 @@ export function opportunityTitle(a: OpportunityAlert): string {
       return `${s.on_screen ? '⭐ ' : ''}📐 BOUNCE ${a.ticker} — bounced off ${off} after the ${shortTf(s.candle_tf)} EMA ${s.ema_len ?? '?'} cross`
         + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.bounce_n != null ? ` · #${s.bounce_n}` : ''}`;
     }
+    // v47: "📐 TURN NIVF — bounced off the 1m basis 15 after it turned up · stop $0.0206 · #1"
+    if (s.stage === 'turn') {
+      return `${s.on_screen ? '⭐ ' : ''}📐 TURN ${a.ticker} — bounced off the ${shortTf(s.candle_tf)} basis ${s.sma_len ?? '?'} after it turned up`
+        + `${s.stop != null ? ` · stop ${fmtAlertPrice(s.stop)}` : ''}${s.turn_n != null ? ` · #${s.turn_n}` : ''}`;
+    }
     // PULLBACK / BROKEN / HELD (the reclaim setup's stages went with script v27)
     const tokens = lineTokens(s.stage, s.line);
     const lineName = tokens.length > 0 ? `${tokens.join(' + ')} VWAP` : 'VWAP';
@@ -258,8 +263,12 @@ export function opportunityBody(a: OpportunityAlert): string {
   if (a.kinds.includes('tv_setup') && a.setup) {
     const s = a.setup;
     const bits = [fmtAlertPrice(a.price)];
-    if (s.stage === 'bounce' && s.stop != null && a.price != null && a.price > 0) bits.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the pullback's low`);
+    if ((s.stage === 'bounce' || s.stage === 'turn') && s.stop != null && a.price != null && a.price > 0) bits.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the pullback's low`);
     if (s.stage === 'bounce' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the cross`);
+    // v47 TURN: how far the basis fell before it turned, the basis, how long after the close above it
+    if (s.stage === 'turn' && s.fall_pct != null) bits.push(`fall ${fmtSignedPct(-Math.abs(s.fall_pct))}`);
+    if (s.stage === 'turn' && s.sma != null) bits.push(`basis ${fmtAlertPrice(s.sma)}`);
+    if (s.stage === 'turn' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the break`);
     if ((s.stage === 'ema' || s.stage === 'bounce') && s.ema != null) bits.push(`EMA ${fmtAlertPrice(s.ema)}`);
     if (s.svwap != null) bits.push(`sVWAP ${fmtAlertPrice(s.svwap)}`);
     if (s.upper != null) bits.push(`${shortTf(s.bb_tf)} BB upper ${fmtAlertPrice(s.upper)}`);
@@ -361,8 +370,8 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
       const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
         && a.setup?.on_screen === true);
       try {
-        // (a v35 EMA cross, its v37 BOUNCE and a v40 BAND cross sound like a CROSS)
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce') || tvStage('band')) crossConfirmPing();
+        // (a v35 EMA cross, its v37 BOUNCE, a v40 BAND cross and a v47 TURN sound like a CROSS)
+        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce') || tvStage('band') || tvStage('turn')) crossConfirmPing();
         else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
         else if (tvStage('pullback')) setupReadyPing();
         else if (audible.some((a) => a.kinds.includes('news'))) chime();

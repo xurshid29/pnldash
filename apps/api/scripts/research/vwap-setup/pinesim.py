@@ -2,6 +2,10 @@
 fields) in simulate() for one line and (v11) simulate_lines() for the month + year lines, the
 PULLBACK setup (script v10) in PullbackLine / simulate_pullback(), the BB breakout (v17–v20) in
 simulate_breakout() / simulate_breakout_1m(), and the VWAP + BB cross (v21) in simulate_vb_cross().
+Further down, each with the rule stated a second time, independently, and a self-test that holds
+the two against each other: the RSI cross with its DIP, LIFT and MACD (v32–v39) in simulate_rsi(),
+the EMA / band / basis cross over VWAP with its BOUNCE (v35–v42) in simulate_ema(), and TURN, the
+bounce off a basis that fell and turned up (v47), in simulate_turn() / turn_rule_direct().
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -2167,5 +2171,372 @@ def selftest_ema():
     return ok and first_of_day == 0 and ok5 and ok6 and ok7 and ok8 and ok9
 
 
+# ── TURN: the bounce off a basis that has turned up (script v47, its section 8) ─
+# On the candles of the basis's own timeframe (the script runs it only on a chart of that timeframe:
+# no request and no sampling, so the bars given here are the candles):
+#   break    a close above the basis (the SMA of the last `len` closes) after a close at or under it
+#   touch    on a later candle, within `wait`, the low comes down to the basis (within `tol` % above it)
+#   bounce   that candle or a later one (still within `wait`) closes green and above the basis, the
+#            basis above its value a candle before and (`macd_on`) the MACD's histogram above zero.
+#            A close under the basis first ends the wait; one bounce per break
+#   TURN     a bounce after the basis fell: its lowest value in the 31 candles to the bounce is no older
+#            than `low_bars` candles and at least `fall_min` % under its highest value in the 46 candles
+#            up to that low (`fall_min` 0 = no fall needed). A bounce without that fall uses up its break
+# The gainer filter and the alert window are the caller's (gainer_of / in_window_of, default: always).
+# Taken from TradingView's built-ins, not from the script's text — where to look first if a chart
+# disagrees with this file:
+#   ta.ema        seeded with the SMA of its first `length` values, na before (ema_series)
+#   ta.macd       the signal line is the ta.ema of the MACD line from that line's first value on
+#   ta.lowest / ta.highest / ta.lowestbars    na until the window is full of non-na values (_ta_window)
+#   ta.lowestbars on equal lowest values      the most recent one (_lowestbars_tie)
+#   a comparison with na is false (the histogram before it exists is not green)
+#   timeframe.change("D")                     a bar whose calendar day, in the bars' own times, is not the bar before's
+TURN_DEFAULTS = dict(len=15, fall_min=10.0, low_bars=15, tol=1.0, wait=10, macd_on=True, fast=12, slow=26, sig=9)
+TURN_LOW_WIN, TURN_PEAK_WIN = 31, 46   # the script's literals: ta.lowestbars / ta.lowest(tnB, 31), ta.highest(tnB, 46)
+
+
+def sma_series(vals, n):
+    """TradingView's ta.sma per value: the mean of the last n; None until n exist."""
+    return [sum(vals[i + 1 - n:i + 1]) / n if i + 1 >= n else None for i in range(len(vals))]
+
+
+def macd_hist_series(closes, fast, slow, sig):
+    """ta.macd's histogram per close: the MACD line (ta.ema fast − ta.ema slow) less its signal line,
+    the ta.ema of the line's own values from its first one; None until the signal line exists."""
+    ef, es = ema_series(closes, fast), ema_series(closes, slow)
+    line = [None if a is None or b is None else a - b for a, b in zip(ef, es)]
+    first = next((i for i, v in enumerate(line) if v is not None), len(line))
+    signal = [None] * first + ema_series(line[first:], sig)
+    return [None if s is None else m - s for m, s in zip(line, signal)]
+
+
+def _lowestbars_tie(agos):
+    """ta.lowestbars' tie rule, stated in this one place: when the window's lowest value stands on
+    several bars, which of them (given as bars ago) the built-in reports. ASSUMED the most recent,
+    the smallest bars-ago; TradingView's reference doesn't say. `max` would be the other rule (the
+    oldest). simulate_turn and turn_rule_direct both take the tie from here."""
+    return min(agos)
+
+
+def _ta_window(vals, i, n):
+    """The n values to bar i as ta.lowest / ta.highest / ta.lowestbars see them, or None while one is
+    missing (ASSUMED: those built-ins are na until the window is full of non-na values)."""
+    if i + 1 < n:
+        return None
+    w = vals[i + 1 - n:i + 1]
+    return None if None in w else w
+
+
+def lowest_ago(vals, i, n):
+    """The script's −ta.lowestbars(vals, n) at bar i: how many bars ago the lowest of the n values to
+    bar i stands (0 = on bar i itself); None while ta.lowestbars is na."""
+    w = _ta_window(vals, i, n)
+    if w is None:
+        return None
+    low = min(w)
+    return _lowestbars_tie([n - 1 - k for k, v in enumerate(w) if v == low])
+
+
+def simulate_turn(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
+    """The script's TURN section (v47), statement for statement, on the bars of the setup's own
+    timeframe (dicts with 't', 'o', 'h', 'l', 'c'; the script's tnRun is taken as true).
+    `tick` = syminfo.mintick; gainer_of(bar) / in_window_of(bar) → bool stand for the script's
+    `(not tnGainOn or gainer)` and `inWindow` (default: always true).
+    → the TURNs: [{'t', 'close', 'stop', 'basis', 'fall_pct' (None when the script sends no `fall`),
+    'turn_n', 'since', 'green'}], the message's fields."""
+    p = dict(TURN_DEFAULTS, **(p or {}))
+    closes = [b['c'] for b in bars]
+    basis = sma_series(closes, p['len'])                                    # tnB
+    hist = macd_hist_series(closes, p['fast'], p['slow'], p['sig'])         # tnHist
+    high46 = []                                                             # tnHigh46, per bar
+    for i in range(len(bars)):
+        w = _ta_window(basis, i, TURN_PEAK_WIN)
+        high46.append(None if w is None else max(w))
+    waiting, break_bar, pb_low, touched, count = False, None, None, False, 0   # the script's `var`s
+    out, prev_day = [], None
+    for i, b in enumerate(bars):
+        o, low, c, tb = b['o'], b['l'], b['c'], basis[i]
+        green = hist[i] is not None and hist[i] > 0                         # tnGreen
+        low_ago = lowest_ago(basis, i, TURN_LOW_WIN)                        # tnLowAgo
+        w = _ta_window(basis, i, TURN_LOW_WIN)
+        low_val = None if w is None else min(w)                             # tnLowVal
+        peak = high46[i - low_ago] if low_ago is not None else None         # tnPeak = tnHigh46[tnLowAgo]
+        fall_pct = (1 - low_val / peak) * 100 if peak is not None and peak > 0 else None
+        fell = p['fall_min'] <= 0 or (fall_pct is not None and low_ago <= p['low_bars'] and fall_pct >= p['fall_min'])
+        gainer = True if gainer_of is None else bool(gainer_of(b))
+        in_window = True if in_window_of is None else bool(in_window_of(b))
+        new_day = prev_day is not None and b['t'].date() != prev_day        # newDay
+        prev_day = b['t'].date()
+        if new_day:
+            count = 0
+            waiting = False
+        fire, stop, age = False, None, None
+        if tb is not None and i >= 1 and basis[i - 1] is not None:
+            rising = tb > basis[i - 1]
+            if waiting:
+                if c < tb:
+                    waiting = False
+                else:
+                    pb_low = min(pb_low, low)
+                    if low <= tb * (1 + p['tol'] / 100):
+                        touched = True
+                    if touched and c > o and c > tb and rising and (not p['macd_on'] or green):
+                        # the bounce: it uses up the break, whether or not the fall and the filters let it send
+                        waiting = False
+                        if fell and in_window and gainer:
+                            fire = True
+                            stop = pb_low - tick
+                            age = i - break_bar
+                            count += 1
+                    elif i - break_bar >= p['wait']:
+                        waiting = False
+            if not waiting and not fire and c > tb and closes[i - 1] <= basis[i - 1]:
+                waiting, break_bar, pb_low, touched = True, i, c, False
+        if fire:
+            out.append({'t': b['t'], 'close': c, 'stop': stop, 'basis': tb, 'fall_pct': fall_pct,
+                        'turn_n': count, 'since': age, 'green': green})
+    return out
+
+
+def turn_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
+    """The TURN rule from its definitions, with none of the script's variables: the basis, the MACD
+    and the fall are worked out again here, and each candle is judged by looking back from it.
+      a crossing   a close above the basis, the close before at or under its own basis
+      its wait     the candles after it, up to and including the first that closes under the basis,
+                   is a bounce, or is the `wait`-th; a new day's first candle ends it and is not in it
+      a bounce     a green close above a basis that is above its value a candle before, the MACD's
+                   histogram above zero (`macd_on`), a low at or under basis × (1 + `tol` %) on that
+                   candle or an earlier one of the wait
+      a break      a crossing on a candle that no earlier break's wait runs past and that is no TURN
+      a TURN       the bounce that ends a break's wait, when the basis fell (below), in the window,
+                   on a gainer
+    → the same list as simulate_turn."""
+    p = dict(TURN_DEFAULTS, **(p or {}))
+    n, length, wait = len(bars), p['len'], p['wait']
+    o, lows, c = [b['o'] for b in bars], [b['l'] for b in bars], [b['c'] for b in bars]
+    day = [b['t'].date() for b in bars]
+    gain = [True if gainer_of is None else bool(gainer_of(b)) for b in bars]
+    inw = [True if in_window_of is None else bool(in_window_of(b)) for b in bars]
+    first = length - 1                                         # the first candle with a basis
+    basis = [sum(c[i + 1 - length:i + 1]) / length if i >= first else None for i in range(n)]
+
+    def ema(vals, m):
+        """Of a list with no gaps: the mean of the first m, then each value weighted 2 / (m + 1)."""
+        got, a = [], 2.0 / (m + 1)
+        for i, v in enumerate(vals):
+            got.append(None if i + 1 < m else sum(vals[:m]) / m if i + 1 == m else a * v + (1 - a) * got[-1])
+        return got
+
+    both = max(p['fast'], p['slow']) - 1                       # the first candle with both EMAs
+    fast_e, slow_e = ema(c, p['fast']), ema(c, p['slow'])
+    line = [fast_e[i] - slow_e[i] for i in range(both, n)]     # the MACD line, from its first candle
+    signal = ema(line, p['sig'])
+    green = [i >= both and signal[i - both] is not None and line[i - both] - signal[i - both] > 0 for i in range(n)]
+
+    def crossing(k):
+        return k > first and c[k] > basis[k] and c[k - 1] <= basis[k - 1]
+
+    ends = {}
+
+    def wait_end(k):
+        """The wait after a crossing at k → (the candle that ends it, why)."""
+        if k not in ends:
+            ends[k] = (n, 'tape')
+            for j in range(k + 1, n):
+                if day[j] != day[k]:
+                    ends[k] = (j, 'day')
+                elif c[j] < basis[j]:
+                    ends[k] = (j, 'under')
+                elif (c[j] > o[j] and c[j] > basis[j] and basis[j] > basis[j - 1] and (green[j] or not p['macd_on'])
+                      and any(lows[m] <= basis[m] * (1 + p['tol'] / 100) for m in range(k + 1, j + 1))):
+                    ends[k] = (j, 'bounce')
+                elif j - k >= wait:
+                    ends[k] = (j, 'last')
+                else:
+                    continue
+                break
+        return ends[k]
+
+    def fall(j):
+        """→ (candles since the basis's lowest value in the 31 candles to j, how far in % that is under
+        its highest value in the 46 candles to that low); None where the candles before don't reach."""
+        if j - (TURN_LOW_WIN - 1) < first:
+            return None, None
+        span = range(j - (TURN_LOW_WIN - 1), j + 1)
+        low = min(basis[m] for m in span)
+        ago = _lowestbars_tie([j - m for m in span if basis[m] == low])
+        at = j - ago
+        if at - (TURN_PEAK_WIN - 1) < first:
+            return ago, None
+        peak = max(basis[m] for m in range(at - (TURN_PEAK_WIN - 1), at + 1))
+        return ago, (1 - low / peak) * 100 if peak > 0 else None
+
+    out, is_break = [], [False] * n
+    for j in range(n):
+        before = range(max(0, j - wait), j)                    # a wait is at most `wait` candles long
+        turn = False
+        k = next((k for k in before if is_break[k] and wait_end(k) == (j, 'bounce')), None)
+        if k is not None:
+            ago, pct = fall(j)
+            fell = p['fall_min'] <= 0 or (pct is not None and ago <= p['low_bars'] and pct >= p['fall_min'])
+            turn = fell and inw[j] and gain[j]
+        if turn:
+            out.append({'t': bars[j]['t'], 'close': c[j], 'stop': min([c[k]] + lows[k + 1:j + 1]) - tick,
+                        'basis': basis[j], 'fall_pct': pct, 'turn_n': 1 + sum(1 for x in out if x['t'].date() == day[j]),
+                        'since': j - k, 'green': green[j]})
+        is_break[j] = crossing(j) and not turn and not any(is_break[k] and wait_end(k)[0] > j for k in before)
+    return out
+
+
+def _turn_tape(seed, days, day_bars, grid=None, gap=True):
+    """A generated 1m tape for selftest_turn: quiet stretches, chop, slow slides, and fast drops with
+    a base and a recovery after them, so breaks, touches and bounces come with and without a fall.
+    `grid`: every price is a multiple of it (1/64: sums of closes are exact, so the basis can stand
+    on one value for several candles and a close can sit exactly on the basis; a base is then often
+    perfectly flat). `gap`: each day opens somewhere else; off, the days run on into each other."""
+    import datetime as dt, math, random
+    rnd = random.Random(seed)
+    t0 = dt.datetime(2026, 11, 2, 4, 0, tzinfo=ET)
+    snap = (lambda x: max(grid, round(x / grid) * grid)) if grid else (lambda x: x)
+    bars, px, phase, left, drift, vol, fell = [], snap(4.0), 'quiet', 0, 0.0, 0.0, -0.2
+    for day in range(days):
+        if gap:
+            px = snap(rnd.uniform(3.0, 6.0))
+        for m in range(day_bars):
+            while left == 0:
+                phase = ('base' if phase == 'drop' else 'rise' if phase == 'base'
+                         else rnd.choice(['quiet', 'chop', 'chop', 'drop', 'drop', 'drop', 'slide']))
+                if px < 1.5 and phase in ('drop', 'slide'):
+                    phase = 'rise'
+                if phase == 'quiet':
+                    left, drift, vol = rnd.randrange(5, 20), 0.0, 0.003
+                elif phase == 'chop':
+                    left, drift, vol = rnd.randrange(15, 45), rnd.uniform(-0.001, 0.002), 0.012
+                elif phase == 'slide':
+                    left = rnd.randrange(30, 60)
+                    drift, vol = math.log(1 - rnd.uniform(0.05, 0.2)) / left, 0.008
+                elif phase == 'drop':
+                    left = rnd.randrange(6, 22)
+                    fell = math.log(1 - rnd.uniform(0.08, 0.35))
+                    drift, vol = fell / left, 0.006
+                elif phase == 'base':
+                    left, drift = rnd.randrange(0, 22), 0.0
+                    vol = 0.0 if grid and rnd.random() < 0.6 else 0.004
+                else:                                       # the recovery: some or all of the drop back
+                    left = rnd.randrange(12, 40)
+                    drift, vol = -fell * rnd.uniform(0.3, 1.2) / left, rnd.choice([0.006, 0.010, 0.014])
+            left -= 1
+            o = snap(px * math.exp(rnd.gauss(0, vol * 0.3)))   # a candle can open off the close before
+            c = snap(px * math.exp(drift + rnd.gauss(0, vol)))
+            h = max(o, c, snap(max(o, c) * (1 + abs(rnd.gauss(0, vol * 0.6)))))
+            low = min(o, c, snap(min(o, c) * (1 - abs(rnd.gauss(0, vol * 0.8)))))
+            bars.append({'t': t0 + dt.timedelta(days=day, minutes=m), 'o': o, 'h': h, 'l': low, 'c': c})
+            px = c
+    return bars
+
+
+def selftest_turn():
+    """TURN (v47): the script's state machine (simulate_turn) against the rule from its definitions
+    (turn_rule_direct) — the same TURNs, field for field — on generated tapes: two-day tapes of
+    continuous prices and of prices on a 1/64 grid (exact ties: the basis's low on several candles, a
+    close on the basis), tapes cut into many short days (a new day ends a wait), and short tapes (the
+    warm-up of the basis, the MACD and the 31 / 46-candle windows), under the script's defaults and
+    with each dial moved."""
+    import datetime as dt
+    global _lowestbars_tie
+    g = 1 / 64
+    tapes = ([('two days', None, _turn_tape(s, 2, 700)) for s in (1, 2, 3, 4)]                 # (kind, its grid, bars)
+             + [('two days', g, _turn_tape(s, 2, 700, g)) for s in (11, 12, 13, 14)]
+             + [('short days', None, _turn_tape(21, 120, 20, gap=False)), ('short days', g, _turn_tape(22, 120, 20, g, gap=False))]
+             + [('short', None, _turn_tape(40 + s, 1, 60 + 3 * s)) for s in range(0, 30, 2)]
+             + [('short', g, _turn_tape(40 + s, 1, 60 + 3 * s, g)) for s in range(1, 30, 2)])
+    cases = [('the defaults', {}), ('MACD off', dict(macd_on=False)), ('no fall needed', dict(fall_min=0)),
+             ('a 5% fall', dict(fall_min=5.0)), ('the low within 5', dict(low_bars=5)),
+             ('len 10', dict(len=10)), ('len 20', dict(len=20)), ('wait 3', dict(wait=3)),
+             ('wait 25 + the low within 30', dict(wait=25, low_bars=30)), ('tol 0', dict(tol=0.0)), ('tol 3', dict(tol=3.0)),
+             ('MACD 5 13 4', dict(fast=5, slow=13, sig=4)),
+             ('MACD 26 12 9 (upside down) + no fall', dict(fall_min=0, fast=26, slow=12)),
+             ('len 5 + wait 30 + MACD off + no fall', dict(fall_min=0, macd_on=False, len=5, wait=30)),
+             ('len 2 + wait 1 + tol 0 + no fall', dict(fall_min=0, len=2, wait=1, tol=0.0))]
+    same, got = True, {}
+    for label, q in cases:
+        got[label] = []
+        for _, _, bars in tapes:
+            a = simulate_turn(bars, q)
+            same = same and a == turn_rule_direct(bars, q)
+            got[label].append(a)
+    base = got['the defaults']
+    count = {label: sum(len(a) for a in runs) for label, runs in got.items()}
+    total = sum(count.values())
+    moved_dial = all(count[label] > 0 and (label == 'the defaults' or runs != base) for label, runs in got.items())
+    # the day's number: 1, 2, … on each day of each tape; TURNs on both days of a two-day tape
+    numbered, second, twice = True, 0, 0
+    for runs in got.values():
+        for (kind, _, bars), a in zip(tapes, runs):
+            by_day = {}
+            for x in a:
+                by_day.setdefault(x['t'].date(), []).append(x['turn_n'])
+            numbered = numbered and all(ns == list(range(1, len(ns) + 1)) for ns in by_day.values())
+            twice += sum(1 for ns in by_day.values() if len(ns) > 1)
+            if kind == 'two days':
+                second += sum(1 for x in a if x['t'].date() != bars[0]['t'].date())
+    # a gainer filter and an alert window, applied where the script applies them: a bounce they stop
+    # still uses up its break, and (the third setting: a 2-close basis, where a close often sits on
+    # it) its candle can be the next break
+    cb = dict(gainer_of=lambda b: b['t'].minute % 3 != 0, in_window_of=lambda b: b['t'].minute % 7 != 0)
+    n_cb = n_open = 0
+    for q in ({}, dict(fall_min=0), dict(fall_min=0, macd_on=False, len=2, wait=3)):
+        for _, _, bars in tapes:
+            a = simulate_turn(bars, q, **cb)
+            same = same and a == turn_rule_direct(bars, q, **cb)
+            n_cb += len(a)
+            n_open += len(simulate_turn(bars, q))
+    # a new day ends a wait: the short-day tapes against the same candles all on one day
+    cut = 0
+    for kind, _, bars in tapes:
+        if kind != 'short days':
+            continue
+        one_day = [dict(b, t=bars[0]['t'] + dt.timedelta(seconds=i)) for i, b in enumerate(bars)]
+        for q in ({}, dict(fall_min=0)):
+            dated, undated = simulate_turn(bars, q), simulate_turn(one_day, q)
+            same = same and undated == turn_rule_direct(one_day, q)
+            at = {b['t']: i for i, b in enumerate(bars)}
+            kept = {(at[x['t']], x['since'], x['stop']) for x in dated}
+            cut += sum(1 for x in undated if ((x['t'] - bars[0]['t']).seconds, x['since'], x['stop']) not in kept)
+    # the warm-up: TURNs sent with no `fall` (the 46 candles to the low not there yet; fall_min 0 only)
+    early = sum(1 for label, runs in got.items() for a in runs for x in a if x['fall_pct'] is None)
+    early_ok = early > 0 and all(x['fall_pct'] is not None for label, q in cases if q.get('fall_min', 10.0) > 0
+                                 for a in got[label] for x in a)
+    # ties: closes exactly on the basis, and the basis's low standing on several candles — under the
+    # other tie rule (the oldest) the two still agree, and the grid tapes' TURNs change; the others' don't
+    on_basis = sum(1 for _, grid, bars in tapes if grid
+                   for b, v in zip(bars, sma_series([x['c'] for x in bars], TURN_DEFAULTS['len'])) if v is not None and b['c'] == v)
+    tie_runs = tie_moved = plain_moved = 0
+    keep, _lowestbars_tie = _lowestbars_tie, max
+    try:
+        for label, q in cases[:6]:
+            for (_, grid, bars), recent in zip(tapes, got[label]):
+                a = simulate_turn(bars, q)
+                same = same and a == turn_rule_direct(bars, q)
+                if grid:
+                    tie_runs += 1
+                    tie_moved += a != recent
+                else:
+                    plain_moved += a != recent
+    finally:
+        _lowestbars_tie = keep
+    ok = (same and count['the defaults'] >= 100 and total >= 1000 and moved_dial and numbered and second > 0 and twice > 0
+          and 0 < n_cb < n_open and cut > 0 and early_ok and on_basis > 0 and tie_moved > 0 and plain_moved == 0)
+    shown = ', '.join(f'{label} {n}' for label, n in count.items())
+    print(f"TURN (v47), the bounce off a basis that fell and turned up: {total} TURNs on {len(tapes)} generated tapes "
+          f"× {len(cases)} settings ({shown}); the script's state machine and the rule from its definitions give the same ones, "
+          f"field for field; so do they with a gainer filter and a window ({n_cb} TURNs, {n_open} without them), and before the 46-candle "
+          f"window is full ({early} sent with no fall); numbered 1, 2, … per day ({second} on a tape's second day; {cut} gone where a new day "
+          f"cut the wait); ties on the grid tapes ({on_basis} closes exactly on the basis): the oldest-low rule would change {tie_moved} of "
+          f"{tie_runs} of their runs and none of the other tapes'", '→', 'OK' if ok else 'UNEXPECTED')
+    return ok
+
+
 if __name__ == '__main__':
-    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb() & selftest_rsi() & selftest_ema()) else 1)
+    raise SystemExit(0 if (selftest() & selftest_pullback() & selftest_breakout() & selftest_vb() & selftest_rsi() & selftest_ema()
+                           & selftest_turn()) else 1)

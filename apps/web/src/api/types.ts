@@ -343,8 +343,11 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // BAND (script v40): the EMA cross's rule with the BB upper band as the line over the VWAP. A stage
 // of its own since 2026-11-16, with a ⚙ switch (the server reads a row stored as `ema` on
 // 11-15 / 11-16 as `band` by its fields).
-export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band';
-export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'ema', 'bounce', 'band'];
+// TURN (script v47): a setup of its own, from the 1m alert. On the candles of a basis line (the
+// average of the last 15 closes of 1m candles), after the basis fell and turned up: a close above
+// it, a low back at it, then a green close above it — the bounce. Its own ⚙ switch.
+export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band' | 'turn';
+export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'ema', 'bounce', 'band', 'turn'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
 export function stageSwitch(stage: TvStage): TvStage {
   return stage === 'bounce' ? 'ema' : stage;
@@ -408,6 +411,14 @@ export interface TvSetupInfo {
   bounce_n?: number | null;   // the day's bounces on the line
   since_n?: number | null;
   bounce_from?: 'ema' | 'vwap' | 'ema+vwap' | null;   // what the pullback came down to
+  // TURN (script v47): candle_tf = the basis's timeframe, stop = a tick under the pullback's low,
+  // since_n = candles after the close above the basis
+  sma_len?: number | null;    // the basis's length (15: the closes it averages)
+  sma?: number | null;        // the basis at the bounce
+  sma_pct?: number | null;    // price vs the basis, %
+  fall_pct?: number | null;   // how far the basis fell before it turned, %
+  turn_n?: number | null;     // the day's TURNs on the ticker, this one included
+  macd_green?: boolean | null;   // the MACD was above its signal line at the bounce
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

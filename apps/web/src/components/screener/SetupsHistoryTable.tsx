@@ -37,7 +37,7 @@ interface SetupEvent {
   outcome: { stage: 'broken' | 'held'; at: number } | null;
 }
 
-type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'retest' | 'ema' | 'band';
+type StageFilter = 'on' | 'all' | 'pullback' | 'cross' | 'retest' | 'ema' | 'band' | 'turn';
 
 function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   const sorted = alerts
@@ -49,7 +49,8 @@ function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
   for (const { a, at } of sorted) {
     const s = a.setup!;
     // A v21 CROSS / v28 RETEST comes from one alert: only a copy of the same one merges, not the next.
-    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : isLineCross(s.stage) || s.stage === 'bounce' ? `|${emaEventKey(s)}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : ''}`;
+    // (A v47 TURN the same: its day's number tells one from the next.)
+    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : isLineCross(s.stage) || s.stage === 'bounce' ? `|${emaEventKey(s)}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'turn' ? `|${s.candle_tf ?? ''}|${s.turn_n ?? ''}` : ''}`;
     const prev = last.get(k);
     if (prev && at - prev.at <= MERGE_MS) {
       if (s.tf && !prev.tfs.includes(s.tf)) prev.tfs.push(s.tf);
@@ -108,6 +109,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       if (stageFilter === 'retest' && st !== 'retest') return false;
       if (stageFilter === 'ema' && stageSwitch(st) !== 'ema') return false;   // the EMA cross and its BOUNCE
       if (stageFilter === 'band' && st !== 'band') return false;             // the BB upper band over the VWAP
+      if (stageFilter === 'turn' && st !== 'turn') return false;             // the bounce off a basis that turned up
       return !momentumOnly || e.setup.on_screen;
     });
   }, [events, settings, stageFilter, momentumOnly]);
@@ -123,6 +125,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const weakBounces = visible.filter((e) => e.setup.stage === 'bounce' && isWeakEma(e.setup)).length;
   const bands = visible.filter((e) => e.setup.stage === 'band').length;
   const weakBands = visible.filter((e) => e.setup.stage === 'band' && isWeakEma(e.setup)).length;
+  const turns = visible.filter((e) => e.setup.stage === 'turn').length;
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -198,6 +201,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
             { label: 'RETEST', value: 'retest' },
             { label: 'EMA + BOUNCE', value: 'ema' },
             { label: 'BAND', value: 'band' },
+            { label: 'TURN', value: 'turn' },
           ]}
         />
         <Checkbox checked={momentumOnly} onChange={(e) => setMomentumOnly(e.target.checked)}>
@@ -213,6 +217,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
               {emas > 0 && <> · {emas} EMA{weakEmas > 0 && <> ({weakEmas} weak)</>}</>}
               {bounces > 0 && <> · {bounces} BOUNCE{weakBounces > 0 && <> ({weakBounces} weak)</>}</>}
               {bands > 0 && <> · {bands} BAND{weakBands > 0 && <> ({weakBands} weak)</>}</>}
+              {turns > 0 && <> · {turns} TURN</>}
             </>
           )}
         </Text>
