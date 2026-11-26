@@ -88,6 +88,10 @@ A standalone `ShelfService` (`services/shelf.ts`) runs alongside the poller: for
 
 **Single-instance only:** the service holds cross-cycle state in memory. Don't deploy multiple replicas without moving state to Redis or DB.
 
+## Local TWS bridge (`tools/tws-bridge`, 2026-11-26)
+
+Not part of the deployed service: a small Node/TypeScript program for the operator's own Mac, outside the npm workspaces (own `package.json` and lockfile; `npm install --ignore-scripts`, `npm start`, `npm test` in that folder). It connects to the TWS that is already running there (TWS's socket API, port 7497 paper / 7496 live) and serves a token-protected HTTP API on `127.0.0.1:8765` that the dashboard page calls from the browser: `POST /focus` (make TWS's linked windows show an alert's ticker) and `POST /order` (the operator's bracket: limit buy + take-profit + stop-limit, prices worked out by the bridge from its `config.json`), plus `/preview`, `/orders`, `/cancel`, `/halt`, `/status`. Orders never touch the pnldash server. Rails live in the bridge: paper accounts only until `paperOnly` is set to false by hand in `config.json` (there is no HTTP way), max shares / dollars / orders a day, a duplicate window, stale alerts refused, a halt switch, nothing queued or resent on reconnect. Human-clicked orders only: do not add automatic order placement, and do not place orders or change TWS settings yourself. `config.json` (the token) and `logs/` are git-ignored: never read the token into output or commit it. The dashboard side is `apps/web/src/api/twsBridge.ts` and the TWS controls in the 📐 sidebar, off until enabled in that browser. Read `tools/tws-bridge/README.md` before touching either.
+
 ## Finviz API Quick Reference
 
 **Important:** Add `-A "Mozilla/5.0"` to curl commands to avoid blocks. Add `-L` to follow the `export.ashx` → `export` redirect (Finviz silently moved this in early 2026).

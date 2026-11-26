@@ -205,6 +205,10 @@ test("a leg that cannot be sent: the legs already in TWS are taken back", async 
   ]);
   assert.deepEqual(r.world.current.callsOf("cancelOrder").map((call) => call.args), [[1000]]);
   assert.match(r.bridge.orders()[0]?.error ?? "", /sending failed/);
+  // The leg that transmits never went out, so nothing of this bracket can fill: it reads as over,
+  // not as pending for the rest of the day.
+  assert.equal(r.bridge.orders()[0]?.status, "Inactive");
+  assert.deepEqual(r.journal.ofType("order_status").map((line) => [line["order_id"], line["status"]]), [[1000, "Inactive"]]);
 });
 
 test("an order that cannot be written to the log is not sent", async (t) => {

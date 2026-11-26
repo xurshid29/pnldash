@@ -12,6 +12,12 @@ export const MAX_BODY_BYTES = 4096;
 const MAX_DISCARD_BYTES = 1024 * 1024;
 /** At most this many refused (401 / 403) requests are logged per minute; the rest are counted. */
 const MAX_REFUSALS_LOGGED_PER_MINUTE = 30;
+/**
+ * The two calls the dashboard repeats (`/status` every 5 s, `/orders` every 2 s after a click).
+ * Answered fine, they are not written to the log: they would be some 17,000 lines a day per open
+ * tab, in the file the day's orders are read back from at a start. A failed one is logged.
+ */
+const POLL_PATHS: ReadonlySet<string> = new Set(["/status", "/orders"]);
 
 const PREFLIGHT_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -190,6 +196,7 @@ export function createBridgeServer(options: ServerOptions): http.Server {
       res.writeHead(status, headers);
       res.end(text);
 
+      if (status === 200 && method === "GET" && POLL_PATHS.has(path)) return;
       const entry: JournalFields = { method, path: path.slice(0, 64), status, ms: clock() - started };
       if (origin !== undefined) entry["origin"] = origin.slice(0, 120);
       Object.assign(entry, logFields(body));

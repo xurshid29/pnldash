@@ -1,0 +1,156 @@
+import { useState } from 'react';
+import { Button, Checkbox, Divider, Input, Popover, Switch, Typography } from 'antd';
+import { BRIDGE_TONE, bridgeOrigin, tokenLooksRight, type BridgeStatus } from '../../api/twsBridge';
+import type { TwsBridge } from '../../hooks/useTwsBridge';
+
+const { Text } = Typography;
+
+// The bridge's own order settings, as /status returns them. Read-only here: they are changed in
+// tools/tws-bridge/config.json, then the bridge is restarted.
+function orderRows(s: BridgeStatus): Array<[string, string]> {
+  const o = s.order;
+  const l = s.limits;
+  const stop = o.stopPct > 0
+    ? `limit − ${o.stopPct}%${o.useAlertStop ? ", or the alert's stop when it has one" : ''} (its own limit ${o.stopLimitOffsetPct}% lower)`
+    : 'none';
+  return [
+    ['Shares', `${o.qty}`],
+    ['Limit', `${o.priceFrom === 'ask' ? "TWS's ask at the click" : "the alert's price"} + ${o.limitOffsetPct}% (no order when that is over ${o.maxChasePct}% past the alert)`],
+    ['Take-profit', o.takeProfitPct > 0 ? `limit + ${o.takeProfitPct}%` : 'none'],
+    ['Stop', stop],
+    ['Max per order', `$${l.maxNotionalUsd.toLocaleString('en-US')} · ${l.maxShares} shares`],
+    ['Orders today', `${s.today.orders} of ${l.maxOrdersPerDay} · ${s.today.filled} filled`],
+    ['Hours', o.outsideRth ? 'pre-market and after hours too' : 'regular hours only'],
+    ['TWS', `port ${s.tws.port} · ${s.tws.accounts.length > 0 ? `account ${s.tws.accounts.join(', ')}` : 'no account reported'} · display group ${s.display_group} · bridge ${s.version}`],
+  ];
+}
+
+// The panel behind the "TWS" button: the status, this browser's settings, the bridge's own order
+// settings (read-only), the halt switch and where the token is.
+export function TwsBridgePanel({ bridge }: { bridge: TwsBridge }) {
+  const { settings, status, view } = bridge;
+  // Drafts: the address and the token are saved when the field is left (or Enter), so a half-typed
+  // one is never called. A pasted token of the right form is saved at once.
+  const [url, setUrl] = useState(settings.url);
+  const [token, setToken] = useState(settings.token);
+  const [haltBusy, setHaltBusy] = useState(false);
+  const [haltError, setHaltError] = useState<string | null>(null);
+
+  const saveUrl = () => bridge.update({ url });
+  const saveToken = (v: string) => bridge.update({ token: v });
+  const onToken = (v: string) => {
+    setToken(v);
+    const t = v.trim();
+    if (t === '' || tokenLooksRight(t)) saveToken(t);
+  };
+  const flipHalt = async () => {
+    if (status == null || haltBusy) return;
+    setHaltBusy(true);
+    setHaltError(await bridge.halt(!status.halted));
+    setHaltBusy(false);
+  };
+
+  const tokenText = token.trim();
+  const label = { fontSize: 11, color: '#8c8c8c', display: 'block', marginBottom: 2 } as const;
+  return (
+    <div style={{ width: 330, fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ color: settings.enabled ? BRIDGE_TONE[view.tone] : '#8c8c8c', fontWeight: 600 }}>
+        {settings.enabled ? view.text : 'Off in this browser.'}
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+        <Switch size="small" checked={settings.enabled} onChange={(v) => bridge.update({ enabled: v })} />
+        <span>Use the TWS bridge in this browser</span>
+      </label>
+      <div>
+        <span style={label}>Token</span>
+        <Input.Password
+          size="small" value={token} autoComplete="off" spellCheck={false} placeholder="64 characters, from config.json"
+          onChange={(e) => onToken(e.target.value)} onBlur={() => saveToken(tokenText)} onPressEnter={() => saveToken(tokenText)}
+        />
+        {tokenText !== '' && !tokenLooksRight(tokenText) && (
+          <span style={{ fontSize: 11, color: BRIDGE_TONE.warn }}>
+            The bridge's token is 64 characters (0-9, a-f); this one has {tokenText.length}.
+          </span>
+        )}
+      </div>
+      <div>
+        <span style={label}>Bridge address</span>
+        <Input
+          size="small" value={url} autoComplete="off" spellCheck={false}
+          onChange={(e) => setUrl(e.target.value)} onBlur={saveUrl} onPressEnter={saveUrl}
+        />
+        {bridgeOrigin(url) == null && (
+          <span style={{ fontSize: 11, color: BRIDGE_TONE.warn }}>
+            It must be http://127.0.0.1:&lt;port&gt;: the bridge runs on this computer, and the token is sent nowhere else.
+          </span>
+        )}
+      </div>
+      <Checkbox checked={settings.follow} onChange={(e) => bridge.update({ follow: e.target.checked })}>
+        <span style={{ fontSize: 12 }}>Selecting a setup row also shows it in TWS</span>
+      </Checkbox>
+      <Checkbox checked={settings.buy} onChange={(e) => bridge.update({ buy: e.target.checked })}>
+        <span style={{ fontSize: 12 }}>Show the Buy button on alerts up to 10 minutes old</span>
+      </Checkbox>
+      {settings.enabled && status != null && (
+        <>
+          <Divider style={{ margin: '2px 0' }} />
+          <div>
+            <span style={{ fontWeight: 600 }}>The bridge's order settings</span>
+            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+              read from the bridge · change them in its config.json, then restart it
+            </Text>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '2px 10px', fontSize: 11 }}>
+            {orderRows(status).map(([name, value]) => (
+              <div key={name} style={{ display: 'contents' }}>
+                <span style={{ color: '#8c8c8c', whiteSpace: 'nowrap' }}>{name}</span>
+                <span>{value}</span>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Button size="small" danger={!status.halted} loading={haltBusy} onClick={() => { void flipHalt(); }}>
+              {status.halted ? 'Resume orders' : 'Halt orders'}
+            </Button>
+            <Text type="secondary" style={{ fontSize: 11 }}>
+              {status.halted ? 'Halted: the bridge places no orders. Showing a ticker still works.' : 'Halt = the bridge places no orders until you resume.'}
+            </Text>
+          </div>
+          {haltError && <span style={{ fontSize: 11, color: BRIDGE_TONE.danger }}>{haltError}</span>}
+        </>
+      )}
+      <Divider style={{ margin: '2px 0' }} />
+      <div style={{ fontSize: 11, color: '#8c8c8c', lineHeight: 1.5 }}>
+        <div>The token is in <code>tools/tws-bridge/config.json</code> on this computer; the file appears after the first <code>npm start</code> in that folder.</div>
+        <div>The browser asks once for permission to reach a program on this computer (Chrome's local network access prompt): allow it. Safari may block the call.</div>
+      </div>
+    </div>
+  );
+}
+
+// The sidebar header's "TWS" button: one small button for everybody, and all there is of the
+// feature until it is switched on in this browser. It opens the bridge's panel (a click, no hover).
+export function TwsBridgeButton({ bridge }: { bridge: TwsBridge }) {
+  return (
+    <Popover trigger="click" placement="bottomLeft" title="TWS bridge" content={<TwsBridgePanel bridge={bridge} />}>
+      <Button size="small" type="text" style={{ marginLeft: 'auto', padding: '0 6px', fontSize: 11, color: '#8c8c8c' }}>TWS</Button>
+    </Popover>
+  );
+}
+
+// The status line under the header, only while the feature is on: "TWS: paper · ready",
+// "TWS bridge not running (or the browser blocked the call)", "TWS: LIVE account · ready" in red.
+export function TwsBridgeLine({ bridge }: { bridge: TwsBridge }) {
+  const { settings, view } = bridge;
+  if (!settings.enabled) return null;
+  const extra = [
+    view.canFocus && !settings.follow ? 'a row click does not move TWS' : null,
+    view.canOrder && !settings.buy ? 'Buy buttons off' : null,
+  ].filter((x): x is string => x != null);
+  return (
+    <div style={{ padding: '2px 8px', borderBottom: '1px solid #262626', fontSize: 11, color: BRIDGE_TONE[view.tone], fontWeight: view.live ? 700 : 400 }}>
+      {view.text}
+      {extra.length > 0 && <span style={{ color: '#8c8c8c', fontWeight: 400 }}> · {extra.join(' · ')}</span>}
+    </div>
+  );
+}

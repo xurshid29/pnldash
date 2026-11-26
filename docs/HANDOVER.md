@@ -18,9 +18,15 @@ v31; the session log has each step since. What the script carries now:
   10× the POP is weak (gray, stored, not announced) and so is its BACK; every POP / BACK row
   carries `vol_x`. Our data could not confirm or refute it (it has no pops from stocks not yet on
   the screen): grade the rows by `vol_x` and by the hour.
-- **In progress (11-26): a local TWS bridge** (`tools/tws-bridge/`), so the dashboard can make
-  TWS's linked windows jump to an alert's ticker and place the operator's bracket order with one
-  click (paper account first). See the session log.
+- **A local TWS bridge (11-26, `tools/tws-bridge/`, its README; `CLAUDE.md` has a section):** a
+  program for the operator's Mac that lets the dashboard make TWS's linked windows jump to an
+  alert's ticker ("TWS" button, or a row click) and place their bracket order with one click
+  ("Buy"). Paper accounts only until they edit its `config.json`; orders never touch the server;
+  off in the dashboard until enabled in that browser (the "TWS" button in the 📐 sidebar's
+  header). **Built and tested against a fake TWS only: its first real run is the operator's**
+  (TWS's API was not enabled). Open: their real offsets for the bracket (the config holds
+  placeholders: limit = alert + 1%, take-profit +10%, stop −5%), and the first pass on the paper
+  login (one focus, one small order, one cancel).
 - **v48 (11-26) adds a fifth setup in two steps, POP and BACK** (stages `pop` and `back`,
   `docs/vwap-setup.md` §22): on its own basis (SMA 15 of 1m closes), POP is the first candle of a
   run above the basis by which a high has reached 10% above it, a heads-up with no entry; BACK is
@@ -351,6 +357,27 @@ the POP at 04:27 ET off a flat base ("suitable") and the one at 11:10 ET after a
   `tools/tws-bridge/` (outside the npm workspaces). TWS's API port was closed when checked: the operator has to enable
   it (Global Configuration → API → Settings).
 - **For the operator:** paste v49, Save, recreate both alerts; no Reset settings.
+- **The bridge as built** (`tools/tws-bridge/`, Node + TypeScript, `@stoqey/ib` 1.6.15 pinned, outside the npm
+  workspaces so the Docker builds don't see it; the deploy workflow's path list doesn't include `tools/`): HTTP on
+  127.0.0.1:8765 with a token from its git-ignored `config.json`; `/focus` (display group), `/order` (BUY LMT +
+  take-profit LMT + STP LMT, prices from its config, never from the page), `/preview`, `/orders`, `/cancel`, `/halt`,
+  `/status`. Rails in the bridge: paper only (no HTTP way to change), 500 shares / $1,000 / 20 orders a day, 10 s per
+  ticker, one order per alert id, alerts over 10 min refused, nothing queued across a reconnect, no orders while TWS
+  has lost IB's servers. A JSONL log per New York day with each fill against the alert's price. 145 tests on a fake
+  TWS; started once here (TWS's port closed): `/status` answers, 401 without the token.
+- **The dashboard side** (`api/twsBridge.ts`, `hooks/useTwsBridge.ts`, `components/screener/TwsBridgeControl.tsx`, the
+  📐 sidebar): a "TWS" button in the sidebar's header opens the settings (enable, token, address, "a row click moves
+  TWS", "show Buy"); when enabled a status line ("TWS: paper · ready", "TWS bridge not running", "TWS: LIVE account …");
+  a small "TWS" button on each row; a "Buy 100 @ …" button on a card whose alert is under 10 minutes old and not over
+  (no Buy on BROKEN / HELD / a broken PULLBACK; POPs have it), "Buy LIVE" in red on a live account; the result and a
+  Cancel in the card. Settings live in that browser's localStorage; other users see only the header button. Built with
+  two more subagents; checked with scripts against the bridge's own classes in memory and a rendered page, not in a
+  browser and not against TWS.
+- **For the operator (bridge):** TWS → Global Configuration → API → Settings (Enable ActiveX and Socket Clients; untick
+  Read-Only API; port 7497 on the paper login; localhost only), link the TWS windows to a colour group, `npm install
+  --ignore-scripts && npm start` in `tools/tws-bridge`, put the token from its `config.json` into the dashboard's TWS
+  settings, allow Chrome's local-network prompt. Then one focus, one small paper order, one cancel, and tell me what
+  TWS did.
 
 **2026-11-25 (Wed, ~15:30 ET; 11-26 on the operator's clock) — SCRIPT v48: A FIFTH SETUP IN TWO STEPS, POP AND BACK.** The
 operator to the two-step proposal in the entry below: "yes, lets do that". `docs/vwap-setup.md` §22.

@@ -91,35 +91,59 @@ Try it on the paper login first: one focus, one preview, one small order, one ca
 
 ## The log
 
-`logs/YYYY-MM-DD.jsonl`, one file per New York date, one JSON object per line: every request (with its result), every order with the alert's price, the computed prices and the order ids, every status change, every fill with `slip_pct` (the average fill against the alert's price), every message from TWS about an order. The token is never written. The files are not cleaned up; delete old ones when you like (today's file is what the daily count is read from at a start).
+`logs/YYYY-MM-DD.jsonl`, one file per New York date, one JSON object per line: the requests with their results, every order with the alert's price, the computed prices and the order ids, every status change, every fill with `slip_pct` (the average fill against the alert's price), every message from TWS about an order. The token is never written.
+
+Not every request is a line. The dashboard's polls (`GET /status`, `GET /orders`) are left out when they are answered; one that fails is logged. Refused calls (wrong token, wrong origin) are logged up to 30 a minute and counted beyond that.
+
+The files are not cleaned up; delete old ones when you like. Today's file is what the day's orders are read back from at a start: the daily count, the duplicate window and the one-order-per-alert rule all survive a restart through it.
 
 ## HTTP API
 
-JSON in and out. Success is `{ "data": … }`; failure is `{ "error": "…", "code": "…" }` with a 4xx / 5xx status. Every request except `OPTIONS` needs the `X-Bridge-Token` header.
+JSON in and out. Every request except `OPTIONS` needs the `X-Bridge-Token` header; a `POST` body is `Content-Type: application/json`, at most 4 KB, and holds only the fields listed (an unknown field is a 400; `null` for an optional field means "not given").
 
-| Call | Body | Answer |
+- Success: `{ "data": … }`
+- Failure: `{ "error": "the sentence to show", "code": "a_stable_name" }` with a 4xx / 5xx status. `error` is for the operator; `code` is for the page (the table below).
+
+| Call | Body | `data` |
 |---|---|---|
-| `GET /status` | – | version, TWS connection, paper / live, the switches, the order defaults, the limits, today's counts |
+| `GET /status` | – | `{ version, tws: { connected, port, paper, accounts, offline }, enabled, halted, paper_only, display_group, order, limits, today: { orders, filled } }` |
 | `POST /focus` | `{ ticker }` | `{ ticker, conid, group }` |
-| `POST /preview` | `{ ticker, alert_price, alert_stop?, qty? }` | `{ ticker, qty, limit, take_profit, stop, stop_limit, notional, checks }` |
+| `POST /preview` | the same body as `/order` | `{ ticker, qty, limit, take_profit, stop, stop_limit, notional, checks }` |
 | `POST /order` | `{ ticker, alert_price, alert_stop?, qty?, stage?, alert_at?, alert_id? }` | `{ order_id, ticker, qty, limit, take_profit, stop, stop_limit, status }` |
-| `GET /orders` | – | today's orders, newest first |
-| `POST /cancel` | `{ order_id }` | `{ order_id, status }` (a buy that has not filled; TWS cancels its exits with it) |
+| `GET /orders` | – | today's orders (New York date), newest first |
+| `POST /cancel` | `{ order_id }` | `{ order_id, status }` |
 | `POST /halt` | `{ halted }` | `{ halted }` |
 
-| Status | Codes |
-|---|---|
-| 400 | `bad_request` (a field is missing, wrong or unknown) |
-| 401 / 403 | `bad_token` / `origin_not_allowed`, `bad_host` |
-| 404 / 405 | `not_found`, `unknown_ticker`, `unknown_order` / `method_not_allowed` |
-| 409 | `disabled`, `halted`, `paper_only`, `daily_limit`, `duplicate`, `ambiguous_ticker`, `already_filled`, `already_done` |
-| 413 / 415 | `body_too_large` (4 KB) / `not_json` |
-| 422 | `stale_alert` (older than 10 min), `too_many_shares`, `too_large`, `chase`, `bad_prices` |
-| 502 | `tws_refused` (TWS said no to the order), `send_failed`, `tws_error`, `no_ask` (TWS answered the ask request with an error) |
-| 503 / 504 | `tws_down`, `tws_offline` / `tws_timeout`, `no_ask` (no ask in time) |
-| 500 | `not_saved` (halt applied but not written to `config.json`), `log_failed` (order not sent), `internal` |
+Notes on the calls:
 
-If TWS refuses one leg of a bracket before the buy has filled, the bridge cancels that bracket, so a buy is never left working without the exits you clicked for. That is the only thing it cancels on its own.
+- **`/status`**: `tws.connected` means the socket to TWS is up and TWS has finished its handshake. `tws.accounts` are masked (`DU…67`); `tws.paper` is true when every one of them starts with `D`. `tws.offline` is true while TWS is connected to the bridge but says it has lost IB's servers: orders are refused (`tws_offline`) until it is back, because TWS would hold them and send them later. `order` and `limits` are the settings from `config.json`. `today.filled` counts the orders with any fill.
+- **`/focus`** works when orders are disabled, halted or the account is live: it places nothing.
+- **`/order`**: `ticker` is upper-cased and must look like a US symbol. `alert_price` and `alert_stop` are JSON numbers above 0 and under 100000. `qty` is a whole number (default `order.qty`). `alert_at` is ISO text or epoch milliseconds / seconds; an alert older than 10 minutes is refused. `alert_id` is a string or a number and is kept as a string; `stage` is free text up to 40 characters. Both are stored with the order.
+  The answer waits up to 1 s for TWS's first word: `status` is TWS's own (`PreSubmitted`, `Submitted`, …) or `PendingSubmit` when none came in time. If TWS refuses within that second the answer is 502 `tws_refused` with TWS's text.
+- **`/preview`** runs every check `/order` would, with the same body, and sends nothing: the order that would go out, or the error `/order` would give. `checks` is a list of `{ name, detail }`, one per check passed (`switches`, `account`, `alert`, `alert_age`, `shares`, `daily`, `duplicate`, `contract`, `limit`, `take_profit`, `stop`, `notional`; `alert` and `alert_age` only when the body carries `alert_id` / `alert_at`). `take_profit`, `stop` and `stop_limit` are `null` when that leg is switched off.
+- **`/orders`**: each item is `{ order_id, ticker, conid, placed_at, asked, sent, status, filled_qty, avg_fill_price, slip_pct, legs, error, note }`. `asked` is what the page sent (`alert_price`, `alert_stop`, `qty`, `stage`, `alert_at`, `alert_id`); `sent` is what went to TWS (`qty`, `limit`, `take_profit`, `stop`, `stop_limit`, `price_from`, `stop_from`, `outside_rth`, `order_ids`). `status`, `filled_qty` and `avg_fill_price` are the buy's; `legs.take_profit` and `legs.stop` carry the exits' own. `error` is the last message from TWS that stopped the order or a leg; `note` the last warning. A buy that never reached TWS, or that TWS says it does not have, reads `Inactive`.
+- **`/cancel`** takes the `order_id` of a buy from `/orders` that has not filled; TWS cancels its exits with it. A filled buy is refused (`already_filled`): its take-profit and stop stay in TWS.
+- **`/halt`** is the off switch, saved to `config.json`. `paperOnly` and `enabled` cannot be changed over HTTP.
+
+One order per alert: when `/order` (or `/preview`) carries an `alert_id` that an order placed today already carries, it is refused with `duplicate_alert` and the text "this alert already has an order (order 123, RAYA, 04:27:31 New York)". This holds across tabs, reloads and a restart of the bridge. An order you cancelled still uses up its alert. The one exception is an order that was stopped before any fill and has nothing left working (TWS refused it, or it could not be sent): its alert can be ordered again. The same ticker inside `duplicateWindowSec` is refused separately (`duplicate`), with or without an `alert_id`.
+
+| Status | `code` |
+|---|---|
+| 400 | `bad_request` (a field is missing, wrong or unknown; the body is not a JSON object) |
+| 401 | `bad_token` |
+| 403 | `origin_not_allowed`, `bad_host` (the call was not addressed to `127.0.0.1` / `localhost`) |
+| 404 | `not_found` (no such path), `unknown_ticker`, `unknown_order` |
+| 405 | `method_not_allowed` |
+| 409 | `disabled`, `halted`, `paper_only`, `duplicate_alert`, `daily_limit`, `duplicate`, `ambiguous_ticker`, `already_filled`, `already_done` |
+| 413 | `body_too_large` (over 4 KB) |
+| 415 | `not_json` |
+| 422 | `stale_alert` (older than 10 min), `too_many_shares`, `too_large`, `chase`, `bad_prices` |
+| 500 | `not_saved` (halt applied but not written to `config.json`), `log_failed` (the order was not sent), `internal` |
+| 502 | `tws_refused` (TWS said no to the order), `send_failed`, `tws_error`, `no_ask` (TWS answered the ask request with an error) |
+| 503 | `tws_down` (TWS not connected), `tws_offline` (TWS has lost IB's servers) |
+| 504 | `tws_timeout`, `no_ask` (no ask in time) |
+
+If TWS refuses one leg of a bracket before the buy has filled, the bridge cancels that bracket, so a buy is never left working without the exits you clicked for. The same happens when a leg cannot be sent. Those are the only cancels it sends on its own.
 
 ## Tests
 

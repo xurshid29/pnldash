@@ -9,7 +9,7 @@ import { NotConnectedError, TwsRequestError, TwsTimeoutError } from "./link.js";
 import type { ExecutionEvent, OrderMessageEvent, OrderStatusEvent, TwsLink } from "./link.js";
 import { buildBracket, formatPrice, planOrder } from "./order.js";
 import type { OrderPlan } from "./order.js";
-import { nyDate, systemClock } from "./time.js";
+import { nyDate, nyTime, systemClock } from "./time.js";
 import type { Clock } from "./time.js";
 
 const TICKER_FORMAT = /^[A-Z][A-Z0-9.]{0,6}$/;
@@ -32,6 +32,15 @@ const CODE_NO_SECURITY = 200;
  */
 const CANCEL_NOTICE_CODES = new Set([202, 135, 161, 10147, 10148]);
 
+/** Of those, the two that say TWS has no such order at all ("not found"). */
+const ORDER_NOT_FOUND_CODES = new Set([135, 10147]);
+
+/**
+ * The status the bridge itself gives a buy that TWS will never report on: it never went out, or
+ * TWS says it has no such order. It is TWS's own word for "not working, was refused".
+ */
+const STATUS_NOT_WORKING = "Inactive";
+
 export interface ResolvedContract {
   conid: number;
   /** The symbol as TWS spells it (a class share is "BRK B", not "BRK.B"). */
@@ -46,7 +55,11 @@ export interface Check {
 
 export interface StatusData {
   version: string;
-  tws: { connected: boolean; port: number; paper: boolean; accounts: string[] };
+  /**
+   * `offline`: TWS is connected to the bridge but says it has lost IB's servers; orders are
+   * refused (`tws_offline`) until it is back. Always false while `connected` is false.
+   */
+  tws: { connected: boolean; port: number; paper: boolean; accounts: string[]; offline: boolean };
   enabled: boolean;
   halted: boolean;
   paper_only: boolean;
@@ -286,13 +299,15 @@ export class Bridge {
   status(): StatusData {
     const accounts = this.link.getAccounts();
     const today = nyDate(this.clock());
+    const connected = this.link.isReady();
     return {
       version: this.version,
       tws: {
-        connected: this.link.isReady(),
+        connected,
         port: this.config.tws.port,
         paper: isPaper(accounts),
         accounts: accounts.map(maskAccount),
+        offline: connected && this.link.isServerLinkLost(),
       },
       enabled: this.config.enabled,
       halted: this.config.halted,
@@ -479,6 +494,22 @@ export class Bridge {
     }
     checks.push({ name: "account", detail: paper ? "paper account" : "LIVE account (paperOnly is off)" });
 
+    // One order per alert, whichever tab or reload the click comes from. The ids are strings on
+    // both sides (a numeric alert_id was turned into one when the request was read).
+    const today = nyDate(now);
+    if (request.alertId !== null) {
+      const taken = this.book.alertOrderOn(today, request.alertId);
+      if (taken !== undefined) {
+        throw new BridgeError(
+          409,
+          "duplicate_alert",
+          `this alert already has an order (order ${taken.order_id}, ${taken.ticker}, ` +
+            `${nyTime(Date.parse(taken.placed_at))} New York)`,
+        );
+      }
+      checks.push({ name: "alert", detail: "no order uses up this alert today" });
+    }
+
     if (request.alertAtMs !== null) {
       const ageMs = now - request.alertAtMs;
       if (ageMs < -ALERT_CLOCK_SKEW_MS) throw badRequest("alert_at is in the future");
@@ -498,7 +529,6 @@ export class Bridge {
     }
     checks.push({ name: "shares", detail: `${qty} of ${limits.maxShares} allowed` });
 
-    const today = nyDate(now);
     const placedToday = this.book.countOn(today);
     if (placedToday >= limits.maxOrdersPerDay) {
       throw new BridgeError(
@@ -654,10 +684,15 @@ export class Bridge {
         sent += 1;
       }
     } catch (err) {
-      // Earlier legs carry transmit=false, so TWS holds them unsent; take them back out.
+      // Earlier legs carry transmit=false, so TWS holds them unsent; take them back out. The
+      // cancel goes out also when no leg is known to have arrived: it costs nothing if none did.
       record.error = `sending failed after ${sent} of ${legs.length} legs: ${errorMessage(err)}`;
       this.journal.write("order_error", { order_id: firstId, ticker: record.ticker, message: record.error });
-      if (sent > 0) this.cleanUp(record);
+      this.cleanUp(record);
+      // The leg that transmits the bracket is the last one. If it was never tried, nothing can
+      // fill and TWS will not report on this buy: it is over now. If the failure was on that
+      // last leg itself, TWS's answer to the cancel settles it instead.
+      if (sent < legs.length - 1) this.markNotWorking(record);
       throw new BridgeError(502, "send_failed", `order ${firstId} for ${record.ticker} was not placed: ${record.error}`);
     }
 
@@ -695,6 +730,22 @@ export class Bridge {
     } catch {
       // Not connected: nothing can be cancelled now; the error stays on the record.
     }
+  }
+
+  /**
+   * Gives a buy that TWS will never report on its final status ("Inactive"): one that never went
+   * out, or one TWS says it does not have. Without it such a buy would read as pending for the
+   * rest of the day, and a refused one would keep its alert used up.
+   */
+  private markNotWorking(record: OrderRecord): void {
+    if (record.filled_qty > 0 || isDone(record.status)) return;
+    this.onOrderStatus({
+      orderId: record.order_id,
+      status: STATUS_NOT_WORKING,
+      filled: record.filled_qty,
+      remaining: 0,
+      avgFillPrice: 0,
+    });
   }
 
   private serial<T>(task: () => Promise<T>): Promise<T> {
@@ -851,6 +902,9 @@ export class Bridge {
     if (event.nonFatal || CANCEL_NOTICE_CODES.has(event.code)) {
       record.note = message;
       this.journal.write("order_note", entry);
+      // TWS has no such buy (the answer to a cancel of one it refused outright, or that never
+      // reached it): no status will ever come for it, so it gets its final one here.
+      if (leg === "parent" && ORDER_NOT_FOUND_CODES.has(event.code)) this.markNotWorking(record);
       return;
     }
     record.error = message;

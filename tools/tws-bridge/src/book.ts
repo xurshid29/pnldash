@@ -37,7 +37,11 @@ export interface OrderRecord {
     outside_rth: boolean;
     order_ids: { parent: number; take_profit: number | null; stop: number | null };
   };
-  /** The buy's status, in TWS's words (PendingSubmit, PreSubmitted, Submitted, Filled, Cancelled, Inactive, ...). */
+  /**
+   * The buy's status, in TWS's words (PendingSubmit, PreSubmitted, Submitted, Filled, Cancelled,
+   * Inactive, ...). "Inactive" is also what the bridge sets itself for a buy that never went out
+   * or that TWS says it does not have.
+   */
   status: string;
   filled_qty: number;
   avg_fill_price: number | null;
@@ -55,6 +59,16 @@ const DONE = new Set(["Filled", "Cancelled", "ApiCancelled", "Inactive"]);
 
 export function isDone(status: string): boolean {
   return DONE.has(status);
+}
+
+/**
+ * Does this order use up its alert? Every order does, a cancelled one too, except one that was
+ * stopped before any fill and has nothing left working: TWS refused it, or it never went out.
+ * The dashboard decides whether an alert can be clicked again with the same rule
+ * (`bridgeOrderCounts` in apps/web/src/api/twsBridge.ts): keep the two in step.
+ */
+export function usesUpAlert(record: OrderRecord): boolean {
+  return !(record.error !== null && record.filled_qty === 0 && isDone(record.status));
 }
 
 export function slipPct(avgFillPrice: number, alertPrice: number): number {
@@ -147,6 +161,11 @@ export class OrderBook {
 
   filledOn(date: string): number {
     return this.ordersOn(date).filter((record) => record.filled_qty > 0).length;
+  }
+
+  /** The newest order of that New York date that carries this alert id and uses the alert up. */
+  alertOrderOn(date: string, alertId: string): OrderRecord | undefined {
+    return this.ordersOn(date).find((record) => record.asked.alert_id === alertId && usesUpAlert(record));
   }
 
   /** When this ticker was last ordered, in ms, or undefined. */

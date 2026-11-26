@@ -12,7 +12,7 @@ test("status: the shape the dashboard reads, with masked accounts", async (t) =>
   const r = await rig(t);
   assert.deepEqual(r.bridge.status(), {
     version: "0.0.0-test",
-    tws: { connected: true, port: 7497, paper: true, accounts: ["DU…67"] },
+    tws: { connected: true, port: 7497, paper: true, accounts: ["DU…67"], offline: false },
     enabled: true,
     halted: false,
     paper_only: true,
@@ -48,7 +48,13 @@ test("status: account masking and the paper test", () => {
 
 test("status: a live account and several accounts", async (t) => {
   const live = await rig(t, { world: (w) => (w.accounts = "U7654321") });
-  assert.deepEqual(live.bridge.status().tws, { connected: true, port: 7497, paper: false, accounts: ["U7…21"] });
+  assert.deepEqual(live.bridge.status().tws, {
+    connected: true,
+    port: 7497,
+    paper: false,
+    accounts: ["U7…21"],
+    offline: false,
+  });
 
   const mixed = await rig(t, { world: (w) => (w.accounts = "DU1234567,U7654321") });
   assert.deepEqual(mixed.bridge.status().tws.accounts, ["DU…67", "U7…21"]);
@@ -58,7 +64,26 @@ test("status: a live account and several accounts", async (t) => {
 test("status: TWS not running", async (t) => {
   const r = await rig(t, { world: (w) => (w.mode = "refuse"), connect: false });
   await until(() => r.world.instances.length >= 2, "a retry");
-  assert.deepEqual(r.bridge.status().tws, { connected: false, port: 7497, paper: false, accounts: [] });
+  assert.deepEqual(r.bridge.status().tws, { connected: false, port: 7497, paper: false, accounts: [], offline: false });
+});
+
+test("status: tws.offline is true while TWS has lost IB's servers, and never while TWS is not connected", async (t) => {
+  const r = await rig(t);
+  assert.equal(r.bridge.status().tws.offline, false);
+
+  r.world.current.emit("info", "Connectivity between IB and Trader Workstation has been lost.", 1100);
+  assert.deepEqual(r.bridge.status().tws, { connected: true, port: 7497, paper: true, accounts: ["DU…67"], offline: true });
+  await refuses(r.bridge.order(buy()), 503, "tws_offline"); // the same condition as the order rail
+
+  r.world.current.emit("info", "Connectivity restored - data maintained.", 1102);
+  assert.equal(r.bridge.status().tws.offline, false);
+
+  // Lost again, and then TWS itself goes away: that is "not connected", not "offline".
+  r.world.current.emit("info", "Connectivity between Trader Workstation and server is broken.", 2110);
+  assert.equal(r.bridge.status().tws.offline, true);
+  r.world.mode = "refuse";
+  r.world.drop();
+  assert.deepEqual(r.bridge.status().tws, { connected: false, port: 7497, paper: false, accounts: [], offline: false });
 });
 
 // ------------------------------------------------------- preview and order

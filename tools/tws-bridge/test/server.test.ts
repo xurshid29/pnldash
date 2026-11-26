@@ -1,12 +1,15 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import http from "node:http";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import type { Bridge } from "../src/bridge.js";
-import { MemoryJournal } from "../src/journal.js";
+import { FileJournal, MemoryJournal } from "../src/journal.js";
 import { createBridgeServer, listenOnLoopback, MAX_BODY_BYTES } from "../src/server.js";
 import { until } from "./fake-tws.js";
-import { rig, TOKEN } from "./harness.js";
+import { rig, T0, TOKEN } from "./harness.js";
 import type { Rig, RigOptions } from "./harness.js";
 
 const DASHBOARD = "https://pnldash.uz";
@@ -84,7 +87,8 @@ async function serve(t: TestContext, options: RigOptions = {}): Promise<Served> 
     bridge: r.bridge,
     token: TOKEN,
     allowedOrigins: r.config.allowedOrigins,
-    journal: r.journal,
+    // The bridge and the HTTP side write one log, as in main.ts.
+    journal: options.journal ?? r.journal,
     clock: () => r.clock.now,
   });
   const port = await listenOnLoopback(server, 0);
@@ -329,7 +333,7 @@ test("flow: status, focus, preview, order, orders, cancel, halt over HTTP", asyn
     "limits",
     "today",
   ]);
-  assert.deepEqual(status.body.data.tws, { connected: true, port: 7497, paper: true, accounts: ["DU…67"] });
+  assert.deepEqual(status.body.data.tws, { connected: true, port: 7497, paper: true, accounts: ["DU…67"], offline: false });
 
   const focus = await call(s.port, { ...from, path: "/focus", json: { ticker: "abcd" } });
   assert.deepEqual(focus.body, { data: { ticker: "ABCD", conid: 111, group: 1 } });
@@ -339,7 +343,7 @@ test("flow: status, focus, preview, order, orders, cancel, halt over HTTP", asyn
   assert.equal(preview.status, 200);
   assert.deepEqual(
     { ...preview.body.data, checks: preview.body.data.checks.length },
-    { ticker: "ABCD", qty: 100, limit: 2.53, take_profit: 2.78, stop: 2.42, stop_limit: 2.39, notional: 253, checks: 10 },
+    { ticker: "ABCD", qty: 100, limit: 2.53, take_profit: 2.78, stop: 2.42, stop_limit: 2.39, notional: 253, checks: 11 },
   );
   assert.deepEqual(Object.keys(preview.body.data.checks[0]), ["name", "detail"]);
   assert.deepEqual(s.world.allPlaced(), []);
@@ -350,10 +354,19 @@ test("flow: status, focus, preview, order, orders, cancel, halt over HTTP", asyn
   });
   assert.equal(s.world.allPlaced().length, 3);
 
+  // The same alert again: one order per alert.
   const again = await call(s.port, { ...from, path: "/order", json: request });
   assert.equal(again.status, 409);
-  assert.deepEqual(Object.keys(again.body), ["error", "code"]);
-  assert.equal(again.body.code, "duplicate");
+  assert.deepEqual(again.body, {
+    error: "this alert already has an order (order 1000, ABCD, 10:00:00 New York)",
+    code: "duplicate_alert",
+  });
+  assert.equal((await call(s.port, { ...from, path: "/preview", json: request })).body.code, "duplicate_alert");
+  // Another alert on the same ticker, seconds later: the ticker's duplicate window.
+  const other = await call(s.port, { ...from, path: "/order", json: { ...request, alert_id: "ev-2" } });
+  assert.equal(other.status, 409);
+  assert.deepEqual(Object.keys(other.body), ["error", "code"]);
+  assert.equal(other.body.code, "duplicate");
 
   s.world.current.emit("orderStatus", 1000, "Submitted", 0, 100, 0);
   const orders = await call(s.port, { ...from, path: "/orders" });
@@ -385,7 +398,7 @@ test("flow: with TWS down, /status still answers and the rest is 503", async (t)
   await until(() => s.world.instances.length >= 1, "a connection attempt");
   const status = await call(s.port);
   assert.equal(status.status, 200);
-  assert.deepEqual(status.body.data.tws, { connected: false, port: 7497, paper: false, accounts: [] });
+  assert.deepEqual(status.body.data.tws, { connected: false, port: 7497, paper: false, accounts: [], offline: false });
   for (const [path, json] of [
     ["/focus", { ticker: "ABCD" }],
     ["/preview", { ticker: "ABCD", alert_price: 2.5 }],
@@ -400,9 +413,9 @@ test("flow: with TWS down, /status still answers and the rest is 503", async (t)
 
 // ---------------------------------------------------------------- the log
 
-test("log: every request is logged with what it was about, and never the token", async (t) => {
+test("log: requests are logged with what they were about, and never the token", async (t) => {
   const s = await serve(t);
-  await call(s.port, { origin: DASHBOARD });
+  await call(s.port, { origin: DASHBOARD, path: "/focus", json: { ticker: "ABCD" } });
   await call(s.port, { token: "a-wrong-token-value" });
   await call(s.port, { origin: "https://evil.example" });
   await call(s.port, { method: "OPTIONS", path: "/order", token: null, origin: DASHBOARD });
@@ -414,7 +427,7 @@ test("log: every request is logged with what it was about, and never the token",
   assert.deepEqual(
     lines.map((line) => [line["method"], line["path"], line["status"]]),
     [
-      ["GET", "/status", 200],
+      ["POST", "/focus", 200],
       ["GET", "/status", 401],
       ["GET", "/status", 403],
       ["OPTIONS", "/order", 204],
@@ -425,6 +438,7 @@ test("log: every request is logged with what it was about, and never the token",
   );
   for (const line of lines) assert.equal(typeof line["ms"], "number");
   assert.equal(lines[0]?.["origin"], DASHBOARD);
+  assert.equal(lines[0]?.["ticker"], "ABCD");
   assert.equal(lines[2]?.["origin"], "https://evil.example");
   assert.deepEqual(
     [lines[4]?.["ticker"], lines[4]?.["alert_price"], lines[4]?.["alert_stop"], lines[4]?.["stage"], lines[4]?.["alert_id"]],
@@ -443,13 +457,150 @@ test("log: a flood of refused requests is counted, not written line by line", as
   const s = await serve(t);
   for (let i = 0; i < 40; i += 1) await call(s.port, { token: null });
   assert.equal(s.journal.ofType("request").length, 30);
-  await call(s.port); // a good request is always logged
+  await call(s.port, { path: "/focus", json: { ticker: "ABCD" } }); // a good call is logged whatever the flood
   assert.equal(s.journal.ofType("request").length, 31);
 
   s.clock.now += 60_000;
   await call(s.port, { token: null });
   assert.deepEqual(s.journal.ofType("requests_refused"), [{ type: "requests_refused", not_logged: 10 }]);
   assert.equal(s.journal.ofType("request").length, 32);
+});
+
+// --------------------------------------------------------------- the polls
+
+test("polls: a hundred answered GET /status and GET /orders add no line to the log", async (t) => {
+  const s = await serve(t);
+  const before = s.journal.events.length;
+  for (let i = 0; i < 50; i += 1) {
+    const status = await call(s.port, { origin: DASHBOARD });
+    assert.equal(status.status, 200);
+    const orders = await call(s.port, { origin: DASHBOARD, path: "/orders" });
+    assert.equal(orders.status, 200);
+  }
+  assert.equal(s.journal.events.length, before);
+  assert.deepEqual(s.journal.ofType("request"), []);
+  // A query string or the dev origin does not make a poll something else.
+  await call(s.port, { origin: DEV, path: "/status?t=1" });
+  await call(s.port, { path: "/orders?since=0" });
+  assert.equal(s.journal.events.length, before);
+});
+
+test("polls: everything else is still logged, and so is a poll that fails", async (t) => {
+  const s = await serve(t);
+  await call(s.port); // answered: not logged
+  await call(s.port, { path: "/orders" }); // answered: not logged
+  await call(s.port, { token: "wrong" }); // 401
+  await call(s.port, { path: "/orders", token: null }); // 401
+  await call(s.port, { path: "/orders", origin: "https://evil.example" }); // 403
+  await call(s.port, { path: "/status", json: {} }); // POST to a GET route: 405
+  await call(s.port, { method: "OPTIONS", path: "/status", token: null, origin: DASHBOARD }); // the preflight of a poll
+  await call(s.port, { path: "/focus", json: { ticker: "ABCD" } });
+  await call(s.port, { path: "/preview", json: { ticker: "ABCD", alert_price: 2.5 } });
+  await call(s.port, { path: "/halt", json: { halted: false } });
+  await call(s.port, { path: "/nothing" }); // 404
+
+  assert.deepEqual(
+    s.journal.ofType("request").map((line) => [line["method"], line["path"], line["status"]]),
+    [
+      ["GET", "/status", 401],
+      ["GET", "/orders", 401],
+      ["GET", "/orders", 403],
+      ["POST", "/status", 405],
+      ["OPTIONS", "/status", 204],
+      ["POST", "/focus", 200],
+      ["POST", "/preview", 200],
+      ["POST", "/halt", 200],
+      ["GET", "/nothing", 404],
+    ],
+  );
+});
+
+test("polls: one that fails inside the bridge is logged", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+  const journal = new MemoryJournal();
+  const bridge = {
+    status(): never {
+      throw new Error("boom");
+    },
+    orders: () => [],
+  } as unknown as Bridge;
+  const server = createBridgeServer({ bridge, token: TOKEN, allowedOrigins: [DASHBOARD], journal });
+  const port = await listenOnLoopback(server, 0);
+  t.after(
+    () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  );
+  assert.equal((await call(port)).status, 500);
+  assert.equal((await call(port, { path: "/orders" })).status, 200);
+  assert.deepEqual(
+    journal.ofType("request").map((line) => [line["method"], line["path"], line["status"], line["code"]]),
+    [["GET", "/status", 500, "internal"]],
+  );
+});
+
+test("polls: an order placed between polls is logged, and a restart reads it back from a log with no poll lines", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tws-bridge-polls-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, "2026-11-25.jsonl");
+  const lineCount = (): number => fs.readFileSync(file, "utf8").trim().split("\n").length;
+  const poll = async (port: number, times: number): Promise<void> => {
+    for (let i = 0; i < times; i += 1) {
+      assert.equal((await call(port, { origin: DASHBOARD })).status, 200);
+      assert.equal((await call(port, { origin: DASHBOARD, path: "/orders" })).status, 200);
+    }
+  };
+
+  const a = await serve(t, { journal: new FileJournal(dir, () => T0, [TOKEN]) });
+  const atStart = lineCount(); // the connection to TWS is the only thing in the file
+  await poll(a.port, 50);
+  assert.equal(lineCount(), atStart);
+
+  const request = { ticker: "ABCD", alert_price: 2.5, alert_stop: 2.42, stage: "band", alert_id: "ev-1" };
+  const order = await call(a.port, { origin: DASHBOARD, path: "/order", json: request });
+  assert.equal(order.body.data.order_id, 1000);
+  a.world.current.emit("orderStatus", 1000, "Submitted", 0, 100, 0);
+  a.world.current.emit("execDetails", -1, {}, { orderId: 1000, execId: "e1", shares: 100, price: 2.52, cumQty: 100, avgPrice: 2.52 });
+  a.world.current.emit("orderStatus", 1000, "Filled", 100, 0, 2.52);
+  const afterOrder = lineCount();
+  await poll(a.port, 50);
+  assert.equal(lineCount(), afterOrder);
+
+  // What the file holds: the order and what happened to it, and the one request that placed it.
+  const lines = fs
+    .readFileSync(file, "utf8")
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+  assert.deepEqual(
+    lines.map((line) => line["type"]),
+    ["tws_up", "order_placed", "request", "order_status", "fill", "order_status"],
+  );
+  assert.deepEqual(
+    lines.filter((line) => line["type"] === "request").map((line) => [line["method"], line["path"], line["status"], line["ticker"]]),
+    [["POST", "/order", 200, "ABCD"]],
+  );
+  const polled = (await call(a.port, { path: "/orders" })).body.data;
+  a.link.stop();
+
+  // The bridge is started again: the day's book comes back whole.
+  const b = await serve(t, { journal: new FileJournal(dir, () => T0 + 5000, [TOKEN]), now: T0 + 5000 });
+  const status = (await call(b.port)).body.data;
+  assert.deepEqual(status.today, { orders: 1, filled: 1 });
+  const restored = (await call(b.port, { path: "/orders" })).body.data;
+  assert.deepEqual(restored, polled);
+  assert.deepEqual(
+    [restored[0].order_id, restored[0].status, restored[0].filled_qty, restored[0].avg_fill_price, restored[0].slip_pct, restored[0].asked.alert_id],
+    [1000, "Filled", 100, 2.52, 0.8, "ev-1"],
+  );
+  // The rails that rest on the book hold: the alert is used, the ticker was just ordered.
+  const again = await call(b.port, { path: "/order", json: request });
+  assert.equal(again.body.code, "duplicate_alert");
+  const other = await call(b.port, { path: "/order", json: { ticker: "ABCD", alert_price: 2.5 } });
+  assert.equal(other.body.code, "duplicate");
+  assert.deepEqual(b.world.allPlaced(), []);
 });
 
 test("an unexpected failure inside is a plain 500, with no detail sent out", async (t) => {
