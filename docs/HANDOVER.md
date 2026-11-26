@@ -10,8 +10,17 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v48 (2026-11-26).** The snapshot below describes
+**⚠ Newer than this snapshot — the script is at v49 (2026-11-26).** The snapshot below describes
 v31; the session log has each step since. What the script carries now:
+- **v49 (11-26) gives the POP a volume test** (`docs/vwap-setup.md` §22.8), the operator's focus
+  ("stocks which are almost without volume, suddenly started popping up"): the biggest volume of
+  the POP candle and the two before it against the average of the 20 candles before those; under
+  10× the POP is weak (gray, stored, not announced) and so is its BACK; every POP / BACK row
+  carries `vol_x`. Our data could not confirm or refute it (it has no pops from stocks not yet on
+  the screen): grade the rows by `vol_x` and by the hour.
+- **In progress (11-26): a local TWS bridge** (`tools/tws-bridge/`), so the dashboard can make
+  TWS's linked windows jump to an alert's ticker and place the operator's bracket order with one
+  click (paper account first). See the session log.
 - **v48 (11-26) adds a fifth setup in two steps, POP and BACK** (stages `pop` and `back`,
   `docs/vwap-setup.md` §22): on its own basis (SMA 15 of 1m closes), POP is the first candle of a
   run above the basis by which a high has reached 10% above it, a heads-up with no entry; BACK is
@@ -311,6 +320,34 @@ Yahoo + SEC + halts).
 ## Session log (newest first)
 
 These are the detailed notes behind START HERE, kept verbatim.
+
+**2026-11-26 (Thu, US holiday, ~07:00 ET) — SCRIPT v49: THE POP'S VOLUME TEST; A TWS BRIDGE STARTED.** The operator, with v48 on
+the chart: "POP is Amazing. I see a big potential with it … the biggest 5-6 POPs happen after the pre-market open
+[04:00–05:00 ET], or very fewer around [08:00 ET] … the rvol for that moment should be very high … the stocks which are
+almost without volume, suddenly started popping up. I think we should focus on only such moves". Examples: RAYA 11-25,
+the POP at 04:27 ET off a flat base ("suitable") and the one at 11:10 ET after a slow climb ("not").
+- **Measured first** (`pop_back_study.py` tables 3–6, README): on our bars the volume reading does not sort the POPs
+  (a high +10% above the POP's close follows 22–34% in every bucket) and by the clock 09:30–10:30 is best, 04:00–05:00 as
+  good on 1.3 a day, 05:00–07:00 worst. **But our bars hold only names already on the Momentum screen**: RAYA's 04:27 kind
+  (flat, no volume, not on the screen) is not in them. Told the operator plainly; built as their filter.
+- **v49:** reading = the biggest volume of the POP candle and the two before it ÷ the average of the 20 candles before
+  those three (the first version read the POP candle alone; the replica's author showed a three-candle pop would water
+  its own average down, so it was changed before shipping). Under the minimum (`ppVolMin` 10; RAYA's 11:10 reads 6.2×)
+  a POP is weak: gray "pop", `| weak`, no `pop N`, stored, quiet; its BACK likewise. Both messages carry `| vol …x`.
+  Two inputs (87), two plots (40). Server: weak pop/back quiet and never capped; dashboard: no row / toast / sound, the
+  reading in rows and a History column. `verify-tv-setups.ts` 916 checks; `pinesim` 41 lines.
+- **Checked through the MCP** (4 calls + 2 compile runs): compiles; against the saved v48 on SVRE 1m only the POP marker
+  differs (v48's 11 POPs = 8 strong + 3 weak at a 3× minimum); the replica gives the same marks on the same candles.
+- **No POP or BACK row had reached prod when this was built** (v48 deployed 11-25 15:22 ET; the alerts were not yet
+  recreated, or nothing fired before the holiday). The operator goes straight to v49.
+- **The order problem.** The operator: "when I see them, I need to switch the window to IBKR, add the ticker … and place
+  an order (I use shortcuts) … when the move fast it almost impossible to catch the price". Advised a local bridge to
+  the TWS already running on their Mac (TWS's socket API; the Web API would log TWS out, one session per username). They
+  answered: TWS and the dashboard are on this Mac; they have a paper account; Ctrl+1 = a limit buy of 100 shares with a
+  take-profit and a stop-limit; build both steps (TWS follows the dashboard; a Buy button). Being built in
+  `tools/tws-bridge/` (outside the npm workspaces). TWS's API port was closed when checked: the operator has to enable
+  it (Global Configuration → API → Settings).
+- **For the operator:** paste v49, Save, recreate both alerts; no Reset settings.
 
 **2026-11-25 (Wed, ~15:30 ET; 11-26 on the operator's clock) — SCRIPT v48: A FIFTH SETUP IN TWO STEPS, POP AND BACK.** The
 operator to the two-step proposal in the entry below: "yes, lets do that". `docs/vwap-setup.md` §22.

@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v48** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18), (v47) TURN, the bounce off a basis line that fell and turned up (§21), and (v48) POP with its BACK, a pop off the basis as a heads-up and its first pullback's bounce as the entry (§22). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v49** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18), (v47) TURN, the bounce off a basis line that fell and turned up (§21), and (v48) POP with its BACK, a pop off the basis as a heads-up and its first pullback's bounce as the entry (§22). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1147,6 +1147,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-24 | v46 | `06f2af2` | Operator: "add own BollingerBands basis row to the BB setups, as we did for Pullback", then, pointing at the "EMA cross over VWAP" settings: "I mean, bb basis for this bb setups of EMA Cross Over VWAP". **The band cross's basis line** (§18.8): the pullback's line again for the EMA cross setup — a teal line, the SMA of the last 20 closes of 15-second bars, with its own switch, timeframe and length (`bbBsOn`, `bbBsTf`, `bbBsLen`: the script's last three inputs, shown in the EMA cross over VWAP group; its last plot). A line only; not the band the cross itself uses, and not v42's removed BASIS cross. Checked on TradingView before the paste (§18.8). **Paste and Save; no reset, and the alerts can stay as they are.** |
 | 2026-11-25 | v47 | `eaf4e33` | Operator, with v46's line at 1 minute / 15 closes and a MACD under a 1m chart, on moves of NIVF and APUS: "How can I catch such moves? … candle breaks the bb basis, the bb basis moving up, macd turned green, and price pulls back to bb basis line and bounces"; "The most important part is, bb basis goes down (usually big drop), and after that, it starts moving up"; after the measurement: "I want to experiment with it, let's build it. Make a seprate setup … with its own bb basis settings (macd usually standart)". **A fourth setup, TURN** (§21): on the basis's own candles (1m, SMA 15), after the basis fell at least 10% and turned up, a close above it, a low back at it within 10 candles, then a green close above it with the basis rising and the MACD green. Script section 8, thirteen inputs in their own group (last; 73), two plots (last; 35), one `alert()` (12), no request; message `TURN … | sma 15 … | fall …% | turn N | since N | green 1`. Server stage `turn` (own ⚙ switch, on by default; Momentum names; `tn_cap` 3), dashboard pill, `pinesim.simulate_turn`. Measured first (`research/ema-vwap/basis_bounce_study.py`): the fall is what counts, about 20 a day after a 10% fall, one in five reach +5%, about break-even — an experiment. **Paste, Save, recreate both alerts; no Reset settings.** |
 | 2026-11-26 | v48 | `116a91f` | Operator, with a basis line at 1 minute / 15 closes on 1m charts of SVRE, ZNB, APUS and WHLR: "these moves are initial pop, and their first pullback to bb basis row … how to catch such pullbacks?"; then "I'm thinking how to catch them up, while the initial pop is moveing too fast"; to a two-step proposal (a heads-up, then the pullback's bounce as the entry): "yes, lets do that". **A fifth setup in two steps, POP and BACK** (§22): on the basis's own candles (1m, SMA 15), POP is the first candle of a run above the basis by which a high has reached 10% above it (a heads-up, no entry); BACK is the first pullback after it: a low back at the basis, then a green close above it with the basis rising and the MACD green, within 20 candles, with a stop under the pullback's low. Script section 9, twelve inputs in their own group (last; 85), three plots (last; 38), two `alert()` calls (14), no request; messages `POP … | sma 15 … | ran …% | pop N` and `BACK … | stop … | sma 15 … | ran …% | back N | since N | green 1`. Server stages `pop` and `back` (each its own ⚙ switch, on by default; Momentum names; `pp_cap` 3 each), dashboard pills sharing one thread, `pinesim.simulate_pop`. Measured first (`research/ema-vwap/pop_study.py`, `pop_back_study.py`): buying the pop's candle loses; at 10% about 35 POPs and 10 BACKs a day, the BACK about break-even (at 5% over a hundred POPs a day and worse BACKs) — an experiment. **Paste, Save, recreate both alerts; no Reset settings.** |
+| 2026-11-26 | v49 | `tbd` | Operator, with v48 on the chart and two POPs of RAYA (04:27 New York off a flat base with almost no volume: "suitable"; 11:10 at the end of a slow climb: "not"): "the rvol for that moment should be very high … the stocks which are almost without volume, suddenly started popping up. I think we should focus on only such moves". **The POP's volume test** (§22.8): the reading is the largest volume among the POP candle and the two candles before it ÷ the average of the 20 candles before those three; with the switch on a POP under the minimum (10) is weak (gray "pop", `| weak`, no `pop N`; stored, not announced) and so is its BACK ("bk"); both messages carry `| vol 34.5x` after `ran`. Two inputs (last; 87), two plots (last; 40), no new `alert()`, no request. Server: weak `pop` / `back` quiet and never capped, `vol_x` and `weak` on the rows; dashboard: no row, toast or sound for a weak one, the reading in the rows and a History column; `pinesim.simulate_pop` reads volume. Measured first (`pop_back_study.py` tables 3–6): among names already on the Momentum screen the reading does not sort the POPs; our bars have no pop out of a stock that was not yet moving, so the rows will say. **Paste, Save, recreate both alerts; no Reset settings.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -3409,3 +3410,65 @@ After two or three weeks of rows:
   as a second TURN-like entry.
 
 The rows are from the exchange feed bought on 11-23 (Nasdaq names), where §22.2's bars are ours.
+
+### 22.8 The POP's volume test (script v49, 2026-11-26)
+
+The operator, with v48 on the chart:
+
+> the biggest 5-6 POPs happen after the pre-market open, between 14:00-15:00 (+5tz) … or very
+> fewer happen around 18:00 … I think the rvol for that moment should be very high, maybe? So,
+> the stocks which are almost without volume, suddenly started popping up. I think we should
+> focus on only such moves (this are my current findings, more improvements come later).
+
+with two POPs of RAYA on 11-25: 04:27 New York, off a flat base with almost no volume
+("suitable"), and 11:10, at the end of a slow climb on steady volume ("not").
+
+**Measured first** (`pop_back_study.py` tables 3–6, README "Which POPs run"): among the POPs
+our own bars hold, the volume reading below does not sort them (a high +10% above the POP's
+close follows 22–34% whatever the reading; about 30% of them read 10× or more), and by the clock
+09:30–10:30 is the best hour, 04:00–05:00 as good on few events, 05:00–07:00 the worst. But
+those bars hold only names already on the Momentum screen: a pop out of a stock that was flat on
+no volume, RAYA's 04:27 kind, is not in them. So the operator's observation is neither
+confirmed nor refuted by our data, and it is built as their filter to try.
+
+**The rule.** `vol` = the largest volume among the POP candle and the two candles before it ÷
+the average volume of the 20 candles before those three. Three candles because a pop often
+takes two or three to reach the mark: read against the 20 candles before the POP candle alone
+(the first version, found wanting by the replica's author before it shipped), its own first
+candles water the average down, and 50 times the base on each of three candles reads 8.5×. A slow
+climb on steady volume still reads low. With "POP: only a pop with a volume surge is announced"
+on, a POP whose `vol` is under the minimum (10 by default) is **weak**: a small gray "pop"
+label, sent with `| weak`, stored and not announced, and it takes no `pop N`. The BACK after a
+weak POP is weak too ("bk", `| weak`, no `back N`). No volume at all in those 20 candles, and
+some now, counts as a surge (with no reading in the message). The minimum is 10 because RAYA's
+"not suitable" POP reads 6.2×. The flag is the script's: `vol` prints to one decimal, so a 9.96
+reads `vol 10x` and is weak.
+
+Both messages carry the reading after `ran`, whatever the switch says (a BACK carries its POP
+candle's):
+
+    POP RAYA 0.58 | sVWAP 0.47 (+23.4%) | sma 15 0.46 (+26.1%) | ran 31.5% | vol 212.4x | candle 1 | pop 1 | day high +29% | vwap 30s | tf 1
+    POP RAYA 0.73 | sVWAP 0.71 (+2.8%) | sma 15 0.68 (+7.4%) | ran 10.5% | vol 6.2x | candle 1 | pop 1 | weak | day high +120% | vwap 30s | tf 1
+
+Two inputs, the script's last (87), shown in the POP and BACK group; two plots, the script's
+last (40); no new `alert()` and no request. No time-of-day rule: the row's time is stored, and
+the hours can be graded with the readings.
+
+**Our side.** `vol_x` and `weak` on `pop` / `back` rows; a weak one is quiet in the gate
+(stored, never announced, no 📐 sidebar row), like a weak EMA cross; the Telegram and dashboard
+texts show the reading. Replica: `simulate_pop` reads a bar's volume (`v`).
+
+**Checked before the paste.** It compiles on TradingView (through the MCP: 87 inputs, 40 plots,
+the same six cosmetic warnings). Against the operator's saved v48 on NASDAQ:SVRE's 1m chart
+every plot is equal on all 1,000 bars except the POP marker, as intended: with the minimum set
+to 3 for the run (threshold 5%, gainers off), v48's 11 POPs are v49's 8 strong and 3 weak ones,
+and the 3 BACKs are unchanged. `pinesim.simulate_pop` on the same bars with their volumes gives
+the same 8, 3 and 3 on the same candles. `selftest_pop`: 21 hand-built volume cases and the
+generated tapes × 10 settings of the test, the two implementations field for field, 36 of 36
+one-line changes caught. `verify-tv-setups.ts` 916 checks (825 before). Not exercised: a pop out
+of a stock with no pre-market volume, on TradingView's own candles (the MCP runs regular hours
+only), and the dashboard in a browser.
+
+**To grade** (with §22.7): POPs by `vol_x` (under 10×, 10–30×, 30×+, and the hundreds a pop out
+of nowhere gives) and by the hour, against what the price did after. TradingView sees every
+candle of every watchlist name, so these rows will hold the pops our own bars lack.

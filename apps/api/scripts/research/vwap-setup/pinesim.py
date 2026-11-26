@@ -2538,7 +2538,7 @@ def selftest_turn():
     return ok
 
 
-# ── POP and BACK: a pop off the basis and its first pullback (script v48, its section 9) ─
+# ── POP and BACK: a pop off the basis and its first pullback (script v48, its section 9; v49's volume test) ─
 # On the candles of the basis's own timeframe, like TURN (no request and no sampling: the bars given
 # here are the candles):
 #   run      starts at a close above the basis (the SMA of the last `len` closes) when the close before
@@ -2556,28 +2556,69 @@ def selftest_turn():
 # The gainer filter and the alert window are the caller's (gainer_of / in_window_of, default: always),
 # read at each alert's own candle: a POP or a bounce they stop is used up all the same, and only the
 # alerts sent are returned and numbered (`pop_n` / `back_n`, from 1 each day).
-# The built-ins are TURN's (ta.sma, ta.macd, timeframe.change("D")): see the list above TURN_DEFAULTS.
-POP_DEFAULTS = dict(len=15, up=10.0, tol=1.0, wait=20, macd_on=True, fast=12, slow=26, sig=9)
+# The volume test (script v49), read at the POP candle:
+#   top      the largest volume among the POP candle and the two candles before it (a pop often takes
+#            two or three candles to reach the mark)
+#   base     the mean volume of the 20 candles before those three (the script's ta.sma(volume, 20)[3]):
+#            none until the POP candle is the tape's 23rd
+#   reading  top ÷ base; none where there is no base, and none where the base is 0
+#   surge    a reading of `vol_min` or more; where the base is 0, any volume in the top (a surge with
+#            no reading). With no base, no surge
+#   weak     (`vol_on`) a POP on a candle with no surge, and that POP's BACK. A weak alert is sent and
+#            returned like any other, but takes no number: it carries the day's count as it stands
+#            (`pop_n` / `back_n`: 0 before the day's first counted one)
+# Every alert carries the POP candle's reading (`vol_x`; a BACK carries its POP's, sent or not), whatever
+# `vol_on` says, and `weak`.
+# A bar's volume is its 'v'. A bar without one has an unknown volume (Pine's na), and so has a bar
+# before the tape's first. Where that lands:
+#   one of the two candles before the POP candle   counts as 0 in the top (the script's nz())
+#   the POP candle itself   no top, so no reading and no surge. ASSUMED of math.max: na when an
+#                           argument is na
+#   one of the base's 20    no base, so no reading and no surge. ASSUMED of ta.sma: na while a value
+#                           in its window is na
+# On a stock's candles TradingView's volume is never na, so the two assumptions only settle what bars
+# without 'v' give here (with none at all, every POP is weak while the test is on).
+# The other built-ins are TURN's (ta.sma, ta.macd, timeframe.change("D")): see the list above TURN_DEFAULTS.
+POP_DEFAULTS = dict(len=15, up=10.0, tol=1.0, wait=20, macd_on=True, fast=12, slow=26, sig=9, vol_on=True, vol_min=10.0)
+POP_VOL_WIN, POP_VOL_TOP = 20, 3   # the script's literals: ta.sma(volume, 20)[3], and the three candles of ppVolTop
 
 
 def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
-    """The script's POP and BACK section (v48), statement for statement, on the bars of the setup's
-    own timeframe (dicts with 't', 'o', 'h', 'l', 'c'; the script's ppRun is taken as true).
+    """The script's POP and BACK section (v48, with v49's volume test), statement for statement, on the
+    bars of the setup's own timeframe (dicts with 't', 'o', 'h', 'l', 'c' and the volume 'v'; the
+    script's ppRun is taken as true).
     `tick` = syminfo.mintick; gainer_of(bar) / in_window_of(bar) → bool stand for the script's
     `(not ppGainOn or gainer)` and `inWindow` (default: always true).
     → the alerts in order, the messages' fields:
-      {'kind': 'pop', 't', 'close', 'basis', 'ran_pct', 'pop_n'}
-      {'kind': 'back', 't', 'close', 'stop', 'basis', 'ran_pct', 'back_n', 'since', 'green'}"""
+      {'kind': 'pop', 't', 'close', 'basis', 'ran_pct', 'vol_x', 'pop_n', 'weak'}
+      {'kind': 'back', 't', 'close', 'stop', 'basis', 'ran_pct', 'vol_x', 'back_n', 'since', 'green', 'weak'}
+    `vol_x` is None where the script's message has no `vol`; a weak alert's `pop_n` / `back_n` is the
+    count as it stood."""
     p = dict(POP_DEFAULTS, **(p or {}))
     closes = [b['c'] for b in bars]
     basis = sma_series(closes, p['len'])                                    # ppB
     hist = macd_hist_series(closes, p['fast'], p['slow'], p['sig'])         # ppHist
+    volume = [b.get('v') for b in bars]                                     # volume; None = na
+    vol_sma = []                                                            # ta.sma(volume, 20), per bar
+    for i in range(len(bars)):
+        w = volume[i + 1 - POP_VOL_WIN:i + 1] if i + 1 >= POP_VOL_WIN else [None]
+        vol_sma.append(None if None in w else sum(w) / POP_VOL_WIN)
     in_run, ran, top, pb_low, popped = False, 0.0, None, None, False        # the script's `var`s
     waiting, pop_bar, touched, pop_n, back_n = False, None, False, 0, 0
+    pop_vol, weak = None, False                                             # ppPopVol, ppWeak
     out, prev_day = [], None
     for i, b in enumerate(bars):
         o, h, low, c, pb = b['o'], b['h'], b['l'], b['c'], basis[i]
         green = hist[i] is not None and hist[i] > 0                         # ppGreen
+        # ppVolTop = math.max(volume, nz(volume[1]), nz(volume[2])): nz() takes an na volume, and one before the first bar,
+        # as 0; with the candle's own volume na, math.max is na (ASSUMED, see above)
+        vol_1 = (volume[i - 1] or 0) if i >= 1 else 0
+        vol_2 = (volume[i - 2] or 0) if i >= 2 else 0
+        vol_top = None if volume[i] is None else max(volume[i], vol_1, vol_2)
+        vol_base = vol_sma[i - 3] if i >= 3 else None                       # ppVolBase = ta.sma(volume, 20)[3]
+        vol_x = vol_top / vol_base if vol_base is not None and vol_base > 0 and vol_top is not None else None   # ppVolX
+        # ppSurge = not na(ppVolBase) and (ppVolBase > 0 ? ppVolTop / ppVolBase >= ppVolMin : ppVolTop > 0); a comparison with na is false
+        surge = vol_base is not None and vol_top is not None and (vol_top / vol_base >= p['vol_min'] if vol_base > 0 else vol_top > 0)
         gainer = True if gainer_of is None else bool(gainer_of(b))
         in_window = True if in_window_of is None else bool(in_window_of(b))
         new_day = prev_day is not None and b['t'].date() != prev_day        # newDay
@@ -2602,9 +2643,12 @@ def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
                     if ran >= p['up']:
                         # the POP: it uses up the run, whether or not the filters let it send
                         popped, waiting, touched, pop_bar = True, True, False, i
+                        pop_vol = vol_x
+                        weak = bool(p['vol_on']) and not surge
                         if in_window and gainer:
                             pop_fire = True
-                            pop_n += 1
+                            if not weak:
+                                pop_n += 1
                 elif waiting:
                     if low <= pb * (1 + p['tol'] / 100):
                         touched = True
@@ -2615,7 +2659,8 @@ def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
                             back_fire = True
                             stop = low_now - tick
                             age = i - pop_bar
-                            back_n += 1
+                            if not weak:
+                                back_n += 1
                     elif p['wait'] > 0 and i - pop_bar >= p['wait']:
                         waiting = False
                 if top is None or h > top:
@@ -2624,10 +2669,11 @@ def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
                 else:
                     pb_low = low_now
         if pop_fire:
-            out.append({'kind': 'pop', 't': b['t'], 'close': c, 'basis': pb, 'ran_pct': ran, 'pop_n': pop_n})
+            out.append({'kind': 'pop', 't': b['t'], 'close': c, 'basis': pb, 'ran_pct': ran, 'vol_x': pop_vol,
+                        'pop_n': pop_n, 'weak': weak})
         if back_fire:
-            out.append({'kind': 'back', 't': b['t'], 'close': c, 'stop': stop, 'basis': pb, 'ran_pct': ran,
-                        'back_n': back_n, 'since': age, 'green': green})
+            out.append({'kind': 'back', 't': b['t'], 'close': c, 'stop': stop, 'basis': pb, 'ran_pct': ran, 'vol_x': pop_vol,
+                        'back_n': back_n, 'since': age, 'green': green, 'weak': weak})
     return out
 
 
@@ -2647,11 +2693,20 @@ def pop_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
                  it (`wait` 0: whenever)
       the stop   a tick under the lowest low from the candle after the top to the BACK candle; the top
                  is the first candle with the highest high of the run's candles before the BACK candle
-    An alert is sent in the window, on a gainer; the ones sent are numbered per day.
+      a reading  the largest volume of a candle and the two before it, over the mean volume of the 20
+                 candles before those three: none when those 20 are not all there with a volume, when
+                 that mean is 0, or when the candle's own volume is unknown (one of the two before it
+                 that is unknown, or not there, counts as 0)
+      a surge    a reading of `vol_min` or more, or volume on one of the three where the 20 all had none
+      weak       (`vol_on`) a POP on a candle with no surge, and the BACK of that run
+    An alert is sent in the window, on a gainer, with its POP candle's reading. The ones sent that are
+    not weak are numbered per day; a weak one carries how many of its kind were numbered before it
+    that day.
     → the same list as simulate_pop."""
     p = dict(POP_DEFAULTS, **(p or {}))
     n, length = len(bars), p['len']
     o, h, lows, c = [b['o'] for b in bars], [b['h'] for b in bars], [b['l'] for b in bars], [b['c'] for b in bars]
+    traded = [b.get('v') for b in bars]
     day = [b['t'].date() for b in bars]
     gain = [True if gainer_of is None else bool(gainer_of(b)) for b in bars]
     inw = [True if in_window_of is None else bool(in_window_of(b)) for b in bars]
@@ -2687,10 +2742,32 @@ def pop_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
         runs.append((k, e))
         free = e + 1
 
+    def most(j):
+        """The largest volume of candle j and the two before it; None when candle j's own is unknown."""
+        if traded[j] is None:
+            return None
+        return max(traded[m] or 0 for m in range(max(0, j - (POP_VOL_TOP - 1)), j + 1))
+
+    def mean_before(j):
+        """The mean volume of the 20 candles before those three; None unless all 20 are there, each with a volume."""
+        first = j - (POP_VOL_TOP - 1) - POP_VOL_WIN
+        w = traded[first:first + POP_VOL_WIN] if first >= 0 else []
+        return sum(w) / POP_VOL_WIN if w and None not in w else None
+
+    def reading(j):
+        top, m = most(j), mean_before(j)
+        return top / m if top is not None and m is not None and m > 0 else None
+
+    def surge(j):
+        top, m = most(j), mean_before(j)
+        if top is None or m is None:
+            return False
+        return top / m >= p['vol_min'] if m > 0 else top > 0
+
     out = []
 
-    def number(kind, k):
-        return 1 + sum(1 for x in out if x['kind'] == kind and x['t'].date() == day[k])
+    def number(kind, k, weak):
+        return (0 if weak else 1) + sum(1 for x in out if x['kind'] == kind and x['t'].date() == day[k] and not x['weak'])
 
     for k, e in runs:
         reach = [(h[m] / basis[m] - 1) * 100 for m in range(k, e + 1)]      # each candle's high against its own basis
@@ -2701,9 +2778,10 @@ def pop_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
         pop = next((j for j in range(k, e + 1) if ran(j) >= p['up']), None)
         if pop is None:
             continue
+        weak = bool(p['vol_on']) and not surge(pop)
         if inw[pop] and gain[pop]:
             out.append({'kind': 'pop', 't': bars[pop]['t'], 'close': c[pop], 'basis': basis[pop], 'ran_pct': ran(pop),
-                        'pop_n': number('pop', pop)})
+                        'vol_x': reading(pop), 'pop_n': number('pop', pop, weak), 'weak': weak})
         last = e if p['wait'] <= 0 else min(e, pop + p['wait'])
         touch = next((j for j in range(pop + 1, last + 1) if lows[j] <= basis[j] * (1 + p['tol'] / 100)), None)
         if touch is None:
@@ -2715,8 +2793,8 @@ def pop_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
         highs = h[k:back]
         top = k + highs.index(max(highs))
         out.append({'kind': 'back', 't': bars[back]['t'], 'close': c[back], 'stop': min(lows[top + 1:back + 1]) - tick,
-                    'basis': basis[back], 'ran_pct': ran(back), 'back_n': number('back', back), 'since': back - pop,
-                    'green': green[back]})
+                    'basis': basis[back], 'ran_pct': ran(back), 'vol_x': reading(pop), 'back_n': number('back', back, weak),
+                    'since': back - pop, 'green': green[back], 'weak': weak})
     return out
 
 
@@ -2725,12 +2803,19 @@ def _pop_tape(seed, days, day_bars, grid=None, gap=True):
     to six candles), pullbacks after them that come down to the 15-close basis (to a little over it,
     or through it), second legs, and fades back under it, so runs come with and without a POP, and
     POPs with and without a BACK. `grid` and `gap` as in _turn_tape (on a grid a quiet stretch is
-    often perfectly flat: its closes stand on the basis)."""
+    often perfectly flat: its closes stand on the basis).
+    The volumes ('v', whole shares) come in stretches of their own, from a generator of their own (the
+    prices are the tapes v48 was tested on): 'even' (1000 on every candle, so a burst reads exactly its
+    multiple), 'busy' (500–3000), 'thin' (0–39) and 'none' (25–69 candles with no volume at all: a base
+    of 0). A candle of a pop or a leg trades a burst, 1 to 250 times its stretch's volume; in a 'none'
+    stretch such a candle trades nothing, 300 or 5000."""
     import datetime as dt, math, random
     rnd = random.Random(seed)
+    vrnd = random.Random(seed + 7919)
     t0 = dt.datetime(2026, 11, 2, 4, 0, tzinfo=ET)
     snap = (lambda x: max(grid, round(x / grid) * grid)) if grid else (lambda x: x)
     bars, px, phase, left, drift, vol, aim = [], snap(4.0), 'quiet', 0, 0.0, 0.0, 0.0
+    trade, trade_left = 'even', 0
     for day in range(days):
         if gap:
             px = snap(rnd.uniform(3.0, 6.0))
@@ -2767,32 +2852,59 @@ def _pop_tape(seed, days, day_bars, grid=None, gap=True):
             c = snap(px * math.exp(drift + rnd.gauss(0, vol)))
             h = max(o, c, snap(max(o, c) * (1 + abs(rnd.gauss(0, vol * 0.6)))))
             low = min(o, c, snap(min(o, c) * (1 - abs(rnd.gauss(0, vol * 0.8)))))
-            bars.append({'t': t0 + dt.timedelta(days=day, minutes=m), 'o': o, 'h': h, 'l': low, 'c': c})
+            if trade_left == 0:
+                trade = vrnd.choice(['even', 'even', 'busy', 'thin', 'none'])
+                trade_left = vrnd.randrange(8, 40) if trade in ('busy', 'thin') else vrnd.randrange(25, 70)
+            trade_left -= 1
+            burst = vrnd.choice([1, 1, 2, 5, 10, 10, 20, 60, 250]) if phase in ('pop', 'leg') else 1
+            if trade == 'none':
+                shares = vrnd.choice([0, 0, 300, 5000]) if burst > 1 else 0
+            else:
+                shares = burst * (1000 if trade == 'even' else vrnd.randrange(500, 3000) if trade == 'busy' else vrnd.randrange(0, 40))
+            bars.append({'t': t0 + dt.timedelta(days=day, minutes=m), 'o': o, 'h': h, 'l': low, 'c': c, 'v': shares})
             px = c
     return bars
 
 
 def selftest_pop():
-    """POP and BACK (v48). First on hand-built candles, each case's alerts worked out by hand in the
-    comments: `lead` candles standing on 10.00 (the basis is 10.00 and every close is on it), then the
-    case's own rows (open, high, low, close); with the default 15-close basis, m rows in it is
-    (10 × (15 − m) + those m closes) / 15. Then the script's state machine (simulate_pop) against the
-    rule from its definitions (pop_rule_direct) — the same alerts, field for field — on generated
-    tapes like selftest_turn's (continuous prices and a 1/64 grid with its exact ties, tapes cut into
-    many short days, short tapes for the warm-up), under the script's defaults and with each dial moved."""
+    """POP and BACK (v48) and its volume test (v49). First on hand-built candles, each case's alerts
+    worked out by hand in the comments: `lead` candles standing on 10.00 (the basis is 10.00 and every
+    close is on it), then the case's own rows (open, high, low, close); with the default 15-close
+    basis, m rows in it is (10 × (15 − m) + those m closes) / 15. v48's cases are about the prices:
+    in them every row trades 15 times its own base (the mean of the 20 candles that end three before
+    it) and no less than the row before, so whichever rows are POPs, each has a surge, reads 15 and
+    is numbered as in v48. v49's cases give every candle its volume. Then the script's state machine
+    (simulate_pop) against the rule from its definitions
+    (pop_rule_direct) — the same alerts, field for field — on generated tapes like selftest_turn's
+    (continuous prices and a 1/64 grid with its exact ties, tapes cut into many short days, short
+    tapes for the warm-up), under the script's defaults and with each dial moved, the volume test's
+    last."""
     import datetime as dt
     t0 = dt.datetime(2026, 11, 2, 9, 30, tzinfo=ET)
-    near = {'basis': 1e-4, 'ran_pct': 1e-3, 'stop': 1e-9}      # the figures below are written to 4 and 3 decimals
+    near = {'basis': 1e-4, 'ran_pct': 1e-3, 'stop': 1e-9, 'vol_x': 1e-9}   # basis and ran_pct are written below to 4 and 3 decimals
 
-    def check(rows, want, q=None, lead=40, new_day_at=None, gain=None, window=None, **cb):
+    def check(rows, want, q=None, lead=40, new_day_at=None, gain=None, window=None, vols=None, lead_vol=100, **cb):
         """simulate_pop and pop_rule_direct on `lead` flat candles + rows, against the alerts worked
         out: ('pop', row, pop_n, basis, ran_pct) / ('back', row, back_n, since, stop, green, basis,
-        ran_pct). `new_day_at`: the row that opens the next day; gain / window: row → bool (the
-        gainer filter and the alert window); `tick` is passed on."""
-        bars = [{'t': t0 + dt.timedelta(minutes=i), 'o': 10.0, 'h': 10.0, 'l': 10.0, 'c': 10.0} for i in range(lead)]
-        for r, (o, h, low, c) in enumerate(rows):
-            t = t0 + dt.timedelta(minutes=lead + r, days=1 if new_day_at is not None and r >= new_day_at else 0)
+        ran_pct), each followed by (vol_x, weak) where those are not (15, False). `new_day_at`: the row
+        that opens the next day; gain / window: row → bool (the gainer filter and the alert window);
+        `tick` is passed on.
+        The volumes: a lead candle trades `lead_vol` (a figure, or candle → figure) and the rows trade
+        `vols`, one figure each; None is a candle with no volume given. Without `vols`, each row trades
+        15 times the mean of the 20 candles that end three before it (100 while those are not there):
+        as no row then trades less than the one before, a row's own volume is the largest of its three."""
+        vol = [lead_vol(i) if callable(lead_vol) else lead_vol for i in range(lead)]
+        for r in range(len(rows)):
+            k = len(vol)
+            vol.append(vols[r] if vols is not None else 15 * sum(vol[k - 22:k - 2]) / 20 if k >= 22 else 100)
+        bars = []
+        for i, shares in enumerate(vol):
+            r = i - lead
+            o, h, low, c = rows[r] if r >= 0 else (10.0, 10.0, 10.0, 10.0)
+            t = t0 + dt.timedelta(minutes=i, days=1 if new_day_at is not None and r >= new_day_at else 0)
             bars.append({'t': t, 'o': o, 'h': h, 'l': low, 'c': c})
+            if shares is not None:
+                bars[-1]['v'] = shares
         row_of = {b['t']: i - lead for i, b in enumerate(bars)}
         if gain is not None:
             cb['gainer_of'] = lambda b: gain(row_of[b['t']])
@@ -2800,16 +2912,28 @@ def selftest_pop():
             cb['in_window_of'] = lambda b: window(row_of[b['t']])
         exp = []
         for kind, r, n, *more in want:
-            x = {'kind': kind, 't': bars[lead + r]['t'], 'close': rows[r][3], 'basis': more[-2], 'ran_pct': more[-1]}
+            own = 2 if kind == 'pop' else 5                      # the figures before (vol_x, weak)
+            vol_x, weak = more[own:] or (15.0, False)
+            x = {'kind': kind, 't': bars[lead + r]['t'], 'close': rows[r][3], 'basis': more[own - 2], 'ran_pct': more[own - 1],
+                 'vol_x': vol_x, 'weak': weak}
             x.update({'pop_n': n} if kind == 'pop' else {'back_n': n, 'since': more[0], 'stop': more[1], 'green': more[2]})
             exp.append(x)
 
         def as_worked_out(got):
             return len(got) == len(exp) and all(
-                g.keys() == x.keys() and all(abs(g[k] - x[k]) <= near[k] if k in near else g[k] == x[k] for k in x)
+                g.keys() == x.keys() and type(g['weak']) is bool
+                and all(abs(g[k] - x[k]) <= near[k] if k in near and None not in (g[k], x[k]) else g[k] == x[k] for k in x)
                 for g, x in zip(got, exp))
 
         return as_worked_out(simulate_pop(bars, q, **cb)) and as_worked_out(pop_rule_direct(bars, q, **cb))
+
+    def reads(alert, vol_x, n=None):
+        """A worked-out alert with its POP candle's reading in the place of 15 (and, given `n`, that number)."""
+        return (alert if n is None else alert[:2] + (n,) + alert[3:]) + (vol_x, False)
+
+    def as_weak(alert, vol_x, n=0):
+        """…and as a weak one: that reading, and the day's count as it stood (`n`) in the place of its number."""
+        return alert[:2] + (n,) + alert[3:] + (vol_x, True)
 
     # a candle that starts a run and is its POP: the close before is on the basis (10.00), this one is
     # above it, basis (140 + 11.5) / 15 = 10.10, high 11.6 = +14.851%
@@ -2829,6 +2953,8 @@ def selftest_pop():
     # is green above a rising basis (163.9 / 15 = 10.9267): the day's second BACK, stop under its own low
     two_runs = [pop0, (11.5, 13.0, 11.5, 12.8), (12.8, 12.8, 10.25, 10.6), (10.6, 11.2, 10.5, 11.1), (11.1, 13.5, 11.1, 13.4),
                 (13.4, 13.4, 10.0, 10.0), (10.0, 12.6, 10.0, 12.5), (11.0, 12.1, 11.0, 12.0)]
+    runs_back1, runs_pop2 = ('back', 3, 1, 3, 10.24, True, 10.4, 26.377), ('pop', 6, 2, 10.7933, 16.739)
+    runs_back2 = ('back', 7, 2, 1, 10.99, True, 10.9267, 16.739)
     # the wait: rows 1–3 stay far above the basis (no touch), row 4 comes down to it (10.4 ≤ 10.524, basis 156.3 / 15 = 10.42,
     # up from 10.36) and closes green above it, 4 candles after the POP; the top is row 0, the lowest low after it 10.4
     late = [pop0, (11.5, 11.5, 11.3, 11.4), (11.4, 11.5, 11.2, 11.3), (11.3, 11.4, 11.1, 11.2), (10.4, 11.0, 10.4, 10.9)]
@@ -2846,6 +2972,7 @@ def selftest_pop():
     # a new day: rows 0–1 are a POP and its BACK; row 2 stays above the basis; row 3 closes above it again (no crossing) with
     # a high +15.236% over 154.9 / 15 = 10.3267; row 4 touches (10.45 ≤ 10.49) and is green above 155.8 / 15 = 10.3867
     two_days = [pop0, (10.3, 10.9, 10.2, 10.8), (10.8, 10.9, 10.7, 10.8), (10.8, 11.9, 10.8, 11.8), (10.5, 11.0, 10.45, 10.9)]
+    day2_pop, day2_back = ('pop', 3, 1, 10.3267, 15.236), ('back', 4, 1, 1, 10.44, True, 10.3867, 15.236)
     # a 2-close basis: row 0 is the POP (basis 11, high +13.636%); row 1 closes exactly on the basis ((12 + 12) / 2), green,
     # the basis up, its low a touch — the run goes on, and it is no bounce (the close is not above the basis); row 2 is
     # (basis 12.25): the top before it is row 0, the lows after that 11.9 and 12.0. Its high is +10.2% out, but it is a
@@ -2869,9 +2996,7 @@ def selftest_pop():
         # own low (10.0) was at the basis
         ("a POP on the run's first candle, whose own low is no touch",
          check([pop0, (11.5, 11.9, 11.4, 11.8)], [first])),
-        ('one POP per run, the next run is POP 2 and BACK 2',
-         check(two_runs, [first, ('back', 3, 1, 3, 10.24, True, 10.4, 26.377), ('pop', 6, 2, 10.7933, 16.739),
-                          ('back', 7, 2, 1, 10.99, True, 10.9267, 16.739)])),
+        ('one POP per run, the next run is POP 2 and BACK 2', check(two_runs, [first, runs_back1, runs_pop2, runs_back2])),
         ('a 15% pop asked: none', check(plain[:4], [], dict(up=15.0))),
         ('tol 0: a low above the basis is no touch', check(plain[:4], [plain_pop], dict(tol=0.0))),
         ('the wait runs out (wait 3, the bounce 4 after)', check(late, [first], dict(wait=3))),
@@ -2911,8 +3036,7 @@ def selftest_pop():
         ('a histogram of 0 is not green', check(plain[:4], [plain_pop], dict(fast=1, slow=2, sig=1))
          and check(plain[:4], [plain_pop, plain_back[:5] + (False,) + plain_back[6:]], dict(fast=1, slow=2, sig=1, macd_on=False))),
         ("a new day: the counts start over and its first candle starts a run",
-         check(two_days, [first, at_once_back, ('pop', 3, 1, 10.3267, 15.236), ('back', 4, 1, 1, 10.44, True, 10.3867, 15.236)],
-               new_day_at=3)),
+         check(two_days, [first, at_once_back, day2_pop, day2_back], new_day_at=3)),
         ('the same candles on one day: nothing after the first BACK', check(two_days, [first, at_once_back])),
         # the gainer filter stops the POP (row 1): the run has had its POP all the same (row 2 is still +14.5% out and
         # sends none), and the BACK is the day's first
@@ -2934,9 +3058,11 @@ def selftest_pop():
         ('a level basis is not a rising one, a high equal to the top is no new top',
          check(level, [('pop', 0, 1, 11.0, 18.182), ('back', 4, 1, 4, 11.49, False, 12.9167, 18.182)], len3)),
         # 15 flat candles: row 0 is the first with a basis on the candle before it. 14: its own basis is the first, so it is
-        # skipped, and row 1 is no crossing (row 0 closed above its basis)
+        # skipped, and row 1 is no crossing (row 0 closed above its basis). With 15 candles before it the POP has no volume
+        # reading (that takes 22), so this one case runs with the volume test off, which keeps its number
         ('the warm-up: a candle with no basis before it is skipped',
-         check([pop0, (11.5, 11.6, 11.4, 11.5)], [first], lead=15) and check([pop0, (11.5, 11.6, 11.4, 11.5)], [], lead=14)),
+         check([pop0, (11.5, 11.6, 11.4, 11.5)], [reads(first, None)], dict(vol_on=False), lead=15)
+         and check([pop0, (11.5, 11.6, 11.4, 11.5)], [], dict(vol_on=False), lead=14)),
     ]
     off = [label for label, good in hand if not good]
     ok_hand = not off
@@ -2946,6 +3072,151 @@ def selftest_pop():
           f"ending first; the stop after a new high, on the bounce candle and before it; the MACD on and off; a new day; a POP or a "
           f"bounce the gainer filter stops; closes, lows and highs exactly on a line; the warm-up)"
           + (f" — NOT: {'; '.join(off)}" if off else ''), '→', 'OK' if ok_hand else 'UNEXPECTED')
+
+    # The volume test (v49): the top (the most traded of the POP candle and the two before it) over the base (the mean of
+    # the 20 candles before those three). A lead candle trades 100 unless the case says otherwise.
+    # In `plain` the POP is row 1, candle 41: its three candles are 39 (the last lead candle), 40 (row 0) and 41, its base
+    # lead candles 19–38; its BACK is row 3.
+    # `ramp` is a pop that takes three candles to reach the mark: row 0 starts the run (basis 150.5 / 15 = 10.0333, high
+    # +4.651%), row 1 gets to +8.487% (10.95 over 151.4 / 15 = 10.0933), row 2 is the POP (11.5 over 152.8 / 15 = 10.1867,
+    # +12.893%), candle 42: its three candles are the three rows, its base lead candles 20–39.
+    ramp = [(10.0, 10.5, 10.0, 10.5), (10.5, 10.95, 10.5, 10.9), (10.9, 11.5, 10.9, 11.4)]
+    ramp_pop = ('pop', 2, 1, 10.1867, 12.893)
+    # `climb` takes six: the highs (the closes) stand +1.864%, +3.586%, +5.159%, +6.579% and +7.843% over bases of 150.2 / 15,
+    # 150.6 / 15, 151.2 / 15, 152 / 15 and 153 / 15, then row 5 is the POP (11.4 over 154.4 / 15 = 10.2933, +10.751%), candle
+    # 45: its three candles are rows 3–5, its base lead candles 23–39 and rows 0–2.
+    climb = [(10.0, 10.2, 10.0, 10.2), (10.2, 10.4, 10.2, 10.4), (10.4, 10.6, 10.4, 10.6), (10.6, 10.8, 10.6, 10.8),
+             (10.8, 11.0, 10.8, 11.0), (11.0, 11.4, 11.0, 11.4)]
+    climb_pop = ('pop', 5, 1, 10.2933, 10.751)
+    hand_vol = [
+        # the base is 100 and the POP candle trades 1000, the most of its three: 10 times, the minimum
+        ('a surge exactly at the minimum counts',
+         check(plain[:4], [reads(plain_pop, 10.0), reads(plain_back, 10.0)], vols=[100, 1000, 100, 100])),
+        # 999 is 9.99 times: the POP is sent weak and takes no number (pop 0), and so is its BACK (back 0), with the POP's reading
+        ('one share under it: the POP and its BACK are weak and take no number',
+         check(plain[:4], [as_weak(plain_pop, 9.99), as_weak(plain_back, 9.99)], vols=[100, 999, 100, 100])),
+        ('the test off: the same two are not weak and are numbered, the reading still given',
+         check(plain[:4], [reads(plain_pop, 9.99), reads(plain_back, 9.99)], dict(vol_on=False), vols=[100, 999, 100, 100])),
+        ('a minimum of 5: 5 times is a surge (not under the default 10), 4.99 is not',
+         check(plain[:4], [reads(plain_pop, 5.0), reads(plain_back, 5.0)], dict(vol_min=5.0), vols=[100, 500, 100, 100])
+         and check(plain[:4], [as_weak(plain_pop, 5.0), as_weak(plain_back, 5.0)], vols=[100, 500, 100, 100])
+         and check(plain[:4], [as_weak(plain_pop, 4.99), as_weak(plain_back, 4.99)], dict(vol_min=5.0), vols=[100, 499, 100, 100])),
+        # row 3, the BACK candle, trades 90000 after a weak POP (900 times that POP's base), and nothing after a POP with a
+        # surge
+        ("the BACK candle's own volume plays no part",
+         check(plain[:4], [as_weak(plain_pop, 9.99), as_weak(plain_back, 9.99)], vols=[100, 999, 100, 90000])
+         and check(plain[:4], [reads(plain_pop, 10.0), reads(plain_back, 10.0)], vols=[100, 1000, 100, 0])),
+        # the three-candle pop: the lead candles trade 1000, the rows 50000, 60000 and 60000. The top is 60000, the base 1000:
+        # 60 times. (Against the 20 candles before the POP candle alone, the test's first reading, the first two rows are in
+        # the mean, (18 × 1000 + 50000 + 60000) / 20 = 6400, and 60000 is 9.375 times it: weak.)
+        ('a pop that takes three candles is read against the 20 before all three',
+         check(ramp, [reads(ramp_pop, 60.0)], vols=[50000, 60000, 60000], lead_vol=1000)),
+        # the same rows with the volume on the first of the three (60000, two before the POP candle, which trades 500), then
+        # on the second: the top is that earlier candle, 60 times
+        ('the top can be one of the two candles before a POP candle that trades little',
+         check(ramp, [reads(ramp_pop, 60.0)], vols=[60000, 1000, 500], lead_vol=1000)
+         and check(ramp, [reads(ramp_pop, 60.0)], vols=[1000, 60000, 500], lead_vol=1000)),
+        # three before the POP candle (candle 39, the last lead candle) 21000 trade: that candle is the base's last, not one of
+        # the three. The base is (19 × 1000 + 21000) / 20 = 2000 and the top the POP candle's 10000: 5 times, weak. One candle
+        # later (row 0) the 21000 are the top, over a base of 1000: 21 times
+        ('a big candle three before the POP candle is in the base, not the top; two before, it is the top',
+         check(ramp, [as_weak(ramp_pop, 5.0)], vols=[1000, 1000, 10000], lead_vol=lambda i: 21000 if i == 39 else 1000)
+         and check(ramp, [reads(ramp_pop, 21.0)], vols=[21000, 1000, 10000], lead_vol=1000)),
+        # the six-candle climb, every row trading 21000 after lead candles of 1000: by the POP (row 5) the first three rows
+        # are in the base, (17 × 1000 + 3 × 21000) / 20 = 4000, and the top's 21000 is 5.25 times it: weak, though each candle
+        # of the climb trades 21 times what the candles before it did. With the 21000 on the last three rows only, the base
+        # is 1000: 21 times
+        ('a slow climb waters its own base down: six candles of 21 times the volume before read 5.25, weak',
+         check(climb, [as_weak(climb_pop, 5.25)], vols=[21000] * 6, lead_vol=1000)
+         and check(climb, [reads(climb_pop, 21.0)], vols=[1000, 1000, 1000, 21000, 21000, 21000], lead_vol=1000)),
+        # the far end of the base, in `plain`: candles 19–38. A candle of 2100 at 19 is its first: (2100 + 19 × 100) / 20 =
+        # 200, and 1000 is 5 times; at 18 it is not in it, and nor is a candle with no volume given there: 10 times
+        ('the base is the 20 candles that end three before the POP candle, no more',
+         check(plain[:4], [as_weak(plain_pop, 5.0), as_weak(plain_back, 5.0)], vols=[100, 1000, 100, 100],
+               lead_vol=lambda i: 2100 if i == 19 else 100)
+         and check(plain[:4], [reads(plain_pop, 10.0), reads(plain_back, 10.0)], vols=[100, 1000, 100, 100],
+                   lead_vol=lambda i: 2100 if i == 18 else 100)
+         and check(plain[:4], [reads(plain_pop, 10.0), reads(plain_back, 10.0)], vols=[100, 1000, 100, 100],
+                   lead_vol=lambda i: None if i == 18 else 100)),
+        # nothing traded on the base's 20 candles, a base of 0: 5 shares on the POP candle, or on the candle before it, are a
+        # surge with no reading to give (the script's message then has no `vol`)
+        ('no volume on the 20 candles of the base: some in the top is a surge with no reading',
+         check(plain[:4], [reads(plain_pop, None), reads(plain_back, None)], vols=[0, 5, 0, 0], lead_vol=0)
+         and check(plain[:4], [reads(plain_pop, None), reads(plain_back, None)], vols=[5, 0, 0, 0], lead_vol=0)),
+        # …none on the three either is no surge. And 5 shares three before the POP candle (candle 38) are in the base, which
+        # is then 5 / 20 = 0.25: the three traded nothing, a reading of 0
+        ('…and none in the top is weak; one trade three before the POP candle is the base, and the reading 0',
+         check(plain[:4], [as_weak(plain_pop, None), as_weak(plain_back, None)], vols=[0, 0, 0, 0], lead_vol=0)
+         and check(plain[:4], [as_weak(plain_pop, 0.0), as_weak(plain_back, 0.0)], vols=[0, 0, 0, 0],
+                   lead_vol=lambda i: 5 if i == 38 else 0)),
+        # pop0 on candle 21, the tape's 22nd: its base would be candles −1 to 18, so it has none: no reading and no surge,
+        # whatever it trades; with the test off it is POP 1. On candle 22 the base is candles 0–19, 100 each: 1000 is 10 times
+        ('fewer than 23 candles: no base, no reading, weak while the test is on',
+         check([pop0], [as_weak(first, None)], lead=21, vols=[90000])
+         and check([pop0], [reads(first, None)], dict(vol_on=False), lead=21, vols=[90000])
+         and check([pop0], [reads(first, 10.0)], lead=22, vols=[1000])),
+        # two_runs: the POPs are rows 0 and 6, their BACKs rows 3 and 7. Row 0 trades 600 over a base of 100, 6 times: weak,
+        # pop 0, and its BACK back 0. Row 6 (candle 46) trades 2500, the most of rows 4–6; its base is candles 24–43, 16 lead
+        # candles and rows 0–3: (1600 + 600 + 300) / 20 = 125. 20 times: the day's first POP that counts, and its BACK the
+        # first BACK that does
+        ('a weak POP and its weak BACK, then in the next run POP 1 and BACK 1',
+         check(two_runs, [as_weak(first, 6.0), as_weak(runs_back1, 6.0), reads(runs_pop2, 20.0, 1), reads(runs_back2, 20.0, 1)],
+               vols=[600, 100, 100, 100, 100, 100, 2500, 100])),
+        # the other way round: row 0 trades 1000, 10 times: POP 1 and BACK 1. Row 6's base: (1600 + 1000 + 300) / 20 = 145,
+        # and it trades 725, 5 times: weak, and it and its BACK carry the counts as they stand, pop 1 and back 1
+        ('a weak POP after a counted one carries the count as it stands, and so does its BACK',
+         check(two_runs, [reads(first, 10.0), reads(runs_back1, 10.0), as_weak(runs_pop2, 5.0, 1), as_weak(runs_back2, 5.0, 1)],
+               vols=[1000, 100, 100, 100, 100, 100, 725, 100])),
+        # two_days with its row 3 (candle 43) opening the next day: row 0 trades 1000, POP 1 and BACK 1 of the first day. Row
+        # 3 is read against the day before: its base is candles 21–40, 19 lead candles and row 0, (1900 + 1000) / 20 = 145.
+        # Trading 1450, 10 times, it is the new day's POP 1; trading 725, 5 times, it is weak and carries the new day's count,
+        # 0. And trading 100 after the day before's last candle (row 2) traded 1450, it is POP 1 again: that candle is the top
+        ("a new day's first candle is read against the day before, base and top; a weak POP there carries 0",
+         check(two_days, [reads(first, 10.0), reads(at_once_back, 10.0), reads(day2_pop, 10.0), reads(day2_back, 10.0)],
+               new_day_at=3, vols=[1000, 100, 100, 1450, 100])
+         and check(two_days, [reads(first, 10.0), reads(at_once_back, 10.0), as_weak(day2_pop, 5.0), as_weak(day2_back, 5.0)],
+                   new_day_at=3, vols=[1000, 100, 100, 725, 100])
+         and check(two_days, [reads(first, 10.0), reads(at_once_back, 10.0), reads(day2_pop, 10.0), reads(day2_back, 10.0)],
+                   new_day_at=3, vols=[1000, 100, 1450, 100, 100])),
+        # a minimum of 0: the POP candle and the two before it (candle 39 and row 0) trade nothing over a base of 100, a
+        # reading of 0: a surge (weak under the default). Without a base above 0 the minimum plays no part: no base, or a
+        # base of 0 and nothing in the top, is weak all the same
+        ('a minimum of 0: every POP with a base above 0 is a surge',
+         check(plain[:4], [reads(plain_pop, 0.0), reads(plain_back, 0.0)], dict(vol_min=0.0), vols=[0, 0, 100, 100],
+               lead_vol=lambda i: 0 if i == 39 else 100)
+         and check(plain[:4], [as_weak(plain_pop, 0.0), as_weak(plain_back, 0.0)], vols=[0, 0, 100, 100],
+                   lead_vol=lambda i: 0 if i == 39 else 100)
+         and check([pop0], [as_weak(first, None)], dict(vol_min=0.0), lead=21, vols=[90000])
+         and check(plain[:4], [as_weak(plain_pop, None), as_weak(plain_back, None)], dict(vol_min=0.0), vols=[0, 0, 0, 0], lead_vol=0)),
+        # the gainer filter stops the weak POP (row 1); its BACK is sent, weak, back 0, with the reading of the POP that was not
+        ('a weak POP not sent: its BACK is sent weak, with its reading',
+         check(plain, [as_weak(plain_back, 9.99)], gain=lambda r: r > 1, vols=[100, 999, 100, 100, 100])),
+        # a candle with no volume given. The POP candle itself: no top. One of the base's 20 (candle 30): no base
+        ('no volume given on the POP candle, or on one of the base: no reading, weak',
+         check(plain[:4], [as_weak(plain_pop, None), as_weak(plain_back, None)], vols=[100, None, 100, 100])
+         and check(plain[:4], [as_weak(plain_pop, None), as_weak(plain_back, None)], vols=[100, 1000, 100, 100],
+                   lead_vol=lambda i: None if i == 30 else 100)),
+        # …on the candle before the POP candle (row 0), or on both before it (candle 39 too): they count as 0 in the top, which
+        # is the POP candle's own 1000, 10 times, or its 999, 9.99 times
+        ('no volume given on the two candles before the POP candle: they count as 0, the reading stands',
+         check(plain[:4], [reads(plain_pop, 10.0), reads(plain_back, 10.0)], vols=[None, 1000, 100, 100])
+         and check(plain[:4], [reads(plain_pop, 10.0), reads(plain_back, 10.0)], vols=[None, 1000, 100, 100],
+                   lead_vol=lambda i: None if i == 39 else 100)
+         and check(plain[:4], [as_weak(plain_pop, 9.99), as_weak(plain_back, 9.99)], vols=[None, 999, 100, 100])),
+        # …and on no candle at all, the bars v48 took: every alert weak, and with the test off v48's alerts
+        ('no volume given at all: every alert weak; with the test off, the alerts of v48',
+         check(plain[:4], [as_weak(plain_pop, None), as_weak(plain_back, None)], vols=[None] * 4, lead_vol=None)
+         and check(plain[:4], [reads(plain_pop, None), reads(plain_back, None)], dict(vol_on=False), vols=[None] * 4, lead_vol=None)),
+    ]
+    off = [label for label, good in hand_vol if not good]
+    ok_hand = ok_hand and not off
+    print(f"…its volume test (v49), on hand-built candles with their volumes: {len(hand_vol) - len(off)} of {len(hand_vol)} cases give "
+          f"the alerts worked out by hand, from both again (a surge exactly at the minimum, and a share under it: the POP and its "
+          f"BACK weak, with the POP's reading and no number; the test off; another minimum, and 0; a pop over three candles, the "
+          f"top on a candle before the POP candle, a big candle three before it, a climb over six; the base's 20 candles, with no "
+          f"volume, and fewer than 23 candles; a weak POP before and after a counted one, and on a new day's first candle; a weak "
+          f"POP not sent; candles with no volume given)"
+          + (f" — NOT: {'; '.join(off)}" if off else ''), '→', 'OK' if not off else 'UNEXPECTED')
 
     g = 1 / 64
     tapes = ([('two days', None, _pop_tape(s, 2, 600)) for s in (1, 2, 3, 4, 5, 6)]                # (kind, its grid, bars)
@@ -2985,30 +3256,56 @@ def selftest_pop():
              for label, runs in got.items()}
     pops, backs = sum(n for n, _ in count.values()), sum(n for _, n in count.values())
     moved_dial = all(n_pop > 0 and n_back > 0 and (label == 'the defaults' or got[label] != base) for label, (n_pop, n_back) in count.items())
-    # the day's numbers: 1, 2, … for the POPs and for the BACKs on each day of each tape; alerts on both days of a two-day tape
+    def numbers(a):
+        """One run's alerts → (the day's numbers hold: of each kind, the alerts that are not weak carry 1, 2, … and a
+        weak one carries the count as it stands; the counts reached, by (day, kind))."""
+        good, reached = True, {}
+        for x in a:
+            key = (x['t'].date(), x['kind'])
+            reached[key] = reached.get(key, 0) + (not x['weak'])
+            good = good and x['pop_n' if x['kind'] == 'pop' else 'back_n'] == reached[key]
+        return good, reached
+
+    # the day's numbers on each day of each tape (`twice`: a day with a BACK 2); alerts on both days of a two-day tape
     numbered, second, twice = True, 0, 0
     for runs in got.values():
         for (kind, _, bars), a in zip(tapes, runs):
-            by_day = {}
-            for x in a:
-                by_day.setdefault((x['t'].date(), x['kind']), []).append(x['pop_n'] if x['kind'] == 'pop' else x['back_n'])
-            numbered = numbered and all(ns == list(range(1, len(ns) + 1)) for ns in by_day.values())
-            twice += sum(1 for (_, k), ns in by_day.items() if k == 'back' and len(ns) > 1)
+            good, reached = numbers(a)
+            numbered = numbered and good
+            twice += sum(1 for (_, k), n in reached.items() if k == 'back' and n > 1)
             if kind == 'two days':
                 second += sum(1 for x in a if x['t'].date() != bars[0]['t'].date())
     # a gainer filter and an alert window, applied where the script applies them: a POP they stop still uses up its run
-    # (its BACK can be sent: `lone`), and a bounce they stop still uses up its POP
+    # (its BACK can be sent: `lone`, and it has that POP's reading and flag), and a bounce they stop still uses up its POP
     cb = dict(gainer_of=lambda b: b['t'].minute % 3 != 0, in_window_of=lambda b: b['t'].minute % 7 != 0)
-    n_cb = n_open = lone = 0
-    for q in ({}, dict(macd_on=False), dict(len=2, up=3.0, wait=3, tol=0.0, macd_on=False)):
+
+    def with_filters(q):
+        """Every tape under the settings with the filter and the window → (the two implementations agree and the numbers
+        hold; the alerts sent; the alerts without the two; the BACKs sent after a POP that was not; those of them that
+        are weak; every BACK has the reading and the flag of its POP, as the run without the two sent it)."""
+        agree, n_sent, n_free, alone, alone_weak, kept = True, 0, 0, 0, 0, True
         for _, _, bars in tapes:
-            a = simulate_pop(bars, q, **cb)
-            same = same and a == pop_rule_direct(bars, q, **cb)
-            n_cb += len(a)
-            n_open += len(simulate_pop(bars, q))
+            a, free = simulate_pop(bars, q, **cb), simulate_pop(bars, q)
+            agree = agree and a == pop_rule_direct(bars, q, **cb) and numbers(a)[0]
+            n_sent += len(a)
+            n_free += len(free)
             at = {b['t']: i for i, b in enumerate(bars)}
             sent = {at[x['t']] for x in a if x['kind'] == 'pop'}
-            lone += sum(1 for x in a if x['kind'] == 'back' and at[x['t']] - x['since'] not in sent)
+            its_pop = {at[x['t']]: x for x in free if x['kind'] == 'pop'}       # without the two every POP is sent
+            for x in a:
+                if x['kind'] == 'back':
+                    src = its_pop[at[x['t']] - x['since']]
+                    kept = kept and (x['vol_x'], x['weak']) == (src['vol_x'], src['weak'])
+                    if at[x['t']] - x['since'] not in sent:
+                        alone += 1
+                        alone_weak += x['weak']
+        return agree, n_sent, n_free, alone, alone_weak, kept
+
+    n_cb = n_open = lone = 0
+    for q in ({}, dict(macd_on=False), dict(len=2, up=3.0, wait=3, tol=0.0, macd_on=False)):
+        agree, n_sent, n_free, alone, _, kept = with_filters(q)
+        same = same and agree and kept
+        n_cb, n_open, lone = n_cb + n_sent, n_open + n_free, lone + alone
     # a new day ends a run and can start one on its first candle: the short-day tapes against the same candles all on one day
     new = cut = 0
     for kind, _, bars in tapes:
@@ -3033,11 +3330,130 @@ def selftest_pop():
     print(f"…and on {len(tapes)} generated tapes × {len(cases)} settings: {pops} POPs + {backs} BACKs ({shown}); the script's state machine "
           f"and the rule from its definitions {'give the same ones, field for field, also' if same else 'DO NOT give the same ones, or not'} "
           f"with a gainer filter and a window ({n_cb} alerts, {n_open} without them; {lone} BACKs sent after a POP that was not); "
-          f"numbered 1, 2, … per day, POPs and BACKs apart ({second} alerts on a tape's second day); a new day: {new} alerts it made and "
+          f"the ones not weak numbered 1, 2, … per day, POPs and BACKs apart, a weak one carrying the count before it ({second} alerts "
+          f"on a tape's second day); a new day: {new} alerts it made and "
           f"{cut} it cut, against the same candles on one day; {at_start} POPs on the first close above the basis, {on_last} BACKs on the "
           f"last candle allowed, {deeper} stops under an earlier candle's low ({over} of them on a bounce candle with the highest high "
           f"since the POP); {on_basis} closes exactly on the basis on the grid tapes", '→', 'OK' if ok else 'UNEXPECTED')
-    return ok_hand and ok
+
+    # The volume test (v49) on the same tapes: the minimum moved (the first seven settings, the `ladder`: the prices' dials
+    # as the defaults have them, so the alerts are the defaults' own), the test off, and both with other dials moved.
+    vol_cases = [('10 (the default)', {}), ('off', dict(vol_on=False)), ('0', dict(vol_min=0.0)), ('2', dict(vol_min=2.0)),
+                 ('5', dict(vol_min=5.0)), ('20', dict(vol_min=20.0)), ('60', dict(vol_min=60.0)),
+                 ('5 + a 5% pop + MACD off', dict(vol_min=5.0, up=5.0, macd_on=False)),
+                 ('10 + len 2 + a 3% pop + wait 3 + tol 0 + MACD off', dict(len=2, up=3.0, wait=3, tol=0.0, macd_on=False)),
+                 ('off + len 5 + a 5% pop + no limit + MACD off', dict(vol_on=False, len=5, up=5.0, wait=0, macd_on=False))]
+    ladder = [label for label, q in vol_cases if set(q) <= {'vol_on', 'vol_min'}]
+
+    def bare(a, also=()):
+        """The alerts without what the volume test decides: the flag and the two numbers (and `also`)."""
+        return [{k: v for k, v in x.items() if k not in ('pop_n', 'back_n', 'weak') + also} for x in a]
+
+    def by_tape(vols, i):
+        """The two parts of candle i's reading, read off a tape's volumes (None = none given) a third time → (the top,
+        the base): the most of candle i and the two before it, the mean of the 20 candles before those three."""
+        top = None if vols[i] is None else max([vols[i]] + [v or 0 for v in vols[max(0, i - 2):i]])
+        w = vols[i - 22:i - 2] if i >= 22 else [None]
+        return top, None if None in w else sum(w) / 20
+
+    same_v = told = carried = unchanged = True
+    weak_at, seen = {}, {}                          # per setting: the weak alerts (tape, candle, kind); what its POPs held
+    for label, q in vol_cases:
+        pq = dict(POP_DEFAULTS, **q)
+        weak_at[label] = set()
+        s = seen[label] = dict(pops=0, backs=0, weak_pops=0, weak_backs=0, exact=0, early=0, woke=0, dead=0, earlier=0, lifted=0,
+                               at_zero=0, at_count=0)
+        for n_tape, (_, _, bars) in enumerate(tapes):
+            a = simulate_pop(bars, q)
+            same_v = same_v and a == pop_rule_direct(bars, q) and numbers(a)[0]
+            if label in ladder:                     # the test sends the same alerts whatever it is set to
+                unchanged = unchanged and bare(a) == bare(base[n_tape])
+            at = {b['t']: i for i, b in enumerate(bars)}
+            shares = [b['v'] for b in bars]
+            pop_of = {}
+            for x in a:
+                i = at[x['t']]
+                if x['weak']:
+                    weak_at[label].add((n_tape, i, x['kind']))
+                if x['kind'] == 'back':             # a BACK has its POP's reading and flag
+                    src = pop_of[i - x['since']]
+                    carried = carried and (x['vol_x'], x['weak']) == (src['vol_x'], src['weak'])
+                    s['backs'] += 1
+                    s['weak_backs'] += x['weak']
+                    continue
+                pop_of[i] = x
+                # the POP's flag against the reading sent with it, and that reading against the tape
+                top, vbase = by_tape(shares, i)
+                surge = x['vol_x'] >= pq['vol_min'] if x['vol_x'] is not None else vbase == 0 and top > 0
+                told = told and x['weak'] == (pq['vol_on'] and not surge) and x['vol_x'] == (top / vbase if vbase else None)
+                s['pops'] += 1
+                s['weak_pops'] += x['weak']
+                s['exact'] += x['vol_x'] == pq['vol_min'] > 0           # a reading exactly at the minimum
+                s['early'] += vbase is None                             # fewer than 23 candles: no base
+                s['woke'] += vbase == 0 and top > 0                     # a base with no volume, and volume in the top
+                s['dead'] += vbase == 0 and top == 0                    # …and none there
+                s['earlier'] += top > shares[i]                         # the top on one of the two candles before the POP candle
+                s['lifted'] += bool(vbase) and shares[i] / vbase < pq['vol_min'] <= top / vbase    # …and a surge only through it
+                s['at_zero'] += x['weak'] and x['pop_n'] == 0           # a weak POP before the day's first counted one
+                s['at_count'] += x['weak'] and x['pop_n'] > 0           # …and after one
+    steps = ['off', '0', '2', '5', '10 (the default)', '20', '60']      # each a higher bar than the one before: more weak
+    nested = (steps == sorted(ladder, key=steps.index) and not weak_at['off']
+              and all(weak_at[lo] < weak_at[hi] for lo, hi in zip(steps, steps[1:])))
+    # …with the gainer filter and the window
+    f_sent = f_lone = f_lone_weak = 0
+    for q in (dict(vol_min=2.0), dict(vol_on=False), dict(vol_min=5.0, up=5.0, macd_on=False)):
+        agree, n_sent, _, alone, alone_weak, kept = with_filters(q)
+        same_v, carried = same_v and agree, carried and kept
+        f_sent, f_lone, f_lone_weak = f_sent + n_sent, f_lone + alone, f_lone_weak + alone_weak
+    # …and candles with no volume given: every 41st candle of a tape (no reading where it is the POP candle or one of the
+    # base's 20, so on that candle and on those 3 to 22 after it; a 0 in the top where it is one of the two before the POP
+    # candle), then all of them, the bars v48 took (the test on: every alert weak, no reading, no number; off: v48's alerts)
+    holed = lost = zeroed = 0
+    no_volume = True
+    for _, _, bars in tapes:
+        some = [b if i % 41 else {k: v for k, v in b.items() if k != 'v'} for i, b in enumerate(bars)]
+        none = [{k: v for k, v in b.items() if k != 'v'} for b in bars]
+        at = {b['t']: i for i, b in enumerate(bars)}
+        given = [b.get('v') for b in some]
+        for q in ({}, dict(vol_min=2.0), dict(vol_on=False)):
+            full, a, blank = simulate_pop(bars, q), simulate_pop(some, q), simulate_pop(none, q)
+            same_v = same_v and a == pop_rule_direct(some, q) and blank == pop_rule_direct(none, q) and numbers(a)[0]
+            unchanged = unchanged and bare(a, ('vol_x',)) == bare(full, ('vol_x',)) == bare(blank, ('vol_x',))
+            holed += len(a)
+            for x, y in zip(a, full):
+                i = at[x['t']] - (x['since'] if x['kind'] == 'back' else 0)     # the alert's POP candle
+                gap = i % 41 == 0 or any((i - k) % 41 == 0 for k in range(3, 23))
+                top, vbase = by_tape(given, i)
+                no_volume = (no_volume and (x['vol_x'] is None) == (gap or y['vol_x'] is None)
+                             and x['vol_x'] == (top / vbase if top is not None and vbase else None))
+                lost += x['vol_x'] is None and y['vol_x'] is not None
+                zeroed += x['vol_x'] is not None and x['vol_x'] != y['vol_x']   # the top was the candle with no volume
+            no_volume = no_volume and (
+                blank == [dict(x, vol_x=None) for x in full] if q.get('vol_on') is False
+                else all(x['weak'] and x['vol_x'] is None and x['pop_n' if x['kind'] == 'pop' else 'back_n'] == 0 for x in blank))
+    d = seen['10 (the default)']
+    held = {k: sum(s[k] for s in seen.values()) for k in d}
+    # a POP with no base (fewer than 23 candles): the default basis takes 15 of them, so these come with a shorter basis or a
+    # smaller pop
+    early_on = sum(seen[label]['early'] for label, q in vol_cases if q.get('vol_on', True))
+    ok_vol = (same_v and told and carried and unchanged and nested and no_volume and lost > 0 and zeroed > 0
+              and all(seen[label]['exact'] > 0 for label in steps[2:])
+              and all(d[k] > 0 for k in ('woke', 'dead', 'earlier', 'lifted', 'at_zero', 'at_count', 'weak_backs'))
+              and d['weak_backs'] < d['backs'] and 0 < early_on < held['early'] and f_lone_weak > 0 and f_lone > f_lone_weak)
+    shown = ', '.join(f"{label}: {s['weak_pops']} + {s['weak_backs']} of {s['pops']} + {s['backs']}" for label, s in seen.items())
+    exact = ', '.join(f"{seen[label]['exact']} at {label.split(' ')[0]}" for label in steps[2:])
+    print(f"…its volume test (v49) on those tapes × {len(vol_cases)} settings of it, the weak POPs + BACKs by the minimum ({shown}); the two "
+          f"{'give the same alerts, field for field, also' if same_v else 'DO NOT give the same alerts, or not'} with the filter and the "
+          f"window ({f_sent} alerts; {f_lone} BACKs after a POP not sent, {f_lone_weak} of them weak) and with candles that have no volume "
+          f"({holed} alerts: {lost} lost their reading, {zeroed} read lower for a 0 in the top); the minimum and the switch change no "
+          f"alert, only its flag and its number, and each higher minimum makes more of them weak; a POP is weak exactly when the reading "
+          f"sent with it says so, and every BACK has its POP's reading and flag; POPs reading exactly the minimum: {exact}; under the "
+          f"defaults {d['earlier']} POPs with the top on a candle before the POP candle ({d['lifted']} of them a surge only through it), "
+          f"{d['woke']} with volume in the top over a base with none (a surge with no reading) and {d['dead']} with none in either, "
+          f"{d['at_zero']} weak POPs carrying 0 and {d['at_count']} a count; with a shorter basis or a smaller pop, {held['early']} "
+          f"POPs with fewer than 23 candles ({early_on} with the test on: weak); in all {held['weak_pops']} of {held['pops']} POPs "
+          f"and {held['weak_backs']} of {held['backs']} BACKs weak", '→', 'OK' if ok_vol else 'UNEXPECTED')
+    return ok_hand and ok and ok_vol
 
 
 if __name__ == '__main__':

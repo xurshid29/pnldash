@@ -1,4 +1,4 @@
-import { isBandCross, isLineCross, lineTokens } from '../components/common/TvStageTag';
+import { isBandCross, isLineCross, isWeakSetup, lineTokens, popVolText } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { useHiddenTickers } from './useHiddenTickers';
@@ -276,8 +276,11 @@ export function opportunityBody(a: OpportunityAlert): string {
     if ((s.stage === 'bounce' || s.stage === 'turn' || s.stage === 'back') && s.stop != null && a.price != null && a.price > 0) bits.push(`stop ${fmtSignedPct((s.stop / a.price - 1) * 100)} under the pullback's low`);
     if (s.stage === 'bounce' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the cross`);
     // v48 POP / BACK: how far the run's highs got above the basis, the basis, and for a BACK how
-    // long after the POP candle. A POP has no stop.
+    // long after the POP candle. A POP has no stop. v49: the POP's volume reading (the biggest of
+    // the POP candle and the two before it against the 20 candles before those): "volume 212.4×
+    // the 20 candles before the pop"; on a BACK "the pop's volume 212.4× the 20 candles before it".
     if (s.stage === 'back' && s.ran_pct != null) bits.push(`ran ${fmtSignedPct(s.ran_pct)} above the basis`);
+    bits.push(popVolText(s) ?? '');   // null on other stages and on a row with no reading
     if ((s.stage === 'pop' || s.stage === 'back') && s.sma != null) bits.push(`basis ${fmtAlertPrice(s.sma)}`);
     if (s.stage === 'back' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the pop`);
     // v47 TURN: how far the basis fell before it turned, the basis, how long after the close above it
@@ -374,7 +377,10 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
     const audible = newAlerts
       .filter((a) => !hiddenRef.current.has(a.ticker))
       // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names.
-      .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && mutedByMomoOnly(a, payload))) }))
+      // v49: a weak setup (an EMA / band cross or a BOUNCE the script's filter kept quiet, a POP
+      // under its volume minimum, the BACK after one) never sounds. The server doesn't put one
+      // in payload.alerts; this holds it here too.
+      .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && (mutedByMomoOnly(a, payload) || (a.setup != null && isWeakSetup(a.setup))))) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
       // Loudest wins: A+ / 📐 CROSS (v21) / RETEST (v28) bright pair > fast-move radar >

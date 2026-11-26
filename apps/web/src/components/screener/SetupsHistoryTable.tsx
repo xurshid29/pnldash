@@ -16,7 +16,7 @@ import { useSelection } from '../../context/SelectionContext';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
 import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
-import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens, isWeakEma, emaEventKey, tagNumber, isLineCross } from '../common/TvStageTag';
+import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens, isWeakSetup, emaEventKey, popEventKey, tagNumber, isLineCross, isPopBack } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
 import { fmtPct, fmtPrice } from '../../utils/format';
 
@@ -50,8 +50,8 @@ function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
     const s = a.setup!;
     // A v21 CROSS / v28 RETEST comes from one alert: only a copy of the same one merges, not the next.
     // (A v47 TURN the same: its day's number tells one from the next. A v48 POP and a BACK too,
-    // each by its own number.)
-    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : isLineCross(s.stage) || s.stage === 'bounce' ? `|${emaEventKey(s)}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'turn' ? `|${s.candle_tf ?? ''}|${s.turn_n ?? ''}` : s.stage === 'pop' ? `|${s.candle_tf ?? ''}|${s.pop_n ?? ''}` : s.stage === 'back' ? `|${s.candle_tf ?? ''}|${s.back_n ?? ''}` : ''}`;
+    // each by its own number; a weak one (v49) takes no number, so by its own readings.)
+    const k = `${a.ticker}|${s.stage}|${lineTokens(s.stage, s.line).join('+')}${s.stage === 'cross' ? `|${s.cross_n ?? ''}` : isLineCross(s.stage) || s.stage === 'bounce' ? `|${emaEventKey(s)}` : s.stage === 'retest' ? `|${s.retest_n ?? ''}` : s.stage === 'turn' ? `|${s.candle_tf ?? ''}|${s.turn_n ?? ''}` : isPopBack(s.stage) ? `|${s.candle_tf ?? ''}|${popEventKey(s)}` : ''}`;
     const prev = last.get(k);
     if (prev && at - prev.at <= MERGE_MS) {
       if (s.tf && !prev.tfs.includes(s.tf)) prev.tfs.push(s.tf);
@@ -78,6 +78,11 @@ function buildEvents(alerts: OpportunityAlert[]): SetupEvent[] {
 
 function hhmm(ms: number, tz: string): string {
   return new Date(ms).toLocaleTimeString('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+// The "POP vol" column's sort value: a POP's or a BACK's reading; rows without one sort under them.
+function popVol(s: TvSetupInfo): number {
+  return isPopBack(s.stage) && s.vol_x != null ? s.vol_x : -1;
 }
 
 // "30S" < "1" < "2": seconds before minutes.
@@ -123,14 +128,16 @@ export function SetupsHistoryTable({ date }: { date: string }) {
   const crosses = visible.filter((e) => e.setup.stage === 'cross').length;
   const retests = visible.filter((e) => e.setup.stage === 'retest').length;
   const emas = visible.filter((e) => e.setup.stage === 'ema').length;
-  const weakEmas = visible.filter((e) => e.setup.stage === 'ema' && isWeakEma(e.setup)).length;   // v36: the ones the script's filter kept quiet
+  const weakEmas = visible.filter((e) => e.setup.stage === 'ema' && isWeakSetup(e.setup)).length;   // v36: the ones the script's filter kept quiet
   const bounces = visible.filter((e) => e.setup.stage === 'bounce').length;
-  const weakBounces = visible.filter((e) => e.setup.stage === 'bounce' && isWeakEma(e.setup)).length;
+  const weakBounces = visible.filter((e) => e.setup.stage === 'bounce' && isWeakSetup(e.setup)).length;
   const bands = visible.filter((e) => e.setup.stage === 'band').length;
-  const weakBands = visible.filter((e) => e.setup.stage === 'band' && isWeakEma(e.setup)).length;
+  const weakBands = visible.filter((e) => e.setup.stage === 'band' && isWeakSetup(e.setup)).length;
   const turns = visible.filter((e) => e.setup.stage === 'turn').length;
   const pops = visible.filter((e) => e.setup.stage === 'pop').length;
+  const weakPops = visible.filter((e) => e.setup.stage === 'pop' && isWeakSetup(e.setup)).length;   // v49: the ones under the script's volume minimum
   const backs = visible.filter((e) => e.setup.stage === 'back').length;
+  const weakBacks = visible.filter((e) => e.setup.stage === 'back' && isWeakSetup(e.setup)).length;  // …and the BACKs after them
 
   const columns: ColumnsType<SetupEvent> = useMemo(() => [
     {
@@ -158,7 +165,7 @@ export function SetupsHistoryTable({ date }: { date: string }) {
           <TvStageTag stage={e.setup.stage} dim={!e.notified} line={e.setup.line}
             touch={tagNumber(e.setup)} tfs={crossTfText(e.setup)} />
           {e.setup.capped && <Text type="secondary" style={{ fontSize: 10 }}>past cap</Text>}
-          {isWeakEma(e.setup) && <Text type="secondary" style={{ fontSize: 10 }}>weak</Text>}
+          {isWeakSetup(e.setup) && <Text type="secondary" style={{ fontSize: 10 }}>weak</Text>}
         </span>
       ),
     },
@@ -182,6 +189,15 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       title: 'Day high', key: 'day', width: 72, align: 'right',
       sorter: (a, b) => (a.setup.day_gain ?? -1e9) - (b.setup.day_gain ?? -1e9),
       render: (_v, e) => (e.setup.day_gain == null ? '—' : fmtSignedPct(Math.round(e.setup.day_gain)).replace('.0%', '%')),
+    },
+    {
+      // v49: the POP's volume reading, on a POP's row and on its BACK's — the biggest volume among
+      // the POP candle and the two candles before it ÷ the average of the 20 candles before those
+      // three (what the script's volume test judges; under its minimum the row is weak). Other
+      // stages' rows show none here.
+      title: 'POP vol', key: 'popvol', width: 88, align: 'right',
+      sorter: (a, b) => popVol(a.setup) - popVol(b.setup),
+      render: (_v, e) => (isPopBack(e.setup.stage) && e.setup.vol_x != null ? `${e.setup.vol_x.toFixed(1)}×` : <Text type="secondary">—</Text>),
     },
     { title: 'Grade', key: 'grade', width: 62, render: (_v, e) => <GradeCell grade={e.grade} /> },
     { title: 'Chg', key: 'chg', width: 64, align: 'right', render: (_v, e) => (e.chg == null ? '—' : fmtPct(e.chg)) },
@@ -225,8 +241,8 @@ export function SetupsHistoryTable({ date }: { date: string }) {
               {bounces > 0 && <> · {bounces} BOUNCE{weakBounces > 0 && <> ({weakBounces} weak)</>}</>}
               {bands > 0 && <> · {bands} BAND{weakBands > 0 && <> ({weakBands} weak)</>}</>}
               {turns > 0 && <> · {turns} TURN</>}
-              {pops > 0 && <> · {pops} POP</>}
-              {backs > 0 && <> · {backs} BACK</>}
+              {pops > 0 && <> · {pops} POP{weakPops > 0 && <> ({weakPops} weak)</>}</>}
+              {backs > 0 && <> · {backs} BACK{weakBacks > 0 && <> ({weakBacks} weak)</>}</>}
             </>
           )}
         </Text>

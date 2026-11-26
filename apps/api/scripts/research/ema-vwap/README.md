@@ -455,3 +455,67 @@ At 10%, by what the run did and when the BACK came:
 **Limits:** as above; and a name's first 15 candles on our screen have no basis here, so pops in
 them are missed: the counts are a floor. The gainer filter is approximated by the day's change
 (10% and over), the alert window by 04:00–20:00.
+
+### Which POPs run: the volume surge and the time of day (2026-11-26, tables 3–6)
+
+The operator, with POPs arriving: "the biggest 5-6 POPs happen after the pre-market open …
+[04:00–05:00 New York], or very fewer happen around [08:00] … the rvol for that moment should be
+very high … the stocks which are almost without volume, suddenly started popping up. I think we
+should focus on only such moves". Their examples, both RAYA on 11-25: the POP at 04:27 off a
+flat base with almost no volume ("suitable") and the one at 11:10 at the end of a slow climb on
+steady volume ("not").
+
+Measured on the POPs of the rule above (10%): `vol` = the script's reading, the largest volume
+among the POP candle and the two candles before it ÷ the average of the 20 candles before those
+three (a minute's volume here = the day's volume at its last snapshot less the minute before's).
+After the POP candle's close and before a close back under the basis: a high +10% / +20% above
+that close, and the share back under the basis within 5 candles.
+
+| the POP's volume reading | a day | +10% | +20% | back under within 5 | a BACK follows |
+|---|---:|---:|---:|---:|---:|
+| under 2× | 3.9 / 5.7 | 33.8% / 24.7% | 15.3% / 13.5% | 24% / 33% | 20% / 22% |
+| 2× – 5× | 10.8 / 12.5 | 30.2% / 28.5% | 14.7% / 12.3% | 18% / 20% | 27% / 30% |
+| 5× – 10× | 6.7 / 6.8 | 24.2% / 28.0% | 11.9% / 13.7% | 19% / 28% | 33% / 22% |
+| 10× – 30× | 6.9 / 6.2 | 27.5% / 21.8% | 15.2% / 10.4% | 23% / 34% | 32% / 30% |
+| 30× and over | 2.9 / 3.0 | 29.3% / 28.0% | 11.2% / 18.3% | 29% / 37% | 24% / 27% |
+| 5×+ off under $5K a minute before | 2.0 / 3.7 | 27.2% / 22.6% | 13.6% / 13.0% | 32% / 37% | 32% / 26% |
+
+| the time of the POP (New York) | a day | +10% | +20% | +50% | back under within 5 |
+|---|---:|---:|---:|---:|---:|
+| 04:00–05:00 | 1.3 / 1.3 | 29.4% / 41.0% | 15.7% / 15.4% | 3.9% / 7.7% | 31% / 21% |
+| 05:00–07:00 | 2.8 / 2.8 | 18.6% / 19.5% | 8.0% / 9.2% | 2.7% / 1.1% | 23% / 41% |
+| 07:00–08:00 | 2.5 / 2.5 | 19.0% / 30.3% | 5.0% / 13.2% | 0.0% / 1.3% | 32% / 24% |
+| 08:00–09:30 | 3.5 / 4.0 | 30.9% / 19.2% | 12.2% / 10.4% | 3.6% / 2.4% | 22% / 38% |
+| 09:30–10:30 | 6.6 / 6.4 | 35.5% / 33.7% | 18.9% / 17.1% | 4.9% / 6.0% | 22% / 28% |
+| 10:30–16:00 | 11.3 / 14.1 | 30.4% / 27.8% | 16.2% / 15.1% | 4.4% / 2.8% | 18% / 25% |
+| 16:00–20:00 | 5.4 / 5.8 | 29.2% / 20.4% | 13.0% / 8.3% | 2.3% / 2.8% | 21% / 25% |
+
+**Read:**
+
+- **In this data the volume surge does not sort the POPs.** Whatever the reading, 22–34% of
+  POPs go on to a high +10% above the POP's close and 10–18% to +20%; the loudest ones (30× and
+  over) are back under the basis within 5 candles a little more often. The BACKs after them are
+  no different either (table 6). A quiet stretch before (under $5K a minute) changes nothing.
+  About 30% of these POPs read 10× or more (9–10 a day).
+- **Time of day:** the first hour after the open (09:30–10:30) is the best in both halves;
+  04:00–05:00 is as good or better on few events (about 1.3 a day here); 05:00–07:00 is the
+  worst. Nothing here sets 08:00 apart.
+- **What this data cannot see is the case the operator means.** A stock that is flat on no
+  volume is not on the Momentum screen, so its first pop is not in these rows: a name needs 15
+  candles on our screen for a basis and 20 for a volume average. RAYA at 04:27 is exactly that
+  kind. Every POP in these tables is on a name that was already moving. So the tables say the
+  surge does not help *among names already on the screen*; they say nothing about pops out of
+  nowhere.
+- RAYA's "not suitable" POP (11:10) reads 6.2× on TradingView's own bars (5.0× if only the POP
+  candle is taken against the 20 before it), which is why the script's minimum is 10× and not 5×.
+- **Why three candles.** The first version read the POP candle alone against the 20 candles
+  before it. A pop that takes two or three candles to reach the mark then waters its own average
+  down: 50 times the base on each of three candles reads 8.5×. The biggest of three candles
+  against the 20 before them reads that 50× and still reads a slow climb low (the same on each
+  of five candles reads 8.5× again: three candles is how sudden "sudden" has to be).
+
+**Built as script v49** (`docs/vwap-setup.md` §22.8): a POP under 10× is weak (gray, stored, not
+announced) and so is its BACK; every POP and BACK carries the reading. TradingView sees every
+candle of every watchlist name, so the stored rows will hold the pops this data lacks, and can
+be graded by `vol_x` and by the hour. A proper measurement needs 1m bars with pre-market volume
+for names before they reach the screen (IBKR's history through TWS would do).

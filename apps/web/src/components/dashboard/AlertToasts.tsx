@@ -7,6 +7,7 @@ import { useHiddenTickers } from '../../hooks/useHiddenTickers';
 import { getAlertKinds } from '../../hooks/useAlertKinds';
 import { mutedByMomoOnly } from '../../hooks/useTvMomoOnly';
 import { opportunityBody, opportunityTitle } from '../../hooks/useScreenerAlerts';
+import { isWeakSetup } from '../common/TvStageTag';
 
 const KIND_COLOR: Record<OpportunityKind, string> = {
   grade_aplus: '#52c41a',
@@ -48,7 +49,9 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
       seen.current.add(a.id);
       if (!armed || hiddenRef.current.has(a.ticker)) continue;
       // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names.
-      const kinds = a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && mutedByMomoOnly(a, payload)));
+      // v49: a weak setup (a filtered EMA / band cross or its BOUNCE, a POP under the script's
+      // volume minimum, the BACK after one) gets no toast, like its sound (useScreenerAlerts).
+      const kinds = a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && (mutedByMomoOnly(a, payload) || (a.setup != null && isWeakSetup(a.setup)))));
       if (kinds.length === 0) continue;
       const shown = { ...a, kinds };
       // 📐 priority: a setup on a ticker that was on our Momentum list gets a gold

@@ -351,6 +351,10 @@ export type OpportunityKind = 'grade_aplus' | 'fast_move' | 'news' | 'tv_setup';
 // basis and ends at a close under it. POP, a heads-up with no entry: the first candle of a run by
 // which a high has reached 10% above the basis. BACK, the entry: after the POP candle a low comes
 // back to the basis, then a green close above it. Each has its own ⚙ switch.
+// v49, the POP's volume test: the reading is the biggest volume among the POP candle and the two
+// candles before it ÷ the average volume of the 20 candles before those three. A POP under the
+// script's minimum (10) is weak, and so is its BACK — stored, not announced, kept out of the 📐
+// sidebar list like a weak EMA cross. Every POP and BACK row carries the reading (vol_x).
 export type TvStage = 'pullback' | 'broken' | 'held' | 'cross' | 'retest' | 'ema' | 'bounce' | 'band' | 'turn' | 'pop' | 'back';
 export const TV_STAGES: readonly TvStage[] = ['pullback', 'broken', 'held', 'cross', 'retest', 'ema', 'bounce', 'band', 'turn', 'pop', 'back'];
 // The ⚙ switch a stage answers to (server: tv-setups.ts stageSwitch).
@@ -375,7 +379,7 @@ export interface TvSetupInfo {
   day_gain: number | null;    // day high vs prior close, %
   ah_gain?: number | null;    // after hours: high since today's close, % (script v3+)
   tf: string | null;          // TradingView interval of the alert
-  vol_x?: number | null;      // script v9+: signal-bar volume ÷ previous-20-bar average
+  vol_x?: number | null;      // script v9+: signal-bar volume ÷ previous-20-bar average (v49, a POP or a BACK: the POP's own reading, see below)
   run_pct?: number | null;    // script v9+: run-up over the previous 10 bars, %
   // PULLBACK setup (script v10)
   svwap?: number | null;      // session VWAP
@@ -411,7 +415,7 @@ export interface TvSetupInfo {
   // v36, the script's filter on an EMA cross
   under_n?: number | null;    // candles in a row the EMA had been at or under the line before the cross
   flips_n?: number | null;    // EMA / line crossings in the 20 candles before
-  weak?: boolean;             // the filter calls it weak: stored, never announced, kept out of the live list
+  weak?: boolean;             // the filter calls it weak: stored, never announced, kept out of the live list (v49: also a POP under the volume minimum, and its BACK)
   // EMA bounce (script v37): stop = under the pullback's low, since_n = candles after the cross, weak = its cross was
   bounce_n?: number | null;   // the day's bounces on the line
   since_n?: number | null;
@@ -426,10 +430,13 @@ export interface TvSetupInfo {
   macd_green?: boolean | null;   // the MACD was above its signal line at the bounce
   // POP and BACK (script v48): candle_tf = the basis's timeframe; sma_len / sma / sma_pct = the
   // basis, as on a TURN. A BACK also has stop (a tick under the pullback's lowest low), since_n
-  // (candles after the POP candle) and macd_green. A POP has no stop.
+  // (candles after the POP candle) and macd_green. A POP has no stop. Since v49 both carry vol_x
+  // (the biggest volume among the POP candle and the two candles before it ÷ the average of the
+  // 20 candles before those three; absent when those 20 had no volume at all or the chart has
+  // fewer than 23 candles) and weak (the POP was under the volume minimum; its BACK is weak with it).
   ran_pct?: number | null;    // how far the run's highs got above the basis so far, %
-  pop_n?: number | null;      // POP: the day's POPs on the ticker, this one included
-  back_n?: number | null;     // BACK: the day's BACKs on the ticker, this one included
+  pop_n?: number | null;      // POP: the day's POPs on the ticker, this one included (a weak one isn't counted: it carries the number as it stood)
+  back_n?: number | null;     // BACK: the day's BACKs on the ticker, this one included (a weak one isn't counted)
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

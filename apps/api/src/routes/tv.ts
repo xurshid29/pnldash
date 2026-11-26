@@ -7,7 +7,7 @@ import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
 import {
-  DEFAULT_ANNOUNCED, EMA_STAGES, parseStageList, parseTvMessage, pastCap, readStoredRules, readStoredStages, storedStages, TV_STAGE_ORDER,
+  DEFAULT_ANNOUNCED, isWeak, parseStageList, parseTvMessage, pastCap, readStoredRules, readStoredStages, storedStages, TV_STAGE_ORDER,
   TvSetupGate, type TvAlertRules,
 } from '../services/tv-setups.js';
 
@@ -98,9 +98,11 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     // v36: an EMA cross the script's filter calls weak is quiet for that (v37: and its BOUNCE).
     // v47: a quiet TURN is muted, capped (`turn N` past tn_cap) or off the list, in that order.
     // v48: a quiet POP or BACK the same (`pop N` / `back N` past pp_cap).
+    // v49: a POP the script's volume test calls weak is quiet for that, and the BACK after it
+    // (isWeak: the EMA family's stages and these two; a TURN has no weak notion).
     const why = verdict !== 'quiet' ? undefined
       : !gate.announces(sig.stage) ? 'muted'
-        : EMA_STAGES.has(sig.stage) && sig.weak ? 'weak'
+        : isWeak(sig) ? 'weak'
           : capped && !capExempt ? 'capped' : 'offlist';
     const alert = poller.deliverTvSetup(sig, verdict, why, capExempt);
     res.json({ data: { id: alert.id, notified: verdict === 'notify' } });

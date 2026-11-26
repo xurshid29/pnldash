@@ -26,7 +26,10 @@
 // back to it and bounces. Sent from the alert on that timeframe (1m) alone.
 // POP and BACK (script v48, 2026-11-26), a fifth setup in two steps, on the same kind of basis: POP,
 // a heads-up when a run's high gets well above the basis, and BACK, the entry, when the price then
-// comes back to the basis and bounces. Both from the 1m alert alone.
+// comes back to the basis and bounces. Both from the 1m alert alone. Since script v49 both carry the
+// POP's volume reading (`vol_x`: the largest volume among the POP candle and the two before it
+// against the 20 candles before those three), and a POP that fails the script's volume test is
+// `weak`, with its BACK: stored, never announced.
 //
 // Why TradingView computes it and we don't: the lines are VWAPs anchored at the
 // session, month and year INCLUDING pre-market volume. Yahoo's extended-hours bars
@@ -128,9 +131,33 @@ export function emaLineStage(sig: { stage: TvStage; ema?: number | null; bb_tf?:
 // per ticker. The script reads the gainer filter at each alert's own candle, so a BACK can arrive
 // after a POP that was never sent: a BACK is announced on its own conditions. A TURN and a BACK can
 // fire on one candle; they are separate setups and both are delivered.
+// v49 (operator, 2026-11-26, with two POPs of RAYA, one off a flat base with almost no volume and
+// one at the end of a slow climb: "the rvol for that moment should be very high … I think we should
+// focus on only such moves"): the script's volume test. Every POP and BACK carries `| vol 212.4x`
+// (`vol_x`: the largest volume among the POP candle and the two candles before it ÷ the average of
+// the 20 candles before those three; a BACK carries its POP's). It is not the PULLBACK's or the
+// CROSS's `vol` (one candle against the 20 before it), though it is read the same way. A POP under
+// the script's minimum (10) carries `| weak`, and so does the BACK after it: a weak one is stored
+// and never announced, whatever its ⚙ switch, the Momentum rule and the cap say (the way a weak EMA
+// cross is quiet). The script gives a weak one no number: its `pop N` / `back N` is the count so far
+// (it can be 0). A weak POP takes nothing from a later strong one.
+// Weak is the script's word alone (`| weak`): the server holds no minimum and never judges `vol_x`.
+// The script prints the reading to one decimal, so a 9.96 arrives as `| vol 10x | … | weak`.
 // The setups judged on the candles of a basis's own timeframe and sent from the alert on that
-// timeframe (1m) alone: no other timeframe's copy to merge, no VWAP line named, no weak filter.
+// timeframe (1m) alone: no other timeframe's copy to merge, no VWAP line named. The TURN has no
+// weak filter; the POP and the BACK have one since v49 (POP_STAGES).
 export const BASIS_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['turn', 'pop', 'back']);
+// The POP and its BACK (v48): the two steps of one setup, and since v49 the two basis stages a
+// message may call weak.
+export const POP_STAGES: ReadonlySet<TvStage> = new Set<TvStage>(['pop', 'back']);
+// The stages whose message may carry `| weak`: the EMA family (v36 the filter, v37 the BOUNCE after
+// a weak cross, v41 a band cross under the band's middle) and (v49) the POP and the BACK.
+export const WEAK_STAGES: ReadonlySet<TvStage> = new Set<TvStage>([...EMA_STAGES, ...POP_STAGES]);
+// The script called this one weak: it is stored and shown, never announced. A `weak` on any other
+// stage (a TURN, a CROSS, a PULLBACK: none has a weak notion) means nothing.
+export function isWeak(sig: { stage: TvStage; weak?: boolean }): boolean {
+  return sig.weak === true && WEAK_STAGES.has(sig.stage);
+}
 // Which VWAP line(s) a message is about: session / month / year (v14). Lines
 // that fired the same stage on one bar are named together in script order,
 // e.g. "session+month". The legacy 'both' (v10–v13) meant session + month.
@@ -157,7 +184,7 @@ export interface TvSetupSignal {
   day_gain: number | null;    // day high vs the prior close, %
   ah_gain: number | null;     // after hours only (script v3+): high since today's close, %
   tf: string | null;          // TradingView interval: "1", "2", "30S", …
-  vol_x: number | null;       // script v9+: signal bar volume ÷ average of the previous 20 bars
+  vol_x: number | null;       // script v9+: signal bar volume ÷ average of the previous 20 bars (v49, a POP or a BACK: the POP's own reading, the largest of the POP candle and the two before it ÷ the average of the 20 before those three)
   run_pct: number | null;     // script v9+: close vs 10 bars earlier, %
   svwap?: number | null;      // session VWAP (anchor Session, 04:00 ET on an Extended chart)
   spx_pct?: number | null;    // price vs the session VWAP, %
@@ -191,7 +218,7 @@ export interface TvSetupSignal {
   // v36, the script's filter: what it measured, and its verdict
   under_n?: number | null;    // candles in a row the EMA had been at or under the line before the cross
   flips_n?: number | null;    // EMA / line crossings in the 20 candles before
-  weak?: boolean;             // the filter calls the cross weak → stored, not announced
+  weak?: boolean;             // the filter calls the cross weak → stored, not announced (v49: a POP that failed the volume test, and its BACK; isWeak)
   // EMA bounce (script v37): stop = a tick under the pullback's low, candle_tf / ema_len / ema as
   // the cross, weak = its cross was weak
   since_n?: number | null;    // candles after the cross candle
@@ -208,9 +235,10 @@ export interface TvSetupSignal {
   // POP and BACK (script v48): candle_tf / sma_len / sma / sma_pct as the TURN's (the basis, its
   // timeframe, the price against it). A BACK also has stop (a tick under the pullback's low),
   // since_n (candles after the POP candle) and macd_green; a POP has none of the three.
+  // v49: both carry vol_x (above), and `weak` when the POP failed the script's volume test.
   ran_pct?: number | null;    // the furthest a high of the run got above the basis so far, %
-  pop_n?: number | null;      // POP: the day's POPs sent on this ticker, this one included
-  back_n?: number | null;     // BACK: the day's BACKs sent on this ticker, this one included
+  pop_n?: number | null;      // POP: the day's POPs sent on this ticker, this one included (a weak one isn't counted: the count so far)
+  back_n?: number | null;     // BACK: the day's BACKs sent on this ticker, this one included (a weak one isn't counted: the count so far)
 }
 export type TvBounceFrom = 'ema' | 'vwap' | 'ema+vwap';
 
@@ -271,6 +299,8 @@ export const TV_SETUP = {
   // v48 POP and BACK: past this many POPs on a ticker in a day (the message's `pop N`), a POP is
   // stored and shown, not announced; the same for a BACK on its own `back N`. (The study behind the
   // setup counted about 35 POPs a day on Momentum names, 28 with this cap, and about 10 BACKs.)
+  // v49: a weak POP or BACK is quiet before the cap is looked at; the script gives it no number, so
+  // it is never past the cap (pastCap).
   pp_cap: 3,
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
@@ -290,12 +320,16 @@ const STAGES: Record<string, TvStage> = {
 // v21: a CROSS past the day's TV_SETUP.vb_cap crosses on its ticker. v35: an EMA cross past em_cap
 // (v37: its BOUNCE on its own `bounce N`). v47: a TURN past tn_cap on its `turn N`. v48: a POP past
 // pp_cap on its `pop N`, a BACK past it on its own `back N`.
+// v49: a weak POP or BACK is never past the cap. The script gives it no number: the `pop N` /
+// `back N` it carries is the day's count without it, so there is nothing of its own to hold against
+// the cap, and its row and its alert are not `capped`. (The EMA family is as it was: a weak cross
+// carries the count so far too, and is still read against em_cap.)
 export function pastCap(sig: TvSetupSignal): boolean {
   if (LINE_CROSS_STAGES.has(sig.stage)) return sig.cross_n != null && sig.cross_n > TV_SETUP.em_cap;   // each line its own `cross N`
   if (sig.stage === 'bounce') return sig.bounce_n != null && sig.bounce_n > TV_SETUP.em_cap;
   if (sig.stage === 'turn') return sig.turn_n != null && sig.turn_n > TV_SETUP.tn_cap;
-  if (sig.stage === 'pop') return sig.pop_n != null && sig.pop_n > TV_SETUP.pp_cap;
-  if (sig.stage === 'back') return sig.back_n != null && sig.back_n > TV_SETUP.pp_cap;
+  if (sig.stage === 'pop') return sig.weak !== true && sig.pop_n != null && sig.pop_n > TV_SETUP.pp_cap;
+  if (sig.stage === 'back') return sig.weak !== true && sig.back_n != null && sig.back_n > TV_SETUP.pp_cap;
   if (sig.stage === 'cross') return sig.cross_n != null && sig.cross_n > TV_SETUP.vb_cap;
   if (sig.stage === 'retest') return sig.retest_n != null && sig.retest_n > TV_SETUP.vb_cap;
   return sig.stage === 'pullback' && sig.fails != null && sig.fails >= TV_SETUP.pb_cap;
@@ -362,15 +396,19 @@ export function turnFields(sig: TvSetupSignal): {
 
 // The v48 POP's and BACK's fields for the alert's setup info and its tier_events row; none on other
 // stages. A POP is a heads-up: it has no stop, no `since` and no MACD reading, so its row has none.
+// v49: both carry `weak` (the POP failed the script's volume test; false on a strong one and on a
+// v48 message), the way an EMA cross's row does. The reading itself, `vol_x`, is one of the fields
+// every stage's row and alert carry (the poller writes it beside these), so it is not repeated here.
 export function popFields(sig: TvSetupSignal): {
   candle_tf?: string | null; sma_len?: number | null; sma?: number | null; sma_pct?: number | null;
   ran_pct?: number | null; pop_n?: number | null;
   stop?: number | null; since_n?: number | null; back_n?: number | null; macd_green?: boolean | null;
+  weak?: boolean;
 } {
   if (sig.stage === 'pop') {
     return {
       candle_tf: sig.candle_tf ?? null, sma_len: sig.sma_len ?? null, sma: sig.sma ?? null, sma_pct: sig.sma_pct ?? null,
-      ran_pct: sig.ran_pct ?? null, pop_n: sig.pop_n ?? null,
+      ran_pct: sig.ran_pct ?? null, pop_n: sig.pop_n ?? null, weak: sig.weak === true,
     };
   }
   if (sig.stage === 'back') {
@@ -378,6 +416,7 @@ export function popFields(sig: TvSetupSignal): {
       candle_tf: sig.candle_tf ?? null, stop: sig.stop ?? null, since_n: sig.since_n ?? null,
       sma_len: sig.sma_len ?? null, sma: sig.sma ?? null, sma_pct: sig.sma_pct ?? null,
       ran_pct: sig.ran_pct ?? null, back_n: sig.back_n ?? null, macd_green: sig.macd_green ?? null,
+      weak: sig.weak === true,
     };
   }
   return {};
@@ -394,6 +433,8 @@ const STORED_NUM_FIELDS = ['upper', 'upper_pct', 'candle_open', 'cross_n', 'stop
   'sma_len', 'sma', 'sma_pct', 'fall_pct', 'turn_n',   // these five: the TURN's (v47); the POP and the BACK share the three `sma` ones
   'ran_pct', 'pop_n', 'back_n'] as const;              // the POP's and the BACK's (v48)
 const STORED_STR_FIELDS = ['candle_tf', 'bb_tf', 'bounce_from'] as const;
+// `weak`: the EMA family's, and since v49 a POP's and a BACK's (popFields). Their `vol_x` is not
+// here: GET /api/screener/alerts reads it for every stage, as it does a PULLBACK's and a CROSS's.
 const STORED_BOOL_FIELDS = ['late', 'weak'] as const;
 // A reading a message may leave out (the TURN's and the BACK's `green 1|0`): true / false as stored,
 // null when the row has the field without a reading.
@@ -620,6 +661,9 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 //   TURN NIVF 0.0213 | stop 0.0206 | sVWAP 0.0211 (+0.9%) | mVWAP 0.023 (-7.4%) | sma 15 0.0207 (+2.9%) | fall 12.3% | candle 1 | turn 1 | since 3 | green 1 | day high +25% | vwap 30s | tf 1   (v47; `sma` the basis's length, value and the price against it, `fall` how far it fell before its low (may be missing), `candle` its timeframe, `since` candles after the close above it, `green` the MACD above its signal: 1 / 0)
 //   POP SVRE 1.85 | sVWAP 1.62 (+14.2%) | mVWAP 1.4 (+32.1%) | sma 15 1.66 (+11.4%) | ran 12.6% | candle 1 | pop 1 | day high +38% | vwap 30s | tf 1   (v48; `sma` as the TURN's, `ran` the furthest a high of the run got above the basis so far, `pop` the day's POPs sent on the ticker; no stop)
 //   BACK SVRE 1.92 | stop 1.84 | sVWAP 1.7 (+12.9%) | mVWAP 1.41 (+36.2%) | sma 15 1.88 (+2.1%) | ran 18.4% | candle 1 | back 1 | since 6 | green 1 | day high +45% | vwap 30s | tf 1   (v48; `stop` a tick under the pullback's low, `back` the day's BACKs sent on the ticker, `since` candles after the POP candle, `green` as the TURN's)
+//   POP RAYA 0.58 | sVWAP 0.47 (+23.4%) | sma 15 0.46 (+26.1%) | ran 31.5% | vol 212.4x | candle 1 | pop 1 | day high +29% | vwap 30s | tf 1   (v49; `vol` after `ran`: the largest volume among the POP candle and the two before it ÷ the average of the 20 candles before those three, read into vol_x like a PULLBACK's; left out when the script has no reading)
+//   POP RAYA 0.73 | sVWAP 0.71 (+2.8%) | sma 15 0.68 (+7.4%) | ran 10.5% | vol 6.2x | candle 1 | pop 1 | weak | day high +120% | vwap 30s | tf 1   (v49; `| weak` after `pop N`: the POP failed the volume test, and `pop N` is the count so far, this one not in it; the flag is the script's, never read off `vol`)
+//   BACK RAYA 0.91 | stop 0.82 | sVWAP 0.88 (+3.4%) | sma 15 0.9 (+1.1%) | ran 150.2% | vol 212.4x | candle 1 | back 1 | since 11 | green 1 | day high +156% | vwap 30s | tf 1   (v49; `vol` is its POP's reading; `| weak` after `green N` when that POP was weak)
 // (v28 adds `vwap 30s|chart` to every message.)
 // (a negative day high is written "-2%"; scripts before v3 wrote "+-2%"), or a JSON
 // object with the TvSetupSignal field names. Express hands us the raw text for
@@ -813,8 +857,12 @@ export class TvSetupGate {
     // v48: a POP's and a BACK's too. The stage is in the key, so a ticker's POP and its BACK never
     // pass for each other's re-delivery, and a TURN and a BACK on one candle are two events.
     const basis = BASIS_STAGES.has(sig.stage);   // the TURN, the POP, the BACK
+    // v49: a POP the script's volume test calls weak, or the BACK after one. It has a key of its own
+    // (`|weak`), so a weak one and a strong one of the same ticker and stage are never each other's
+    // re-delivery: a weak POP can't drop the strong POP of a later run. (A TURN's key is as it was.)
+    const weakPop = POP_STAGES.has(sig.stage) && sig.weak === true;
     // v40: a band cross and an EMA cross of one candle are two events (`|bb`).
-    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || ema || basis ? `|${sig.candle_tf ?? ''}` : ''}`;   // the stage tells an EMA and a band cross of one candle apart
+    const exact = `${sig.ticker}|${sig.stage}|${sig.tf ?? ''}|${sig.line ?? ''}${vb || ema || basis ? `|${sig.candle_tf ?? ''}` : ''}${weakPop ? '|weak' : ''}`;   // the stage tells an EMA and a band cross of one candle apart
     const prev = this.lastExact.get(exact);
     const dupSec = vb || ema || basis ? TV_SETUP.vb_dup_sec : TV_SETUP.dup_sec;
     if (prev != null && nowSec - prev < dupSec) return 'drop';
@@ -826,9 +874,12 @@ export class TvSetupGate {
     // v48 POP and BACK: the same, each on its own switch and its own day's number (`pop N`,
     // `back N` against pp_cap). A BACK is judged on its own: whether its POP was announced, quiet
     // or never sent plays no part.
+    // v49: a weak POP and a weak BACK (the message's own `| weak`) are quiet, whatever the switch,
+    // the list and the cap say. The gate keeps nothing about them, so the next strong one is
+    // judged as if they had not come. A TURN has no weak notion: a `weak` in its message changes nothing.
     if (basis) {
       const fresh = !this.emaMomoOnly && sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
-      const quiet = !this.announced.has(sig.stage) || pastCap(sig)
+      const quiet = !this.announced.has(sig.stage) || weakPop || pastCap(sig)
         || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
       return quiet ? 'quiet' : 'notify';
     }
@@ -1186,6 +1237,11 @@ function basisLevels(sig: TvSetupSignal): string[] {
 // v48 POP: "a pop: the run's high got 12.6% above its 1m basis (SMA 15) — a heads-up, no entry: the
 // entry is the BACK, the first pullback to the basis", then the day's number, the basis and the
 // VWAP lines. No stop: there is nothing to buy yet.
+// v49: the day's number is followed by the POP's volume reading: "volume 212.4× the 20 candles before
+// the pop". Not the CROSS's words ("its last 20 candles"): that is one candle against the 20 before
+// it, this the largest of three against the 20 before them. A weak POP is never announced; if one is
+// formatted, the line says it is not counted (its `pop N` is the day's count without it) and that it
+// was filtered as weak for low volume.
 function formatPop(
   sig: TvSetupSignal,
   tvSym: string,
@@ -1193,13 +1249,19 @@ function formatPop(
 ): string {
   const tf = fmtTf(sig.candle_tf);
   const ran = sig.ran_pct != null ? `${sig.ran_pct.toFixed(1)}%` : 'well';
+  const weak = isWeak(sig);
   const lines = [
     `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.pop} <b>${TV_STAGE_LABEL.pop}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
     `<i>a pop: the run's high got ${ran} above its ${tf} basis (SMA ${sig.sma_len ?? '?'}) — a heads-up, no entry: the entry is the BACK, the first pullback to the basis</i>`,
   ];
+  const what: string[] = [];
   if (sig.pop_n != null) {
-    lines.push(`pop ${sig.pop_n} today${sig.pop_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
+    what.push(weak ? `not counted (${sig.pop_n} POP${sig.pop_n === 1 ? '' : 's'} today so far)`
+      : `pop ${sig.pop_n} today${sig.pop_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
   }
+  if (sig.vol_x != null) what.push(`volume ${sig.vol_x.toFixed(1)}× the 20 candles before the pop`);
+  if (weak) what.push('filtered as weak for low volume');
+  if (what.length > 0) lines.push(what.join(' · '));
   const lvl = basisLevels(sig);
   if (lvl.length > 0) lines.push(lvl.join(' · '));
   lines.push(momentumLine(row));
@@ -1213,12 +1275,17 @@ function formatPop(
 // (at the 1m close) — the entry", then the stop under the pullback's low, the day's number, how far
 // the run's high got above the basis, the candles after the POP candle and the MACD, then the basis
 // and the VWAP lines.
+// v49: after the run's high comes its POP's volume reading, named as the POP's ("its POP's volume
+// 212.4× the 20 candles before it"). A weak BACK is never announced; if one is formatted, it is not
+// counted (its `back N` is the day's count without it) and the line ends "after a POP filtered as
+// weak for low volume".
 function formatBack(
   sig: TvSetupSignal,
   tvSym: string,
   row: { change_pct: number | null; grade: string | null; float_m: number | null } | null,
 ): string {
   const tf = fmtTf(sig.candle_tf);
+  const weak = isWeak(sig);
   const lines = [
     `${row ? '⭐ ' : ''}📐 ${STAGE_ICON.back} <b>${TV_STAGE_LABEL.back}</b>  <b>${escapeHtml(sig.ticker)}</b>  ${fmtPx(sig.price)}`.trimEnd(),
     `<i>the first pullback after the pop: price came back to its ${tf} basis (SMA ${sig.sma_len ?? '?'}) and bounced (at the ${tf} close) — the entry</i>`,
@@ -1229,11 +1296,14 @@ function formatBack(
     what.push(`stop ${fmtPx(sig.stop)} (${risk}under the pullback's low)`);
   }
   if (sig.back_n != null) {
-    what.push(`back ${sig.back_n} today${sig.back_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
+    what.push(weak ? `not counted (${sig.back_n} BACK${sig.back_n === 1 ? '' : 's'} today so far)`
+      : `back ${sig.back_n} today${sig.back_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
   }
   if (sig.ran_pct != null) what.push(`the run's high got ${sig.ran_pct.toFixed(1)}% above the basis`);
+  if (sig.vol_x != null) what.push(`its POP's volume ${sig.vol_x.toFixed(1)}× the 20 candles before it`);
   if (sig.since_n != null) what.push(`${sig.since_n} candle${sig.since_n === 1 ? '' : 's'} after the POP`);
   if (sig.macd_green != null) what.push(sig.macd_green ? 'MACD green' : 'MACD not green');
+  if (weak) what.push('after a POP filtered as weak for low volume');
   if (what.length > 0) lines.push(what.join(' · '));
   const lvl = basisLevels(sig);
   if (lvl.length > 0) lines.push(lvl.join(' · '));

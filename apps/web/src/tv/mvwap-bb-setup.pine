@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v48 (2026-11-26). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v49 (2026-11-26). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -25,6 +25,9 @@
 // v48 adds a fifth setup in two steps (section 9, at the end): POP, a heads-up when a run's high
 // gets well above its basis, and BACK, the entry, when the price then comes back to the basis and
 // bounces. Its own basis and MACD settings; sent from the alert on the basis's timeframe (1m).
+// v49 gives the POP a volume test (section 9): a POP is weak (gray, `| weak`, not announced) when
+// the biggest of its candle and the two before it traded under 10 times the average of the 20
+// candles before them, and so is its BACK; every POP and BACK carries the reading (`| vol 34.5x`).
 // 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
@@ -1813,8 +1816,35 @@ plotshape(tnShow and tnFire, "TURN (v47)", shape.labelup, location.belowbar, col
 // the basis so far, `pop N` / `back N` = the day's POPs / BACKs sent on this ticker, `stop` = see
 // above, `since N` = candles after the POP candle, `green` = the MACD above its signal at the
 // bounce (1 / 0).
-// Its twelve inputs are the script's last; its three plots are the script's last. Its basis line
-// is hidden until switched on in Style (with TURN's settings it is TURN's line).
+// Its twelve inputs and its three plots were the script's last in v48 (v49's two and two follow
+// them). Its basis line is hidden until switched on in Style (with TURN's settings it is TURN's
+// line).
+// v49, the volume test. Operator, 11-26, with two POPs of RAYA (04:27 New York, off a flat base
+// with almost no volume: "suitable"; 11:10, at the end of a slow climb on steady volume: "not"):
+// "the rvol for that moment should be very high … the stocks which are almost without volume,
+// suddenly started popping up. I think we should focus on only such moves".
+//   vol      the largest volume among the POP candle and the two candles before it ÷ the average
+//            volume of the 20 candles before those three. Three candles, because a pop often
+//            takes two or three to reach the mark, and read against the 20 before the POP candle
+//            alone its own first candles would water the average down (50 times the base on each
+//            of three candles would read 8.5x). A slow climb on steady volume still reads low:
+//            RAYA's 11:10 POP reads 6.2x.
+//   weak     with the switch on, a POP whose `vol` is under the minimum (10 by default): drawn
+//            gray ("pop"), sent with `| weak`, stored and not announced, and it takes no `pop N`.
+//            Its BACK is weak too ("bk", `| weak`, no `back N`).
+// Both messages carry `| vol 34.5x` after `ran` (a BACK carries its POP's), so the rows can be
+// graded by it whatever the switch says. Two cases have no reading: those 20 candles had no
+// volume at all (with volume in the three, that POP counts as a surge), or the chart has fewer than 23
+// candles (weak). The flag is the script's: `vol` is printed to one decimal, so a 9.96 reads
+// `vol 10x` and is weak.
+//   POP RAYA 0.58 | sVWAP 0.47 (+23.4%) | sma 15 0.46 (+26.1%) | ran 31.5% | vol 212.4x | candle 1 | pop 1 | day high +29% | vwap 30s | tf 1
+//   POP RAYA 0.73 | sVWAP 0.71 (+2.8%) | sma 15 0.68 (+7.4%) | ran 10.5% | vol 6.2x | candle 1 | pop 1 | weak | day high +120% | vwap 30s | tf 1
+//   BACK RAYA 0.91 | stop 0.82 | sVWAP 0.88 (+3.4%) | sma 15 0.9 (+1.1%) | ran 150.2% | vol 212.4x | candle 1 | back 1 | since 11 | green 1 | day high +156% | vwap 30s | tf 1
+// Measured before building (pop_back_study.py, tables 3–6): among names already on our Momentum
+// screen the reading does not sort the POPs (a high +10% above the POP's close follows about as
+// many of them in every bucket). That data has no pop out of a stock that was not yet moving,
+// which is the case the operator means, so this is their filter to try; the rows will say.
+// Its two inputs are the script's last (shown in this group); its two plots are the script's last.
 ppOn     = input.bool(true,      "POP setup on (v48): a run pops well above its basis (POP, a heads-up), then comes back to the basis and bounces (BACK, the entry)", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
 ppTf     = input.timeframe("1",  "POP: the basis's timeframe — its candles are the ones judged; the markers show on that chart, the alerts come from the alert on it", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
 ppLen    = input.int(15,         "POP: the basis's length (the closes it averages)", minval = 2, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
@@ -1827,7 +1857,16 @@ ppSlow   = input.int(26,         "BACK: the MACD's slow length", minval = 2, gro
 ppSig    = input.int(9,          "BACK: the MACD's signal length", minval = 1, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
 ppGainOn = input.bool(true,      "POP and BACK: gainers only (the gainer filter at the top)", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
 ppShow   = input.bool(true,      "POP and BACK: draw the markers (the basis line is hidden until switched on in Style)", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppVolOn  = input.bool(true,      "POP: only a pop with a volume surge is announced (v49); the others are drawn gray and sent as weak", group = "POP and BACK: a pop off the basis and its first pullback (v48)")
+ppVolMin = input.float(10.0,     "POP: …the biggest of the POP candle and the two candles before it traded at least this many times the average of the 20 candles before them", minval = 0, step = 0.5, group = "POP and BACK: a pop off the basis and its first pullback (v48)")
 ppRun    = ppOn and timeframe.in_seconds(ppTf) == chartSec
+// the volume surge at this candle: the largest volume among it and the two candles before it,
+// against the average of the 20 candles before those three (no volume at all in those 20 and
+// some now counts as a surge)
+ppVolTop  = math.max(volume, nz(volume[1]), nz(volume[2]))
+ppVolBase = ta.sma(volume, 20)[3]
+ppVolX    = ppVolBase > 0 ? ppVolTop / ppVolBase : na
+ppSurge   = not na(ppVolBase) and (ppVolBase > 0 ? ppVolTop / ppVolBase >= ppVolMin : ppVolTop > 0)
 ppB      = ta.sma(close, ppLen)
 [ppMacdLine, ppSignalLine, ppHist] = ta.macd(close, ppFast, ppSlow, ppSig)
 ppGreen  = ppHist > 0
@@ -1839,8 +1878,10 @@ var bool  ppPopped  = false   // the run has had its POP
 var bool  ppWaiting = false   // waiting for the POP's BACK
 var int   ppPopBar  = na
 var bool  ppTouched = false
-var int   ppPopN    = 0       // the day's POPs sent on this ticker
-var int   ppBackN   = 0       // the day's BACKs sent on this ticker
+var int   ppPopN    = 0       // the day's POPs sent on this ticker (weak ones are not counted)
+var int   ppBackN   = 0       // the day's BACKs sent on this ticker (weak ones are not counted)
+var float ppPopVol  = na      // the POP's volume reading (ppVolX at the POP candle)
+var bool  ppWeak    = false   // the run's POP failed the volume test: it and its BACK are weak
 if newDay
     ppPopN    := 0
     ppBackN   := 0
@@ -1872,9 +1913,12 @@ if ppRun and not na(ppB) and not na(ppB[1])
                 ppWaiting := true
                 ppTouched := false
                 ppPopBar  := bar_index
+                ppPopVol  := ppVolX
+                ppWeak    := ppVolOn and not ppSurge
                 if inWindow and (not ppGainOn or gainer)
                     ppPopFire := true
-                    ppPopN    += 1
+                    if not ppWeak
+                        ppPopN += 1
         else if ppWaiting
             if low <= ppB * (1 + ppTol / 100)
                 ppTouched := true
@@ -1885,7 +1929,8 @@ if ppRun and not na(ppB) and not na(ppB[1])
                     ppBackFire := true
                     ppStop     := ppLowNow - syminfo.mintick
                     ppAge      := bar_index - ppPopBar
-                    ppBackN    += 1
+                    if not ppWeak
+                        ppBackN += 1
             else if ppWaitN > 0 and bar_index - ppPopBar >= ppWaitN
                 ppWaiting := false
         if na(ppTop) or high > ppTop
@@ -1904,11 +1949,16 @@ ppMsg(bool isBack) =>
     if not na(yvwap)
         msg += " | yVWAP " + str.tostring(yvwap, format.mintick) + " (" + pctVs(yvwap) + "%)"
     msg += " | sma " + str.tostring(ppLen) + " " + str.tostring(ppB, format.mintick) + " (" + pctVs(ppB) + "%)"
-    msg += " | ran " + str.tostring(ppRan, "#.0") + "% | candle " + ppTf
+    msg += " | ran " + str.tostring(ppRan, "#.0") + "%"
+    if not na(ppPopVol)
+        msg += " | vol " + str.tostring(ppPopVol, "#.#") + "x"
+    msg += " | candle " + ppTf
     if isBack
         msg += " | back " + str.tostring(ppBackN) + " | since " + str.tostring(ppAge) + " | green " + (ppGreen ? "1" : "0")
     else
         msg += " | pop " + str.tostring(ppPopN)
+    if ppWeak
+        msg += " | weak"
     if not na(dayHighGain)
         msg += " | day high " + (dayHighGain >= 0 ? "+" : "") + str.tostring(dayHighGain, "#") + "%"
     if not na(ahGain)
@@ -1919,5 +1969,8 @@ if ppPopFire
 if ppBackFire
     alert(ppMsg(true), alert.freq_once_per_bar_close)
 plot(ppRun and ppShow ? ppB : na, "POP basis (v48)", color.orange, display = display.none)
-plotshape(ppShow and ppPopFire, "POP (v48)", shape.labeldown, location.abovebar, color.yellow, text = "POP", textcolor = color.black, size = size.small)
-plotshape(ppShow and ppBackFire, "BACK (v48)", shape.labelup, location.belowbar, color.aqua, text = "BK", textcolor = color.black, size = size.small)
+plotshape(ppShow and ppPopFire and not ppWeak, "POP (v48)", shape.labeldown, location.abovebar, color.yellow, text = "POP", textcolor = color.black, size = size.small)
+plotshape(ppShow and ppBackFire and not ppWeak, "BACK (v48)", shape.labelup, location.belowbar, color.aqua, text = "BK", textcolor = color.black, size = size.small)
+// v49 plots go last: the POPs the volume test calls weak, and their BACKs, in gray (sent with `| weak`, stored, not announced).
+plotshape(ppShow and ppPopFire and ppWeak, "POP, low volume (v49)", shape.labeldown, location.abovebar, color.gray, text = "pop", textcolor = color.white, size = size.tiny)
+plotshape(ppShow and ppBackFire and ppWeak, "BACK after a low-volume POP (v49)", shape.labelup, location.belowbar, color.gray, text = "bk", textcolor = color.white, size = size.tiny)

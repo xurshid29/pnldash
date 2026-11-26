@@ -15,7 +15,10 @@
 // alert): after a basis fell and turned up, price closes above it, comes back to it and bounces.
 // v48 (2026-11-26) added a fifth in two steps, POP and BACK (stages `pop` and `back`, from the 1m
 // alert): a run's high gets well above its basis (a heads-up), then the price comes back to the basis
-// and bounces (the entry).
+// and bounces (the entry). v49 (2026-11-26) gave the POP a volume test: both messages carry the POP's
+// volume reading (`| vol 212.4x`: the largest volume among the POP candle and the two before it against
+// the 20 candles before those three), and a POP under the script's minimum is `| weak`, with its BACK:
+// stored, never announced, never past the cap. Weak is the script's word alone, never read off `vol`.
 
 import { readFileSync } from 'fs';
 import { dirname, resolve } from 'path';
@@ -25,7 +28,7 @@ import {
   parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, stageSwitch, readStoredStages, storedStages,
   emaByBand, emaFields, EMA_BAND_LABEL, readStoredRules, emaLineStage, storedSetupFields, storedStage,
   EMA_STAGES, LINE_CROSS_STAGES, TV_STAGE_LABEL, turnFields, vbFields, VB_STAGES, PULLBACK_STAGES,
-  popFields, BASIS_STAGES,
+  popFields, BASIS_STAGES, POP_STAGES, WEAK_STAGES, isWeak,
   type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 import * as tvSetups from '../src/services/tv-setups.js';
@@ -1366,13 +1369,15 @@ console.log('POP and BACK: a pop off the basis and its first pullback (v48, 2026
   }
 
   // What a POP row and a BACK row store (tier_events meta), and what a reloaded page reads back (GET /api/screener/alerts)
+  // v49: popFields also stores `weak` (false for these two v48 messages, which carry no `| weak`), so a POP row has seven
+  // fields and a BACK row ten. Until v49 these three checks pinned six and nine, the same fields without `weak`.
   const pRow = popFields(p!);
   const bRow = popFields(b!);
-  check('v48: a POP row stores its six fields (popFields) — no stop, `since` or MACD reading',
-    JSON.stringify(pRow) === JSON.stringify({ candle_tf: '1', sma_len: 15, sma: 1.66, sma_pct: 11.4, ran_pct: 12.6, pop_n: 1 })
+  check('v48: a POP row stores its six fields (popFields) and (v49) `weak` — no stop, `since` or MACD reading',
+    JSON.stringify(pRow) === JSON.stringify({ candle_tf: '1', sma_len: 15, sma: 1.66, sma_pct: 11.4, ran_pct: 12.6, pop_n: 1, weak: false })
       && !('stop' in pRow) && !('since_n' in pRow) && !('macd_green' in pRow) && !('back_n' in pRow), JSON.stringify(pRow));
-  check('v48: a BACK row stores its nine fields',
-    JSON.stringify(bRow) === JSON.stringify({ candle_tf: '1', stop: 1.84, since_n: 6, sma_len: 15, sma: 1.88, sma_pct: 2.1, ran_pct: 18.4, back_n: 1, macd_green: true })
+  check('v48: a BACK row stores its nine fields and (v49) `weak`',
+    JSON.stringify(bRow) === JSON.stringify({ candle_tf: '1', stop: 1.84, since_n: 6, sma_len: 15, sma: 1.88, sma_pct: 2.1, ran_pct: 18.4, back_n: 1, macd_green: true, weak: false })
       && !('pop_n' in bRow), JSON.stringify(bRow));
   check('v48: …other stages store none of them (popFields), and a POP or a BACK none of the TURN\'s, the VB\'s or the EMA family\'s',
     Object.keys(popFields(pb)).length === 0 && Object.keys(popFields(parseTvMessage(TURN_MSG)!)).length === 0
@@ -1383,12 +1388,13 @@ console.log('POP and BACK: a pop off the basis and its first pullback (v48, 2026
       && !('macd_green' in popFields({ ...p!, stop: 1.7, since_n: 2, macd_green: true })));
   const pStored = storedSetupFields({ stage: 'pop', price: 1.85, svwap: 1.62, tf: '1', ...pRow });
   const bStored = storedSetupFields({ stage: 'back', price: 1.92, svwap: 1.7, tf: '1', ...bRow });
-  check('v48: storedSetupFields copies a POP row\'s fields back — ran_pct and pop_n as numbers, with the basis and its timeframe — and nothing else',
+  check('v48: storedSetupFields copies a POP row\'s fields back — ran_pct and pop_n as numbers, with the basis and its timeframe, and (v49) `weak` as a boolean — and nothing else',
     pStored.ran_pct === 12.6 && pStored.pop_n === 1 && pStored.sma_len === 15 && pStored.sma === 1.66 && pStored.sma_pct === 11.4 && pStored.candle_tf === '1'
-      && Object.keys(pStored).length === 6 && !('stop' in pStored) && !('back_n' in pStored) && !('macd_green' in pStored), JSON.stringify(pStored));
-  check('v48: …and a BACK row\'s — ran_pct and back_n as numbers, macd_green as a boolean, with stop, since_n, the basis and its timeframe',
+      && pStored.weak === false && Object.keys(pStored).length === 7 && !('stop' in pStored) && !('back_n' in pStored) && !('macd_green' in pStored), JSON.stringify(pStored));
+  check('v48: …and a BACK row\'s — ran_pct and back_n as numbers, macd_green as a boolean, with stop, since_n, the basis and its timeframe, and (v49) `weak`',
     bStored.ran_pct === 18.4 && bStored.back_n === 1 && bStored.stop === 1.84 && bStored.since_n === 6 && bStored.macd_green === true && bStored.sma_len === 15
-      && bStored.sma === 1.88 && bStored.sma_pct === 2.1 && bStored.candle_tf === '1' && Object.keys(bStored).length === 9 && !('pop_n' in bStored), JSON.stringify(bStored));
+      && bStored.sma === 1.88 && bStored.sma_pct === 2.1 && bStored.candle_tf === '1' && bStored.weak === false && Object.keys(bStored).length === 10
+      && !('pop_n' in bStored), JSON.stringify(bStored));
   check('v48: …the round trip is exact: what each row stored is what the reloaded page reads, field for field',
     Object.keys(pRow).length === Object.keys(pStored).length && Object.keys(pRow).every((k) => pStored[k] === (pRow as Record<string, unknown>)[k])
       && Object.keys(bRow).length === Object.keys(bStored).length && Object.keys(bRow).every((k) => bStored[k] === (bRow as Record<string, unknown>)[k]),
@@ -1406,6 +1412,370 @@ console.log('POP and BACK: a pop off the basis and its first pullback (v48, 2026
       && popOnly.every((k) => !(k in storedSetupFields({ stage: 'cross', ...vbFields(parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 1 | tf 30S')!) })))
       && storedStage({ stage: 'pop', ...pRow }) === 'pop' && storedStage({ stage: 'back', ...bRow }) === 'back'
       && storedStage({ stage: 'back', bb_tf: '45S' }) === 'back' && storedStage({ stage: 'pop', basis: 1.66 }) === 'pop');
+}
+
+// v49 (operator, 2026-11-26, with two POPs of RAYA: 04:27 New York off a flat base with almost no volume, "suitable",
+// and 11:10 at the end of a slow climb on steady volume, "not": "the rvol for that moment should be very high … the
+// stocks which are almost without volume, suddenly started popping up. I think we should focus on only such moves"):
+// the POP's volume test. Every POP and BACK message carries `| vol <n>x` right after `| ran …%` (the largest volume among
+// the POP candle and the two candles before it ÷ the average of the 20 candles before those three; a BACK carries its
+// POP's), read into `vol_x` like a PULLBACK's, though it is another reading. A POP that fails the script's test, and the
+// BACK after it, carry `| weak` (after `pop N` / `green N`, before `day high`): stored, never announced, whatever the ⚙
+// switches, the Momentum rule and the cap say. A weak one takes no number, so its `pop N` / `back N` is the day's count
+// so far (it can be 0) and it is never past the cap. The TURN has no weak notion and is as it was.
+// The first three are the examples in the script's comments (checked against them in the Contract section below). The
+// weak one's reading was `vol 5x` until the script redefined the reading the same day (one candle against the 20 before
+// it then); RAYA's 11:10 POP reads 6.2x by the new one.
+const POP_VOL_MSG = 'POP RAYA 0.58 | sVWAP 0.47 (+23.4%) | sma 15 0.46 (+26.1%) | ran 31.5% | vol 212.4x | candle 1 | pop 1 | day high +29% | vwap 30s | tf 1';
+const POP_WEAK_MSG = 'POP RAYA 0.73 | sVWAP 0.71 (+2.8%) | sma 15 0.68 (+7.4%) | ran 10.5% | vol 6.2x | candle 1 | pop 1 | weak | day high +120% | vwap 30s | tf 1';
+const BACK_VOL_MSG = 'BACK RAYA 0.91 | stop 0.82 | sVWAP 0.88 (+3.4%) | sma 15 0.9 (+1.1%) | ran 150.2% | vol 212.4x | candle 1 | back 1 | since 11 | green 1 | day high +156% | vwap 30s | tf 1';
+// The BACK after a weak POP, as the script's ppMsg() writes it (no example of it in the script's comments): `| weak`
+// after `green N`, `back 0` because it takes no number, and its POP's reading.
+const BACK_WEAK_MSG = 'BACK RAYA 0.76 | stop 0.7 | sVWAP 0.72 (+5.6%) | sma 15 0.74 (+2.7%) | ran 14.2% | vol 6.2x | candle 1 | back 0 | since 4 | green 1 | weak | day high +120% | vwap 30s | tf 1';
+// The script prints `vol` to one decimal ("#.#") and tests the unrounded reading, so a POP whose reading is 9.96 (under
+// the minimum of 10) arrives as `vol 10x` and weak. Weak is the message's `| weak` alone, never the server's reading of `vol`.
+const POP_EDGE_MSG = 'POP RAYA 0.73 | sVWAP 0.71 (+2.8%) | sma 15 0.68 (+7.4%) | ran 10.5% | vol 10x | candle 1 | pop 1 | weak | day high +120% | vwap 30s | tf 1';
+const BACK_EDGE_MSG = 'BACK RAYA 0.76 | stop 0.7 | sVWAP 0.72 (+5.6%) | sma 15 0.74 (+2.7%) | ran 14.2% | vol 10x | candle 1 | back 0 | since 4 | green 1 | weak | day high +120% | vwap 30s | tf 1';
+console.log('POP and BACK: the volume test (v49, 2026-11-26)');
+{
+  const T0 = 1_795_700_000;
+  const ps = parseTvMessage(POP_VOL_MSG);    // a strong POP
+  const pw = parseTvMessage(POP_WEAK_MSG);   // a weak POP
+  const bs = parseTvMessage(BACK_VOL_MSG);   // a strong BACK
+  const bw = parseTvMessage(BACK_WEAK_MSG);  // the BACK after a weak POP
+  const turn = parseTvMessage(TURN_MSG)!;
+
+  // The messages
+  check('v49: the POP example parses — `vol 212.4x` after `ran` reads into vol_x, not weak, and every other field as before',
+    ps?.stage === 'pop' && ps.ticker === 'RAYA' && ps.price === 0.58 && ps.svwap === 0.47 && ps.spx_pct === 23.4 && ps.mvwap === null && ps.px_pct === null
+      && ps.yvwap === null && ps.sma_len === 15 && ps.sma === 0.46 && ps.sma_pct === 26.1 && ps.ran_pct === 31.5 && ps.vol_x === 212.4 && ps.candle_tf === '1'
+      && ps.pop_n === 1 && ps.weak === false && ps.day_gain === 29 && ps.ah_gain === null && ps.vwap_src === '30s' && ps.tf === '1' && ps.stop === null
+      && ps.since_n === null && ps.macd_green === null && ps.back_n === null && ps.run_pct === null, JSON.stringify(ps));
+  check('v49: the weak POP example parses — `vol 6.2x`, `| weak` after `pop 1` (the count so far, this one not in it)',
+    pw?.stage === 'pop' && pw.ticker === 'RAYA' && pw.price === 0.73 && pw.svwap === 0.71 && pw.spx_pct === 2.8 && pw.sma_len === 15 && pw.sma === 0.68
+      && pw.sma_pct === 7.4 && pw.ran_pct === 10.5 && pw.vol_x === 6.2 && pw.candle_tf === '1' && pw.pop_n === 1 && pw.weak === true && pw.day_gain === 120
+      && pw.vwap_src === '30s' && pw.tf === '1' && pw.stop === null && pw.back_n === null, JSON.stringify(pw));
+  check('v49: the BACK example parses — its POP\'s `vol 212.4x`, not weak, and every other field as before',
+    bs?.stage === 'back' && bs.ticker === 'RAYA' && bs.price === 0.91 && bs.stop === 0.82 && bs.svwap === 0.88 && bs.spx_pct === 3.4 && bs.mvwap === null
+      && bs.sma_len === 15 && bs.sma === 0.9 && bs.sma_pct === 1.1 && bs.ran_pct === 150.2 && bs.vol_x === 212.4 && bs.candle_tf === '1' && bs.back_n === 1
+      && bs.since_n === 11 && bs.macd_green === true && bs.weak === false && bs.day_gain === 156 && bs.vwap_src === '30s' && bs.tf === '1' && bs.pop_n === null,
+    JSON.stringify(bs));
+  check('v49: a weak BACK parses — `| weak` after `green 1`, `back 0` (it takes no number), its POP\'s `vol 6.2x`',
+    bw?.stage === 'back' && bw.ticker === 'RAYA' && bw.price === 0.76 && bw.stop === 0.7 && bw.svwap === 0.72 && bw.spx_pct === 5.6 && bw.sma === 0.74
+      && bw.sma_pct === 2.7 && bw.ran_pct === 14.2 && bw.vol_x === 6.2 && bw.candle_tf === '1' && bw.back_n === 0 && bw.since_n === 4 && bw.macd_green === true
+      && bw.weak === true && bw.day_gain === 120 && bw.vwap_src === '30s' && bw.tf === '1' && bw.pop_n === null, JSON.stringify(bw));
+  check('v49: a weak POP that is the day\'s first carries `pop 0`, and a weak BACK with a red MACD reads `green 0`',
+    parseTvMessage(POP_WEAK_MSG.replace('pop 1', 'pop 0'))?.pop_n === 0 && parseTvMessage(POP_WEAK_MSG.replace('pop 1', 'pop 0'))?.weak === true
+      && parseTvMessage(BACK_WEAK_MSG.replace('green 1', 'green 0'))?.macd_green === false && parseTvMessage(BACK_WEAK_MSG.replace('green 1', 'green 0'))?.weak === true);
+  const p48 = parseTvMessage(POP_MSG)!;
+  const b48 = parseTvMessage(BACK_MSG)!;
+  check('v49: the v48 messages (no `vol`, no `weak`) still parse: no reading, not weak', p48.stage === 'pop' && p48.vol_x === null && p48.weak === false
+    && p48.pop_n === 1 && p48.ran_pct === 12.6 && b48.stage === 'back' && b48.vol_x === null && b48.weak === false && b48.back_n === 1 && b48.ran_pct === 18.4);
+  check('v49: a v49 POP without `| vol` (the script leaves the piece out when it has no reading: `if not na(ppPopVol)`): no reading, and not weak for that',
+    parseTvMessage(POP_VOL_MSG.replace(' | vol 212.4x', ''))?.vol_x === null && parseTvMessage(POP_VOL_MSG.replace(' | vol 212.4x', ''))?.weak === false
+      && parseTvMessage(POP_VOL_MSG.replace(' | vol 212.4x', ''))?.ran_pct === 31.5 && parseTvMessage(POP_VOL_MSG.replace(' | vol 212.4x', ''))?.candle_tf === '1');
+  // The number is what Pine's "#.#" prints: "5", "34.5", "0" for a reading under 0.05, and ".5" is read as well.
+  const volOf = (m: string, v: string) => parseTvMessage(m.replace(/vol [0-9.]+x/, `vol ${v}`))?.vol_x;
+  const PB_VOL = 'PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | mVWAP 4.1 (+51.2%) | line session | touch 2 | peak +17% | day high +336% | vol 0.6x | run -9.6% | tf 1';
+  check('v49: the `vol` number\'s styles — "0x", ".5x", "0.5x", "34.5x", "1234x", "5.0x" — read alike in a POP, a BACK and a PULLBACK (the same piece)',
+    [POP_VOL_MSG, BACK_VOL_MSG, PB_VOL].every((m) => volOf(m, '0x') === 0 && volOf(m, '.5x') === 0.5 && volOf(m, '0.5x') === 0.5 && volOf(m, '34.5x') === 34.5
+      && volOf(m, '1234x') === 1234 && volOf(m, '5.0x') === 5 && volOf(m, '212.4X') === 212.4)
+      && parseTvMessage(PB_VOL)?.vol_x === 0.6 && parseTvMessage(PB_VOL)?.stage === 'pullback');
+  check('v49: …an unreadable one is no reading, and the rest of the message still parses ("vol x", "vol 12" without its x, "vol NaNx", "vol -3x")',
+    ['x', '12', 'NaNx', '-3x', ''].every((v) => { const s = parseTvMessage(POP_VOL_MSG.replace('vol 212.4x', `vol ${v}`));
+      return s?.stage === 'pop' && s.vol_x === null && s.ran_pct === 31.5 && s.candle_tf === '1' && s.pop_n === 1 && s.weak === false && s.day_gain === 29; }));
+  check('v49: `weak` is read after a "|" only, wherever it stands: a POP or a BACK on a ticker named WEAK or VOL is not weak and has no reading of the name\'s making',
+    parseTvMessage(POP_MSG.replace('SVRE', 'WEAK'))?.weak === false && parseTvMessage(BACK_MSG.replace('SVRE', 'WEAK'))?.weak === false
+      && parseTvMessage(POP_MSG.replace('SVRE', 'VOL'))?.vol_x === null && parseTvMessage(POP_MSG.replace('SVRE', 'VOL'))?.price === 1.85
+      && parseTvMessage(POP_VOL_MSG.replace('RAYA', 'VOL'))?.vol_x === 212.4 && parseTvMessage(POP_VOL_MSG.replace('RAYA', 'VOL'))?.ticker === 'VOL'
+      && parseTvMessage(POP_WEAK_MSG.replace('RAYA', 'WEAK'))?.weak === true && parseTvMessage(POP_WEAK_MSG.replace('RAYA', 'WEAK'))?.ticker === 'WEAK'
+      && parseTvMessage(POP_VOL_MSG.replace(' | tf 1', ' | tf 1 | weak'))?.weak === true && parseTvMessage(POP_VOL_MSG.replace('pop 1', 'pop 1 weak'))?.weak === false);
+  // A JSON body: `vol_x` and `weak` by the signal's field names
+  const pwJs = parseTvMessage({ stage: 'pop', ticker: 'RAYA', price: 0.73, svwap: 0.71, spx_pct: 2.8, sma_len: 15, sma: 0.68, sma_pct: 7.4, ran_pct: 10.5,
+    vol_x: 6.2, candle_tf: '1', pop_n: 1, weak: true, day_gain: 120, vwap_src: '30s', tf: '1' });
+  const bsJs = parseTvMessage({ stage: 'back', ticker: 'RAYA', price: 0.91, stop: 0.82, svwap: 0.88, spx_pct: 3.4, sma_len: 15, sma: 0.9, sma_pct: 1.1,
+    ran_pct: 150.2, vol_x: 212.4, candle_tf: '1', back_n: 1, since_n: 11, macd_green: true, day_gain: 156, vwap_src: '30s', tf: '1' });
+  check('v49: the JSON bodies (with `vol_x`, and `weak: true` for the weak one) read field for field as the messages do',
+    pwJs != null && pw != null && (Object.keys(pw) as Array<keyof TvSetupSignal>).every((k) => pwJs[k] === pw[k]) && Object.keys(pwJs).length === Object.keys(pw).length
+      && bsJs != null && bs != null && (Object.keys(bs) as Array<keyof TvSetupSignal>).every((k) => bsJs[k] === bs[k]) && Object.keys(bsJs).length === Object.keys(bs).length,
+    `${JSON.stringify(pwJs)} ${JSON.stringify(bsJs)}`);
+  check('v49: …in JSON only a literal `true` is weak ("true", 1, "weak" and nothing are not), and `vol_x` reads a number or a numeric string',
+    ['true', 1, 'weak', null, undefined, false].every((v) => parseTvMessage({ stage: 'pop', ticker: 'RAYA', weak: v })?.weak === false)
+      && parseTvMessage({ stage: 'back', ticker: 'RAYA', weak: true })?.weak === true
+      && parseTvMessage({ stage: 'pop', ticker: 'RAYA', vol_x: '212.4' })?.vol_x === 212.4 && parseTvMessage({ stage: 'pop', ticker: 'RAYA', vol_x: 0 })?.vol_x === 0
+      && parseTvMessage({ stage: 'pop', ticker: 'RAYA', vol_x: '5x' })?.vol_x === null && parseTvMessage({ stage: 'pop', ticker: 'RAYA' })?.vol_x === null);
+
+  // Which stages can be weak
+  check('v49: POP and BACK are the POP setup\'s stages, and with the EMA family the stages a message may call weak; the TURN, the VB\'s and the PULLBACK\'s are not',
+    JSON.stringify([...POP_STAGES]) === '["pop","back"]' && JSON.stringify([...WEAK_STAGES]) === '["ema","bounce","band","pop","back"]'
+      && [...POP_STAGES].every((s) => BASIS_STAGES.has(s)) && !POP_STAGES.has('turn') && !WEAK_STAGES.has('turn')
+      && [...VB_STAGES, ...PULLBACK_STAGES].every((s) => !WEAK_STAGES.has(s)) && [...EMA_STAGES].every((s) => WEAK_STAGES.has(s)));
+  check('v49: isWeak — a POP, a BACK, an EMA cross, a band cross and a BOUNCE marked weak are; unmarked ones are not; a TURN, a CROSS, a RETEST or a PULLBACK never is, marked or not',
+    isWeak(pw!) && isWeak(bw!) && !isWeak(ps!) && !isWeak(bs!) && !isWeak(p48) && !isWeak(b48)
+      && (['ema', 'band', 'bounce', 'pop', 'back'] as const).every((stage) => isWeak({ stage, weak: true }) && !isWeak({ stage, weak: false }) && !isWeak({ stage }))
+      && (['turn', 'cross', 'retest', 'pullback', 'broken', 'held'] as const).every((stage) => !isWeak({ stage, weak: true }) && !isWeak({ stage })));
+
+  // The gate: a weak one is stored (admitted) and never announced
+  check('v49: gate — a weak POP on Momentum → quiet; a weak BACK on Momentum → quiet', new TvSetupGate().admit(pw!, T0, false, true) === 'quiet'
+    && new TvSetupGate().admit(bw!, T0, false, true) === 'quiet');
+  const only = (stages: Parameters<TvSetupGate['setAnnounced']>[0]) => { const x = new TvSetupGate(); x.setAnnounced(stages); return x; };
+  const lax = () => { const x = new TvSetupGate(); x.setEmaMomentumOnly(false); return x; };
+  check('v49: gate — …whatever the ⚙ switches say: every stage on, POP and BACK alone on, only its own on',
+    [pw!, bw!].every((s) => only([...TV_STAGE_ORDER]).admit(s, T0, false, true) === 'quiet' && only(['pop', 'back']).admit(s, T0, false, true) === 'quiet'
+      && only([s.stage]).admit(s, T0, false, true) === 'quiet' && only([s.stage]).announces(s.stage)));
+  check('v49: gate — …whatever the Momentum rule says: on the list, off it, and off it with the rule off and a day high over +30% (both examples say +120%)',
+    [pw!, bw!].every((s) => s.day_gain! >= TV_SETUP.vb_fresh_gain && new TvSetupGate().admit(s, T0, false, true) === 'quiet'
+      && new TvSetupGate().admit(s, T0, false, false) === 'quiet' && lax().admit(s, T0, false, false) === 'quiet' && lax().admit(s, T0, false, true) === 'quiet'
+      && lax().admit({ ...s, day_gain: 900 }, T0, false, false) === 'quiet'));
+  check('v49: gate — …whatever the cap says: with a count so far of 0, 1, 3 (the cap) or 4, and with a grade exemption',
+    [0, 1, TV_SETUP.pp_cap, TV_SETUP.pp_cap + 1].every((n) => new TvSetupGate().admit({ ...pw!, pop_n: n }, T0, false, true) === 'quiet'
+      && new TvSetupGate().admit({ ...bw!, back_n: n }, T0, false, true) === 'quiet'
+      && new TvSetupGate().admit({ ...pw!, pop_n: n }, T0, true, true) === 'quiet' && new TvSetupGate().admit({ ...bw!, back_n: n }, T0, true, true) === 'quiet'));
+  check('v49: gate — a weak one is stored, not thrown away: its verdict is quiet (never drop, log or flood), and its own re-delivery within 20 s is dropped',
+    (() => { const k = new TvSetupGate();
+      return k.admit(pw!, T0, false, true) === 'quiet' && k.admit(pw!, T0 + 5, false, true) === 'drop' && k.admit(bw!, T0, false, true) === 'quiet'
+        && k.admit(bw!, T0 + 5, false, true) === 'drop' && k.admit(pw!, T0 + TV_SETUP.vb_dup_sec + 1, false, true) === 'quiet'; })());
+  check('v49: gate — the strong ones as before: on Momentum announced, a re-delivery dropped, the next one a new event',
+    (() => { const k = new TvSetupGate();
+      return k.admit(ps!, T0, false, true) === 'notify' && k.admit(ps!, T0 + 5, false, true) === 'drop' && k.admit({ ...ps!, pop_n: 2 }, T0 + 180, false, true) === 'notify'
+        && k.admit(bs!, T0, false, true) === 'notify' && k.admit(bs!, T0 + 5, false, true) === 'drop' && k.admit({ ...bs!, back_n: 2 }, T0 + 180, false, true) === 'notify'; })());
+  check('v49: gate — …off Momentum quiet (with the rule off and their +29% / +156% day highs: the POP quiet, the BACK announced), past the cap quiet, switched off quiet',
+    new TvSetupGate().admit(ps!, T0, false, false) === 'quiet' && new TvSetupGate().admit(bs!, T0, false, false) === 'quiet'
+      && lax().admit(ps!, T0, false, false) === 'quiet' && lax().admit({ ...ps!, day_gain: 30 }, T0, false, false) === 'notify' && lax().admit(bs!, T0, false, false) === 'notify'
+      && new TvSetupGate().admit({ ...ps!, pop_n: 4 }, T0, false, true) === 'quiet' && new TvSetupGate().admit({ ...bs!, back_n: 4 }, T0, false, true) === 'quiet'
+      && new TvSetupGate().admit({ ...ps!, pop_n: 3 }, T0, false, true) === 'notify' && new TvSetupGate().admit({ ...bs!, back_n: 3 }, T0, false, true) === 'notify'
+      && only(['back']).admit(ps!, T0, false, true) === 'quiet' && only(['pop']).admit(bs!, T0, false, true) === 'quiet');
+  check('v49: gate — the reading alone decides nothing here: a strong POP with a small `vol`, or with none, announces; only the message\'s `| weak` makes one quiet',
+    new TvSetupGate().admit({ ...ps!, vol_x: 0 }, T0, false, true) === 'notify' && new TvSetupGate().admit({ ...ps!, vol_x: null }, T0, false, true) === 'notify'
+      && new TvSetupGate().admit({ ...bs!, vol_x: 0.5 }, T0, false, true) === 'notify' && new TvSetupGate().admit({ ...pw!, vol_x: 5000 }, T0, false, true) === 'quiet'
+      && new TvSetupGate().admit(p48, T0, false, true) === 'notify' && new TvSetupGate().admit(b48, T0, false, true) === 'notify');
+  // `vol` is printed to one decimal and the script tests the unrounded reading, so a 9.96 arrives as `| vol 10x | … | weak`:
+  // a reading that looks like the minimum, on a weak POP. The server takes weak from `| weak` alone.
+  const pe = parseTvMessage(POP_EDGE_MSG);
+  const be = parseTvMessage(BACK_EDGE_MSG);
+  check('v49: `| vol 10x | … | weak` (a 9.96, printed to one decimal) parses as it stands: the reading 10, and weak',
+    pe?.stage === 'pop' && pe.ticker === 'RAYA' && pe.vol_x === 10 && pe.weak === true && pe.pop_n === 1 && pe.ran_pct === 10.5 && pe.candle_tf === '1'
+      && pe.day_gain === 120 && be?.stage === 'back' && be.vol_x === 10 && be.weak === true && be.back_n === 0 && be.since_n === 4 && be.stop === 0.7
+      && isWeak(pe) && isWeak(be), `${JSON.stringify(pe)} ${JSON.stringify(be)}`);
+  check('v49: …it is quiet on Momentum, a POP and a BACK alike, with any switches, and its row says weak with the reading it came with',
+    new TvSetupGate().admit(pe!, T0, false, true) === 'quiet' && new TvSetupGate().admit(be!, T0, false, true) === 'quiet'
+      && only(['pop', 'back']).admit(pe!, T0, false, true) === 'quiet' && lax().admit(be!, T0, false, false) === 'quiet'
+      && popFields(pe!).weak === true && popFields(be!).weak === true
+      && formatTvSetupAlert(pe!, 'RAYA', null).includes('· volume 10.0× the 20 candles before the pop · filtered as weak for low volume\n')
+      && formatTvSetupAlert(be!, 'RAYA', null).includes('· its POP\'s volume 10.0× the 20 candles before it ·')
+      && formatTvSetupAlert(be!, 'RAYA', null).includes('· after a POP filtered as weak for low volume\n'));
+  check('v49: …and the same reading without `| weak` announces: `vol 10x`, `vol 9.9x` (the script\'s switch off), `vol 0x`; with `| weak`, `vol 10.1x`, `vol 500x` and no `vol` are quiet',
+    ['10x', '9.9x', '0x', '0.1x'].every((v) => { const s = parseTvMessage(POP_EDGE_MSG.replace('vol 10x', `vol ${v}`).replace(' | weak', ''));
+      const b2 = parseTvMessage(BACK_EDGE_MSG.replace('vol 10x', `vol ${v}`).replace(' | weak', ''));
+      return s?.weak === false && !isWeak(s) && new TvSetupGate().admit(s, T0, false, true) === 'notify' && popFields(s).weak === false
+        && b2?.weak === false && new TvSetupGate().admit({ ...b2, back_n: 1 }, T0, false, true) === 'notify'; })
+      && ['vol 10.1x', 'vol 500x', 'vol 212.4x'].every((v) => { const s = parseTvMessage(POP_EDGE_MSG.replace('vol 10x', v));
+        return s?.weak === true && new TvSetupGate().admit(s, T0, false, true) === 'quiet'; })
+      && new TvSetupGate().admit(parseTvMessage(POP_EDGE_MSG.replace(' | vol 10x', ''))!, T0, false, true) === 'quiet'
+      && parseTvMessage(POP_EDGE_MSG.replace(' | vol 10x', ''))?.vol_x === null);
+  {
+    // No code on the server holds a volume minimum or compares the reading: `vol_x` is stored, passed on and printed
+    const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
+    const sources = ['services/tv-setups.ts', 'routes/tv.ts', 'routes/screener.ts'].map((f) => readFileSync(resolve(srcDir, f), 'utf8'));
+    const pollerSrc = readFileSync(resolve(srcDir, 'services/poller.ts'), 'utf8');
+    const deliver = pollerSrc.slice(pollerSrc.indexOf('  deliverTvSetup(sig: TvSetupSignal'), pollerSrc.indexOf('  private pushOpportunityAlerts('));
+    const code = [...sources, deliver].map((src) => src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n'));
+    check('v49: the server never judges the reading — no comparison of `vol_x` with a number in tv-setups.ts, the two routes or deliverTvSetup (only "is there one"), and TV_SETUP holds no volume minimum',
+      code.every((src) => src.length > 0 && !/vol_x\s*(?:[<>]=?|[!=]==?)\s*(?!null\b)\S/.test(src) && !/(?<!=)[<>]=?\s*(?:sig|s|m|o)\.vol_x/.test(src))
+        && code.every((src) => (src.match(/vol_x\s*!=\s*null/g) ?? []).length === (src.match(/vol_x\s*[!=]==?/g) ?? []).length)
+        && deliver.length > 2000 && Object.keys(TV_SETUP).every((k) => !/vol/i.test(k))
+        && code[0].includes('weak: /\\|\\s*weak\\b/i.test(text),') && code[0].includes('weak: o.weak === true,'));
+  }
+  // A weak one's number is not its own (the day's count without it), so it is never past the cap: not in its row, not in
+  // its alert, not in the webhook's reason. Until this the row of a weak POP sent after the day's fourth strong one said `capped`.
+  check('v49: a weak POP or BACK is never past the cap, whatever count it carries (0, 3, 4, 99); a strong one with the same number is, past 3',
+    [0, 3, 4, 99].every((n) => !pastCap({ ...pw!, pop_n: n }) && !pastCap({ ...bw!, back_n: n }) && !pastCap({ ...pe!, pop_n: n }) && !pastCap({ ...be!, back_n: n }))
+      && pastCap({ ...ps!, pop_n: 4 }) && pastCap({ ...bs!, back_n: 4 }) && pastCap({ ...ps!, pop_n: 99 }) && !pastCap({ ...ps!, pop_n: 3 }) && !pastCap({ ...bs!, back_n: 3 })
+      && pastCap({ ...pw!, pop_n: 4, weak: false }) && pastCap({ ...bw!, back_n: 4, weak: false }) && pastCap({ ...pw!, pop_n: 4, weak: undefined }));
+  check('v49: …so a weak one\'s text never says "past the cap", and the next strong one past it still does',
+    !formatTvSetupAlert({ ...pw!, pop_n: 4 }, 'RAYA', null).includes('past the cap') && !formatTvSetupAlert({ ...bw!, back_n: 4 }, 'RAYA', null).includes('past the cap')
+      && formatTvSetupAlert({ ...ps!, pop_n: 4 }, 'RAYA', null).includes('pop 4 today — past the cap')
+      && formatTvSetupAlert({ ...bs!, back_n: 4 }, 'RAYA', null).includes('back 4 today — past the cap'));
+  check('v49: …the other stages\' caps are as they were: a TURN, a CROSS and a PULLBACK carrying `weak` are still past theirs, and a weak EMA cross past its count still reads so',
+    pastCap({ ...turn, turn_n: 4, weak: true }) && pastCap({ ...turn, turn_n: 4 }) && !pastCap({ ...turn, turn_n: 3, weak: true })
+      && pastCap({ ...parseTvMessage('CROSS X 1.0 | candle 5 | bb 2 | cross 4 | tf 30S')!, weak: true })
+      && pastCap({ ...parseTvMessage('PULLBACK X 1.0 | sVWAP 1 (+0%) | line session | touch 3 | fails 2 | tf 1')!, weak: true })
+      && pastCap(parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 4 | under 3 | flips 4 | weak | tf 30S')!)
+      && pastCap(parseTvMessage('BOUNCE OMH 8.12 | stop 8.01 | ema 9 8.06 | line session | from vwap | candle 5 | bounce 4 | since 9 | weak | tf 30S')!));
+  {
+    const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
+    const pollerSrc = readFileSync(resolve(srcDir, 'services/poller.ts'), 'utf8');
+    const tvSrc = readFileSync(resolve(srcDir, 'routes/tv.ts'), 'utf8');
+    const deliver = pollerSrc.slice(pollerSrc.indexOf('  deliverTvSetup(sig: TvSetupSignal'), pollerSrc.indexOf('  private pushOpportunityAlerts('));
+    check('v49: …the row\'s and the alert\'s `capped`, and the webhook\'s reason, all read pastCap (the one place that knows a weak one has no number)',
+      (deliver.match(/capped: pastCap\(sig\)/g) ?? []).length === 2 && !/capped:\s*(?!pastCap\(sig\))\S/.test(deliver.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n'))
+        && tvSrc.includes('const capped = pastCap(sig);') && tvSrc.includes(': capped && !capExempt ? \'capped\' : \'offlist\';'));
+  }
+  check('v49: gate — a weak POP, then a strong POP on the same ticker three minutes later: both admitted, quiet then announced',
+    (() => { const k = new TvSetupGate();
+      return k.admit(pw!, T0, false, true) === 'quiet' && k.admit(ps!, T0 + 180, false, true) === 'notify'; })());
+  check('v49: gate — …and with no time between them: a weak POP never is a strong one\'s re-delivery, in either order (the same for a BACK)',
+    (() => { const k = new TvSetupGate();
+      return k.admit(pw!, T0, false, true) === 'quiet' && k.admit(ps!, T0, false, true) === 'notify' && k.admit(ps!, T0 + 1, false, true) === 'drop'
+        && k.admit(pw!, T0 + 1, false, true) === 'drop'; })()
+      && (() => { const k = new TvSetupGate();
+        return k.admit(ps!, T0, false, true) === 'notify' && k.admit(pw!, T0 + 2, false, true) === 'quiet'; })()
+      && (() => { const k = new TvSetupGate();
+        return k.admit(bw!, T0, false, true) === 'quiet' && k.admit(bs!, T0 + 2, false, true) === 'notify' && k.admit(bs!, T0 + 3, false, true) === 'drop'; })());
+  check('v49: gate — weak POPs use nothing up: after three of them the day\'s first strong POP announces, and the third strong one still does',
+    (() => { const k = new TvSetupGate();
+      return [0, 60, 120].every((dt) => k.admit({ ...pw!, pop_n: 0 }, T0 + dt, false, true) === 'quiet') && k.admit(ps!, T0 + 180, false, true) === 'notify'
+        && k.admit({ ...pw!, pop_n: 1 }, T0 + 240, false, true) === 'quiet' && k.admit({ ...ps!, pop_n: 2 }, T0 + 300, false, true) === 'notify'
+        && k.admit({ ...ps!, pop_n: 3 }, T0 + 360, false, true) === 'notify' && k.admit({ ...ps!, pop_n: 4 }, T0 + 420, false, true) === 'quiet'; })()
+      && !pastCap(pw!) && !pastCap(bw!) && !pastCap({ ...pw!, pop_n: 0 }));
+  check('v49: gate — a strong BACK is not touched by an earlier weak POP of another run, nor by a weak BACK; and a weak BACK follows a strong POP quietly',
+    (() => { const k = new TvSetupGate();   // a weak POP's run ends, a later run's POP is strong and its BACK comes
+      return k.admit(pw!, T0, false, true) === 'quiet' && k.admit(ps!, T0 + 300, false, true) === 'notify' && k.admit(bs!, T0 + 900, false, true) === 'notify'; })()
+      && (() => { const k = new TvSetupGate();   // the BACK right after a weak POP, with no strong POP between
+        return k.admit(pw!, T0, false, true) === 'quiet' && k.admit(bs!, T0 + 1, false, true) === 'notify'; })()
+      && (() => { const k = new TvSetupGate();
+        return k.admit(bw!, T0, false, true) === 'quiet' && k.admit(bs!, T0 + 300, false, true) === 'notify'; })()
+      && (() => { const k = new TvSetupGate();
+        return k.admit(ps!, T0, false, true) === 'notify' && k.admit(bw!, T0 + 300, false, true) === 'quiet'; })());
+
+  // The TURN has no weak notion: a `weak` on one changes nothing
+  const turnWeak = { ...turn, weak: true };
+  check('v49: the TURN is untouched — one carrying `weak` announces on Momentum as before, is quiet off it, past its cap and switched off as before',
+    new TvSetupGate().admit(turnWeak, T0, false, true) === 'notify' && new TvSetupGate().admit(turn, T0, false, true) === 'notify'
+      && new TvSetupGate().admit(turnWeak, T0, false, false) === 'quiet' && new TvSetupGate().admit({ ...turnWeak, turn_n: 4 }, T0, false, true) === 'quiet'
+      && only(['pop', 'back']).admit(turnWeak, T0, false, true) === 'quiet' && only(['turn']).admit(turnWeak, T0, false, true) === 'notify'
+      && new TvSetupGate().admit(parseTvMessage(TURN_MSG.replace(' | day high', ' | weak | day high'))!, T0, false, true) === 'notify');
+  check('v49: …its key is as it was (a `weak` is no part of it), and its row and its text carry no weak',
+    (() => { const k = new TvSetupGate();
+      return k.admit(turnWeak, T0, false, true) === 'notify' && k.admit(turn, T0 + 5, false, true) === 'drop' && k.admit(turnWeak, T0 + 6, false, true) === 'drop'
+        && k.admit(turn, T0 + TV_SETUP.vb_dup_sec + 1, false, true) === 'notify'; })()
+      && !('weak' in turnFields(turnWeak)) && JSON.stringify(turnFields(turnWeak)) === JSON.stringify(turnFields(turn))
+      && formatTvSetupAlert(turnWeak, 'NASDAQ:NIVF', null) === formatTvSetupAlert(turn, 'NASDAQ:NIVF', null)
+      && !formatTvSetupAlert(turnWeak, 'NASDAQ:NIVF', null).includes('weak') && !formatTvSetupAlert(turn, 'NASDAQ:NIVF', null).includes('volume'));
+  check('v49: the EMA family\'s weak rule is as it was: a weak EMA cross, band cross and BOUNCE are quiet on Momentum, strong ones announce',
+    (['ema', 'band', 'bounce'] as const).every((stage) => {
+      const m = stage === 'bounce' ? 'BOUNCE OMH 8.2 | stop 8.0 | sVWAP 8.01 (+2.4%) | ema 9 8.1 | line session | from ema | candle 1 | bounce 1 | since 3 | vwap 30s | tf 30S'
+        : stage === 'band' ? 'EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.13 (-0.5%) | bb 30S | mid 8.02 (+0.9%) | line session | candle 1 | cross 1 | under 12 | flips 1 | vwap 30s | tf 30S'
+          : 'EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 1 | cross 1 | under 12 | flips 1 | vwap 30s | tf 30S';
+      const s = parseTvMessage(m)!;
+      return s.stage === stage && new TvSetupGate().admit(s, T0, false, true) === 'notify' && new TvSetupGate().admit({ ...s, weak: true }, T0, false, true) === 'quiet'; }));
+
+  // Telegram: the texts for the two strong examples, whole, then a weak one's if it is ever formatted (it is never sent)
+  const momo = { change_pct: 24.1, grade: 'B+', float_m: 3.2 };
+  const links = '<a href="https://www.tradingview.com/chart/?symbol=NASDAQ%3ARAYA">TradingView</a> · <a href="https://finviz.com/quote.ashx?t=RAYA">Finviz</a>';
+  const psHtml = formatTvSetupAlert(ps!, 'NASDAQ:RAYA', momo);
+  // (Until the script redefined the reading, the same day, these lines borrowed the CROSS's words, "…× its last 20 candles".)
+  check('v49: Telegram — the POP example\'s text, whole: the day\'s number, then the reading ("volume 212.4× the 20 candles before the pop")',
+    psHtml === ['⭐ 📐 💥 <b>POP</b>  <b>RAYA</b>  $0.5800',
+      '<i>a pop: the run\'s high got 31.5% above its 1m basis (SMA 15) — a heads-up, no entry: the entry is the BACK, the first pullback to the basis</i>',
+      'pop 1 today (first) · volume 212.4× the 20 candles before the pop',
+      'basis $0.4600 (+26.1%) · sVWAP $0.4700 (+23.4%)',
+      '⭐ <b>on Momentum</b> · grade B+ · now +24.1% · float 3.2M',
+      'day high +29% · tf 1',
+      links].join('\n'), psHtml);
+  const bsHtml = formatTvSetupAlert(bs!, 'NASDAQ:RAYA', momo);
+  check('v49: Telegram — the BACK example\'s text, whole: after how far the run\'s high got, the reading named as its POP\'s ("its POP\'s volume 212.4× the 20 candles before it")',
+    bsHtml === ['⭐ 📐 🎯 <b>BACK</b>  <b>RAYA</b>  $0.9100',
+      '<i>the first pullback after the pop: price came back to its 1m basis (SMA 15) and bounced (at the 1m close) — the entry</i>',
+      'stop $0.8200 (-9.9%, under the pullback\'s low) · back 1 today (first) · the run\'s high got 150.2% above the basis · its POP\'s volume 212.4× the 20 candles before it · 11 candles after the POP · MACD green',
+      'basis $0.9000 (+1.1%) · sVWAP $0.8800 (+3.4%)',
+      '⭐ <b>on Momentum</b> · grade B+ · now +24.1% · float 3.2M',
+      'day high +156% · tf 1',
+      links].join('\n'), bsHtml);
+  check('v49: Telegram — "its last 20 candles" stays the CROSS\'s own wording for its own reading (one candle against the 20 before it): no POP or BACK text says it, strong or weak; a strong one says nothing of weak',
+    formatTvSetupAlert(parseTvMessage('CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 1.8x | tf 30S')!, 'NASDAQ:AIXI', null)
+      .includes('day high +25% · volume 1.8× its last 20 candles · tf 30S')
+      && [ps!, pw!, bs!, bw!].every((s) => !formatTvSetupAlert(s, 'NASDAQ:RAYA', momo).includes('its last 20 candles')
+        && !formatTvSetupAlert(s, 'NASDAQ:RAYA', null).includes('last 20'))
+      && [psHtml, bsHtml].every((h) => !h.includes('weak') && !h.includes('not counted') && !h.includes('null') && !h.includes('undefined'))
+      && !psHtml.includes('its POP\'s') && !psHtml.includes('before it') && bsHtml.includes('its POP\'s volume') && !bsHtml.includes('before the pop'));
+  const pwHtml = formatTvSetupAlert(pw!, 'NASDAQ:RAYA', null);
+  check('v49: Telegram — a weak POP\'s text, whole: not counted (its `pop 1` is the count so far, so no "(first)"), the reading, "filtered as weak for low volume"',
+    pwHtml === ['📐 💥 <b>POP</b>  <b>RAYA</b>  $0.7300',
+      '<i>a pop: the run\'s high got 10.5% above its 1m basis (SMA 15) — a heads-up, no entry: the entry is the BACK, the first pullback to the basis</i>',
+      'not counted (1 POP today so far) · volume 6.2× the 20 candles before the pop · filtered as weak for low volume',
+      'basis $0.6800 (+7.4%) · sVWAP $0.7100 (+2.8%)',
+      '<i>not on our Momentum list</i>',
+      'day high +120% · tf 1',
+      links].join('\n'), pwHtml);
+  const bwHtml = formatTvSetupAlert(bw!, 'NASDAQ:RAYA', null);
+  check('v49: Telegram — a weak BACK\'s text, whole: not counted, its POP\'s reading, and at the end "after a POP filtered as weak for low volume"',
+    bwHtml === ['📐 🎯 <b>BACK</b>  <b>RAYA</b>  $0.7600',
+      '<i>the first pullback after the pop: price came back to its 1m basis (SMA 15) and bounced (at the 1m close) — the entry</i>',
+      'stop $0.7000 (-7.9%, under the pullback\'s low) · not counted (0 BACKs today so far) · the run\'s high got 14.2% above the basis · its POP\'s volume 6.2× the 20 candles before it · 4 candles after the POP · MACD green · after a POP filtered as weak for low volume',
+      'basis $0.7400 (+2.7%) · sVWAP $0.7200 (+5.6%)',
+      '<i>not on our Momentum list</i>',
+      'day high +120% · tf 1',
+      links].join('\n'), bwHtml);
+  check('v49: Telegram — a weak one never reads "(first)" or "past the cap", whatever its count so far; "1 BACK", "0 POPs", "4 POPs"',
+    [0, 1, 4].every((n) => { const h = formatTvSetupAlert({ ...pw!, pop_n: n }, 'RAYA', null); const hb = formatTvSetupAlert({ ...bw!, back_n: n }, 'RAYA', null);
+      return !h.includes('(first)') && !h.includes('past the cap') && h.includes(`not counted (${n} POP${n === 1 ? '' : 's'} today so far)`)
+        && !hb.includes('(first)') && !hb.includes('past the cap') && hb.includes(`not counted (${n} BACK${n === 1 ? '' : 's'} today so far)`); }));
+  check('v49: Telegram — without a reading (a v48 message, or a v49 one the script sent without `| vol`) no volume is named; a weak one without a count or a reading still says why',
+    !formatTvSetupAlert(p48, 'NASDAQ:SVRE', momo).includes('volume') && !formatTvSetupAlert(b48, 'NASDAQ:SVRE', momo).includes('volume')
+      && formatTvSetupAlert({ ...ps!, vol_x: null }, 'RAYA', null).includes('\npop 1 today (first)\n')
+      && formatTvSetupAlert(parseTvMessage({ stage: 'pop', ticker: 'RAYA', weak: true })!, 'RAYA', null).includes('\nfiltered as weak for low volume\n')
+      && formatTvSetupAlert(parseTvMessage({ stage: 'back', ticker: 'RAYA', weak: true })!, 'RAYA', null).includes('\nafter a POP filtered as weak for low volume\n')
+      && !formatTvSetupAlert(parseTvMessage({ stage: 'pop', ticker: 'RAYA', weak: true })!, 'RAYA', null).includes('null')
+      && !formatTvSetupAlert(parseTvMessage({ stage: 'back', ticker: 'RAYA', weak: true })!, 'RAYA', null).includes('undefined'));
+  check('v49: Telegram — the reading keeps one decimal ("5.0×", "0.5×", "1234.6×"), in a POP and a BACK',
+    formatTvSetupAlert({ ...ps!, vol_x: 5 }, 'RAYA', null).includes('· volume 5.0× the 20 candles before the pop\n')
+      && formatTvSetupAlert({ ...ps!, vol_x: 0.5 }, 'RAYA', null).includes('· volume 0.5× the 20 candles before the pop\n')
+      && formatTvSetupAlert({ ...bs!, vol_x: 1234.56 }, 'RAYA', null).includes('· its POP\'s volume 1234.6× the 20 candles before it ·'));
+
+  // What a row stores (tier_events meta: popFields beside the fields every stage's row has, `vol_x` among them), and what
+  // a reloaded page reads back (GET /api/screener/alerts: storedSetupFields, and `vol_x` by name)
+  check('v49: a POP row and a BACK row store `weak` — true for a weak one, false for a strong one — beside their v48 fields',
+    JSON.stringify(popFields(ps!)) === JSON.stringify({ candle_tf: '1', sma_len: 15, sma: 0.46, sma_pct: 26.1, ran_pct: 31.5, pop_n: 1, weak: false })
+      && JSON.stringify(popFields(pw!)) === JSON.stringify({ candle_tf: '1', sma_len: 15, sma: 0.68, sma_pct: 7.4, ran_pct: 10.5, pop_n: 1, weak: true })
+      && JSON.stringify(popFields(bs!)) === JSON.stringify({ candle_tf: '1', stop: 0.82, since_n: 11, sma_len: 15, sma: 0.9, sma_pct: 1.1, ran_pct: 150.2, back_n: 1, macd_green: true, weak: false })
+      && JSON.stringify(popFields(bw!)) === JSON.stringify({ candle_tf: '1', stop: 0.7, since_n: 4, sma_len: 15, sma: 0.74, sma_pct: 2.7, ran_pct: 14.2, back_n: 0, macd_green: true, weak: true }),
+    `${JSON.stringify(popFields(pw!))} ${JSON.stringify(popFields(bw!))}`);
+  check('v49: …`weak` is the message\'s own flag as a boolean (a missing one stores false), and popFields gives no other stage a `weak`',
+    popFields({ ...ps!, weak: undefined }).weak === false && popFields({ ...bs!, weak: undefined }).weak === false
+      && !('weak' in popFields(turnWeak)) && Object.keys(popFields(turnWeak)).length === 0 && !('vol_x' in popFields(ps!)) && !('vol_x' in popFields(bs!)));
+  // A row as the poller writes it and Postgres hands it back (jsonb): the fields every row has, then the stage's own
+  const rowOf = (s: TvSetupSignal): Record<string, unknown> => JSON.parse(JSON.stringify({ stage: s.stage, price: s.price, tf: s.tf, vol_x: s.vol_x,
+    run_pct: s.run_pct, svwap: s.svwap ?? null, ...vbFields(s), ...emaFields(s), ...turnFields(s), ...popFields(s) })) as Record<string, unknown>;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : null);   // the route's own reader for `vol_x`
+  check('v49: the round trip — a stored POP row and BACK row read back with their `weak` (true / false) and their `vol_x` (212.4 / 6.2)',
+    storedSetupFields(rowOf(ps!)).weak === false && num(rowOf(ps!).vol_x) === 212.4 && storedSetupFields(rowOf(pw!)).weak === true && num(rowOf(pw!).vol_x) === 6.2
+      && storedSetupFields(rowOf(bs!)).weak === false && num(rowOf(bs!).vol_x) === 212.4 && storedSetupFields(rowOf(bw!)).weak === true && num(rowOf(bw!).vol_x) === 6.2
+      && storedStage(rowOf(pw!)) === 'pop' && storedStage(rowOf(bw!)) === 'back',
+    `${JSON.stringify(storedSetupFields(rowOf(pw!)))} ${JSON.stringify(storedSetupFields(rowOf(bw!)))}`);
+  check('v49: …field for field: what popFields stored is what storedSetupFields reads (seven for a POP, ten for a BACK), and a row without a reading has `vol_x` null',
+    [ps!, pw!, bs!, bw!].every((s) => { const back = storedSetupFields(rowOf(s)); const stored = popFields(s) as Record<string, unknown>;
+      return Object.keys(back).length === Object.keys(stored).length && Object.keys(stored).every((k) => back[k] === stored[k])
+        && Object.keys(back).length === (s.stage === 'pop' ? 7 : 10); })
+      && 'vol_x' in rowOf(p48) && num(rowOf(p48).vol_x) === null && storedSetupFields(rowOf(p48)).weak === false);
+  check('v49: …a row stored by v48 (no `weak` in it) reads back without one, so it is not weak; junk in `weak` reads false',
+    !('weak' in storedSetupFields({ stage: 'pop', candle_tf: '1', sma_len: 15, sma: 1.66, sma_pct: 11.4, ran_pct: 12.6, pop_n: 1 }))
+      && Object.keys(storedSetupFields({ stage: 'pop', candle_tf: '1', sma_len: 15, sma: 1.66, sma_pct: 11.4, ran_pct: 12.6, pop_n: 1 })).length === 6
+      && storedSetupFields({ stage: 'pop', weak: 'true' }).weak === false && storedSetupFields({ stage: 'back', weak: 1 }).weak === false
+      && storedSetupFields({ stage: 'back', weak: true }).weak === true);
+  {
+    const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
+    const pollerSrc = readFileSync(resolve(srcDir, 'services/poller.ts'), 'utf8');
+    const screenerSrc = readFileSync(resolve(srcDir, 'routes/screener.ts'), 'utf8');
+    const tvSrc = readFileSync(resolve(srcDir, 'routes/tv.ts'), 'utf8');
+    // deliverTvSetup: the live alert's `setup` (pushed over SSE as it is), then the tier_events row's meta, then the log lines
+    const deliver = pollerSrc.slice(pollerSrc.indexOf('  deliverTvSetup(sig: TvSetupSignal'));
+    const rowAt = deliver.indexOf('    recordTierEvent(\'alert\', \'tv_setup\', sig.ticker, {');
+    const liveSetup = deliver.slice(deliver.indexOf('      setup: {'), rowAt);
+    const rowMeta = deliver.slice(rowAt, deliver.indexOf('    if (sig.stage === \'ema\' || sig.stage === \'band\') {'));
+    check('v49: the poller writes `vol_x` and popFields (with `weak`) into both the live alert\'s setup and its tier_events row, and the alert goes out over SSE whole',
+      rowAt > 0 && [liveSetup, rowMeta].every((part) => part.length > 0 && part.length < 2500 && part.includes('vol_x: sig.vol_x, run_pct: sig.run_pct,')
+        && part.includes('...popFields(sig),') && part.includes('...emaFields(sig),'))
+        && (pollerSrc.match(/vol_x: sig\.vol_x, run_pct: sig\.run_pct,/g) ?? []).length === 2
+        && deliver.includes('this.opportunity.pushExternal(alert);\n      broadcast(\'alert\', alert);'), `${liveSetup.length} / ${rowMeta.length}`);
+    check('v49: GET /api/screener/alerts passes a stored row\'s `weak` (storedSetupFields) and reads its `vol_x` by name',
+      screenerSrc.includes('...storedSetupFields(m),') && screenerSrc.includes('vol_x: num(m.vol_x), run_pct: num(m.run_pct),')
+        && screenerSrc.indexOf('...storedSetupFields(m),') < screenerSrc.indexOf('vol_x: num(m.vol_x), run_pct: num(m.run_pct),'));
+    check('v49: the webhook names a quiet weak POP / BACK\'s reason `weak` (isWeak, after "muted" and before "capped"), and the poller\'s log line says so, with the reading',
+      /: !gate\.announces\(sig\.stage\) \? 'muted'\s*\n\s*: isWeak\(sig\) \? 'weak'\s*\n\s*: capped && !capExempt \? 'capped' : 'offlist';/.test(tvSrc)
+        && deliver.includes('(mode === \'quiet\' ? (why === \'weak\' ? (back ? \' · quiet (after a weak POP)\' : \' · quiet (the volume test calls it weak)\')')
+        && deliver.includes('(sig.vol_x != null ? ` · ${back ? \'POP vol\' : \'vol\'} ${sig.vol_x}x` : \'\')'));
+  }
 }
 
 console.log('Contract — the Pine script still emits what the parser reads');
@@ -1444,8 +1814,12 @@ console.log('Contract — the Pine script still emits what the parser reads');
     'input.timeframe("30S",   "VB: BB timeframe (the band)"', '"VB: BB timeframe (the band)"',
     // v28: RETEST (the operator's entry) in the VB break's place, the 30s-bar VWAP option, the operator's tolerance 0
     // (the header: the script's version, and since v48 five setups — v47 had "Four setups … the EMA cross, TURN)",
-    // before it "Three setups … the EMA cross)")
-    'Script version: v48 (2026-11-26)', 'Five setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross, TURN, POP with its BACK)', '"RETEST "', '" | stop "', '" | retest "',
+    // before it "Three setups … the EMA cross)"; v49 is the same day's second version, v48 until then)
+    'Script version: v49 (2026-11-26)', 'Five setups in one script (PULLBACK, the VWAP + BB cross, the EMA cross, TURN, POP with its BACK)', '"RETEST "', '" | stop "', '" | retest "',
+    // v49's paragraph in the header: the POP's volume test, the weak POP and BACK, the reading in every POP / BACK message
+    '// v49 gives the POP a volume test (section 9): a POP is weak (gray, `| weak`, not announced) when',
+    '// the biggest of its candle and the two before it traded under 10 times the average of the 20',
+    '// candles before them, and so is its BACK; every POP and BACK carries the reading (`| vol 34.5x`).',
     'low <= vRtLine * (1 + vbRtNear / 100)', 'close > vRtLine and close > open', 'vRtStop  := vRtLow - syminfo.mintick',
     // v30: the RETEST waits for the close of the candle that came back (above the line), on its closing bar
     'bool vEndsNow  = time_close == time_close(cTf)', 'bool vRtGo = rtAtClose ? vEndsNow and close > vRtLine :',
@@ -1553,6 +1927,16 @@ console.log('Contract — the Pine script still emits what the parser reads');
     '"BB upper cross, filtered, late close (v40)"', 'text = "BB"']) {
     check(`script emits ${part}`, pine.includes(part));
   }
+  // v49: the header — the version in the script's second line, named once, and v49's paragraph whole, after v48's and
+  // right before the setups' walkthrough
+  check('v49: the header says v49 (2026-11-26), once, and carries v49\'s paragraph after v48\'s, right before the walkthrough of the setups',
+    pine.startsWith('//@version=6\n// mVWAP-BB — the operator\'s VWAP setups. Script version: v49 (2026-11-26). ')
+      && (pine.match(/Script version: v\d+/g) ?? []).length === 1 && !pine.includes('Script version: v48')
+      && pine.indexOf('// v48 adds a fifth setup in two steps (section 9, at the end)') > 0
+      && pine.indexOf('// v48 adds a fifth setup in two steps (section 9, at the end)') < pine.indexOf('// v49 gives the POP a volume test (section 9)')
+      && pine.includes('\n// v49 gives the POP a volume test (section 9): a POP is weak (gray, `| weak`, not announced) when\n'
+        + '// the biggest of its candle and the two before it traded under 10 times the average of the 20\n'
+        + '// candles before them, and so is its BACK; every POP and BACK carries the reading (`| vol 34.5x`).\n// 1) PULLBACK (v10): '));
   // v40: the EMA's own crosses, bounce and marks read the EMA whichever line is chosen (only emOk switches them)
   check('v40: the EMA\'s block still reads the EMA, and its marks carry no band switch', !pine.includes('emSig') && !pine.includes('emUseBb')
     && pine.includes('bool emX1 = emSession and emS.crossUp(emHS, emLive[1], svwap[1])') && pine.includes('bool emX4 = emSession and emS.crossUp(emHS, emLive, svwap)')
@@ -1629,15 +2013,17 @@ console.log('Contract — the Pine script still emits what the parser reads');
       code.includes('\nvbCandleTf = input.timeframe("2",') && code.includes('\nvbBbTf     = input.timeframe("30S",')
         && code.includes('\nemTf      = input.timeframe("2",') && code.includes('\nemSrc   = input.string("BB upper",'));
     const inputs = lines.map((l) => /^([A-Za-z_]\w*)\s*=\s*input\.(?:bool|int|float|string|timeframe|session|source)\(/.exec(l)?.[1]).filter((x): x is string => x != null);
-    check('v44 / v45 / v46 / v47 / v48: the 85 inputs, in order (TradingView keeps a saved value by position; v44 took 19 out, so it needed Reset settings once; v45 and v46 each add a basis line\'s three at the end, v47 the TURN\'s thirteen after them and v48 the POP\'s twelve after those, so they need none)',
+    check('v44 / v45 / v46 / v47 / v48 / v49: the 87 inputs, in order (TradingView keeps a saved value by position; v44 took 19 out, so it needed Reset settings once; v45 and v46 each add a basis line\'s three at the end, v47 the TURN\'s thirteen after them, v48 the POP\'s twelve after those and v49 the volume test\'s two after those, so they need none)',
       inputs.join(' ') === 'minDayGain runnerDays useAhGain alertWin pbOn pbSession pbMonth pbYear pbArm pbNear pbLowMY pbBreak pbWin pbMax pbCapMark pbTimeout'
         + ' vbOn vbCandleTf vbBbTf vbLen vbMult vbTol vbGainOn vbSession vbMonth vbYear vbRtOn vbRtCancel vbTf vbShow vwSrc vbRtNear vbRtWait vbRtWhen mvSrc'
         + ' emOn emTf emLen emSession emMonth emYear emGainOn emShow emFilterOn emMinUnder emMaxFlips emFromHour emBncOn emBncFrom emBncWait emBncTolE emBncTolV'
         + ' emSrc bbMidOn pbBsOn pbBsTf pbBsLen bbBsOn bbBsTf bbBsLen'
         + ' tnOn tnTf tnLen tnFallMin tnLowBars tnTol tnWaitN tnMacdOn tnFast tnSlow tnSig tnGainOn tnShow'
-        + ' ppOn ppTf ppLen ppUp ppTol ppWaitN ppMacdOn ppFast ppSlow ppSig ppGainOn ppShow', `${inputs.length}: ${inputs.join(' ')}`);
-    check('v48: …85 of them, the last twelve the POP\'s', inputs.length === 85
-      && inputs.slice(-12).join(' ') === 'ppOn ppTf ppLen ppUp ppTol ppWaitN ppMacdOn ppFast ppSlow ppSig ppGainOn ppShow', String(inputs.length));
+        + ' ppOn ppTf ppLen ppUp ppTol ppWaitN ppMacdOn ppFast ppSlow ppSig ppGainOn ppShow'
+        + ' ppVolOn ppVolMin', `${inputs.length}: ${inputs.join(' ')}`);
+    check('v48 / v49: …87 of them, the last fourteen the POP\'s: v48\'s twelve, then v49\'s two (ppVolOn, ppVolMin), the script\'s last', inputs.length === 87
+      && inputs.slice(-14).join(' ') === 'ppOn ppTf ppLen ppUp ppTol ppWaitN ppMacdOn ppFast ppSlow ppSig ppGainOn ppShow ppVolOn ppVolMin'
+      && inputs.slice(-2).join(' ') === 'ppVolOn ppVolMin' && inputs.indexOf('ppShow') === 84, String(inputs.length));
     // v45 (operator, 11-22, with TradingView's own BB 15S on a 1m chart, its middle line only: "add own BollingerBand to
     // Pullback section, with configurable timeframe, only basis row is enough … I'm going to experiment entering when price
     // closes above it after the pullback"): a line and nothing else. Its inputs sit last in the code and carry the Pullback
@@ -1736,12 +2122,22 @@ console.log('Contract — the Pine script still emits what the parser reads');
     // The examples in the script's comments ("Message (the contract with parseTvMessage)") are read by the parser itself.
     const examples = pine.split('\n').map((l) => /^\/\/\s+((?:PULLBACK|BROKEN|HELD|CROSS|RETEST|EMA|BOUNCE|TURN|POP|BACK) [A-Z]+ [0-9.]+ \|.*)$/.exec(l)?.[1].trim())
       .filter((x): x is string => x != null);
-    check('v47 / v48: every example message in the script\'s comments parses, each to its own stage (the EMA example about the band to BAND; v48: the POP\'s and the BACK\'s, last)',
-      JSON.stringify(examples.map((m) => parseTvMessage(m)?.stage ?? null)) === '["pullback","cross","retest","ema","band","bounce","turn","pop","back"]',
+    check('v47 / v48 / v49: every example message in the script\'s comments parses, each to its own stage (the EMA example about the band to BAND; v48: the POP\'s and the BACK\'s; v49: a POP, a weak POP and a BACK with the volume reading, last)',
+      JSON.stringify(examples.map((m) => parseTvMessage(m)?.stage ?? null)) === '["pullback","cross","retest","ema","band","bounce","turn","pop","back","pop","pop","back"]',
       examples.map((m) => `${m.split(' ')[0]}→${parseTvMessage(m)?.stage ?? 'null'}`).join(' '));
-    check('v48: …the POP example and the BACK example there are the two messages pinned above',
-      examples.filter((m) => m.startsWith('POP ')).join('\n') === POP_MSG && examples.filter((m) => m.startsWith('BACK ')).join('\n') === BACK_MSG,
+    check('v48 / v49: …the POP examples and the BACK examples there are the messages pinned above: v48\'s two (still there, without `vol`), then v49\'s three',
+      examples.filter((m) => m.startsWith('POP ')).join('\n') === [POP_MSG, POP_VOL_MSG, POP_WEAK_MSG].join('\n')
+        && examples.filter((m) => m.startsWith('BACK ')).join('\n') === [BACK_MSG, BACK_VOL_MSG].join('\n')
+        && examples.slice(-5).join('\n') === [POP_MSG, BACK_MSG, POP_VOL_MSG, POP_WEAK_MSG, BACK_VOL_MSG].join('\n'),
       examples.filter((m) => /^(POP|BACK) /.test(m)).join(' ¦ '));
+    const exVol = examples.slice(-3).map((m) => parseTvMessage(m));
+    check('v49: …the three new examples read to the right fields: `vol` 212.4 / 6.2 / 212.4 (the weak one\'s was 5 until the reading was redefined), weak no / yes / no, each number as its own (`pop 1`, `pop 1`, `back 1`)',
+      JSON.stringify(exVol.map((s) => [s?.stage, s?.ticker, s?.vol_x, s?.weak])) === '[["pop","RAYA",212.4,false],["pop","RAYA",6.2,true],["back","RAYA",212.4,false]]'
+        && exVol[0]?.pop_n === 1 && exVol[0]?.ran_pct === 31.5 && exVol[0]?.price === 0.58 && exVol[0]?.day_gain === 29
+        && exVol[1]?.pop_n === 1 && exVol[1]?.ran_pct === 10.5 && exVol[1]?.price === 0.73 && exVol[1]?.day_gain === 120
+        && exVol[2]?.back_n === 1 && exVol[2]?.ran_pct === 150.2 && exVol[2]?.price === 0.91 && exVol[2]?.stop === 0.82 && exVol[2]?.since_n === 11
+        && exVol[2]?.macd_green === true && exVol[2]?.day_gain === 156 && exVol.every((s) => s?.candle_tf === '1' && s.tf === '1' && s.vwap_src === '30s' && s.sma_len === 15),
+      JSON.stringify(exVol.map((s) => [s?.stage, s?.ticker, s?.vol_x, s?.weak])));
     const ex = examples.find((m) => m.startsWith('TURN NIVF '));
     const exSig = ex ? parseTvMessage(ex) : null;
     check('v47: …the TURN example there is the message pinned above, read to every field',
@@ -1767,52 +2163,123 @@ console.log('Contract — the Pine script still emits what the parser reads');
       'if low <= ppB * (1 + ppTol / 100)', 'if ppTouched and close > open and close > ppB and ppB > ppB[1] and (not ppMacdOn or ppGreen)',
       'else if ppWaitN > 0 and bar_index - ppPopBar >= ppWaitN', 'float ppLowNow = na(ppPbLow) ? low : math.min(ppPbLow, low)',
       'if na(ppTop) or high > ppTop', 'ppPbLow := ppLowNow',
-      // what lets either send, the stop a tick under the pullback's low, the day's numbers
+      // what lets either send, the stop a tick under the pullback's low, the day's numbers (v49: a weak one takes none;
+      // until v49 the two lines were 'ppPopN    += 1' and 'ppBackN    += 1', unconditional)
       'if inWindow and (not ppGainOn or gainer)', 'ppStop     := ppLowNow - syminfo.mintick', 'ppAge      := bar_index - ppPopBar',
-      'ppPopN    += 1', 'ppBackN    += 1',
-      // the message: one function for both
+      'if not ppWeak\n                        ppPopN += 1', 'if not ppWeak\n                        ppBackN += 1',
+      // the message: one function for both (v49: `| vol` between `| ran` and `| candle`, which v48 wrote on one line:
+      // 'msg += " | ran " + str.tostring(ppRan, "#.0") + "% | candle " + ppTf')
       'ppMsg(bool isBack) =>',
       'string msg = (isBack ? "BACK " : "POP ") + syminfo.ticker + " " + str.tostring(close, format.mintick)',
       'msg += " | stop " + str.tostring(ppStop, format.mintick)',
       'msg += " | sma " + str.tostring(ppLen) + " " + str.tostring(ppB, format.mintick) + " (" + pctVs(ppB) + "%)"',
-      'msg += " | ran " + str.tostring(ppRan, "#.0") + "% | candle " + ppTf',
+      'msg += " | ran " + str.tostring(ppRan, "#.0") + "%"', 'msg += " | vol " + str.tostring(ppPopVol, "#.#") + "x"', 'msg += " | candle " + ppTf',
       'msg += " | back " + str.tostring(ppBackN) + " | since " + str.tostring(ppAge) + " | green " + (ppGreen ? "1" : "0")',
       'msg += " | pop " + str.tostring(ppPopN)']) {
-      check(`v48: script has ${part}`, pine.includes(part));
+      check(`v48: script has ${part.replace(/\n\s+/g, ' ⏎ ')}`, pine.includes(part));
+    }
+    // v49: the volume test's own lines — the reading (the largest volume among the candle and the two before it, against
+    // the average of the 20 candles before those three; no volume in those 20 and some now is a surge), the surge on the
+    // same ratio, the reading and the weak flag kept at the POP for its BACK, and `| weak` in the message.
+    // (As first written, the same day, the reading was the script's v9 one: 'ppSurge  = not na(volAvg20) and (volAvg20 > 0 ?
+    // volume / volAvg20 >= ppVolMin : volume > 0)' and 'ppPopVol  := volX', one candle against the 20 before it. Those two
+    // lines, volAvg20 and volX, are still the script's, for the PULLBACK's `vol`; the POP section no longer reads them.)
+    for (const part of ['ppVolTop  = math.max(volume, nz(volume[1]), nz(volume[2]))', 'ppVolBase = ta.sma(volume, 20)[3]',
+      'ppVolX    = ppVolBase > 0 ? ppVolTop / ppVolBase : na',
+      'ppSurge   = not na(ppVolBase) and (ppVolBase > 0 ? ppVolTop / ppVolBase >= ppVolMin : ppVolTop > 0)',
+      'var float ppPopVol  = na', 'var bool  ppWeak    = false', 'ppPopVol  := ppVolX', 'ppWeak    := ppVolOn and not ppSurge',
+      'if not na(ppPopVol)\n        msg += " | vol " + str.tostring(ppPopVol, "#.#") + "x"', 'if ppWeak\n        msg += " | weak"',
+      '"POP, low volume (v49)"', '"BACK after a low-volume POP (v49)"', 'text = "pop"', 'text = "bk"',
+      // the PULLBACK's reading, as it was
+      'volAvg20 = ta.sma(volume, 20)[1]', 'volX     = volAvg20 > 0 ? volume / volAvg20 : na', 'if not na(volX)\n        msg += " | vol " + str.tostring(volX, "#.#") + "x"',
+      // what the section's comments say the reading is, and that the flag is the script's (a 9.96 prints as `vol 10x`, weak)
+      '//   vol      the largest volume among the POP candle and the two candles before it ÷ the average',
+      '//            volume of the 20 candles before those three.',
+      '// candles (weak). The flag is the script\'s: `vol` is printed to one decimal, so a 9.96 reads', '// `vol 10x` and is weak.',
+      // the minimum's title in the settings names the same three candles and the 20 before them
+      '"POP: …the biggest of the POP candle and the two candles before it traded at least this many times the average of the 20 candles before them"']) {
+      check(`v49: script has ${part.replace(/\n\s+/g, ' ⏎ ')}`, pine.includes(part));
     }
     const code = pine.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
     const popAt = code.indexOf('\nppOn     = input.bool(');
     const pop = code.slice(popAt);
-    check('v48: the POP section is the script\'s last code, after the TURN\'s mark; it ends with the BACK\'s mark',
+    check('v48 / v49: the POP section is the script\'s last code, after the TURN\'s mark; it ends with (v49) the weak BACK\'s gray mark (v48: the BACK\'s)',
       popAt > code.indexOf('"TURN (v47)"') && code.indexOf('"TURN (v47)"') > 0
-        && pop.trimEnd().endsWith('text = "BK", textcolor = color.black, size = size.small)'));
+        && pop.trimEnd().endsWith('"BACK after a low-volume POP (v49)", shape.labelup, location.belowbar, color.gray, text = "bk", textcolor = color.white, size = size.tiny)'));
     check('v48: the run starts over at a close back above the basis and ends, with any wait for a BACK, at a close under it',
       pop.includes('\n    if ppIn and close < ppB\n        ppIn      := false\n        ppWaiting := false\n'
         + '    else if not ppIn and close > ppB and (close[1] <= ppB[1] or newDay)\n        ppIn      := true\n        ppRan     := 0.0\n        ppTop     := na\n'
         + '        ppPbLow   := na\n        ppPopped  := false\n        ppWaiting := false\n'));
-    check('v48: one POP per run — it uses up the run whether or not the filters let it send, and only a sent one takes a day\'s number',
+    // v49: at the POP the script also keeps the candle's volume reading and whether it failed the volume test, before
+    // the filters (so a POP that is not sent still marks its run), and a weak one takes no day's number. Until v49 the
+    // block ended '…ppPopBar  := bar_index ⏎ if inWindow and (not ppGainOn or gainer) ⏎ ppPopFire := true ⏎ ppPopN    += 1'.
+    check('v48 / v49: one POP per run — it uses up the run whether or not the filters let it send; (v49) the reading and the weak flag are set there, before the filters; only a sent one that is not weak takes a day\'s number',
       pop.includes('\n        if not ppPopped\n            if ppRan >= ppUp\n                ppPopped  := true\n                ppWaiting := true\n                ppTouched := false\n'
-        + '                ppPopBar  := bar_index\n                if inWindow and (not ppGainOn or gainer)\n                    ppPopFire := true\n                    ppPopN    += 1\n'));
-    check('v48: the BACK is judged on a candle after the POP candle (the `else` of "not popped yet"), one per POP, sent on its own candle\'s filters',
+        + '                ppPopBar  := bar_index\n                ppPopVol  := ppVolX\n                ppWeak    := ppVolOn and not ppSurge\n'
+        + '                if inWindow and (not ppGainOn or gainer)\n                    ppPopFire := true\n'
+        + '                    if not ppWeak\n                        ppPopN += 1\n'));
+    // (Until v49 the block's count line was 'ppBackN    += 1', unconditional.)
+    check('v48 / v49: the BACK is judged on a candle after the POP candle (the `else` of "not popped yet"), one per POP, sent on its own candle\'s filters; (v49) one after a weak POP takes no day\'s number',
       pop.includes('\n        else if ppWaiting\n            if low <= ppB * (1 + ppTol / 100)\n                ppTouched := true\n'
         + '            if ppTouched and close > open and close > ppB and ppB > ppB[1] and (not ppMacdOn or ppGreen)\n                ppWaiting := false\n'
         + '                if inWindow and (not ppGainOn or gainer)\n                    ppBackFire := true\n                    ppStop     := ppLowNow - syminfo.mintick\n'
-        + '                    ppAge      := bar_index - ppPopBar\n                    ppBackN    += 1\n'
+        + '                    ppAge      := bar_index - ppPopBar\n                    if not ppWeak\n                        ppBackN += 1\n'
         + '            else if ppWaitN > 0 and bar_index - ppPopBar >= ppWaitN\n                ppWaiting := false\n'));
+    check('v49: the day\'s numbers go up in those two places alone, the weak flag and the reading are set at the POP alone (a BACK is weak as its POP was, and carries its POP\'s reading), and neither is reset before the next POP sets it',
+      (pop.match(/\bppPopN\s*\+=/g) ?? []).length === 1 && (pop.match(/\bppBackN\s*\+=/g) ?? []).length === 1
+        && (pop.match(/\bppWeak\s*:=/g) ?? []).length === 1 && (pop.match(/\bppPopVol\s*:=/g) ?? []).length === 1
+        && pop.indexOf('ppWeak    := ppVolOn and not ppSurge') > pop.indexOf('if ppRan >= ppUp')
+        && pop.indexOf('ppWeak    := ppVolOn and not ppSurge') < pop.indexOf('else if ppWaiting'));
+    // The reading as redefined (v49, the same day): three candles' largest volume against the 20 candles before those
+    // three. The four lines stand together, after the section's inputs and before the basis.
+    check('v49: the reading\'s exact definition, four lines in a row — the top of three candles (this one and the two before it, a missing one as 0), the base three candles back (the average of the 20 before those three), their ratio (none when the base is 0 or missing), and the surge on that same ratio',
+      pop.includes('\nppRun    = ppOn and timeframe.in_seconds(ppTf) == chartSec\n'
+        + 'ppVolTop  = math.max(volume, nz(volume[1]), nz(volume[2]))\n'
+        + 'ppVolBase = ta.sma(volume, 20)[3]\n'
+        + 'ppVolX    = ppVolBase > 0 ? ppVolTop / ppVolBase : na\n'
+        + 'ppSurge   = not na(ppVolBase) and (ppVolBase > 0 ? ppVolTop / ppVolBase >= ppVolMin : ppVolTop > 0)\n'
+        + 'ppB      = ta.sma(close, ppLen)\n'));
+    // the section's code without the comments at the ends of its lines (one names ppVolX beside ppPopVol's declaration)
+    const popBare = pop.split('\n').map((l) => l.replace(/\s*\/\/.*$/, '')).join('\n');
+    check('v49: …each is declared once and read nowhere else: the top and the base by the reading and the surge alone, the reading by the POP alone (`ppPopVol  := ppVolX`), the surge by the weak flag alone',
+      (popBare.match(/^ppVolTop\s*=[^=]/gm) ?? []).length === 1 && (popBare.match(/^ppVolBase\s*=[^=]/gm) ?? []).length === 1
+        && (popBare.match(/^ppVolX\s*=[^=]/gm) ?? []).length === 1 && (popBare.match(/^ppSurge\s*=[^=]/gm) ?? []).length === 1
+        && (popBare.match(/\bppVolTop\b/g) ?? []).length === 4 && (popBare.match(/\bppVolBase\b/g) ?? []).length === 6
+        && (popBare.match(/\bppVolX\b/g) ?? []).length === 2 && popBare.includes('\n                ppPopVol  := ppVolX\n')
+        && (popBare.match(/\bppSurge\b/g) ?? []).length === 2 && popBare.includes('ppWeak    := ppVolOn and not ppSurge')
+        && popBare.length > 3000 && popBare.length < pop.length,
+      `top ${(popBare.match(/\bppVolTop\b/g) ?? []).length} base ${(popBare.match(/\bppVolBase\b/g) ?? []).length} x ${(popBare.match(/\bppVolX\b/g) ?? []).length} surge ${(popBare.match(/\bppSurge\b/g) ?? []).length}`);
+    check('v49: …the POP section reads this candle\'s reading (no earlier candle\'s), no longer the PULLBACK\'s one-candle reading (volX, volAvg20), and with the switch off no POP is weak',
+      !/\bpp(?:VolX|VolTop|VolBase|Surge)\[/.test(popBare) && !/\bvolX\b|\bvolAvg20\b/.test(popBare)
+        && (code.match(/\bvolX\b/g) ?? []).length === 3 && (code.match(/\bvolAvg20\b/g) ?? []).length === 3
+        && pop.includes('ppWeak    := ppVolOn and not ppSurge'));
+    check('v49: the volume test is declared after its two inputs and before the run\'s code',
+      pop.indexOf('\nppVolMin = input.float(') > 0 && pop.indexOf('\nppVolMin = input.float(') < pop.indexOf('\nppVolTop  = ')
+        && pop.indexOf('\nppVolTop  = ') < pop.indexOf('\nppSurge   = ')
+        && pop.indexOf('\nppSurge   = ') < pop.indexOf('\nif ppRun and not na(ppB) and not na(ppB[1])'));
     check('v48: the stop\'s low is the lowest low after the candle of the run\'s highest high (a new high starts it over), read with the bounce candle\'s own low in it',
       pop.includes('\n        if na(ppTop) or high > ppTop\n            ppTop   := high\n            ppPbLow := na\n        else\n            ppPbLow := ppLowNow\n')
         && pop.indexOf('float ppLowNow = na(ppPbLow) ? low : math.min(ppPbLow, low)') < pop.indexOf('ppStop     := ppLowNow - syminfo.mintick')
         && pop.indexOf('ppStop     := ppLowNow - syminfo.mintick') < pop.indexOf('if na(ppTop) or high > ppTop'));
     const body = pop.slice(pop.indexOf('ppMsg(bool isBack) =>'), pop.indexOf('\nif ppPopFire'));
     const inOrder = (pieces: string[]) => pieces.every((x, i) => body.indexOf(x) >= 0 && (i === 0 || body.indexOf(pieces[i - 1]) < body.indexOf(x)));
-    const popOrder = ['"POP "', '" | sVWAP "', '" | mVWAP "', '" | yVWAP "', '" | sma "', '" | ran "', '% | candle "', '" | pop "', '" | day high "', '" | ah "',
-      '" | vwap "', '" | tf "'];
-    const backOrder = ['"BACK "', '" | stop "', '" | sVWAP "', '" | mVWAP "', '" | yVWAP "', '" | sma "', '" | ran "', '% | candle "', '" | back "', '" | since "',
-      '" | green "', '" | day high "', '" | ah "', '" | vwap "', '" | tf "'];
-    check('v48: the POP message\'s pieces come in the order the parser\'s example has them (the VWAP lines, sma, ran, candle, pop, day high, ah, vwap, tf)',
+    // v49: `| vol` right after `| ran`, and `| weak` after the day's number (a POP's `pop N`, a BACK's `green N`), before
+    // `day high`. (v48's lists had '% | candle "' right after '" | ran "': the two were one line then.)
+    const popOrder = ['"POP "', '" | sVWAP "', '" | mVWAP "', '" | yVWAP "', '" | sma "', '" | ran "', '" | vol "', '" | candle "', '" | pop "', '" | weak"',
+      '" | day high "', '" | ah "', '" | vwap "', '" | tf "'];
+    const backOrder = ['"BACK "', '" | stop "', '" | sVWAP "', '" | mVWAP "', '" | yVWAP "', '" | sma "', '" | ran "', '" | vol "', '" | candle "', '" | back "',
+      '" | since "', '" | green "', '" | weak"', '" | day high "', '" | ah "', '" | vwap "', '" | tf "'];
+    check('v48 / v49: the POP message\'s pieces come in the order the parser\'s examples have them (the VWAP lines, sma, ran, vol, candle, pop, weak, day high, ah, vwap, tf)',
       pop.indexOf('ppMsg(bool isBack) =>') > 0 && inOrder(popOrder), popOrder.map((x) => `${x}@${body.indexOf(x)}`).join(' '));
-    check('v48: the BACK message\'s pieces too (stop, the VWAP lines, sma, ran, candle, back, since, green, day high, ah, vwap, tf)',
+    check('v48 / v49: the BACK message\'s pieces too (stop, the VWAP lines, sma, ran, vol, candle, back, since, green, weak, day high, ah, vwap, tf)',
       inOrder(backOrder), backOrder.map((x) => `${x}@${body.indexOf(x)}`).join(' '));
+    check('v49: `| vol` comes right after `| ran` and right before `| candle`, in both messages, and is left out when the script has no reading',
+      body.includes('\n    msg += " | ran " + str.tostring(ppRan, "#.0") + "%"\n    if not na(ppPopVol)\n        msg += " | vol " + str.tostring(ppPopVol, "#.#") + "x"\n'
+        + '    msg += " | candle " + ppTf\n    if isBack\n        msg += " | back "') && (body.match(/" \| vol "/g) ?? []).length === 1);
+    check('v49: `| weak` comes right after `pop N` (a POP) or `green N` (a BACK) and right before `day high`, for a weak POP and the BACK after it alike',
+      body.includes('\n    if isBack\n        msg += " | back " + str.tostring(ppBackN) + " | since " + str.tostring(ppAge) + " | green " + (ppGreen ? "1" : "0")\n'
+        + '    else\n        msg += " | pop " + str.tostring(ppPopN)\n    if ppWeak\n        msg += " | weak"\n    if not na(dayHighGain)\n        msg += " | day high "')
+        && (body.match(/" \| weak"/g) ?? []).length === 1);
     check('v48: the stop, the `back` number, `since` and `green` go into a BACK alone, the `pop` number into a POP alone',
       body.includes('\n    if isBack\n        msg += " | stop "') && body.includes('\n    if isBack\n        msg += " | back "')
         && body.includes('\n    else\n        msg += " | pop " + str.tostring(ppPopN)\n') && (body.match(/" \| stop "/g) ?? []).length === 1
@@ -1822,9 +2289,17 @@ console.log('Contract — the Pine script still emits what the parser reads');
         && body.includes('if not na(yvwap)\n        msg += " | yVWAP "') && body.includes('if not na(dayHighGain)\n        msg += " | day high "')
         && body.includes('if not na(ahGain)\n        msg += " | ah "'));
     const ppInputs = pop.split('\n').filter((l) => /^pp\w+\s*=\s*input\./.test(l));
-    check('v48: the POP\'s twelve inputs, every one in its own group',
-      ppInputs.length === 12 && ppInputs.every((l) => l.includes('group = "POP and BACK: a pop off the basis and its first pullback (v48)")'))
-        && (code.match(/group = "POP and BACK: a pop off the basis and its first pullback \(v48\)"/g) ?? []).length === 12, String(ppInputs.length));
+    check('v48 / v49: the POP\'s fourteen inputs (v48\'s twelve, then v49\'s two for the volume test), every one in its own group',
+      ppInputs.length === 14 && ppInputs.every((l) => l.includes('group = "POP and BACK: a pop off the basis and its first pullback (v48)")'))
+        && (code.match(/group = "POP and BACK: a pop off the basis and its first pullback \(v48\)"/g) ?? []).length === 14
+        && ppInputs.slice(0, 12).every((l) => !/^ppVol/.test(l)) && ppInputs[12].startsWith('ppVolOn  = input.bool(') && ppInputs[13].startsWith('ppVolMin = input.float('),
+      String(ppInputs.length));
+    check('v49: the volume test\'s defaults — on, and a reading of at least 10 (the biggest of the POP candle and the two before it against the average of the 20 before them; 0 allowed: every POP with a reading passes)',
+      pop.includes('\nppVolOn  = input.bool(true,') && pop.includes('\nppVolMin = input.float(10.0,')
+        && pop.includes('\nppVolMin = input.float(10.0,     "POP: …the biggest of the POP candle and the two candles before it traded at least this many times the average of the 20 candles before them", minval = 0, step = 0.5, group = ')
+        && /\nppVolMin = input\.float\(10\.0,[^\n]*minval = 0, step = 0\.5, group = /.test(pop)
+        && pop.indexOf('\nppShow   = input.bool(') < pop.indexOf('\nppVolOn  = input.bool(') && pop.indexOf('\nppVolOn  = input.bool(') < pop.indexOf('\nppVolMin = input.float(')
+        && pop.indexOf('\nppVolMin = input.float(') < pop.indexOf('\nppRun    = ppOn and'));
     check('v48: its defaults — on, a 1m basis of 15 closes, a high 10% above it, a low within 1% of the basis, the bounce within 20 candles, a MACD 12 26 9 that must be green, gainers only',
       pop.startsWith('\nppOn     = input.bool(true,') && pop.includes('\nppTf     = input.timeframe("1",') && pop.includes('\nppLen    = input.int(15,')
         && pop.includes('\nppUp     = input.float(10.0,') && pop.includes('\nppTol    = input.float(1.0,') && pop.includes('\nppWaitN  = input.int(20,')
@@ -1840,10 +2315,18 @@ console.log('Contract — the Pine script still emits what the parser reads');
       && code.split('\n').filter((l) => /\bpp[A-Z]\w*/.test(l)).every((l) => !l.includes('request.')));
     check('v48: the section keeps to its own names: no code line before it names a pp… variable, and it names none of the TURN\'s (tn…)',
       !/\bpp[A-Z]\w*/.test(code.slice(0, popAt)) && !/\btn[A-Z]\w*/.test(pop));
-    check('v48: its three plots — the basis line (hidden until switched on in Style), the POP\'s mark above the bar, the BACK\'s under it',
+    // v49: the two marks are drawn for a POP / BACK that is not weak (v48 drew them for every one: `ppShow and ppPopFire`,
+    // `ppShow and ppBackFire`), and two gray ones, the script's last plots, for the weak ones.
+    check('v48 / v49: its three v48 plots — the basis line (hidden until switched on in Style), the POP\'s mark above the bar, the BACK\'s under it, (v49) each mark for one that is not weak',
       pop.includes('\nplot(ppRun and ppShow ? ppB : na, "POP basis (v48)", color.orange, display = display.none)\n')
-        && pop.includes('\nplotshape(ppShow and ppPopFire, "POP (v48)", shape.labeldown, location.abovebar, color.yellow, text = "POP"')
-        && pop.includes('\nplotshape(ppShow and ppBackFire, "BACK (v48)", shape.labelup, location.belowbar, color.aqua, text = "BK"'));
+        && pop.includes('\nplotshape(ppShow and ppPopFire and not ppWeak, "POP (v48)", shape.labeldown, location.abovebar, color.yellow, text = "POP"')
+        && pop.includes('\nplotshape(ppShow and ppBackFire and not ppWeak, "BACK (v48)", shape.labelup, location.belowbar, color.aqua, text = "BK"'));
+    check('v49: its two new plots, last — a weak POP\'s gray mark above the bar ("pop"), then the gray mark of the BACK after it under the bar ("bk"); the four marks\' conditions leave no POP or BACK undrawn or drawn twice',
+      pop.includes('\nplotshape(ppShow and ppBackFire and not ppWeak, "BACK (v48)", shape.labelup, location.belowbar, color.aqua, text = "BK", textcolor = color.black, size = size.small)\n'
+        + 'plotshape(ppShow and ppPopFire and ppWeak, "POP, low volume (v49)", shape.labeldown, location.abovebar, color.gray, text = "pop", textcolor = color.white, size = size.tiny)\n'
+        + 'plotshape(ppShow and ppBackFire and ppWeak, "BACK after a low-volume POP (v49)", shape.labelup, location.belowbar, color.gray, text = "bk", textcolor = color.white, size = size.tiny)')
+        && (pop.match(/^plotshape\(ppShow and pp(?:Pop|Back)Fire and (?:not )?ppWeak, /gm) ?? []).length === 4
+        && (pop.match(/^(?:plot|plotshape)\(/gm) ?? []).length === 5);
     // The two examples in the script's comments, read by the parser to every field
     const exPop = parseTvMessage(pine.split('\n').find((l) => /^\/\/\s+POP SVRE /.test(l))?.replace(/^\/\/\s+/, '').trim() ?? '');
     const exBack = parseTvMessage(pine.split('\n').find((l) => /^\/\/\s+BACK SVRE /.test(l))?.replace(/^\/\/\s+/, '').trim() ?? '');
@@ -1858,7 +2341,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
         && exBack.candle_tf === '1' && exBack.back_n === 1 && exBack.pop_n === null && exBack.since_n === 6 && exBack.macd_green === true && exBack.day_gain === 45
         && exBack.vwap_src === '30s' && exBack.tf === '1', JSON.stringify(exBack));
   }
-  check('v44 / v47 / v48: 14 alert() calls — three PULLBACK, the VB and its RETEST, four EMA / BOUNCE, two band crosses, (v47) the TURN, and (v48) the POP and the BACK',
+  check('v44 / v47 / v48 / v49: 14 alert() calls — three PULLBACK, the VB and its RETEST, four EMA / BOUNCE, two band crosses, (v47) the TURN, and (v48) the POP and the BACK (v49 adds none: a weak one goes out through the same two)',
     (pine.match(/^\s*alert\(/gm) ?? []).length === 14, String((pine.match(/^\s*alert\(/gm) ?? []).length));
   // v28: the VB break (LEVEL / BREAK) is gone; the new inputs went last (after vbShow).
   for (const gone of ['"LEVEL"', '"BREAK"', 'vbLvMsg', '" | level "', '" | break "', 'text = "BRK"']) {
@@ -1896,7 +2379,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
       'request.security(syminfo.tickerid, pbBsUpper ? pbBsTf : timeframe.period, ta.sma(close, pbBsLen))',
       'request.security_lower_tf(syminfo.tickerid, bbBsLower ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))',
       'request.security(syminfo.tickerid, bbBsUpper ? bbBsTf : timeframe.period, ta.sma(close, bbBsLen))'];
-    check('v44 / v45 / v46: the script\'s ten requests, in order: the hourly anchors, the 30s bars, the VB\'s hourly anchors, the VB\'s view, the EMA, the EMA\'s band, the pullback basis\'s two, the band cross basis\'s two (v47\'s TURN and v48\'s POP / BACK add none)',
+    check('v44 / v45 / v46: the script\'s ten requests, in order: the hourly anchors, the 30s bars, the VB\'s hourly anchors, the VB\'s view, the EMA, the EMA\'s band, the pullback basis\'s two, the band cross basis\'s two (v47\'s TURN, v48\'s POP / BACK and v49\'s volume test add none)',
       reqs.length === want.length && want.every((w, i) => reqs[i].includes(w)), reqs.map((l) => l.trim().slice(0, 70)).join(' ¦ '));
   }
   check('v28: the new inputs come after the last v27 one', at('vbShow     = input.bool') > 0 && at('vbShow     = input.bool') < at('vwSrc      = input.string')
@@ -1915,7 +2398,7 @@ console.log('Contract — the Pine script still emits what the parser reads');
   check('v37: the five EMA bounce inputs come after the filter ones, in order', at('emFromHour = input.int') < at('emBncOn   = input.bool')
     && at('emBncOn   = input.bool') < at('emBncFrom = input.string') && at('emBncFrom = input.string') < at('emBncWait = input.int')
     && at('emBncWait = input.int') < at('emBncTolE = input.float') && at('emBncTolE = input.float') < at('emBncTolV = input.float'));
-  check('v40 / v41 / v45 / v46 / v47 / v48: their inputs come last, in order — emSrc, bbMidOn, the pullback basis line\'s three, the band cross basis line\'s three, the TURN\'s thirteen, then the POP\'s twelve, nothing after (v44: the MACD\'s six before them and the basis\'s three after them are gone) — the first two before the EMA section\'s code that reads them',
+  check('v40 / v41 / v45 / v46 / v47 / v48 / v49: their inputs come last, in order — emSrc, bbMidOn, the pullback basis line\'s three, the band cross basis line\'s three, the TURN\'s thirteen, the POP\'s twelve, then (v49) the volume test\'s two, nothing after (v44: the MACD\'s six before them and the basis\'s three after them are gone) — the first two before the EMA section\'s code that reads them',
     at('emBncTolV = input.float') > 0 && at('emBncTolV = input.float') < at('emSrc   = input.string') && at('emSrc   = input.string') < at('bbMidOn = input.bool')
     && at('bbMidOn = input.bool') < at('emPrevE = request.security')
     && at('bbMidOn = input.bool') < at('pbBsOn  = input.bool') && at('pbBsOn  = input.bool') < at('pbBsTf  = input.timeframe') && at('pbBsTf  = input.timeframe') < at('pbBsLen = input.int')
@@ -1933,11 +2416,14 @@ console.log('Contract — the Pine script still emits what the parser reads');
     && at('ppWaitN  = input.int') < at('ppMacdOn = input.bool') && at('ppMacdOn = input.bool') < at('ppFast   = input.int')
     && at('ppFast   = input.int') < at('ppSlow   = input.int') && at('ppSlow   = input.int') < at('ppSig    = input.int')
     && at('ppSig    = input.int') < at('ppGainOn = input.bool') && at('ppGainOn = input.bool') < at('ppShow   = input.bool')
-    && (pine.slice(at('ppShow   = input.bool') + 'ppShow   = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0
-    && (pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 85,
+    // v49: two more after ppShow (until v49 nothing came after it, and the script had 85)
+    && at('ppShow   = input.bool') < at('ppVolOn  = input.bool') && at('ppVolOn  = input.bool') < at('ppVolMin = input.float')
+    && (pine.slice(at('ppShow   = input.bool') + 'ppShow   = input.bool'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 2
+    && (pine.slice(at('ppVolMin = input.float') + 'ppVolMin = input.float'.length).match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 0
+    && (pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length === 87,
     String((pine.match(/input\.(bool|int|float|string|timeframe|session|source)\(/g) ?? []).length));
   // New plots go last (TradingView keeps a plot's style by position too)
-  check('v40 / v41 / v45 / v46 / v47 / v48: the band\'s line and its four marks, its middle line, the pullback basis line, the band cross basis line, the TURN\'s basis and mark, then the POP\'s basis and the POP\'s and the BACK\'s marks are the script\'s last plots, after the bounce\'s four (v44: the MACD\'s two before them and the basis\'s five after them are gone)',
+  check('v40 / v41 / v45 / v46 / v47 / v48 / v49: the band\'s line and its four marks, its middle line, the pullback basis line, the band cross basis line, the TURN\'s basis and mark, the POP\'s basis and the POP\'s and the BACK\'s marks, then (v49) the weak POP\'s and the weak BACK\'s gray marks are the script\'s last plots, after the bounce\'s four (v44: the MACD\'s two before them and the basis\'s five after them are gone)',
     at('"EMA bounce, filtered, late close (v37)"') > 0 && at('"EMA bounce, filtered, late close (v37)"') < at('"BB upper (EMA cross, v40)"')
     && at('"BB upper (EMA cross, v40)"') < at('"BB upper cross over VWAP (v40)"')
     && at('"BB upper cross over VWAP (v40)"') < at('"BB upper cross, late close (v40)"')
@@ -1948,14 +2434,19 @@ console.log('Contract — the Pine script still emits what the parser reads');
     && at('"Pullback basis (v45)"') < at('"Band cross basis (v46)"')
     && at('"Band cross basis (v46)"') < at('"TURN basis (v47)"') && at('"TURN basis (v47)"') < at('"TURN (v47)"')
     && at('"TURN (v47)"') < at('"POP basis (v48)"') && at('"POP basis (v48)"') < at('"POP (v48)"') && at('"POP (v48)"') < at('"BACK (v48)"')
-    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"BACK (v48)"'))));
+    // v49: two more after the BACK's mark (until v49 no plot came after it)
+    && at('"BACK (v48)"') < at('"POP, low volume (v49)"') && at('"POP, low volume (v49)"') < at('"BACK after a low-volume POP (v49)"')
+    && (pine.slice(at('"BACK (v48)"')).match(/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/gm) ?? []).length === 2
+    && !/^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/m.test(pine.slice(at('"BACK after a low-volume POP (v49)"'))));
   {
     const titles = pine.split('\n').filter((l) => /^\s*(plot|plotshape|plotchar|bgcolor|fill)\(/.test(l)).map((l) => /"([^"]*)"/.exec(l)?.[1] ?? '?');
-    check('v44 / v45 / v46 / v47 / v48: 38 plots, the last thirteen the band\'s six (its line, its four marks, its middle line), the pullback basis line, the band cross basis line, the TURN\'s two (its basis, its mark) and the POP\'s three (its basis, the POP\'s mark, the BACK\'s mark), right after the bounce\'s last mark',
-      titles.length === 38 && JSON.stringify(titles.slice(-14)) === JSON.stringify(['EMA bounce, filtered, late close (v37)', 'BB upper (EMA cross, v40)',
+    check('v44 / v45 / v46 / v47 / v48 / v49: 40 plots, the last fifteen the band\'s six (its line, its four marks, its middle line), the pullback basis line, the band cross basis line, the TURN\'s two (its basis, its mark), the POP\'s three (its basis, the POP\'s mark, the BACK\'s mark) and (v49) the two gray marks of a weak POP and of the BACK after it, right after the bounce\'s last mark',
+      titles.length === 40 && JSON.stringify(titles.slice(-16)) === JSON.stringify(['EMA bounce, filtered, late close (v37)', 'BB upper (EMA cross, v40)',
         'BB upper cross over VWAP (v40)', 'BB upper cross, late close (v40)', 'BB upper cross, filtered (v40)', 'BB upper cross, filtered, late close (v40)',
         'BB middle (EMA cross, v41)', 'Pullback basis (v45)', 'Band cross basis (v46)', 'TURN basis (v47)', 'TURN (v47)',
-        'POP basis (v48)', 'POP (v48)', 'BACK (v48)']), `${titles.length}: ${titles.slice(-14).join(' ¦ ')}`);
+        'POP basis (v48)', 'POP (v48)', 'BACK (v48)', 'POP, low volume (v49)', 'BACK after a low-volume POP (v49)'])
+        && JSON.stringify(titles.slice(-2)) === '["POP, low volume (v49)","BACK after a low-volume POP (v49)"]' && new Set(titles).size === titles.length,
+      `${titles.length}: ${titles.slice(-16).join(' ¦ ')}`);
   }
   check('v36 / v37: the gray "filtered" marks, then the four bounce marks, in order',
     at('"yVWAP (EMA cross, v35)"') > 0 && at('"yVWAP (EMA cross, v35)"') < at('"EMA cross, filtered (v36)"')

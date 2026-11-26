@@ -46,7 +46,7 @@ export interface TvSetupInfo {
   day_gain: number | null;    // day high vs prior close, %
   ah_gain: number | null;     // after hours: high since today's close, % (script v3+)
   tf: string | null;
-  vol_x: number | null;       // script v9+: signal-bar volume ÷ previous-20-bar average
+  vol_x: number | null;       // script v9+: signal-bar volume ÷ previous-20-bar average (v49, a POP or a BACK: the POP's own reading, the largest of the POP candle and the two before it ÷ the average of the 20 before those three)
   run_pct: number | null;     // script v9+: run-up over the previous 10 bars, %
   // PULLBACK setup (script v10); svwap / spx_pct are also the VB cross's session line
   svwap: number | null;       // session VWAP
@@ -82,6 +82,11 @@ export interface TvSetupInfo {
   ran_pct?: number | null;    // the furthest a high of the run got above the basis so far, %
   pop_n?: number | null;      // POP: the day's POPs sent on the ticker, this one included
   back_n?: number | null;     // BACK: the day's BACKs sent on the ticker, this one included
+  // The script calls it weak: stored and shown, never announced. An EMA cross, a band cross or a
+  // BOUNCE the filter marks (v36 / v37 / v41; tv-setups.ts emaFields), and since v49 a POP whose
+  // volume reading failed the script's test and the BACK after it (popFields); then `pop_n` /
+  // `back_n` is the day's count without this one, and `capped` is never true.
+  weak?: boolean;
   vwap_src?: '30s' | 'chart' | null; // v28: which bars the script built its VWAP lines from (null = before v28)
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe

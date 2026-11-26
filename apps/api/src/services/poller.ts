@@ -3967,6 +3967,9 @@ class PollerService {
   // v48 POP (tv_pop) and BACK (tv_back): limited like the TURN, each on its own day's number
   // (why 'capped' = past TV_SETUP.pp_cap on `pop N` / `back N`). Rows carry the basis and how far
   // the run's high got above it; a BACK's also the stop, the candles after the POP and the MACD.
+  // v49: why 'weak' = the POP failed the script's volume test (a BACK: its POP did). Rows carry
+  // `weak` (popFields) and `vol_x`, the POP's volume reading (the largest of the POP candle and the
+  // two before it ÷ the average of the 20 before those three). A weak one is never `capped`.
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist' | 'weak', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
@@ -4057,12 +4060,14 @@ class PollerService {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'}` + (back ? ` · stop ${sig.stop ?? '?'}` : '') +
         ` · ${sig.candle_tf ?? '?'} candle · basis SMA ${sig.sma_len ?? '?'} ${sig.sma ?? '?'} (${sig.sma_pct ?? '?'}%)` +
         ` · the run's high ${sig.ran_pct ?? '?'}% above it` +
+        (sig.vol_x != null ? ` · ${back ? 'POP vol' : 'vol'} ${sig.vol_x}x` : '') +   // v49: the POP's volume reading
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
         ` · ${back ? 'back' : 'pop'} ${n ?? '?'}` + (back ? ` · ${sig.since_n ?? '?'} candles after the POP` : '') +
         (back && sig.macd_green != null ? ` · MACD ${sig.macd_green ? 'green' : 'not green'}` : '') +
         ` · day ${sig.day_gain ?? '?'}% · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
-        (mode === 'quiet' ? (why === 'capped' ? ` · quiet (past the cap: ${back ? 'back' : 'pop'} ${n} today)`
+        (mode === 'quiet' ? (why === 'weak' ? (back ? ' · quiet (after a weak POP)' : ' · quiet (the volume test calls it weak)')
+          : why === 'capped' ? ` · quiet (past the cap: ${back ? 'back' : 'pop'} ${n} today)`
           : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
     } else if (VB_STAGES.has(sig.stage)) {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
