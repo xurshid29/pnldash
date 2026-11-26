@@ -373,6 +373,15 @@ the POP at 04:27 ET off a flat base ("suitable") and the one at 11:10 ET after a
   Cancel in the card. Settings live in that browser's localStorage; other users see only the header button. Built with
   two more subagents; checked with scripts against the bridge's own classes in memory and a rendered page, not in a
   browser and not against TWS.
+- **First real pass, the same evening, on the operator's paper TWS (DU…49):** they enabled the API (port 7497) and
+  started the bridge: it connected and recognised the paper account; its display-group report (added that evening,
+  `c6ec99a`) showed their windows in **Group 4** (green), so `displayGroup` is 4 in their `config.json`; the dashboard
+  panel in their Chrome read "TWS: paper · ready" (the browser → 127.0.0.1 path works). A paper test order by curl
+  (WHLR, alert 0.4259): TWS showed one linked bracket (BUY LMT 0.4302, ProfitTaker SELL LMT 0.4732, StopLoss SELL STP
+  LMT 0.4086), the bridge tracked it (Submitted, TWS's code 399 note: not at the exchange until 04:00 ET), and `/cancel`
+  cancelled all three. TWS asked once whether to bypass its Order Precautions for API orders: recommended Yes on paper,
+  a real decision on the live login. **Not yet seen:** a focus click moving the windows, a Buy click on a live alert,
+  a fill and its slippage line. The bracket's distances are still my placeholders.
 - **For the operator (bridge):** TWS → Global Configuration → API → Settings (Enable ActiveX and Socket Clients; untick
   Read-Only API; port 7497 on the paper login; localhost only), link the TWS windows to a colour group, `npm install
   --ignore-scripts && npm start` in `tools/tws-bridge`, put the token from its `config.json` into the dashboard's TWS
