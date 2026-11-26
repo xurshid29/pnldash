@@ -22,6 +22,8 @@ export class FakeIb implements IbApi {
   readonly options: IbApiOptions;
   private readonly world: FakeTws;
   private readonly listeners = new Map<string, Listener[]>();
+  /** Display group → the request id it was subscribed with on this connection. */
+  private readonly groupSubscriptions = new Map<number, number>();
 
   constructor(options: IbApiOptions, world: FakeTws) {
     this.options = options;
@@ -83,7 +85,13 @@ export class FakeIb implements IbApi {
     this.calls.push({ name: "reqContractDetails", args: [reqId, contract] });
     if (this.world.silentLookups) return this;
     queueMicrotask(() => {
-      const found = this.world.contracts.get(contract.symbol ?? "");
+      // By symbol, or (with no symbol given) by contract id alone.
+      const found =
+        contract.symbol !== undefined
+          ? this.world.contracts.get(contract.symbol)
+          : [...this.world.contracts.values()]
+              .map((listings) => listings.filter((details) => details.contract.conId === contract.conId))
+              .find((listings) => listings.length > 0);
       if (found === undefined) {
         this.emit("error", new Error("No security definition has been found for the request"), 200, reqId);
         return;
@@ -130,17 +138,37 @@ export class FakeIb implements IbApi {
 
   queryDisplayGroups(reqId: number): this {
     this.calls.push({ name: "queryDisplayGroups", args: [reqId] });
+    const groups = this.world.groups;
+    if (groups !== null) queueMicrotask(() => this.emit("displayGroupList", reqId, groups));
     return this;
   }
 
+  /** As TWS does: a subscription is answered once with what the group shows now. */
   subscribeToGroupEvents(reqId: number, groupId: number): this {
     this.calls.push({ name: "subscribeToGroupEvents", args: [reqId, groupId] });
+    this.groupSubscriptions.set(groupId, reqId);
+    if (!this.world.silentGroups.has(groupId)) {
+      queueMicrotask(() => this.emit("displayGroupUpdated", reqId, this.world.groupShows.get(groupId) ?? "none"));
+    }
     return this;
   }
 
+  /** As TWS does: the group changes, and its subscribers are told. */
   updateDisplayGroup(reqId: number, contractInfo: string): this {
     this.calls.push({ name: "updateDisplayGroup", args: [reqId, contractInfo] });
+    for (const [groupId, subscriptionId] of this.groupSubscriptions) {
+      if (subscriptionId !== reqId) continue;
+      this.world.groupShows.set(groupId, contractInfo);
+      queueMicrotask(() => this.emit("displayGroupUpdated", reqId, contractInfo));
+    }
     return this;
+  }
+
+  /** The operator picks something else in a TWS window linked to this group. */
+  operatorShows(groupId: number, contractInfo: string): void {
+    this.world.groupShows.set(groupId, contractInfo);
+    const reqId = this.groupSubscriptions.get(groupId);
+    if (reqId !== undefined) this.emit("displayGroupUpdated", reqId, contractInfo);
   }
 
   reqOpenOrders(): this {
@@ -173,6 +201,12 @@ export class FakeTws {
     ["BRK B", [listing("BRK B", 555, "NYSE")]],
   ]);
   readonly asks = new Map<string, number>();
+  /** The display groups TWS lists, most used first ("4|1|2|5"); null = it never answers the question. */
+  groups: string | null = null;
+  /** What a display group shows: "<conid>@<exchange>", "none" or "combo". A group not in here shows "none". */
+  readonly groupShows = new Map<number, string>();
+  /** Groups that do not say what they show when subscribed to. */
+  readonly silentGroups = new Set<number>();
   /** TWS never answers a contract lookup. */
   silentLookups = false;
   /** Make the Nth placeOrder call on a connection throw (1 = the first). */

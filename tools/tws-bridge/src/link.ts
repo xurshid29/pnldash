@@ -80,6 +80,10 @@ export interface LinkHandlers {
   onOrderStatus?(event: OrderStatusEvent): void;
   onExecution?(event: ExecutionEvent): void;
   onOrderMessage?(event: OrderMessageEvent): void;
+  /** TWS listed its display groups: once per connection, if it answers at all. */
+  onDisplayGroups?(groups: number[]): void;
+  /** A display group said what it shows: `"<conid>@<exchange>"`, `"none"` or `"combo"`. */
+  onDisplayGroupShows?(group: number, contractInfo: string): void;
   /** Things worth a log line: TWS notices, display-group answers, lookup errors that came late. */
   onNote?(kind: string, fields: Record<string, unknown>): void;
 }
@@ -93,6 +97,14 @@ export interface LinkOptions {
   reconnectMaxMs?: number;
   handshakeTimeoutMs?: number;
   maxReqPerSec?: number;
+  /** The gap between two messages the bridge sends for itself rather than for a click. */
+  backgroundGapMs?: number;
+}
+
+export interface DisplayGroupContent {
+  id: number;
+  /** What TWS last said the group shows, or null when it has not said. */
+  contractInfo: string | null;
 }
 
 type Pending =
@@ -129,6 +141,7 @@ export class TwsLink {
   private readonly reconnectMaxMs: number;
   private readonly handshakeTimeoutMs: number;
   private readonly maxReqPerSec: number;
+  private readonly backgroundGapMs: number;
 
   private api: IbApi | null = null;
   private ready = false;
@@ -138,7 +151,12 @@ export class TwsLink {
   private displayGroups: number[] | null = null;
   /** Display group → the request id of its subscription on this connection. */
   private readonly groupSubscriptions = new Map<number, number>();
+  /** Display group → what TWS last said it shows. */
+  private readonly groupShows = new Map<number, string>();
   private readonly pending = new Map<number, Pending>();
+  /** What the bridge sends for itself, waiting its turn: see {@link inBackground}. */
+  private backgroundQueue: Array<() => void> = [];
+  private backgroundTimer: NodeJS.Timeout | null = null;
 
   private nextRequestId = REQUEST_ID_BASE;
   /** Only ever grows within one run of the bridge, so an order id is never used twice. */
@@ -159,6 +177,7 @@ export class TwsLink {
     this.reconnectMaxMs = options.reconnectMaxMs ?? 30000;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs ?? 15000;
     this.maxReqPerSec = options.maxReqPerSec ?? 40;
+    this.backgroundGapMs = options.backgroundGapMs ?? 150;
     this.backoffMs = this.reconnectMinMs;
   }
 
@@ -179,6 +198,31 @@ export class TwsLink {
   /** The display groups TWS listed for this connection, or null when it has not answered. */
   getDisplayGroups(): number[] | null {
     return this.displayGroups === null ? null : [...this.displayGroups];
+  }
+
+  /**
+   * What each display group shows, by group number: the groups TWS listed, and any other the
+   * bridge has subscribed to for `/focus`. Empty while not connected.
+   */
+  getDisplayGroupContents(): DisplayGroupContent[] {
+    const ids = new Set<number>([...(this.displayGroups ?? []), ...this.groupSubscriptions.keys()]);
+    return [...ids]
+      .sort((a, b) => a - b)
+      .map((id) => ({ id, contractInfo: this.groupShows.get(id) ?? null }));
+  }
+
+  /**
+   * Queues something the bridge does for itself (learning what the display groups show). Such
+   * tasks run one at a time with a gap between them and after them, and never at once: the
+   * library sends at most 4 messages per 100 ms and queues the rest, so paced like this they
+   * cannot hold up the messages of a click. They are dropped with the connection. Returns false
+   * when there is no connection to queue for.
+   */
+  inBackground(task: () => void): boolean {
+    if (this.api === null || !this.ready) return false;
+    this.backgroundQueue.push(task);
+    this.scheduleBackground();
+    return true;
   }
 
   start(): void {
@@ -267,13 +311,49 @@ export class TwsLink {
    */
   focus(group: number, conid: number): void {
     const api = this.requireApi();
+    api.updateDisplayGroup(this.subscribeToGroup(group), `${conid}@SMART`);
+  }
+
+  /** Subscribes to a display group unless this connection already has, and returns its request id. */
+  private subscribeToGroup(group: number): number {
+    const api = this.requireApi();
     let reqId = this.groupSubscriptions.get(group);
     if (reqId === undefined) {
       reqId = this.takeRequestId();
       this.groupSubscriptions.set(group, reqId);
       api.subscribeToGroupEvents(reqId, group);
     }
-    api.updateDisplayGroup(reqId, `${conid}@SMART`);
+    return reqId;
+  }
+
+  private scheduleBackground(): void {
+    if (this.backgroundTimer !== null) return;
+    this.backgroundTimer = setTimeout(() => {
+      this.backgroundTimer = null;
+      const task = this.backgroundQueue.shift();
+      if (task === undefined || this.api === null || !this.ready) {
+        this.backgroundQueue = [];
+        return;
+      }
+      try {
+        task();
+      } catch (err) {
+        this.reportFailure("background task", err);
+      }
+      // The gap is kept after the last task as well, so the next one queued still waits.
+      this.scheduleBackground();
+    }, this.backgroundGapMs);
+  }
+
+  /** A failure in the bridge's own handling of an event: said, never thrown into the socket. */
+  private reportFailure(where: string, err: unknown): void {
+    const message = err instanceof Error ? err.message : String(err);
+    try {
+      this.handlers.onNote?.("internal_error", { where, message });
+    } catch {
+      // The log itself failed: the console line below is all that is left.
+    }
+    console.error(`tws-bridge: error while handling ${where}:`, err);
   }
 
   private requireApi(): IbApi {
@@ -309,12 +389,19 @@ export class TwsLink {
   }
 
   private attach(api: IbApi): void {
-    // Events of an object that is no longer the current connection are dropped.
+    // Events of an object that is no longer the current connection are dropped. A listener that
+    // throws is reported and goes no further: the library calls listeners from its socket
+    // handler, where an exception would lose the other events of that read and end the process.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const on = (event: string, listener: (...args: any[]) => void): void => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       api.on(event, (...args: any[]) => {
-        if (this.api === api) listener(...args);
+        if (this.api !== api) return;
+        try {
+          listener(...args);
+        } catch (err) {
+          this.reportFailure(`the ${event} event`, err);
+        }
       });
     };
 
@@ -404,11 +491,34 @@ export class TwsLink {
     });
 
     on(EventName.displayGroupList, (_reqId: number, groups: string) => {
-      this.displayGroups = String(groups)
-        .split("|")
-        .map((group) => Number(group))
-        .filter((group) => Number.isInteger(group) && group > 0);
-      this.handlers.onNote?.("display_groups", { groups: this.displayGroups });
+      const listed = [
+        ...new Set(
+          String(groups)
+            .split("|")
+            .map((group) => Number(group))
+            .filter((group) => Number.isInteger(group) && group > 0),
+        ),
+      ];
+      this.displayGroups = listed;
+      this.handlers.onNote?.("display_groups", { groups: listed });
+      // Subscribing to a group is how TWS tells what the group shows, now and on every change.
+      // One group at a time, in the background; the one `/focus` uses may be subscribed already.
+      for (const group of listed) {
+        this.inBackground(() => {
+          this.subscribeToGroup(group);
+        });
+      }
+      this.handlers.onDisplayGroups?.([...listed]);
+    });
+
+    on(EventName.displayGroupUpdated, (reqId: number, contractInfo: string) => {
+      for (const [group, subscriptionId] of this.groupSubscriptions) {
+        if (subscriptionId !== reqId) continue;
+        const shows = String(contractInfo).trim().slice(0, 64);
+        this.groupShows.set(group, shows);
+        this.handlers.onDisplayGroupShows?.(group, shows);
+        return;
+      }
     });
   }
 
@@ -473,6 +583,12 @@ export class TwsLink {
     this.serverLinkLost = false;
     this.displayGroups = null;
     this.groupSubscriptions.clear();
+    this.groupShows.clear();
+    this.backgroundQueue = [];
+    if (this.backgroundTimer !== null) {
+      clearTimeout(this.backgroundTimer);
+      this.backgroundTimer = null;
+    }
 
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);

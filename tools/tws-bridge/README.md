@@ -24,7 +24,16 @@ In TWS: **File → Global Configuration → API → Settings**
 - **Socket port**: `7497` on the paper login (TWS's default for paper; live is `7496`)
 - tick **Allow connections from localhost only**
 
-Then link the windows that should follow the alerts (chart, order entry, Level 2 …): click the chain-link icon in each window's title bar and pick the same colour group for all of them. TWS numbers its groups; the bridge moves the one whose number is `displayGroup` in `config.json` (default `1`) and prints the group numbers TWS reports when it connects. If a focus changes nothing on screen, the windows are linked to another group: try the next number (edit `config.json`, restart the bridge).
+Then link the windows that should follow the alerts (chart, order entry, Level 2 …): click the chain-link icon in each window's title bar and pick the same colour group for all of them. TWS shows a colour; the API knows the groups only by number, and the bridge moves the one whose number is `displayGroup` in `config.json` (default `1`).
+
+To find the number, look at what the bridge prints a second or so after it connects: what each group shows, read from TWS.
+
+```
+display groups: 1 nothing · 2 nothing · 4 WHLR ← windows are linked here · 5 nothing
+displayGroup is 1 but the linked windows look like group 4: set "displayGroup": 4 in config.json and restart
+```
+
+The group that shows the ticker your windows show is yours. The second line appears only when `displayGroup` looks wrong, and it is a guess (a group no window is linked to shows nothing, so a single group that shows something is taken to be the linked one). It is said once per connection; `GET /status` carries the same, kept current, as `display_groups`. Reading the groups changes no window and sends nothing but the group subscriptions and ticker lookups.
 
 ## Start
 
@@ -61,7 +70,7 @@ Read once, at the start: after an edit, restart the bridge. A missing or unknown
 | `http.port` | `8765` | The bridge's own port, always on `127.0.0.1`. |
 | `token` | random | The secret the dashboard sends as `X-Bridge-Token`. 64 hex characters. |
 | `allowedOrigins` | `https://pnldash.uz`, `http://localhost:5173` | The pages allowed to call the bridge from a browser. |
-| `displayGroup` | `1` | The TWS display group that `/focus` moves. |
+| `displayGroup` | `1` | The number of the TWS display group that `/focus` moves (the bridge prints what each group shows when it connects). |
 | `paperOnly` | `true` | Orders only when every account TWS reports is a paper account (id starts with `D`). |
 | `enabled` | `true` | `false` = no orders at all (focus still works). |
 | `halted` | `false` | The off switch; the dashboard can flip it (`POST /halt`). |
@@ -106,7 +115,7 @@ JSON in and out. Every request except `OPTIONS` needs the `X-Bridge-Token` heade
 
 | Call | Body | `data` |
 |---|---|---|
-| `GET /status` | – | `{ version, tws: { connected, port, paper, accounts, offline }, enabled, halted, paper_only, display_group, order, limits, today: { orders, filled } }` |
+| `GET /status` | – | `{ version, tws: { connected, port, paper, accounts, offline }, enabled, halted, paper_only, display_group, display_groups: [{ id, shows }], order, limits, today: { orders, filled } }` |
 | `POST /focus` | `{ ticker }` | `{ ticker, conid, group }` |
 | `POST /preview` | the same body as `/order` | `{ ticker, qty, limit, take_profit, stop, stop_limit, notional, checks }` |
 | `POST /order` | `{ ticker, alert_price, alert_stop?, qty?, stage?, alert_at?, alert_id? }` | `{ order_id, ticker, qty, limit, take_profit, stop, stop_limit, status }` |
@@ -116,7 +125,7 @@ JSON in and out. Every request except `OPTIONS` needs the `X-Bridge-Token` heade
 
 Notes on the calls:
 
-- **`/status`**: `tws.connected` means the socket to TWS is up and TWS has finished its handshake. `tws.accounts` are masked (`DU…67`); `tws.paper` is true when every one of them starts with `D`. `tws.offline` is true while TWS is connected to the bridge but says it has lost IB's servers: orders are refused (`tws_offline`) until it is back, because TWS would hold them and send them later. `order` and `limits` are the settings from `config.json`. `today.filled` counts the orders with any fill.
+- **`/status`**: `tws.connected` means the socket to TWS is up and TWS has finished its handshake. `tws.accounts` are masked (`DU…67`); `tws.paper` is true when every one of them starts with `D`. `tws.offline` is true while TWS is connected to the bridge but says it has lost IB's servers: orders are refused (`tws_offline`) until it is back, because TWS would hold them and send them later. `display_group` is the configured group; `display_groups` is what each of TWS's groups shows now, by group number: `shows` is a ticker, the raw `"<conid>@<exchange>"` while the ticker is not known, `"combo"`, or `null` for nothing (the list is empty while TWS is not connected or has not listed its groups). `order` and `limits` are the settings from `config.json`. `today.filled` counts the orders with any fill.
 - **`/focus`** works when orders are disabled, halted or the account is live: it places nothing.
 - **`/order`**: `ticker` is upper-cased and must look like a US symbol. `alert_price` and `alert_stop` are JSON numbers above 0 and under 100000. `qty` is a whole number (default `order.qty`). `alert_at` is ISO text or epoch milliseconds / seconds; an alert older than 10 minutes is refused. `alert_id` is a string or a number and is kept as a string; `stage` is free text up to 40 characters. Both are stored with the order.
   The answer waits up to 1 s for TWS's first word: `status` is TWS's own (`PreSubmitted`, `Submitted`, …) or `PendingSubmit` when none came in time. If TWS refuses within that second the answer is 502 `tws_refused` with TWS's text.

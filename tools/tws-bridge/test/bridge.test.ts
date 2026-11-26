@@ -17,6 +17,7 @@ test("status: the shape the dashboard reads, with masked accounts", async (t) =>
     halted: false,
     paper_only: true,
     display_group: 1,
+    display_groups: [],
     order: {
       qty: 100,
       priceFrom: "alert",

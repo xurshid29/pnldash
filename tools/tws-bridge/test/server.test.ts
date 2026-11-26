@@ -329,6 +329,7 @@ test("flow: status, focus, preview, order, orders, cancel, halt over HTTP", asyn
     "halted",
     "paper_only",
     "display_group",
+    "display_groups",
     "order",
     "limits",
     "today",

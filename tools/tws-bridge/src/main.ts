@@ -118,6 +118,7 @@ async function main(): Promise<void> {
     stopping = true;
     say(`${signal}: stopping. Orders already in TWS stay in TWS.`);
     journal.write("stop", { signal });
+    bridge.close();
     link.stop();
     server.close(() => process.exit(0));
     server.closeAllConnections();

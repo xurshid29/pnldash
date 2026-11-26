@@ -12,7 +12,13 @@ import { FakeTws, sleep, until } from "./fake-tws.js";
 const STOCK: Contract = { conId: 111, symbol: "ABCD", secType: SecType.STK, exchange: "SMART", currency: "USD" };
 const BUY: Order = { action: OrderAction.BUY, orderType: OrderType.LMT, totalQuantity: 1, lmtPrice: 1, transmit: true };
 
-function makeLink(t: TestContext, world: FakeTws, handlers: LinkHandlers = {}, handshakeTimeoutMs = 1000): TwsLink {
+function makeLink(
+  t: TestContext,
+  world: FakeTws,
+  handlers: LinkHandlers = {},
+  handshakeTimeoutMs = 1000,
+  backgroundGapMs = 1,
+): TwsLink {
   const link = new TwsLink({
     factory: world.factory,
     host: "127.0.0.1",
@@ -21,6 +27,7 @@ function makeLink(t: TestContext, world: FakeTws, handlers: LinkHandlers = {}, h
     reconnectMinMs: 5,
     reconnectMaxMs: 20,
     handshakeTimeoutMs,
+    backgroundGapMs,
   });
   link.handlers = handlers;
   t.after(() => link.stop());
@@ -282,6 +289,118 @@ test("link: display groups are asked for on connect; focus subscribes once per c
   link.focus(1, 111);
   assert.equal(world.current.callsOf("subscribeToGroupEvents").length, 1);
   assert.equal(world.current.callsOf("updateDisplayGroup").length, 1);
+});
+
+test("link: every listed display group is subscribed to in the background, and what each shows is kept", async (t) => {
+  const world = new FakeTws();
+  world.groups = "2|1|2"; // TWS's order, with a repeat
+  world.groupShows.set(2, "222@SMART");
+  const lists: number[][] = [];
+  const shown: Array<[number, string]> = [];
+  const link = makeLink(
+    t,
+    world,
+    { onDisplayGroups: (groups) => lists.push(groups), onDisplayGroupShows: (group, info) => shown.push([group, info]) },
+    1000,
+    10,
+  );
+  link.start();
+  await until(() => link.isReady(), "ready");
+  // The list is in; no group has been asked yet (the first subscription waits one gap).
+  assert.deepEqual(link.getDisplayGroupContents(), [
+    { id: 1, contractInfo: null },
+    { id: 2, contractInfo: null },
+  ]);
+  assert.deepEqual(world.current.callsOf("subscribeToGroupEvents"), []);
+  await until(() => shown.length === 2, "both groups to answer");
+
+  assert.deepEqual(lists, [[2, 1]]);
+  assert.deepEqual(shown, [
+    [2, "222@SMART"],
+    [1, "none"],
+  ]);
+  assert.deepEqual(link.getDisplayGroupContents(), [
+    { id: 1, contractInfo: "none" },
+    { id: 2, contractInfo: "222@SMART" },
+  ]);
+  const subscriptions = world.current.callsOf("subscribeToGroupEvents");
+  assert.deepEqual(subscriptions.map((call) => call.args[1]), [2, 1]);
+  for (const call of subscriptions) assert.ok((call.args[0] as number) >= REQUEST_ID_BASE);
+
+  // /focus on a group the survey subscribed to sends only the update, under that subscription.
+  link.focus(2, 111);
+  assert.equal(world.current.callsOf("subscribeToGroupEvents").length, 2);
+  assert.deepEqual(world.current.callsOf("updateDisplayGroup")[0]?.args, [subscriptions[0]?.args[0], "111@SMART"]);
+  await until(() => shown.length === 3, "the group's own report of the change");
+  assert.deepEqual(link.getDisplayGroupContents()[1], { id: 2, contractInfo: "111@SMART" });
+
+  // An event under an id that is no subscription of ours changes nothing.
+  world.current.emit("displayGroupUpdated", REQUEST_ID_BASE + 9999, "5@SMART");
+  assert.equal(shown.length, 3);
+});
+
+test("link: background work waits its turn and is dropped with the connection", async (t) => {
+  const world = new FakeTws();
+  const link = makeLink(t, world, {}, 1000, 15);
+  assert.equal(link.inBackground(() => undefined), false); // nothing to queue for before a connection
+  link.start();
+  await until(() => link.isReady(), "ready");
+
+  const ran: string[] = [];
+  assert.equal(link.inBackground(() => ran.push("a")), true);
+  assert.equal(link.inBackground(() => ran.push("b")), true);
+  assert.equal(ran.join(), ""); // never at once
+  await until(() => ran.length === 1, "the first task");
+  assert.equal(ran.join(), "a"); // one per gap
+  await until(() => ran.length === 2, "the second task");
+
+  // Queued, then the connection drops: the task is gone and does not run on the next connection.
+  link.inBackground(() => ran.push("c"));
+  world.drop();
+  assert.equal(link.inBackground(() => ran.push("d")), false);
+  await until(() => link.isReady(), "ready again");
+  await sleep(50);
+  assert.equal(ran.join(), "a,b");
+});
+
+test("link: a handler that throws is reported and stops nothing after it", async (t) => {
+  const errors = t.mock.method(console, "error", () => undefined);
+  const world = new FakeTws();
+  const statuses: number[] = [];
+  const failures: string[] = [];
+  const link = makeLink(t, world, {
+    onDisplayGroupShows: () => {
+      throw new Error("a bug in the group report");
+    },
+    onOrderStatus: (event) => statuses.push(event.orderId),
+    onNote: (kind, fields) => {
+      if (kind === "internal_error") failures.push(`${String(fields["where"])}: ${String(fields["message"])}`);
+    },
+  });
+  link.start();
+  await until(() => link.isReady(), "ready");
+
+  link.focus(1, 111); // the fake TWS answers the subscription, and the handler throws
+  await until(() => failures.length >= 1, "the failure to be reported");
+  assert.equal(failures[0], "the displayGroupUpdated event: a bug in the group report");
+  assert.ok(errors.mock.callCount() >= 1);
+
+  // The connection and everything after it carry on.
+  assert.equal(link.isReady(), true);
+  world.current.emit("orderStatus", 1000, "Filled", 100, 0, 2.5);
+  assert.deepEqual(statuses, [1000]);
+  assert.equal(link.allocateOrderIds(3), 1000);
+  link.focus(1, 222);
+  assert.equal(world.current.callsOf("updateDisplayGroup").length, 2);
+
+  // A failing background task is reported the same way and the queue goes on.
+  const ran: string[] = [];
+  link.inBackground(() => {
+    throw new Error("a bug in a background task");
+  });
+  link.inBackground(() => ran.push("next"));
+  await until(() => ran.length === 1, "the task after the failing one");
+  assert.ok(failures.includes("background task: a bug in a background task"));
 });
 
 test("link: events of a connection that was dropped are ignored", async (t) => {

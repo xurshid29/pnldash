@@ -22,6 +22,12 @@ export interface RigOptions {
   journal?: Journal;
   ackWaitMs?: number;
   contractTimeoutMs?: number;
+  /** The gap between the bridge's own background messages (default here: 1 ms). */
+  backgroundGapMs?: number;
+  /** How long the display-group report waits for the groups to answer (default here: 1 s). */
+  groupReportMs?: number;
+  /** How long a display group's ticker lookup may take (default here: 1 s). */
+  groupLookupTimeoutMs?: number;
   now?: number;
   saveHalted?: (halted: boolean) => void;
 }
@@ -35,6 +41,8 @@ export interface Rig {
   bridge: Bridge;
   /** Every value the bridge asked to have saved as `halted`. */
   saved: boolean[];
+  /** Every line the bridge printed on its console. */
+  said: string[];
 }
 
 /** A bridge wired to a fake TWS, a movable clock and an in-memory log. */
@@ -46,6 +54,7 @@ export async function rig(t: TestContext, options: RigOptions = {}): Promise<Rig
   const clock = { now: options.now ?? T0 };
   const memory = new MemoryJournal();
   const saved: boolean[] = [];
+  const said: string[] = [];
   const link = new TwsLink({
     factory: world.factory,
     host: config.tws.host,
@@ -54,6 +63,7 @@ export async function rig(t: TestContext, options: RigOptions = {}): Promise<Rig
     reconnectMinMs: 5,
     reconnectMaxMs: 20,
     handshakeTimeoutMs: 1000,
+    backgroundGapMs: options.backgroundGapMs ?? 1,
   });
   const bridge = new Bridge({
     config,
@@ -62,14 +72,20 @@ export async function rig(t: TestContext, options: RigOptions = {}): Promise<Rig
     version: "0.0.0-test",
     saveHalted: options.saveHalted ?? ((halted) => saved.push(halted)),
     clock: () => clock.now,
+    say: (message) => said.push(message),
     ackWaitMs: options.ackWaitMs ?? 0,
     contractTimeoutMs: options.contractTimeoutMs ?? 1000,
     askTimeoutMs: 40,
+    groupReportMs: options.groupReportMs ?? 1000,
+    groupLookupTimeoutMs: options.groupLookupTimeoutMs ?? 1000,
   });
-  t.after(() => link.stop());
+  t.after(() => {
+    bridge.close();
+    link.stop();
+  });
   link.start();
   if (options.connect ?? true) await until(() => link.isReady(), "the fake TWS connection");
-  return { world, config, clock, journal: memory, link, bridge, saved };
+  return { world, config, clock, journal: memory, link, bridge, saved, said };
 }
 
 function isRefusal(status: number, code: string, message?: RegExp): (err: unknown) => boolean {

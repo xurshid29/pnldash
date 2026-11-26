@@ -4,6 +4,8 @@ import { isDone, OrderBook } from "./book.js";
 import type { OrderRecord } from "./book.js";
 import type { Config, LimitsConfig, OrderConfig } from "./config.js";
 import { badRequest, BridgeError, errorMessage } from "./errors.js";
+import { describeDisplayGroups, parseContractInfo } from "./groups.js";
+import type { GroupReading } from "./groups.js";
 import type { Journal } from "./journal.js";
 import { NotConnectedError, TwsRequestError, TwsTimeoutError } from "./link.js";
 import type { ExecutionEvent, OrderMessageEvent, OrderStatusEvent, TwsLink } from "./link.js";
@@ -63,7 +65,14 @@ export interface StatusData {
   enabled: boolean;
   halted: boolean;
   paper_only: boolean;
+  /** The configured group: the one `/focus` moves. */
   display_group: number;
+  /**
+   * What each of TWS's display groups shows right now, by group number: a ticker, the raw
+   * `"<conid>@<exchange>"` while its ticker is not known, `"combo"`, or null for nothing (or not
+   * heard from yet). Empty while TWS is not connected or has not listed its groups.
+   */
+  display_groups: Array<{ id: number; shows: string | null }>;
   order: OrderConfig;
   limits: LimitsConfig;
   today: { orders: number; filled: number };
@@ -123,6 +132,10 @@ export interface BridgeOptions {
   contractTimeoutMs?: number;
   /** How long a `priceFrom: "ask"` order waits for the ask. */
   askTimeoutMs?: number;
+  /** After TWS lists its display groups, how long to wait for what they show before saying it. */
+  groupReportMs?: number;
+  /** How long to wait for the ticker of a contract id a display group shows. */
+  groupLookupTimeoutMs?: number;
 }
 
 export function maskAccount(account: string): string {
@@ -246,6 +259,21 @@ export function pickContract(ticker: string, symbol: string, details: ContractDe
 }
 
 /**
+ * The name to show for a contract id, from TWS's answer to a lookup by that id: a stock's symbol
+ * the way the tape writes it ("BRK.B"), anything else by its local symbol. Null when the answer
+ * names nothing.
+ */
+export function tickerOfConid(conid: number, details: ContractDetails[]): string | null {
+  for (const { contract } of details) {
+    if (contract.conId !== undefined && contract.conId !== conid) continue;
+    const isStock = contract.secType === undefined || contract.secType === SecType.STK;
+    const name = (isStock ? contract.symbol : contract.localSymbol || contract.symbol)?.trim();
+    if (name) return (isStock ? name.replaceAll(" ", ".") : name).slice(0, 32);
+  }
+  return null;
+}
+
+/**
  * Everything the HTTP API does, with every rail. The HTTP layer in `server.ts` only checks who is
  * calling; whether an order may go out is decided here and nowhere else.
  */
@@ -260,6 +288,8 @@ export class Bridge {
   private readonly ackWaitMs: number;
   private readonly contractTimeoutMs: number;
   private readonly askTimeoutMs: number;
+  private readonly groupReportMs: number;
+  private readonly groupLookupTimeoutMs: number;
 
   private readonly book = new OrderBook();
   private readonly contracts = new Map<string, { contract: ResolvedContract; at: number }>();
@@ -267,6 +297,14 @@ export class Bridge {
   /** Brackets already cancelled by the bridge after a leg was refused: once each. */
   private readonly cleanedUp = new Set<number>();
   private queue: Promise<unknown> = Promise.resolve();
+
+  /** Contract id → ticker, for what the display groups show. A contract id never changes hands. */
+  private readonly conidTickers = new Map<number, string>();
+  /** Contract ids whose ticker TWS did not give on this connection: not asked again. */
+  private readonly conidUnknown = new Set<number>();
+  private readonly conidLookups = new Set<number>();
+  /** The once-per-connection console report of the display groups: its deadline, and whether it was said. */
+  private groupReport: { timer: NodeJS.Timeout | null; said: boolean } | null = null;
 
   constructor(options: BridgeOptions) {
     this.config = options.config;
@@ -279,6 +317,8 @@ export class Bridge {
     this.ackWaitMs = options.ackWaitMs ?? 1000;
     this.contractTimeoutMs = options.contractTimeoutMs ?? 3000;
     this.askTimeoutMs = options.askTimeoutMs ?? 800;
+    this.groupReportMs = options.groupReportMs ?? 3000;
+    this.groupLookupTimeoutMs = options.groupLookupTimeoutMs ?? 2000;
 
     // Today's orders from the log: the daily count and the duplicate window survive a restart,
     // and their order ids are not handed out again even if TWS restarts its numbering.
@@ -292,8 +332,15 @@ export class Bridge {
       onOrderStatus: (event) => this.onOrderStatus(event),
       onExecution: (event) => this.onExecution(event),
       onOrderMessage: (event) => this.onOrderMessage(event),
+      onDisplayGroups: () => this.onDisplayGroups(),
+      onDisplayGroupShows: (_group, contractInfo) => this.onDisplayGroupShows(contractInfo),
       onNote: (kind, noteFields) => this.onNote(kind, noteFields),
     };
+  }
+
+  /** Ends the bridge's own timers. The connection is the link's to stop. */
+  close(): void {
+    this.endGroupReport();
   }
 
   status(): StatusData {
@@ -313,6 +360,7 @@ export class Bridge {
       halted: this.config.halted,
       paper_only: this.config.paperOnly,
       display_group: this.config.displayGroup,
+      display_groups: this.groupReadings().map(({ id, shows }) => ({ id, shows })),
       order: { ...this.config.order },
       limits: { ...this.config.limits },
       today: { orders: this.book.countOn(today), filled: this.book.filledOn(today) },
@@ -790,6 +838,7 @@ export class Bridge {
     }
     const contract = pickContract(ticker, symbol, details);
     this.contracts.set(ticker, { contract, at: now });
+    this.conidTickers.set(contract.conid, ticker);
     return contract;
   }
 
@@ -830,22 +879,137 @@ export class Bridge {
   }
 
   private onDown(reason: string): void {
+    this.endGroupReport();
+    this.conidLookups.clear();
+    this.conidUnknown.clear();
     this.journal.write("tws_down", { reason });
     this.say(`TWS not connected: ${reason} (retrying)`);
   }
 
   private onNote(kind: string, noteFields: Record<string, unknown>): void {
     this.journal.write(kind, noteFields);
-    if (kind === "display_groups") {
-      const groups = this.link.getDisplayGroups() ?? [];
-      const mine = this.config.displayGroup;
-      this.say(
-        `TWS display groups: ${groups.join(", ") || "none"}` +
-          (groups.includes(mine) ? "" : ` (displayGroup ${mine} is not among them: /focus may do nothing)`),
-      );
-    } else if (kind === "display_group_error") {
-      this.say(`TWS refused the display group: ${String(noteFields["message"])}`);
+    if (kind === "display_group_error") {
+      this.say(`TWS refused display group ${String(noteFields["group"])}: ${String(noteFields["message"])}`);
     }
+  }
+
+  // ------------------------------------------------------ display groups
+  //
+  // Which numbered group shows which ticker, so `displayGroup` can be set without guessing. The
+  // link subscribes to every group TWS lists; here the contract ids become tickers and the
+  // console is told once per connection. All of it is reading: nothing here can change a window,
+  // and its messages wait their turn in the link's background queue, behind any click.
+
+  /** What each display group shows now, with contract ids turned into tickers where known. */
+  private groupReadings(): GroupReading[] {
+    return this.link.getDisplayGroupContents().map(({ id, contractInfo }) => {
+      if (contractInfo === null) return { id, shows: null, answered: false };
+      const content = parseContractInfo(contractInfo);
+      if (content.kind === "none") return { id, shows: null, answered: true };
+      if (content.kind === "combo") return { id, shows: "combo", answered: true };
+      if (content.kind === "other") return { id, shows: content.text, answered: true };
+      return { id, shows: this.conidTickers.get(content.conid) ?? contractInfo, answered: true };
+    });
+  }
+
+  /** TWS has listed its groups: the report is due when they have all answered, or after the wait. */
+  private onDisplayGroups(): void {
+    if (this.groupReport !== null) return;
+    const report: { timer: NodeJS.Timeout | null; said: boolean } = { timer: null, said: false };
+    this.groupReport = report;
+    report.timer = setTimeout(() => {
+      report.timer = null;
+      if (this.groupReport === report) this.sayDisplayGroups();
+    }, this.groupReportMs);
+    this.maybeSayDisplayGroups();
+  }
+
+  private onDisplayGroupShows(contractInfo: string): void {
+    const content = parseContractInfo(contractInfo);
+    if (content.kind === "contract") this.lookUpConid(content.conid, content.exchange);
+    this.maybeSayDisplayGroups();
+  }
+
+  /**
+   * Asks TWS, in the background and once, which ticker a contract id is. The exchange the group
+   * named goes with it: the pair is how TWS itself identifies what the window shows.
+   */
+  private lookUpConid(conid: number, exchange: string): void {
+    if (this.conidTickers.has(conid) || this.conidUnknown.has(conid) || this.conidLookups.has(conid)) return;
+    this.conidLookups.add(conid);
+    const queued = this.link.inBackground(() => {
+      // By the time its turn comes the operator may have moved on: then nobody needs the answer.
+      const shown = this.link.getDisplayGroupContents().some(({ contractInfo }) => {
+        const content = contractInfo === null ? null : parseContractInfo(contractInfo);
+        return content?.kind === "contract" && content.conid === conid;
+      });
+      if (!shown) {
+        this.conidLookups.delete(conid);
+        return;
+      }
+      let lookup: Promise<ContractDetails[]>;
+      try {
+        lookup = this.link.contractDetails(
+          exchange === "" ? { conId: conid } : { conId: conid, exchange },
+          this.groupLookupTimeoutMs,
+        );
+      } catch {
+        this.conidLookups.delete(conid);
+        return;
+      }
+      lookup.then(
+        (details) => {
+          this.conidLookups.delete(conid);
+          const ticker = tickerOfConid(conid, details);
+          if (ticker === null) this.conidUnknown.add(conid);
+          else this.conidTickers.set(conid, ticker);
+          this.maybeSayDisplayGroups();
+        },
+        (err: unknown) => {
+          // TWS refused or was slow: the group keeps reading as "<conid>@<exchange>". A dropped
+          // connection is no answer at all: the next connection may ask again.
+          this.conidLookups.delete(conid);
+          if (!(err instanceof NotConnectedError)) this.conidUnknown.add(conid);
+          this.maybeSayDisplayGroups();
+        },
+      );
+    });
+    if (!queued) this.conidLookups.delete(conid);
+  }
+
+  /** Says the report as soon as every listed group has answered and no ticker is still on its way. */
+  private maybeSayDisplayGroups(): void {
+    if (this.groupReport === null || this.groupReport.said) return;
+    const listed = this.link.getDisplayGroups();
+    if (listed === null) return;
+    for (const { id, contractInfo } of this.link.getDisplayGroupContents()) {
+      if (!listed.includes(id)) continue;
+      if (contractInfo === null) return;
+      const content = parseContractInfo(contractInfo);
+      if (content.kind !== "contract") continue;
+      if (!this.conidTickers.has(content.conid) && !this.conidUnknown.has(content.conid)) return;
+    }
+    this.sayDisplayGroups();
+  }
+
+  private sayDisplayGroups(): void {
+    const report = this.groupReport;
+    if (report === null || report.said || !this.link.isReady()) return;
+    report.said = true;
+    if (report.timer !== null) {
+      clearTimeout(report.timer);
+      report.timer = null;
+    }
+    const listed = this.link.getDisplayGroups() ?? [];
+    const readings = this.groupReadings().filter((group) => listed.includes(group.id));
+    for (const line of describeDisplayGroups(this.config.displayGroup, readings)) this.say(line);
+    this.journal.write("display_groups_shown", { display_group: this.config.displayGroup, groups: readings });
+  }
+
+  private endGroupReport(): void {
+    if (this.groupReport === null) return;
+    if (this.groupReport.timer !== null) clearTimeout(this.groupReport.timer);
+    this.groupReport = null;
   }
 
   private onOrderStatus(event: OrderStatusEvent): void {
