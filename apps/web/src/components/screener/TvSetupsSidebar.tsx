@@ -14,8 +14,8 @@ import { TickerLinks } from '../common/TickerLinks';
 import { TvStageTag, tvLevelsText, fmtTf, isVbStage, lineTokens, lineDistanceText, crossTfText, retestStopText, popRanText, isWeakSetup, emaEventKey, popEventKey, tagNumber, isBandCross, isLineCross, isPopBack } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
 import { TwsBridgeButton, TwsBridgeLine } from './TwsBridgeControl';
-import { bridgeCard, useTwsBridge } from '../../hooks/useTwsBridge';
-import { BRIDGE_ALERT_MAX_AGE_MS, bridgeOrderCancellable, bridgeOrderRequest, bridgeOrderText } from '../../api/twsBridge';
+import { bridgeCard, useTwsBridge, type BridgeOrderBlock } from '../../hooks/useTwsBridge';
+import { BRIDGE_ALERT_MAX_AGE_MS, bridgeOrderRequest } from '../../api/twsBridge';
 import { fmtPct, fmtPrice } from '../../utils/format';
 import pineScript from '../../tv/mvwap-bb-setup.pine?raw';
 import rvolScript from '../../tv/rvol.pine?raw';
@@ -32,15 +32,19 @@ const LIVE_MIN = { pullback: 60, cross: 15, retest: 15, ema: 15, bounce: 15, ban
 // The 1m and 2m alerts report the same stage separately; within this window
 // they are one event.
 const MERGE_MS = 5 * 60_000;
-// TWS bridge (2026-11-26): a Buy button that has just appeared or moved (a new alert pushed the
-// list down, a row above opened) takes no click for this long, so a click aimed at one row cannot
-// land on the Buy button that slid under the cursor.
+// TWS bridge (2026-11-26): a button that moves money — Buy, Chase, Sell — that has just appeared
+// or moved (a new alert pushed the list down, a row above opened, a buy filled and Sell stands
+// where Cancel stood) takes no click for this long, so a click aimed at one thing cannot land on
+// the button that slid under the cursor.
 const BUY_HOLD_MS = 600;
-// An order's line: working, filled, over without a fill, stopped by TWS.
-const ORDER_TONE = { working: '#d9d9d9', filled: '#95de64', done: '#8c8c8c', error: '#ff7875' } as const;
+// An order's line: still working (or selling), holding shares, over.
+const ORDER_TONE = { working: '#d9d9d9', filled: '#95de64', done: '#8c8c8c' } as const;
 // The bridge's buttons, smaller than antd's small (24 px) so the card stays compact.
-const BUY_BTN ={ height: 20, padding: '0 8px', fontSize: 11, lineHeight: '18px', fontWeight: 600 } as const;
-const CANCEL_BTN = { height: 18, padding: '0 6px', fontSize: 10, lineHeight: '16px', borderRadius: 3, marginLeft: 6 } as const;
+const BUY_BTN = { height: 20, padding: '0 8px', fontSize: 11, lineHeight: '18px', fontWeight: 600 } as const;
+const ORDER_BTN = { height: 18, padding: '0 6px', fontSize: 10, lineHeight: '16px', borderRadius: 3, marginLeft: 6 } as const;
+const SELL_BTN = { ...ORDER_BTN, fontWeight: 600 } as const;
+// `loose_exit` on an order: the one way this setup could go short, so it is said in so many words.
+const LOOSE_EXIT = 'an exit order is still working in TWS on a closed position: the bridge is cancelling it; check TWS';
 
 interface SetupEvent {
   id: string;
@@ -210,7 +214,7 @@ const HOW_TO = (
     <div><b>VWAP lines</b> (v28): the Inputs' “VWAP lines from” picks how the script builds its VWAPs, for the lines it draws and for every setup. <b>30s bars</b> (ours, the default): built from 30-second bars, so the line is the same on your 5m and 30s charts and closer to the true VWAP. <b>Chart bars</b>: TradingView's built-in way, from each chart's own bars, so it differs by timeframe (on your alerts, a 5m chart's line sat a median 0.4% from the 30s chart's, a 10m chart's 1.6%). The alerts copy the choice when you create them. The month line has its own switch (v31), “Month VWAP from”: <b>30s bars</b> (the default) builds it from this month's hourly bars plus today's 30-second bars — the yellow line you see is then the one PULLBACK and the VB use, on every chart (on a name whose one day dwarfs the month, TradingView's own month VWAP can sit several % away: ROMA 10-28, ~6%); <b>chart bars</b> = TradingView's anchored VWAP, as before.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
     <div><b>RVol</b> (optional): ⋯ → <b>Copy RVol script</b> → a new Pine Editor tab → Add to chart. It shows the Momentum table's RVol 1m / 5m / Day in its own pane, in the same units; set the pane's scale to Logarithmic. No alert needed.</div>
-    <div><b>TWS bridge</b> (optional, 11-26): a small program on your own computer (<code>tools/tws-bridge</code>) that talks to the TWS you are logged in to. The <b>TWS</b> button in this panel's header switches it on for this browser and holds its settings; until then nothing changes here. With it on, a row whose alert is no older than 10 minutes has <b>Buy</b>, with the shares and the limit price on it: one click places your bracket in TWS (a limit buy with a take-profit and a stop), and the row then reads what was sent, then the fill against the alert's price, with <b>Cancel</b> beside it until the buy fills. A setup that is over has no Buy: a BROKEN or a HELD row, and a PULLBACK already marked “✗ broke”. A POP has one. One alert, one order at a time: after a buy that is working or filled the button is gone; cancel it unfilled and the button returns, with “cancelled” before it (the same when TWS refused the order). Orders go from this computer straight to TWS and never through the pnldash server. The bridge refuses a live account until its own config says otherwise (<code>"paperOnly": false</code>, set by hand in its file; the button then reads <b>Buy LIVE</b>, in red). It also refuses an alert older than 10 minutes and a second order for the same ticker within 10 seconds (a Buy clicked that soon after the order you cancelled is refused with the bridge's “duplicate” text: click again a few seconds later), and it places nothing while TWS has lost IB's servers (the TWS line then reads “offline”). The prices are the bridge's settings, not this page's: the page sends the ticker, the alert's price and the alert's stop, and the shares, the limit, the take-profit and the stop are worked out by the bridge from <code>tools/tws-bridge/config.json</code> (the TWS button's panel shows them).</div>
+    <div><b>TWS bridge</b> (optional, 11-26): a small program on your own computer (<code>tools/tws-bridge</code>) that talks to the TWS you are logged in to. The <b>TWS</b> button in this panel's header switches it on for this browser and holds its settings; until then nothing changes here. With it on, a row whose alert is no older than 10 minutes has <b>Buy</b>, with the shares and the limit price on it: one click places your bracket in TWS (a limit buy with a take-profit and a stop), and the row then reads what was sent, then the fill against the alert's price, with <b>Cancel</b> beside it until the buy fills. A setup that is over has no Buy: a BROKEN or a HELD row, and a PULLBACK already marked “✗ broke”. A POP has one. One alert, one order at a time: after a buy that is working or filled the button is gone; cancel it unfilled and the button returns, with “cancelled” before it (the same when TWS refused the order). <b>Chase</b>, beside Cancel on a buy that has not filled because the price ran: one click moves that buy up to the live ask plus the same offset, and its take-profit and stop with it; never past the cap against the alert's price, and only so many times (3% and 5 moves unless you changed them in the bridge's config). The line then says where the buy is and where it started (“moved 2×, first 0.4302”). <b>Sell</b>, on an order that holds shares: one click sells what it holds just under the live bid (2% under unless you changed it; a limit order, so it should fill at the bid and no lower than that limit). While that sell is working the button reads <b>Sell lower</b>, and a click moves it down to the bid of that moment; when it is done the line reads what was sold against the buy (“sold 929 @ 0.4101 (−4.7% vs the buy)”). On a buy that only part filled, <b>Cancel the rest</b> cancels what has not filled, and <b>Sell 40</b> sells the shares that did (the bridge cancels the rest first). Every price change is a click: nothing on this page and nothing in the bridge re-prices by itself. Sell and Cancel work while the bridge is halted and whatever the alert's age: an order that holds shares keeps its line and its Sell button on the card for as long as it holds them, after a reload and under a newer alert too (as “earlier order”). If an exit order is left working in TWS on a position that is already closed, the bridge cancels it and the card says so in amber; check TWS when you see it. <b>Dollar sizing</b>: with <code>order.amountUsd</code> in the bridge's config (400, say), a buy is as many whole shares as that pays for at its limit, rounded down, and the button reads <b>Buy $400 ≈ 929 @ 0.4302</b>; when the limit comes from the live ask it reads <b>Buy $400 @ ask +1%</b> and the shares are worked out at the click. A chase does not change the shares. Orders go from this computer straight to TWS and never through the pnldash server. The bridge refuses a live account until its own config says otherwise (<code>"paperOnly": false</code>, set by hand in its file; the button then reads <b>Buy LIVE</b>, in red). It also refuses an alert older than 10 minutes and a second order for the same ticker within 10 seconds (a Buy clicked that soon after the order you cancelled is refused with the bridge's “duplicate” text: click again a few seconds later), and it places nothing while TWS has lost IB's servers (the TWS line then reads “offline”). The prices are the bridge's settings, not this page's: the page sends the ticker, the alert's price and the alert's stop, and the shares, the limit, the take-profit and the stop are worked out by the bridge from <code>tools/tws-bridge/config.json</code> (the TWS button's panel shows them).</div>
     <div style={{ marginTop: 8, color: '#8c8c8c' }}>
       <b>Reading the list.</b> Five setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD), the <b>VWAP + BB cross</b> (CROSS, then RETEST), (v35) the <b>EMA cross</b> over VWAP, with (v37) its <b>BOUNCE</b>, (v47) <b>TURN</b> (a bounce off a basis line that fell and turned up), and (v48) <b>POP and BACK</b> (a run gets 10% above its basis line: POP, a heads-up; then it comes back to the basis and bounces: BACK, the entry; since v49 a POP without a volume surge is weak and stays quiet, and so does its BACK). A CROSS or a RETEST pings only when the name is on Momentum (⭐) or its day high is +30% or more; an EMA cross, a BAND cross, a BOUNCE, a TURN, a POP or a BACK pings only when the name is on Momentum (since 11-15; ⚙ → <b>EMA / BAND / BOUNCE / TURN / POP / BACK: Momentum list only</b> — untick it to let a +30% day high ping off the list too). Off-list ones show dimmed. <b>Show only Momentum tickers</b> (the checkbox under the title) hides the rows without a ⭐ and silences their toasts and sounds on this dashboard (Telegram is unchanged); the browser remembers it.
       <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
@@ -294,14 +298,17 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   const [copied, setCopied] = useState<CopiedList | null>(() => loadCopied());
   // TWS bridge (2026-11-26): off unless switched on in this browser. Then a fresh alert's row
   // has a Buy button that places the operator's bracket order — through a program on this
-  // computer, never through our API — and the row shows that order, with Cancel. (The first
+  // computer, never through our API — and the row shows that order with what can be asked of it:
+  // Cancel, Chase (move a buy that has not filled up to the ask) and Sell (get out of what it
+  // holds), since 2026-11-27. Every one is a click; nothing re-prices by itself. (The first
   // version also had a per-row "TWS" button and a row click that moved TWS's windows to the
-  // ticker; removed 2026-11-27 at the operator's request: the Buy / Cancel pair was what they
-  // wanted.)
+  // ticker; removed 2026-11-27 at the operator's request.)
   const tws = useTwsBridge();
   const twsOn = tws.settings.enabled;
   const listRef = useRef<HTMLDivElement | null>(null);
-  const buyEls = useRef(new Map<string, HTMLElement>());      // the Buy buttons on screen, by alert id
+  // The Buy, Chase and Sell buttons on screen, by what they are for ("buy:<alert id>",
+  // "chase:<order id>", "sell:<order id>:first" / ":lower").
+  const buyEls = useRef(new Map<string, HTMLElement>());
   const buyTops = useRef(new Map<string, number>());          // where each sat after the last render
   const buyHold = useRef(new Map<string, number>());          // …and until when it takes no click
   useLayoutEffect(() => {
@@ -370,16 +377,24 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     return n;
   });
 
+  // A place for a button that moves money: where it sits is remembered (the layout effect above),
+  // so a click on it right after it appeared or moved can be held back.
+  const holdRef = (key: string) => (el: HTMLElement | null) => {
+    if (el) buyEls.current.set(key, el); else buyEls.current.delete(key);
+  };
+  // True, with a line on the card saying so, when the button under the click only just got there.
+  const heldBack = (key: string, ticker: string, what: string): boolean => {
+    if (clickTime().sinceLoad >= (buyHold.current.get(key) ?? 0)) return false;
+    tws.note(ticker, `The list just moved under the button: nothing was sent. Click ${what} again.`);
+    return true;
+  };
   // One click on Buy = one /order call for that alert (the bridge controller's lock sees to it).
   // The page sends the ticker, the alert's price, its stop when it has one, and what the alert was.
   const buyRow = (c: TickerCard) => {
     const e = c.current;
     if (setupOver(c)) return;   // no button there; a second look costs nothing
+    if (heldBack(`buy:${e.id}`, c.ticker, 'Buy')) return;
     const click = clickTime();
-    if (click.sinceLoad < (buyHold.current.get(e.id) ?? 0)) {
-      tws.note(c.ticker, 'The list just moved under the button: nothing was sent. Click Buy again.');
-      return;
-    }
     if (click.at - e.at > BRIDGE_ALERT_MAX_AGE_MS) {
       tws.note(c.ticker, 'This alert is older than 10 minutes: nothing was sent.');
       return;
@@ -447,10 +462,54 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
       .catch(() => message.error('Clipboard blocked by the browser'));
   };
 
-  const cancelButton = (orderId: number, ticker: string) => (
-    <Button size="small" disabled={tws.cancelling.includes(orderId)} onClick={() => tws.cancel(orderId, ticker)} style={CANCEL_BTN}>
-      {tws.cancelling.includes(orderId) ? 'cancelling…' : 'Cancel'}
-    </Button>
+  // One click on Chase = one /chase call: the bridge moves that buy up to the live ask + offset,
+  // once. One click on Sell = one /sell call: it sells what the order holds just under the live
+  // bid, or moves a sell that is already working lower. The page sends the order's id, no price.
+  const chaseOrder = (b: BridgeOrderBlock, ticker: string) => {
+    if (heldBack(`chase:${b.order_id}`, ticker, 'Chase')) return;
+    tws.chase(b.order_id, ticker);
+  };
+  const sellOrder = (b: BridgeOrderBlock, ticker: string) => {
+    if (b.sell == null || heldBack(`sell:${b.order_id}:${b.sell.lower ? 'lower' : 'first'}`, ticker, b.sell.label)) return;
+    tws.sell(b.order_id, ticker);
+  };
+  // An order's buttons, in its text's own flow after the last word, so they cost no line of
+  // their own: Chase, Cancel (the buy, or "the rest" of one that part filled), Sell (in the
+  // danger style: it sells at the bid). While a call for the order is in flight none takes a click.
+  const orderButtons = (b: BridgeOrderBlock, ticker: string) => (
+    <>
+      {b.chase && (
+        <span ref={holdRef(`chase:${b.order_id}`)} style={{ display: 'inline-flex' }}>
+          <Button size="small" disabled={b.busy != null} onClick={() => chaseOrder(b, ticker)} style={ORDER_BTN}>
+            {b.busy === 'chase' ? 'moving…' : 'Chase'}
+          </Button>
+        </span>
+      )}
+      {b.cancel != null && (
+        <Button size="small" disabled={b.busy != null} onClick={() => tws.cancel(b.order_id, ticker)} style={ORDER_BTN}>
+          {b.busy === 'cancel' ? 'cancelling…' : b.cancel}
+        </Button>
+      )}
+      {b.sell != null && (
+        <span ref={holdRef(`sell:${b.order_id}:${b.sell.lower ? 'lower' : 'first'}`)} style={{ display: 'inline-flex' }}>
+          <Button size="small" type="primary" danger disabled={b.busy != null} onClick={() => sellOrder(b, ticker)} style={SELL_BTN}>
+            {b.busy === 'sell' ? 'selling…' : b.sell.label}
+          </Button>
+        </span>
+      )}
+    </>
+  );
+  // One order on a card: its line, then what the bridge or TWS had to say about it (a notice, a
+  // refused change, an exit left working on a closed position), then its buttons. An error on an
+  // order that is still working takes no button away.
+  const orderBlock = (b: BridgeOrderBlock, ticker: string, lead: string | null) => (
+    <span key={b.order_id} style={{ color: ORDER_TONE[b.tone] }}>
+      {lead}{b.text}
+      {b.note && <span style={{ color: '#8c8c8c' }}> · {b.note}</span>}
+      {b.error && <span style={{ color: '#ff7875' }}> · {b.error}</span>}
+      {b.loose && <span style={{ color: '#faad14' }}> · {LOOSE_EXIT}</span>}
+      {orderButtons(b, ticker)}
+    </span>
   );
 
   const row = (c: TickerCard, dim: boolean) => {
@@ -532,33 +591,26 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           >
             {/* An order that ended with nothing filled (cancelled, refused) freed its alert: its
                 line comes first, then the button — "cancelled · Buy 100 @ 0.4302". */}
-            {t.orderText && t.orderEnded && (
-              <span style={{ color: ORDER_TONE[t.orderTone] }}>{t.orderText}{t.buyLabel != null && ' ·'}</span>
+            {t.order != null && t.orderEnded && (
+              <span style={{ color: ORDER_TONE[t.order.tone] }}>
+                {t.order.text}
+                {t.order.error && <span style={{ color: '#ff7875' }}> · {t.order.error}</span>}
+                {t.buyLabel != null && ' ·'}
+              </span>
             )}
             {t.buyLabel != null && (
-              <span
-                ref={(el) => { if (el) buyEls.current.set(e.id, el); else buyEls.current.delete(e.id); }}
-                style={{ display: 'inline-flex' }}
-              >
+              <span ref={holdRef(`buy:${e.id}`)} style={{ display: 'inline-flex' }}>
                 <Button size="small" type="primary" danger={tws.view.live} disabled={t.sending} onClick={() => buyRow(c)} style={BUY_BTN}>
                   {t.sending ? 'sending…' : t.buyLabel}
                 </Button>
               </span>
             )}
-            {/* A working or filled order. Cancel sits in the text's own flow, after its last
-                word, so it costs no line. */}
-            {t.orderText && !t.orderEnded && (
-              <span style={{ color: ORDER_TONE[t.orderTone] }}>
-                {t.orderText}{t.cancelId != null && cancelButton(t.cancelId, c.ticker)}
-              </span>
-            )}
+            {/* The alert's order while it works or holds shares, with its buttons. */}
+            {t.order != null && !t.orderEnded && orderBlock(t.order, c.ticker, null)}
             {t.error && <span style={{ color: '#ff7875' }}>{t.error}</span>}
-            {t.other && (
-              <span style={{ color: '#d9d9d9' }}>
-                earlier order {hhmm(Date.parse(t.other.placed_at))}: {bridgeOrderText(t.other)}
-                {bridgeOrderCancellable(t.other) && cancelButton(t.other.order_id, c.ticker)}
-              </span>
-            )}
+            {/* Other alerts' orders on this ticker that are working or hold shares (and, beside a
+                Buy button, the last one that filled): each keeps its Cancel and its Sell here. */}
+            {t.others.map((b) => orderBlock(b, c.ticker, `earlier order ${hhmm(Date.parse(b.placed_at))}: `))}
             {t.note && <span style={{ color: '#ff7875' }}>{t.note}</span>}
           </div>
         )}

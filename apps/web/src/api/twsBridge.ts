@@ -1,6 +1,8 @@
 // Client for the TWS bridge (tools/tws-bridge, 2026-11-26): a small program on the operator's own
 // computer, next to TWS. The page calls it at http://127.0.0.1:8765 to place the operator's
-// bracket order (/order), to follow it (/orders) and to cancel it (/cancel). Nothing here goes
+// bracket order (/order), to follow it (/orders), to cancel it (/cancel), to move a buy that has
+// not filled up to the ask (/chase) and to get out of what an order bought (/sell). Every one of
+// them is a click: nothing here, and nothing in the bridge, re-prices by itself. Nothing goes
 // through the pnldash API, and the token is sent to the bridge alone: as a header, never in a
 // URL, never logged, and only to a loopback address (bridgeOrigin).
 //
@@ -28,6 +30,18 @@ export interface BridgeOrderSettings {
   stopLimitOffsetPct: number;
   useAlertStop: boolean;
   outsideRth: boolean;
+  // Since the bridge's chase / sell / dollar-sizing version (2026-11-27); an older bridge sends
+  // none of them, and the page then shows no Chase and sizes in shares.
+  maxChases?: number;                 // most chases of one buy, and most later moves of one sell; 0 = no Chase
+  sellOffsetPct?: number;             // a sell's limit = the live bid − this %
+  amountUsd?: number;                 // dollars per buy; 0 = sized in shares (`qty`)
+  askFallback?: 'alert' | 'none';     // with priceFrom "ask": what a buy does when TWS gives no live ask
+}
+
+// How an order's quantity was arrived at: so many dollars' worth, or a number of shares.
+export interface BridgeSizing {
+  mode: 'usd' | 'shares';
+  amount_usd?: number;
 }
 
 export interface BridgeLimits {
@@ -64,11 +78,14 @@ export interface BridgeOrderRequest {
 export interface BridgePreview {
   ticker: string;
   qty: number;
+  sizing?: BridgeSizing;
   limit: number;
   take_profit: number | null;
   stop: number | null;
   stop_limit: number | null;
   notional: number;
+  price_from?: 'alert' | 'ask';
+  note?: string | null;
   checks: Array<{ name: string; detail: string }>;
 }
 
@@ -76,11 +93,37 @@ export interface BridgeOrder {
   order_id: number;
   ticker: string;
   qty: number;
+  sizing?: BridgeSizing;
   limit: number;
   take_profit: number | null;
   stop: number | null;
   stop_limit: number | null;
+  // What the limit was worked out from; "alert" under priceFrom "ask" means the fallback was
+  // used, and `note` then says why ("no live ask from TWS in 800 ms: priced from the alert").
+  price_from?: 'alert' | 'ask';
+  note?: string | null;
   status: string;
+}
+
+// The answer of /chase: the bracket's prices after the move.
+export interface BridgeChase {
+  order_id: number;
+  limit: number;
+  take_profit: number | null;
+  stop: number | null;
+  stop_limit: number | null;
+  chases: number;
+  status: string;
+}
+
+// The answer of /sell: the order doing the selling — the bracket's take-profit leg moved down to
+// the bid, or a sell order of its own when the exits are gone.
+export interface BridgeSell {
+  order_id: number;
+  qty: number;
+  limit: number;
+  status: string;
+  via: 'take_profit' | 'new_order';
 }
 
 export interface BridgeLeg {
@@ -90,7 +133,25 @@ export interface BridgeLeg {
   avg_fill_price: number | null;
 }
 
-// One bracket as GET /orders lists it; `order_id` is the buy's.
+// The last /sell of an order, as /orders shows it. `status`, `filled_qty` and `avg_fill_price`
+// are those of the order doing the selling.
+export interface BridgeExit {
+  via: 'take_profit' | 'new_order';
+  order_id: number;
+  qty: number;                     // the shares this sell is for
+  limit: number;                   // its limit now …
+  first_limit: number;             // … and at the first click
+  bid: number;                     // the bid read at the last click
+  reprices: number;                // how many later clicks moved it down
+  sent_at: string;
+  status: string;
+  filled_qty: number;
+  avg_fill_price: number | null;
+  exit_pct: number | null;         // the average sell against the buy's average fill, %: negative = sold lower
+}
+
+// One bracket as GET /orders lists it; `order_id` is the buy's. The fields marked optional came
+// with the bridge's chase / sell version: asOrders fills them in (0, null) for an older bridge.
 export interface BridgeOrderRecord {
   order_id: number;
   ticker: string;
@@ -103,20 +164,31 @@ export interface BridgeOrderRecord {
     alert_at: string | null;
     alert_id: string | null;
   };
+  sizing?: BridgeSizing;
+  // The prices are the current ones (a chase, a sell through the take-profit leg and a change
+  // made by hand in TWS move them); `first_limit` is what the buy was placed with.
   sent: {
     qty: number;
     limit: number;
     take_profit: number | null;
     stop: number | null;
     stop_limit: number | null;
+    first_limit?: number;
   };
+  chases?: number;                 // how many /chase clicks moved the buy
   status: string;                  // the buy's, in TWS's words (PendingSubmit, Submitted, Filled, Cancelled, …)
   filled_qty: number;
   avg_fill_price: number | null;
   slip_pct: number | null;         // the average fill against the alert's price, %: positive = paid more
+  held_qty?: number;               // bought by this order and not sold yet: what /sell would sell
   legs: { take_profit: BridgeLeg | null; stop: BridgeLeg | null };
-  error: string | null;            // the last message from TWS that stopped the order or one of its legs
-  note: string | null;             // the last warning or notice from TWS about it
+  exit?: BridgeExit | null;        // the last /sell; null until Sell is clicked
+  // An exit leg is still working on an order that holds nothing; the bridge cancels it itself.
+  loose_exit?: boolean;
+  // The last message from TWS that stopped the order or a leg, or refused a change to one. It
+  // can be set on an order that is still working (a refused chase or sell move).
+  error: string | null;
+  note: string | null;             // the last warning or notice about it (at first: why the price came from the alert)
 }
 
 // Every failure in one shape. `status` is the HTTP status, 0 when the bridge gave no answer;
@@ -174,6 +246,11 @@ export function tokenLooksRight(token: string): boolean {
 
 const SHORT_MS = 2500;   // status, preview, orders, cancel, halt
 const ORDER_MS = 6000;   // /order: the bridge answers within about a second, more when TWS is slow
+// /chase reads the ask (0.8 s at most) and waits up to a second for TWS's word on the change.
+const CHASE_MS = 6000;
+// /sell reads the bid and the account's position, may wait for a cancel to be confirmed first
+// (1.5 s) and then for TWS's word: several seconds when everything is slow.
+const SELL_MS = 8000;
 
 async function call<T>(conn: BridgeConn, method: 'GET' | 'POST', path: string, body: unknown, timeoutMs: number): Promise<T> {
   const origin = bridgeOrigin(conn.url);
@@ -253,9 +330,45 @@ function isRecord(o: unknown): o is BridgeOrderRecord {
     && isObj(o.asked) && isObj(o.sent) && isNum(o.sent.qty) && isNum(o.sent.limit) && numOrNull(o.sent.take_profit) && numOrNull(o.sent.stop)
     && isNum(o.filled_qty) && numOrNull(o.avg_fill_price) && numOrNull(o.slip_pct) && (o.error == null || typeof o.error === 'string');
 }
+function isLeg(l: unknown): l is BridgeLeg {
+  return isObj(l) && isNum(l.order_id) && typeof l.status === 'string' && isNum(l.filled_qty) && numOrNull(l.avg_fill_price);
+}
+function isExit(e: unknown): e is BridgeExit {
+  return isObj(e) && (e.via === 'take_profit' || e.via === 'new_order') && isNum(e.order_id) && isNum(e.qty) && isNum(e.limit)
+    && typeof e.status === 'string' && isNum(e.filled_qty) && numOrNull(e.avg_fill_price) && numOrNull(e.exit_pct);
+}
+// A record with everything the card reads in place: what an older bridge does not send (and
+// anything of the wrong kind) becomes "none" — no chases, nothing known to be held, no sell.
+function cleanRecord(o: BridgeOrderRecord): BridgeOrderRecord {
+  const raw = o as unknown as Obj;
+  const legs = isObj(raw.legs) ? raw.legs : {};
+  const exit = isExit(raw.exit)
+    ? { ...raw.exit, bid: isNum(raw.exit.bid) ? raw.exit.bid : raw.exit.limit, first_limit: isNum(raw.exit.first_limit) ? raw.exit.first_limit : raw.exit.limit, reprices: isNum(raw.exit.reprices) ? raw.exit.reprices : 0 }
+    : null;
+  return {
+    ...o,
+    sent: { ...o.sent, first_limit: isNum(o.sent.first_limit) ? o.sent.first_limit : o.sent.limit },
+    chases: isNum(raw.chases) ? raw.chases : 0,
+    held_qty: isNum(raw.held_qty) ? raw.held_qty : undefined,
+    legs: { take_profit: isLeg(legs.take_profit) ? legs.take_profit : null, stop: isLeg(legs.stop) ? legs.stop : null },
+    exit,
+    loose_exit: raw.loose_exit === true,
+    note: typeof raw.note === 'string' ? raw.note : null,
+  };
+}
 function asOrders(d: unknown): BridgeOrderRecord[] {
   if (!Array.isArray(d)) throw notTheBridge('/orders');
-  return d.filter(isRecord);
+  return d.filter(isRecord).map(cleanRecord);
+}
+
+function asChase(d: unknown): BridgeChase {
+  if (isObj(d) && isNum(d.order_id) && isNum(d.limit) && typeof d.status === 'string') return d as unknown as BridgeChase;
+  throw notTheBridge('/chase');
+}
+
+function asSell(d: unknown): BridgeSell {
+  if (isObj(d) && isNum(d.order_id) && isNum(d.qty) && isNum(d.limit) && typeof d.status === 'string') return d as unknown as BridgeSell;
+  throw notTheBridge('/sell');
 }
 
 export const twsBridge = {
@@ -268,6 +381,12 @@ export const twsBridge = {
   orders: async (conn: BridgeConn) => asOrders(await call<unknown>(conn, 'GET', '/orders', undefined, SHORT_MS)),
   cancel: (conn: BridgeConn, orderId: number) =>
     call<{ order_id: number; status: string }>(conn, 'POST', '/cancel', { order_id: orderId }, SHORT_MS),
+  // Moves a working buy up to the live ask + offset, and its exits with it: one call = one move.
+  // The page sends the order's id and nothing else; the bridge reads the ask itself.
+  chase: async (conn: BridgeConn, orderId: number) => asChase(await call<unknown>(conn, 'POST', '/chase', { order_id: orderId }, CHASE_MS)),
+  // Sells what that order still holds just under the live bid; a call while that sell is working
+  // moves it lower. One call = one sell or one move. Not blocked by a halt.
+  sell: async (conn: BridgeConn, orderId: number) => asSell(await call<unknown>(conn, 'POST', '/sell', { order_id: orderId }, SELL_MS)),
   halt: (conn: BridgeConn, halted: boolean) => call<{ halted: boolean }>(conn, 'POST', '/halt', { halted }, SHORT_MS),
 };
 
@@ -292,11 +411,30 @@ export function bridgeLimit(alertPrice: number, limitOffsetPct: number): number 
   return Math.round(raw * scale + 1e-6) / scale;
 }
 
-// "100 @ 0.5858" — what the Buy button carries, from /status's order settings. With the bridge's
-// priceFrom on "ask" the limit is only known at the click: "100 @ ask +1%".
+// Dollars as the bridge writes them, without needless cents: "$400", "$412.50".
+export function bridgeUsd(amount: number): string {
+  return `$${Number.isInteger(amount) ? amount : amount.toFixed(2)}`;
+}
+
+// The shares a dollar-sized buy gets at a limit: as many whole shares as the amount pays for,
+// rounded down, so the order never costs more (the bridge's planOrder, its 1e-9 guard included).
+export function bridgeSharesFor(amountUsd: number, limit: number): number {
+  return Math.floor(amountUsd / limit + 1e-9);
+}
+
+// What the Buy button carries, from /status's order settings:
+//   "100 @ 0.5858"          sized in shares, the limit from the alert's price
+//   "$400 ≈ 929 @ 0.4302"   sized in dollars (order.amountUsd above 0): the shares are the amount ÷
+//                           the rounded limit, rounded down — the bridge's rule
+//   "100 @ ask +1%" / "$400 @ ask +1%"   with the bridge's priceFrom on "ask": the limit, and with
+//                           it the share count, is only known at the click
+// After the click the card prints the bridge's own numbers.
 export function bridgeBuyNumbers(order: BridgeOrderSettings, alertPrice: number): string {
-  if (order.priceFrom === 'ask') return `${order.qty} @ ask +${order.limitOffsetPct}%`;
-  return `${order.qty} @ ${bridgePx(bridgeLimit(alertPrice, order.limitOffsetPct))}`;
+  const usd = order.amountUsd != null && order.amountUsd > 0 ? order.amountUsd : null;
+  if (order.priceFrom === 'ask') return `${usd != null ? bridgeUsd(usd) : order.qty} @ ask +${order.limitOffsetPct}%`;
+  const limit = bridgeLimit(alertPrice, order.limitOffsetPct);
+  if (usd != null) return `${bridgeUsd(usd)} ≈ ${bridgeSharesFor(usd, limit)} @ ${bridgePx(limit)}`;
+  return `${order.qty} @ ${bridgePx(limit)}`;
 }
 
 // The body of /order for one alert row, or null when the row has no usable price. `alert_price`
@@ -318,9 +456,14 @@ function signedPct(p: number): string {
   return `${p > 0 ? '+' : p < 0 ? '−' : ''}${Math.abs(p).toFixed(1)}%`;
 }
 
-// "100 @ 0.5858 · take-profit 0.6444 · stop 0.5565" — the bracket as it went to TWS.
-function bracketText(o: { qty: number; limit: number; take_profit: number | null; stop: number | null }): string {
-  const parts = [`${o.qty} @ ${bridgePx(o.limit)}`];
+// "929 @ 0.4410 (moved 2×, first 0.4302) · take-profit 0.4851 · stop 0.4190" — the bracket as TWS
+// has it, with how often a chase moved the buy and where it started.
+function bracketText(
+  o: { qty: number; limit: number; take_profit: number | null; stop: number | null },
+  moved?: { chases: number; first: number },
+): string {
+  const was = moved != null && moved.chases > 0 ? ` (moved ${moved.chases}×, first ${bridgePx(moved.first)})` : '';
+  const parts = [`${o.qty} @ ${bridgePx(o.limit)}${was}`];
   if (o.take_profit != null) parts.push(`take-profit ${bridgePx(o.take_profit)}`);
   if (o.stop != null) parts.push(`stop ${bridgePx(o.stop)}`);
   return parts.join(' · ');
@@ -331,31 +474,159 @@ export function bridgeSentText(o: BridgeOrder): string {
   return `sent: ${bracketText(o)}`;
 }
 
-// One order as the card prints it:
-//   "sent: 100 @ 0.5858 · take-profit 0.6444 · stop 0.5565"          working, nothing filled
-//   "filled 100 @ 0.5850 (−0.1% vs the alert)"                        the buy filled
-//   "filled 40 of 100 @ 0.5850 (−0.1% vs the alert) · still working"  part of it
-//   "cancelling…" / "cancelled" / "cancelled · 40 of 100 filled @ 0.5850"
-//   "Inactive" and other statuses in TWS's words; TWS's own message when it stopped the order.
-export function bridgeOrderText(o: BridgeOrderRecord): string {
-  const qty = o.sent.qty;
-  const fill = o.avg_fill_price != null && o.filled_qty > 0
-    ? `${o.filled_qty === qty ? `${qty}` : `${o.filled_qty} of ${qty}`} @ ${bridgePx(o.avg_fill_price)}`
-      + (o.slip_pct != null ? ` (${signedPct(o.slip_pct)} vs the alert)` : '')
-    : null;
-  let text: string;
-  if (o.status === 'Filled') text = `filled ${fill ?? `${qty}`}`;
-  else if (o.status === 'Cancelled' || o.status === 'ApiCancelled') text = fill ? `cancelled · ${fill.replace(' @ ', ' filled @ ')}` : 'cancelled';
-  else if (o.status === 'PendingCancel') text = fill ? `cancelling… · filled ${fill}` : 'cancelling…';
-  else if (bridgeOrderDone(o.status)) text = fill ? `${o.status} · filled ${fill}` : o.status;
-  else if (fill) text = `filled ${fill} · still working`;
-  else text = `sent: ${bracketText(o.sent)}`;
-  return o.error ? `${text} · ${o.error}` : text;
-}
-
 // A buy that can still be cancelled: not done, and not already being cancelled.
 export function bridgeOrderCancellable(o: { status: string }): boolean {
   return !bridgeOrderDone(o.status) && o.status !== 'PendingCancel';
+}
+
+// One order as a card shows it: its line, and what can be asked of it now.
+export interface BridgeOrderView {
+  // The line (see bridgeOrderView for every form it takes).
+  text: string;
+  // working (still to fill, or selling) · filled (holds shares) · done (nothing held, nothing working)
+  tone: 'working' | 'filled' | 'done';
+  // TWS's last word against the order: what stopped it or a leg, or refused a change to one. It
+  // can stand on an order that is still working (a refused chase or sell move), so it is shown
+  // beside the line and takes no button away.
+  error: string | null;
+  // The bridge's or TWS's last notice, while the buy is working or a sell is (at first: why the
+  // price came from the alert when the ask was asked for). Not on an order that just holds its
+  // shares: by then it is old news, and the line is long enough.
+  note: string | null;
+  // An exit leg is still working on a position that is closed; the bridge is cancelling it.
+  loose: boolean;
+  // Cancel the buy ("Cancel"), or what has not filled of it ("Cancel the rest"); null = nothing to cancel.
+  cancel: 'Cancel' | 'Cancel the rest' | null;
+  // A working buy with something left to fill and chases left (order.maxChases; 0 = no Chase).
+  chase: boolean;
+  // Shares held: "Sell", "Sell 40" (not all of the order: a part fill, or part already sold), and
+  // "Sell lower" while a sell is working. `lower` tells the two kinds of click apart.
+  sell: { label: string; lower: boolean } | null;
+}
+
+// The line of one order:
+//   working buy          "sent: 929 @ 0.4410 (moved 2×, first 0.4302) · take-profit 0.4851 · stop 0.4190"
+//   part filled, working "filled 40 of 100 @ 2.52 (+0.8% vs the alert) · 60 still working at 2.53"
+//   being cancelled      "cancelling…" / "cancelling the rest… · filled 40 of 100 @ 2.52 (+0.8% vs the alert)"
+//   filled, held         "filled 929 @ 0.4301 (+1.0% vs the alert) · holding 929 · take-profit 0.4731 · stop 0.4086"
+//                        ("… · holding 929 · no exit order working" when neither exit is left in TWS)
+//   filled, closed by an exit of its own
+//                        "filled 929 @ 0.4301 (…) · take-profit filled 929 @ 0.4731 (+10.0% vs the buy)" / "… · stop filled …"
+//   cancelled            "cancelled" / "cancelled · 40 of 100 filled @ 2.52 (+0.8% vs the alert) · holding 40 · …"
+//   other final statuses in TWS's words ("Inactive")
+//   Sell clicked         "bought 929 @ 0.4301 · selling 929 @ 0.4020 (bid 0.4102)"
+//                        "… · selling 929 @ 0.3950 (bid 0.4031, moved 1×, first 0.4020) · sold 400 @ 0.4050 (−5.8% vs the buy), 529 left"
+//   sold                 "bought 929 @ 0.4301 · sold 929 @ 0.4101 (−4.7% vs the buy)"
+//   part sold, sell over "bought 929 @ 0.4301 · sold 400 of 929 @ 0.4050 (−5.8% vs the buy) · 529 still held"
+//   a sell that sold nothing  "… · the sell did not go through (Cancelled)" after the holding line
+// `settings` are /status's order settings (for maxChases); null = not known, so no Chase.
+export function bridgeOrderView(o: BridgeOrderRecord, settings: Pick<BridgeOrderSettings, 'maxChases'> | null): BridgeOrderView {
+  const qty = o.sent.qty;
+  const filled = o.filled_qty;
+  const avg = o.avg_fill_price;
+  const done = bridgeOrderDone(o.status);
+  const cancelling = o.status === 'PendingCancel';
+  const held = o.held_qty ?? 0;
+  const knowsHeld = o.held_qty != null;
+  const exit = o.exit ?? null;
+  const exitWorking = exit != null && !bridgeOrderDone(exit.status);
+  const chases = o.chases ?? 0;
+  const tp = o.legs.take_profit;
+  const st = o.legs.stop;
+  const alive = (l: BridgeLeg | null) => l != null && !bridgeOrderDone(l.status);
+  const vsBuy = (p: number | null) => (p != null && avg != null && avg > 0 ? ` (${signedPct((p / avg - 1) * 100)} vs the buy)` : '');
+
+  // "929 @ 0.4301 (+1.0% vs the alert)" / "40 of 100 @ 2.52 (…)"; `short` leaves the alert out.
+  const fill = (short: boolean): string | null => (avg != null && filled > 0
+    ? `${filled === qty ? `${qty}` : `${filled} of ${qty}`} @ ${bridgePx(avg)}${!short && o.slip_pct != null ? ` (${signedPct(o.slip_pct)} vs the alert)` : ''}`
+    : null);
+  // What is held and what stands between it and a loss: the bracket's exits still working in TWS.
+  const holding = (): string => {
+    const exits: string[] = [];
+    if (alive(tp) && o.sent.take_profit != null) exits.push(`take-profit ${bridgePx(o.sent.take_profit)}`);
+    if (alive(st) && o.sent.stop != null) exits.push(`stop ${bridgePx(o.sent.stop)}`);
+    return `holding ${held} · ${exits.length > 0 ? exits.join(' · ') : 'no exit order working'}`;
+  };
+  // Nothing held and no Sell clicked: an exit of the bracket's own closed it.
+  const closedBy = (): string => {
+    const parts: string[] = [];
+    if (tp != null && tp.filled_qty > 0) parts.push(`take-profit filled ${tp.filled_qty}${tp.avg_fill_price != null ? ` @ ${bridgePx(tp.avg_fill_price)}` : ''}${vsBuy(tp.avg_fill_price)}`);
+    if (st != null && st.filled_qty > 0) parts.push(`stop filled ${st.filled_qty}${st.avg_fill_price != null ? ` @ ${bridgePx(st.avg_fill_price)}` : ''}${vsBuy(st.avg_fill_price)}`);
+    return parts.length > 0 ? parts.join(' · ') : 'nothing held';
+  };
+  const after = (): string => (knowsHeld && filled > 0 ? ` · ${held > 0 ? holding() : closedBy()}` : '');
+
+  let text: string;
+  let tone: BridgeOrderView['tone'];
+  if (exit != null && (exitWorking || exit.filled_qty > 0)) {
+    // Sell was clicked, and that sell is working or has sold something.
+    const at = exit.avg_fill_price != null
+      ? ` @ ${bridgePx(exit.avg_fill_price)}${exit.exit_pct != null ? ` (${signedPct(exit.exit_pct)} vs the buy)` : ''}`
+      : '';
+    let selling: string;
+    if (exitWorking) {
+      const was = exit.reprices > 0 ? `, moved ${exit.reprices}×, first ${bridgePx(exit.first_limit)}` : '';
+      selling = `selling ${exit.qty} @ ${bridgePx(exit.limit)} (bid ${bridgePx(exit.bid)}${was})`;
+      if (exit.filled_qty > 0) selling += ` · sold ${exit.filled_qty}${at}, ${Math.max(0, exit.qty - exit.filled_qty)} left`;
+    } else {
+      selling = exit.filled_qty >= exit.qty ? `sold ${exit.filled_qty}${at}` : `sold ${exit.filled_qty} of ${exit.qty}${at}`;
+      if (held > 0) selling += ` · ${held} still held`;
+    }
+    text = `bought ${fill(true) ?? `${qty}`} · ${selling}`;
+    tone = exitWorking ? 'working' : held > 0 ? 'filled' : 'done';
+  } else {
+    if (!done && !cancelling) {
+      const f = fill(false);
+      const moved = { chases, first: o.sent.first_limit ?? o.sent.limit };
+      text = f != null
+        ? `filled ${f} · ${Math.max(0, qty - filled)} still working at ${bridgePx(o.sent.limit)}${chases > 0 ? ` (moved ${chases}×, first ${bridgePx(moved.first)})` : ''}`
+        : `sent: ${bracketText(o.sent, moved)}`;
+      tone = 'working';
+    } else if (cancelling) {
+      const f = fill(false);
+      text = f != null ? `cancelling the rest… · filled ${f}` : 'cancelling…';
+      tone = 'working';
+    } else if (o.status === 'Filled') {
+      text = `filled ${fill(false) ?? `${qty}`}${after()}`;
+      tone = knowsHeld && held === 0 ? 'done' : 'filled';
+    } else {
+      const word = o.status === 'Cancelled' || o.status === 'ApiCancelled' ? 'cancelled' : o.status;
+      const f = fill(false);
+      text = f != null ? `${word} · ${f.replace(' @ ', ' filled @ ')}${after()}` : word;
+      tone = held > 0 ? 'filled' : 'done';
+    }
+    // A sell that ended with nothing sold: the shares are still held, and Sell can be clicked again.
+    if (exit != null) text += ` · the sell did not go through (${exit.status})`;
+  }
+
+  const maxChases = settings?.maxChases ?? 0;
+  return {
+    text,
+    tone,
+    error: o.error ?? null,
+    note: !done || exitWorking ? o.note ?? null : null,
+    loose: o.loose_exit === true,
+    cancel: bridgeOrderCancellable(o) ? (filled > 0 ? 'Cancel the rest' : 'Cancel') : null,
+    chase: !done && !cancelling && filled < qty && maxChases > 0 && chases < maxChases,
+    sell: held > 0 ? { lower: exitWorking, label: exitWorking ? 'Sell lower' : held === qty ? 'Sell' : `Sell ${held}` } : null,
+  };
+}
+
+// The line alone.
+export function bridgeOrderText(o: BridgeOrderRecord): string {
+  return bridgeOrderView(o, null).text;
+}
+
+// Does the page have a reason to ask /orders often about this order? While the buy is working,
+// and while it holds shares with a sell working.
+export function bridgeOrderBusy(o: BridgeOrderRecord): boolean {
+  return !bridgeOrderDone(o.status) || ((o.held_qty ?? 0) > 0 && o.exit != null && !bridgeOrderDone(o.exit.status));
+}
+
+// …and a reason to ask now and then: it is busy, it holds shares (its exits in TWS can fill at
+// any time), or an exit of it is loose.
+export function bridgeOrderLive(o: BridgeOrderRecord): boolean {
+  return bridgeOrderBusy(o) || (o.held_qty ?? 0) > 0 || o.loose_exit === true;
 }
 
 // Does this order use up its alert? Only while it is still working, or once anything of it has
@@ -384,6 +655,15 @@ export interface BridgeView {
   canOrder: boolean;
   // Orders would go to a LIVE account (TWS reports a non-paper account and paper_only is off).
   live: boolean;
+  // A chase would be accepted: what an order needs, but for the day's order count (a chase is
+  // the same order again).
+  canChase: boolean;
+  // A sell (and a cancel) can be asked for: the bridge answers and TWS is connected. A halt does
+  // not block getting out, and neither does the alert's age; what else may stand in the way
+  // (TWS offline, a live account under paper-only) the bridge says in its own words.
+  canSell: boolean;
+  // TWS is logged in to a non-paper account, whatever the switches say: the Sell button reads "LIVE".
+  liveAccount: boolean;
 }
 
 // The status the sidebar prints, from the last /status answer (or the failure in its place).
@@ -402,7 +682,7 @@ export function describeBridge(
   setup: { url: string; token: string },
   poll: { status: BridgeStatus | null; failure: BridgeFailure | null },
 ): BridgeView {
-  const off = { canOrder: false, live: false };
+  const off = { canOrder: false, live: false, canChase: false, canSell: false, liveAccount: false };
   if (bridgeOrigin(setup.url) == null) return { text: 'TWS bridge: the URL must be http://127.0.0.1:<port>', tone: 'warn', ...off };
   if (setup.token === '') return { text: 'TWS bridge: not set up (no token)', tone: 'muted', ...off };
   const f = poll.failure;
@@ -419,8 +699,10 @@ export function describeBridge(
   const paper = s.tws.paper;
   const account = !known ? 'TWS: connected' : paper ? 'TWS: paper' : 'TWS: LIVE account';
   const tone: BridgeTone = paper ? 'ok' : 'danger';
-  const blocked = (why: string, t: BridgeTone = 'warn'): BridgeView =>
-    ({ text: `${account} · ${why}`, tone: t, canOrder: false, live: false });
+  // From here the bridge answers and TWS is connected: a sell can be asked for in every case.
+  const liveAccount = known && !paper;
+  const blocked = (why: string, t: BridgeTone = 'warn', canChase = false): BridgeView =>
+    ({ text: `${account} · ${why}`, tone: t, canOrder: false, live: false, canChase, canSell: true, liveAccount });
   // TWS has lost IB's servers (a newer bridge says so; an older one sends no `offline`): no
   // orders, whatever else is on.
   if (s.tws.offline === true) return blocked("offline (TWS has lost IB's servers) · no orders");
@@ -428,6 +710,7 @@ export function describeBridge(
   if (!paper && s.paper_only) return blocked('no orders (the bridge is paper-only)');
   if (s.halted) return blocked('halted');
   if (!s.enabled) return blocked("orders off in the bridge's config");
-  if (s.today.orders >= s.limits.maxOrdersPerDay) return blocked(`daily limit reached (${s.today.orders} of ${s.limits.maxOrdersPerDay})`);
-  return { text: `${account} · ready`, tone, canOrder: true, live: !paper };
+  // The day's count stops new orders; a chase is not one.
+  if (s.today.orders >= s.limits.maxOrdersPerDay) return blocked(`daily limit reached (${s.today.orders} of ${s.limits.maxOrdersPerDay})`, 'warn', true);
+  return { text: `${account} · ready`, tone, canOrder: true, live: !paper, canChase: true, canSell: true, liveAccount };
 }

@@ -392,6 +392,20 @@ the POP at 04:27 ET off a flat base ("suitable") and the one at 11:10 ET after a
   important; the bridge keeps `/focus` and now logs every group change, unused); **(2) an order that ends with nothing
   filled frees its alert**, so Buy returns after a cancel ("the Buy button should be re-appeared after cancelling"),
   in the bridge (`usesUpAlert`) and the dashboard (`bridgeOrderCounts`) alike. Bridge 178 tests.
+- **Orders that don't fill, 11-27 (operator's clock):** "when price moves too quickly … the placed order can't be
+  filled … I usually, move them manually towards the price. And, same happens to selling". Their answers: "YES,
+  certainly, we need a Sell button"; pay up to 3% past the alert; the stop's limit 3% under the stop; they don't use
+  IB's Adaptive; and "make a Buy button use fixed amount of dollars … $400 for each trade". An automatic chase was
+  offered and not asked for: every price change is a click. Built (`8d0079a` bridge, 294 tests; the dashboard commit
+  after it): `/chase` (a working buy up to the live ask + 1%, exits with it, within 3% of the alert, 5 moves), `/sell`
+  (what the order holds, just under the live bid, by moving the take-profit leg or with one new sell order; never more
+  than held or the account's position; works while halted), `order.amountUsd` (shares = amount ÷ limit), `priceFrom:
+  "ask"` with a fallback to the alert's price, and a clean-up that cancels a sell leg left working on a flat order.
+  The dashboard: `Buy $400 ≈ 929 @ …`, Chase / Cancel / Sell on the order's line, "Sell lower", the order's fills and
+  exits in words. **Their `config.json` now:** `amountUsd` 400, `priceFrom` ask, `limitOffsetPct` 1, `maxChasePct` 3,
+  `stopLimitOffsetPct` 3, `maxShares` 50000 (take-profit +10% and stop −5% are still my placeholders).
+  **None of chase / sell / live-ask pricing has run against a real TWS**: the bridge README's "To try on the paper
+  login, in market hours" list is the checklist; the first point to watch is that the stop is cancelled after a Sell.
 - **For the operator (bridge):** TWS → Global Configuration → API → Settings (Enable ActiveX and Socket Clients; untick
   Read-Only API; port 7497 on the paper login; localhost only), link the TWS windows to a colour group, `npm install
   --ignore-scripts && npm start` in `tools/tws-bridge`, put the token from its `config.json` into the dashboard's TWS

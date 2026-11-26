@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Button, Checkbox, Divider, Input, Popover, Switch, Typography } from 'antd';
-import { BRIDGE_TONE, bridgeOrigin, tokenLooksRight, type BridgeStatus } from '../../api/twsBridge';
+import { BRIDGE_TONE, bridgeOrigin, bridgeUsd, tokenLooksRight, type BridgeStatus } from '../../api/twsBridge';
 import type { TwsBridge } from '../../hooks/useTwsBridge';
 
 const { Text } = Typography;
@@ -13,11 +13,26 @@ function orderRows(s: BridgeStatus): Array<[string, string]> {
   const stop = o.stopPct > 0
     ? `limit − ${o.stopPct}%${o.useAlertStop ? ", or the alert's stop when it has one" : ''} (its own limit ${o.stopLimitOffsetPct}% lower)`
     : 'none';
+  // Sized in dollars (order.amountUsd above 0) or in shares.
+  const usd = o.amountUsd != null && o.amountUsd > 0 ? o.amountUsd : null;
+  const size: [string, string] = usd != null
+    ? ['Amount', `${bridgeUsd(usd)} per trade (whole shares at the buy's limit, rounded down)`]
+    : ['Shares', `${o.qty}`];
+  // Where the buy's limit starts from, and what happens when TWS has no live ask.
+  const from = o.priceFrom === 'ask'
+    ? `the live ask + ${o.limitOffsetPct}% (${o.askFallback === 'alert' ? `the alert's price + ${o.limitOffsetPct}% when TWS gives no ask` : 'no order when TWS gives no ask'})`
+    : `the alert's price + ${o.limitOffsetPct}%`;
+  // The chase and sell settings came with a later bridge: an older one sends neither.
+  const chase: Array<[string, string]> = o.maxChases == null ? []
+    : [['Chase', o.maxChases > 0 ? `up to ${o.maxChases} move${o.maxChases === 1 ? '' : 's'}, never more than ${o.maxChasePct}% past the alert` : 'off']];
+  const sell: Array<[string, string]> = o.sellOffsetPct == null ? [] : [['Sell', `the live bid − ${o.sellOffsetPct}%`]];
   return [
-    ['Shares', `${o.qty}`],
-    ['Limit', `${o.priceFrom === 'ask' ? "TWS's ask at the click" : "the alert's price"} + ${o.limitOffsetPct}% (no order when that is over ${o.maxChasePct}% past the alert)`],
+    size,
+    ['Limit', `${from} · no order over ${o.maxChasePct}% past the alert`],
     ['Take-profit', o.takeProfitPct > 0 ? `limit + ${o.takeProfitPct}%` : 'none'],
     ['Stop', stop],
+    ...chase,
+    ...sell,
     ['Max per order', `$${l.maxNotionalUsd.toLocaleString('en-US')} · ${l.maxShares} shares`],
     ['Orders today', `${s.today.orders} of ${l.maxOrdersPerDay} · ${s.today.filled} filled`],
     ['Hours', o.outsideRth ? 'pre-market and after hours too' : 'regular hours only'],
@@ -110,7 +125,9 @@ export function TwsBridgePanel({ bridge }: { bridge: TwsBridge }) {
               {status.halted ? 'Resume orders' : 'Halt orders'}
             </Button>
             <Text type="secondary" style={{ fontSize: 11 }}>
-              {status.halted ? 'Halted: the bridge places no orders until you resume. Orders already in TWS stay there.' : 'Halt = the bridge places no orders until you resume.'}
+              {status.halted
+                ? 'Halted: no new order and no Chase until you resume. Sell and Cancel still work; orders already in TWS stay there.'
+                : 'Halt = no new order and no Chase until you resume. Sell and Cancel still work.'}
             </Text>
           </div>
           {haltError && <span style={{ fontSize: 11, color: BRIDGE_TONE.danger }}>{haltError}</span>}
