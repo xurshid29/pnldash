@@ -62,13 +62,21 @@ export function isDone(status: string): boolean {
 }
 
 /**
- * Does this order use up its alert? Every order does, a cancelled one too, except one that was
- * stopped before any fill and has nothing left working: TWS refused it, or it never went out.
+ * Does this order use up its alert? Only while it is still working, or once anything of it has
+ * filled. An order that has ended with nothing filled frees its alert, whoever ended it: the
+ * operator cancelled it (from the dashboard or in TWS), TWS refused it, or it never went out.
+ *
+ * "Ended" is a finished status, which TWS has confirmed or the bridge has set itself for a buy
+ * TWS will never report on. `PendingCancel` is not one: until the cancel is confirmed the buy can
+ * still fill.
+ *
  * The dashboard decides whether an alert can be clicked again with the same rule
- * (`bridgeOrderCounts` in apps/web/src/api/twsBridge.ts): keep the two in step.
+ * (`bridgeOrderCounts` in apps/web/src/api/twsBridge.ts): keep the two in step. The one thing
+ * written out here that is implied there is that a `Filled` status counts even if no fill
+ * quantity came with it.
  */
 export function usesUpAlert(record: OrderRecord): boolean {
-  return !(record.error !== null && record.filled_qty === 0 && isDone(record.status));
+  return record.filled_qty > 0 || record.status === "Filled" || !isDone(record.status);
 }
 
 export function slipPct(avgFillPrice: number, alertPrice: number): number {

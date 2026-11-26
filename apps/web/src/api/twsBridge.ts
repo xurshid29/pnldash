@@ -1,8 +1,12 @@
 // Client for the TWS bridge (tools/tws-bridge, 2026-11-26): a small program on the operator's own
-// computer, next to TWS. The page calls it at http://127.0.0.1:8765 to show a ticker in TWS
-// (/focus) or to place the operator's bracket order (/order). Nothing here goes through the
-// pnldash API, and the token is sent to the bridge alone: as a header, never in a URL, never
-// logged, and only to a loopback address (bridgeOrigin).
+// computer, next to TWS. The page calls it at http://127.0.0.1:8765 to place the operator's
+// bracket order (/order), to follow it (/orders) and to cancel it (/cancel). Nothing here goes
+// through the pnldash API, and the token is sent to the bridge alone: as a header, never in a
+// URL, never logged, and only to a loopback address (bridgeOrigin).
+//
+// The bridge also has /focus (make TWS's linked windows show a ticker). The page used it for a
+// per-row "TWS" button and a row click that TWS followed; both were removed on 2026-11-27 at the
+// operator's request, and this client's focus() with them.
 
 export const BRIDGE_DEFAULT_URL = 'http://127.0.0.1:8765';
 
@@ -41,16 +45,9 @@ export interface BridgeStatus {
   enabled: boolean;
   halted: boolean;
   paper_only: boolean;
-  display_group: number;
   order: BridgeOrderSettings;
   limits: BridgeLimits;
   today: { orders: number; filled: number };
-}
-
-export interface BridgeFocus {
-  ticker: string;
-  conid: number;
-  group: number;
 }
 
 // The body of /preview and /order. The bridge answers 400 to an unknown field, so only these.
@@ -176,9 +173,6 @@ export function tokenLooksRight(token: string): boolean {
 }
 
 const SHORT_MS = 2500;   // status, preview, orders, cancel, halt
-// /focus: the bridge's own contract lookup may take 3 s, and its error text ("TWS did not answer
-// …") is the better one to show, so the page waits a little longer than that.
-const FOCUS_MS = 4000;
 const ORDER_MS = 6000;   // /order: the bridge answers within about a second, more when TWS is slow
 
 async function call<T>(conn: BridgeConn, method: 'GET' | 'POST', path: string, body: unknown, timeoutMs: number): Promise<T> {
@@ -264,16 +258,8 @@ function asOrders(d: unknown): BridgeOrderRecord[] {
   return d.filter(isRecord);
 }
 
-function asFocus(d: unknown, ticker: string): BridgeFocus {
-  // Only the ticker is printed ("TWS → RAYA"): a missing one falls back to what was asked for.
-  const o = isObj(d) ? d : {};
-  return { ticker: typeof o.ticker === 'string' ? o.ticker : ticker, conid: isNum(o.conid) ? o.conid : 0, group: isNum(o.group) ? o.group : 0 };
-}
-
 export const twsBridge = {
   status: async (conn: BridgeConn) => asStatus(await call<unknown>(conn, 'GET', '/status', undefined, SHORT_MS)),
-  // The TWS windows linked to the bridge's display group jump to the ticker. Places nothing.
-  focus: async (conn: BridgeConn, ticker: string) => asFocus(await call<unknown>(conn, 'POST', '/focus', { ticker }, FOCUS_MS), ticker),
   // The order /order would send right now, or the error it would give. Sends nothing.
   preview: (conn: BridgeConn, req: BridgeOrderRequest) => call<BridgePreview>(conn, 'POST', '/preview', req, SHORT_MS),
   // Places the bracket: one call = one order. Never retried by this client. An answer that
@@ -372,10 +358,18 @@ export function bridgeOrderCancellable(o: { status: string }): boolean {
   return !bridgeOrderDone(o.status) && o.status !== 'PendingCancel';
 }
 
-// Does this order use up its alert? One that TWS stopped before anything filled does not: the
-// bridge cancels such a bracket, nothing is left working, and the alert can be bought again.
-export function bridgeOrderCounts(o: BridgeOrderRecord): boolean {
-  return !(o.error != null && o.filled_qty === 0 && bridgeOrderDone(o.status));
+// Does this order use up its alert? Only while it is still working, or once anything of it has
+// filled. An order that has ended with nothing filled frees its alert, whoever ended it: the
+// operator cancelled it (from the card or in TWS), TWS refused it, or it never went out
+// (2026-11-27, the operator after the first real test: "the Buy button should re-appear after
+// cancelling"). "Ended" is a final status (Cancelled, Inactive); `PendingCancel` is not one —
+// until the cancel is confirmed the buy can still fill. A cancelled order with a partial fill
+// still counts.
+//
+// The bridge refuses a second order on an alert by the same rule (`usesUpAlert` in
+// tools/tws-bridge/src/book.ts): keep the two in step.
+export function bridgeOrderCounts(o: Pick<BridgeOrderRecord, 'status' | 'filled_qty'>): boolean {
+  return o.filled_qty > 0 || o.status === 'Filled' || !bridgeOrderDone(o.status);
 }
 
 export type BridgeTone = 'muted' | 'ok' | 'warn' | 'danger';
@@ -386,8 +380,6 @@ export interface BridgeView {
   // What the status line reads.
   text: string;
   tone: BridgeTone;
-  // The bridge answers and TWS is connected: a /focus can work.
-  canFocus: boolean;
   // Every switch the page can see says an order would be accepted.
   canOrder: boolean;
   // Orders would go to a LIVE account (TWS reports a non-paper account and paper_only is off).
@@ -410,7 +402,7 @@ export function describeBridge(
   setup: { url: string; token: string },
   poll: { status: BridgeStatus | null; failure: BridgeFailure | null },
 ): BridgeView {
-  const off = { canFocus: false, canOrder: false, live: false };
+  const off = { canOrder: false, live: false };
   if (bridgeOrigin(setup.url) == null) return { text: 'TWS bridge: the URL must be http://127.0.0.1:<port>', tone: 'warn', ...off };
   if (setup.token === '') return { text: 'TWS bridge: not set up (no token)', tone: 'muted', ...off };
   const f = poll.failure;
@@ -428,14 +420,14 @@ export function describeBridge(
   const account = !known ? 'TWS: connected' : paper ? 'TWS: paper' : 'TWS: LIVE account';
   const tone: BridgeTone = paper ? 'ok' : 'danger';
   const blocked = (why: string, t: BridgeTone = 'warn'): BridgeView =>
-    ({ text: `${account} · ${why}`, tone: t, canFocus: true, canOrder: false, live: false });
+    ({ text: `${account} · ${why}`, tone: t, canOrder: false, live: false });
   // TWS has lost IB's servers (a newer bridge says so; an older one sends no `offline`): no
-  // orders, whatever else is on. A /focus may still work for a ticker the bridge already knows.
+  // orders, whatever else is on.
   if (s.tws.offline === true) return blocked("offline (TWS has lost IB's servers) · no orders");
   if (!known) return blocked('account not reported yet', 'muted');
   if (!paper && s.paper_only) return blocked('no orders (the bridge is paper-only)');
   if (s.halted) return blocked('halted');
   if (!s.enabled) return blocked("orders off in the bridge's config");
   if (s.today.orders >= s.limits.maxOrdersPerDay) return blocked(`daily limit reached (${s.today.orders} of ${s.limits.maxOrdersPerDay})`);
-  return { text: `${account} · ready`, tone, canFocus: true, canOrder: true, live: !paper };
+  return { text: `${account} · ready`, tone, canOrder: true, live: !paper };
 }

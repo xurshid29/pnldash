@@ -21,7 +21,7 @@ function orderRows(s: BridgeStatus): Array<[string, string]> {
     ['Max per order', `$${l.maxNotionalUsd.toLocaleString('en-US')} · ${l.maxShares} shares`],
     ['Orders today', `${s.today.orders} of ${l.maxOrdersPerDay} · ${s.today.filled} filled`],
     ['Hours', o.outsideRth ? 'pre-market and after hours too' : 'regular hours only'],
-    ['TWS', `port ${s.tws.port} · ${s.tws.accounts.length > 0 ? `account ${s.tws.accounts.join(', ')}` : 'no account reported'} · display group ${s.display_group} · bridge ${s.version}`],
+    ['TWS', `port ${s.tws.port} · ${s.tws.accounts.length > 0 ? `account ${s.tws.accounts.join(', ')}` : 'no account reported'} · bridge ${s.version}`],
   ];
 }
 
@@ -85,9 +85,6 @@ export function TwsBridgePanel({ bridge }: { bridge: TwsBridge }) {
           </span>
         )}
       </div>
-      <Checkbox checked={settings.follow} onChange={(e) => bridge.update({ follow: e.target.checked })}>
-        <span style={{ fontSize: 12 }}>Selecting a setup row also shows it in TWS</span>
-      </Checkbox>
       <Checkbox checked={settings.buy} onChange={(e) => bridge.update({ buy: e.target.checked })}>
         <span style={{ fontSize: 12 }}>Show the Buy button on alerts up to 10 minutes old</span>
       </Checkbox>
@@ -113,7 +110,7 @@ export function TwsBridgePanel({ bridge }: { bridge: TwsBridge }) {
               {status.halted ? 'Resume orders' : 'Halt orders'}
             </Button>
             <Text type="secondary" style={{ fontSize: 11 }}>
-              {status.halted ? 'Halted: the bridge places no orders. Showing a ticker still works.' : 'Halt = the bridge places no orders until you resume.'}
+              {status.halted ? 'Halted: the bridge places no orders until you resume. Orders already in TWS stay there.' : 'Halt = the bridge places no orders until you resume.'}
             </Text>
           </div>
           {haltError && <span style={{ fontSize: 11, color: BRIDGE_TONE.danger }}>{haltError}</span>}
@@ -143,14 +140,10 @@ export function TwsBridgeButton({ bridge }: { bridge: TwsBridge }) {
 export function TwsBridgeLine({ bridge }: { bridge: TwsBridge }) {
   const { settings, view } = bridge;
   if (!settings.enabled) return null;
-  const extra = [
-    view.canFocus && !settings.follow ? 'a row click does not move TWS' : null,
-    view.canOrder && !settings.buy ? 'Buy buttons off' : null,
-  ].filter((x): x is string => x != null);
   return (
     <div style={{ padding: '2px 8px', borderBottom: '1px solid #262626', fontSize: 11, color: BRIDGE_TONE[view.tone], fontWeight: view.live ? 700 : 400 }}>
       {view.text}
-      {extra.length > 0 && <span style={{ color: '#8c8c8c', fontWeight: 400 }}> · {extra.join(' · ')}</span>}
+      {view.canOrder && !settings.buy && <span style={{ color: '#8c8c8c', fontWeight: 400 }}> · Buy buttons off</span>}
     </div>
   );
 }

@@ -5,10 +5,13 @@ import path from "node:path";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import { FileJournal } from "../src/journal.js";
+import { listing } from "./fake-tws.js";
+import type { FakeTws } from "./fake-tws.js";
 import { buy, refuses, rig, T0, TOKEN } from "./harness.js";
 
-// One order per alert: an alert_id that an order placed today already carries is refused
-// (409 duplicate_alert), unless that order was stopped before any fill and nothing of it is left.
+// One order per alert: an alert_id is refused (409 duplicate_alert) while an order placed today
+// with that id is still working or has any fill. An order that ended with nothing filled frees
+// its alert, whoever ended it: cancelled by the operator, refused by TWS, never sent.
 
 function tempDir(t: TestContext): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tws-bridge-alert-"));
@@ -92,20 +95,90 @@ test("alert: /preview lists the check, and a preview does not use the alert up",
   assert.equal((await r.bridge.order(buy({ alert_id: "ev-1" }))).order_id, 1000);
 });
 
-test("alert: an order the operator cancelled still uses up its alert", async (t) => {
+test("alert: an order the operator cancelled frees its alert once TWS confirms the cancel", async (t) => {
   const r = await rig(t);
   await r.bridge.order(buy({ alert_id: "ev-1" }));
   const ib = r.world.current;
   ib.emit("orderStatus", 1000, "Submitted", 0, 100, 0);
-  r.bridge.cancel({ order_id: 1000 });
+  r.clock.now += LATER;
+  await refuses(r.bridge.order(buy({ alert_id: "ev-1" })), 409, "duplicate_alert", TAKEN); // working
+
+  // Asked for, not yet confirmed: the buy can still fill, so the alert is still taken.
+  assert.equal(r.bridge.cancel({ order_id: 1000 }).status, "PendingCancel");
+  await refuses(r.bridge.order(buy({ alert_id: "ev-1" })), 409, "duplicate_alert", TAKEN);
+  await refuses(r.bridge.preview(buy({ alert_id: "ev-1" })), 409, "duplicate_alert", TAKEN);
+  assert.equal(r.world.allPlaced().length, 3);
+
   ib.emit("error", new Error("Order Canceled - reason:"), 202, 1000);
   ib.emit("orderStatus", 1000, "Cancelled", 0, 100, 0);
   assert.equal(r.bridge.orders()[0]?.status, "Cancelled");
   assert.equal(r.bridge.orders()[0]?.error, null);
 
+  // Ended with nothing filled: the Buy can come back, and a new order goes out.
+  const preview = await r.bridge.preview(buy({ alert_id: "ev-1" }));
+  assert.equal(preview.checks.find((check) => check.name === "alert")?.detail, "no order uses up this alert today");
+  assert.equal((await r.bridge.order(buy({ alert_id: "ev-1" }))).order_id, 1003);
+  assert.equal(r.world.allPlaced().length, 6);
+
+  // The new order is working: now it has the alert.
+  r.clock.now += LATER;
+  await refuses(r.bridge.order(buy({ alert_id: "ev-1" })), 409, "duplicate_alert", /\(order 1003, ABCD, 10:01:00 New York\)$/);
+});
+
+test("alert: an order cancelled in TWS itself frees its alert the same way", async (t) => {
+  const r = await rig(t);
+  await r.bridge.order(buy({ alert_id: "ev-1" }));
+  const ib = r.world.current;
+  ib.emit("orderStatus", 1000, "Submitted", 0, 100, 0);
+  // The operator cancels it in TWS: the bridge only hears the status.
+  ib.emit("orderStatus", 1000, "Cancelled", 0, 100, 0);
+  ib.emit("orderStatus", 1001, "Cancelled", 0, 100, 0);
+  ib.emit("orderStatus", 1002, "Cancelled", 0, 100, 0);
+  assert.deepEqual(ib.callsOf("cancelOrder"), []);
+  r.clock.now += LATER;
+  assert.equal((await r.bridge.order(buy({ alert_id: "ev-1" }))).order_id, 1003);
+
+  // "ApiCancelled" is the same ending under TWS's other name.
+  ib.emit("orderStatus", 1003, "ApiCancelled", 0, 100, 0);
+  r.clock.now += LATER;
+  assert.equal((await r.bridge.order(buy({ alert_id: "ev-1" }))).order_id, 1006);
+});
+
+test("alert: a cancelled order with a partial fill still uses up its alert", async (t) => {
+  const r = await rig(t);
+  await r.bridge.order(buy({ alert_id: "ev-1" }));
+  const ib = r.world.current;
+  ib.emit("orderStatus", 1000, "Submitted", 40, 60, 2.52);
+  r.bridge.cancel({ order_id: 1000 });
+  ib.emit("orderStatus", 1000, "Cancelled", 40, 60, 2.52);
+  const [order] = r.bridge.orders();
+  assert.deepEqual([order?.status, order?.filled_qty], ["Cancelled", 40]);
+
   r.clock.now += LATER;
   await refuses(r.bridge.order(buy({ alert_id: "ev-1" })), 409, "duplicate_alert", TAKEN);
   assert.equal(r.world.allPlaced().length, 3);
+});
+
+test("alert: a cancelled order still counts for the day and still starts the ticker's window", async (t) => {
+  const r = await rig(t, { config: (c) => (c.limits.maxOrdersPerDay = 2) });
+  await r.bridge.order(buy({ alert_id: "ev-1" }));
+  r.bridge.cancel({ order_id: 1000 });
+  r.world.current.emit("orderStatus", 1000, "Cancelled", 0, 100, 0);
+  assert.deepEqual(r.bridge.status().today, { orders: 1, filled: 0 });
+
+  // The alert is free, but the ticker was ordered three seconds ago.
+  r.clock.now += 3000;
+  await refuses(r.bridge.order(buy({ alert_id: "ev-1" })), 409, "duplicate", /ABCD was ordered 3s ago/);
+
+  r.clock.now += LATER;
+  assert.equal((await r.bridge.order(buy({ alert_id: "ev-1" }))).order_id, 1003); // the second of two
+  r.bridge.cancel({ order_id: 1003 });
+  r.world.current.emit("orderStatus", 1003, "Cancelled", 0, 100, 0);
+
+  // Free again, but the day's two orders are spent, cancelled or not.
+  r.clock.now += LATER;
+  await refuses(r.bridge.order(buy({ alert_id: "ev-1" })), 409, "daily_limit", /2 of 2 today/);
+  assert.deepEqual(r.bridge.status().today, { orders: 2, filled: 0 });
 });
 
 test("alert: a filled order uses up its alert, also when TWS refused one of its exits afterwards", async (t) => {
@@ -182,15 +255,18 @@ test("alert: a refused buy that TWS says it does not have is over, and its alert
   assert.equal(ib.callsOf("cancelOrder").length, 1);
 });
 
-test("alert: an operator's cancel that TWS answers with 'not found' ends the order but keeps the alert used", async (t) => {
+test("alert: an operator's cancel that TWS answers with 'not found' ends the order and frees the alert", async (t) => {
   const r = await rig(t);
   await r.bridge.order(buy({ alert_id: "ev-1" }));
   r.bridge.cancel({ order_id: 1000 });
+  r.clock.now += LATER;
+  await refuses(r.bridge.order(buy({ alert_id: "ev-1" })), 409, "duplicate_alert", TAKEN); // PendingCancel
+
+  // TWS has no such order: it is over with nothing filled, and no status will ever say so.
   r.world.current.emit("error", new Error("Can't find order with id = 1000"), 135, 1000);
   assert.equal(r.bridge.orders()[0]?.status, "Inactive");
   assert.equal(r.bridge.orders()[0]?.error, null);
-  r.clock.now += LATER;
-  await refuses(r.bridge.order(buy({ alert_id: "ev-1" })), 409, "duplicate_alert", TAKEN);
+  assert.equal((await r.bridge.order(buy({ alert_id: "ev-1" }))).order_id, 1003);
 });
 
 test("alert: an order that failed to send frees its alert; the ticker's window still holds", async (t) => {
@@ -248,7 +324,11 @@ test("alert: the rule is per New York date", async (t) => {
 
 test("alert: the rule holds across a restart, with each order's outcome read back from the log", async (t) => {
   const dir = tempDir(t);
-  const a = await rig(t, { journal: new FileJournal(dir, () => T0, [TOKEN]) });
+  const moreTickers = (w: FakeTws): void => {
+    w.contracts.set("PART", [listing("PART", 666, "NASDAQ")]);
+    w.contracts.set("PEND", [listing("PEND", 777, "NASDAQ")]);
+  };
+  const a = await rig(t, { journal: new FileJournal(dir, () => T0, [TOKEN]), world: moreTickers });
   const ib = a.world.current;
 
   await a.bridge.order(buy({ alert_id: 987 })); // 1000: working
@@ -257,7 +337,7 @@ test("alert: the rule holds across a restart, with each order's outcome read bac
   ib.emit("error", new Error("Order rejected - reason: no"), 201, 1003);
   ib.emit("orderStatus", 1003, "Inactive", 0, 100, 0);
 
-  await a.bridge.order(buy({ ticker: "QQQQ", alert_id: "ev-3" })); // 1006: the operator cancels it
+  await a.bridge.order(buy({ ticker: "QQQQ", alert_id: "ev-3" })); // 1006: the operator cancels it, nothing filled
   a.bridge.cancel({ order_id: 1006 });
   ib.emit("orderStatus", 1006, "Cancelled", 0, 100, 0);
 
@@ -269,40 +349,53 @@ test("alert: the rule holds across a restart, with each order's outcome read bac
   ib.emit("error", new Error("Order rejected - reason: no"), 201, 1012);
   ib.emit("error", new Error("OrderId 1012 that needs to be cancelled is not found."), 10147, 1012);
 
+  await a.bridge.order(buy({ ticker: "PART", alert_id: "ev-6" })); // 1015: cancelled after 40 of 100 filled
+  ib.emit("orderStatus", 1015, "Submitted", 40, 60, 2.52);
+  a.bridge.cancel({ order_id: 1015 });
+  ib.emit("orderStatus", 1015, "Cancelled", 40, 60, 2.52);
+
+  await a.bridge.order(buy({ ticker: "PEND", alert_id: "ev-7" })); // 1018: cancel asked for, not confirmed
+  a.bridge.cancel({ order_id: 1018 });
+
   const before = a.bridge.orders();
   assert.deepEqual(
-    before.map((order) => [order.order_id, order.status, order.error !== null]),
+    before.map((order) => [order.order_id, order.status, order.filled_qty, order.error !== null]),
     [
-      [1012, "Inactive", true],
-      [1009, "Inactive", true],
-      [1006, "Cancelled", false],
-      [1003, "Inactive", true],
-      [1000, "PendingSubmit", false],
+      [1018, "PendingCancel", 0, false],
+      [1015, "Cancelled", 40, false],
+      [1012, "Inactive", 0, true],
+      [1009, "Inactive", 0, true],
+      [1006, "Cancelled", 0, false],
+      [1003, "Inactive", 0, true],
+      [1000, "PendingSubmit", 0, false],
     ],
   );
   a.link.stop();
 
   // A minute later the bridge is started again.
-  const b = await rig(t, { journal: new FileJournal(dir, () => T0 + LATER, [TOKEN]), now: T0 + LATER });
+  const b = await rig(t, { journal: new FileJournal(dir, () => T0 + LATER, [TOKEN]), now: T0 + LATER, world: moreTickers });
   assert.deepEqual(b.bridge.orders(), before);
 
-  // Working, and cancelled by the operator: their alerts are used up.
+  // Still working, cancelled with a partial fill, cancel not yet confirmed: their alerts are used up.
   await refuses(b.bridge.order(buy({ alert_id: "987" })), 409, "duplicate_alert", TAKEN);
   await refuses(b.bridge.preview(buy({ alert_id: 987 })), 409, "duplicate_alert", TAKEN);
   await refuses(
-    b.bridge.order(buy({ ticker: "QQQQ", alert_id: "ev-3" })),
+    b.bridge.order(buy({ ticker: "PART", alert_id: "ev-6" })),
     409,
     "duplicate_alert",
-    /^this alert already has an order \(order 1006, QQQQ, 10:00:00 New York\)$/,
+    /^this alert already has an order \(order 1015, PART, 10:00:00 New York\)$/,
   );
+  await refuses(b.bridge.order(buy({ ticker: "PEND", alert_id: "ev-7" })), 409, "duplicate_alert", /order 1018, PEND/);
   assert.deepEqual(b.world.allPlaced(), []);
 
-  // Refused by TWS, failed to send, refused and unknown to TWS: free to order again.
-  assert.equal((await b.bridge.order(buy({ ticker: "WXYZ", alert_id: "ev-2" }))).order_id, 1015);
-  assert.equal((await b.bridge.order(buy({ ticker: "PENY", alert_id: "ev-4" }))).order_id, 1018);
-  assert.equal((await b.bridge.order(buy({ ticker: "BRK.B", alert_id: "ev-5" }))).order_id, 1021);
+  // Ended with nothing filled (refused by TWS, cancelled by the operator, failed to send,
+  // refused and unknown to TWS): free to order again.
+  assert.equal((await b.bridge.order(buy({ ticker: "WXYZ", alert_id: "ev-2" }))).order_id, 1021);
+  assert.equal((await b.bridge.order(buy({ ticker: "QQQQ", alert_id: "ev-3" }))).order_id, 1024);
+  assert.equal((await b.bridge.order(buy({ ticker: "PENY", alert_id: "ev-4" }))).order_id, 1027);
+  assert.equal((await b.bridge.order(buy({ ticker: "BRK.B", alert_id: "ev-5" }))).order_id, 1030);
 
   // And those new orders use the alerts up in turn.
   b.clock.now += LATER;
-  await refuses(b.bridge.order(buy({ ticker: "WXYZ", alert_id: "ev-2" })), 409, "duplicate_alert", /order 1015, WXYZ, 10:01:00 New York/);
+  await refuses(b.bridge.order(buy({ ticker: "WXYZ", alert_id: "ev-2" })), 409, "duplicate_alert", /order 1021, WXYZ, 10:01:00 New York/);
 });

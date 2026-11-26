@@ -41,7 +41,12 @@ test("focus: subscribes to the display group once, then updates it with <conid>@
   });
   // Focus places nothing.
   assert.deepEqual(r.world.allPlaced(), []);
-  assert.deepEqual(r.journal.ofType("focus")[0], { type: "focus", ticker: "ABCD", conid: 111, group: 1 });
+  // The log line carries the exact string sent to TWS and the subscription it went under.
+  assert.deepEqual(r.journal.ofType("focus"), [
+    { type: "focus", ticker: "ABCD", conid: 111, group: 1, sent: "111@SMART", request_id: reqId },
+    { type: "focus", ticker: "WXYZ", conid: 222, group: 1, sent: "222@SMART", request_id: reqId },
+    { type: "focus", ticker: "ABCD", conid: 111, group: 1, sent: "111@SMART", request_id: reqId },
+  ]);
 });
 
 test("focus: the configured display group is the one used", async (t) => {

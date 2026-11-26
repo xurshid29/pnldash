@@ -83,7 +83,7 @@ export interface LinkHandlers {
   /** TWS listed its display groups: once per connection, if it answers at all. */
   onDisplayGroups?(groups: number[]): void;
   /** A display group said what it shows: `"<conid>@<exchange>"`, `"none"` or `"combo"`. */
-  onDisplayGroupShows?(group: number, contractInfo: string): void;
+  onDisplayGroupShows?(group: number, contractInfo: string, detail: DisplayGroupEvent): void;
   /** Things worth a log line: TWS notices, display-group answers, lookup errors that came late. */
   onNote?(kind: string, fields: Record<string, unknown>): void;
 }
@@ -105,6 +105,22 @@ export interface DisplayGroupContent {
   id: number;
   /** What TWS last said the group shows, or null when it has not said. */
   contractInfo: string | null;
+}
+
+/** The rest of a `displayGroupUpdated` event, for the log. */
+export interface DisplayGroupEvent {
+  /** The contract-info string exactly as TWS sent it. */
+  raw: string;
+  /** The request id of the group's subscription the event came under. */
+  requestId: number;
+}
+
+/** What a `/focus` put on the wire. */
+export interface FocusSent {
+  /** The request id of the group's subscription: `updateDisplayGroup` goes out under it. */
+  requestId: number;
+  /** The string sent to TWS: `"<conid>@SMART"`. */
+  contractInfo: string;
 }
 
 type Pending =
@@ -309,9 +325,12 @@ export class TwsLink {
    * Makes the TWS windows linked to `group` show a contract. The group is subscribed to once per
    * connection; every later call only sends the update.
    */
-  focus(group: number, conid: number): void {
+  focus(group: number, conid: number): FocusSent {
     const api = this.requireApi();
-    api.updateDisplayGroup(this.subscribeToGroup(group), `${conid}@SMART`);
+    const requestId = this.subscribeToGroup(group);
+    const contractInfo = `${conid}@SMART`;
+    api.updateDisplayGroup(requestId, contractInfo);
+    return { requestId, contractInfo };
   }
 
   /** Subscribes to a display group unless this connection already has, and returns its request id. */
@@ -514,11 +533,14 @@ export class TwsLink {
     on(EventName.displayGroupUpdated, (reqId: number, contractInfo: string) => {
       for (const [group, subscriptionId] of this.groupSubscriptions) {
         if (subscriptionId !== reqId) continue;
-        const shows = String(contractInfo).trim().slice(0, 64);
+        const raw = String(contractInfo);
+        const shows = raw.trim().slice(0, 64);
         this.groupShows.set(group, shows);
-        this.handlers.onDisplayGroupShows?.(group, shows);
+        this.handlers.onDisplayGroupShows?.(group, shows, { raw, requestId: reqId });
         return;
       }
+      // Under an id that is no subscription of this connection: said, so the log can show it.
+      this.handlers.onNote?.("display_group_unknown", { request_id: reqId, contract_info: String(contractInfo).slice(0, 256) });
     });
   }
 

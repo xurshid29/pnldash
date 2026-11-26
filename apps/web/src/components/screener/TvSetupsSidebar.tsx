@@ -38,9 +38,8 @@ const MERGE_MS = 5 * 60_000;
 const BUY_HOLD_MS = 600;
 // An order's line: working, filled, over without a fill, stopped by TWS.
 const ORDER_TONE = { working: '#d9d9d9', filled: '#95de64', done: '#8c8c8c', error: '#ff7875' } as const;
-// The bridge's buttons, smaller than antd's small (24 px) so the rows keep their height.
-const TWS_BTN = { height: 16, padding: '0 5px', fontSize: 10, lineHeight: '14px', borderRadius: 3 } as const;
-const BUY_BTN = { height: 20, padding: '0 8px', fontSize: 11, lineHeight: '18px', fontWeight: 600 } as const;
+// The bridge's buttons, smaller than antd's small (24 px) so the card stays compact.
+const BUY_BTN ={ height: 20, padding: '0 8px', fontSize: 11, lineHeight: '18px', fontWeight: 600 } as const;
 const CANCEL_BTN = { height: 18, padding: '0 6px', fontSize: 10, lineHeight: '16px', borderRadius: 3, marginLeft: 6 } as const;
 
 interface SetupEvent {
@@ -169,10 +168,17 @@ function provenLine(c: TickerCard, e: SetupEvent): string | null {
 // TWS bridge: a setup that is over gets no Buy button — a card whose row is a BROKEN or a HELD
 // event, or a PULLBACK already marked "✗ broke" (its BROKEN is usually switched off, so the row
 // stays the PULLBACK). A PULLBACK marked "✓ held" keeps it, and so does a POP: the operator acts
-// on POPs. The row's TWS button stays either way.
+// on POPs.
 function setupOver(c: TickerCard): boolean {
   const st = c.current.setup.stage;
   return st === 'broken' || st === 'held' || c.outcome?.stage === 'broken';
+}
+
+// The moment of a click on Buy, on both clocks: the page's own (what the Buy button's hold is
+// measured on) and the wall clock (the alert's age). Read in the click's handler, never while
+// rendering.
+function clickTime(): { sinceLoad: number; at: number } {
+  return { sinceLoad: performance.now(), at: Date.now() };
 }
 
 function age(ms: number): string {
@@ -204,7 +210,7 @@ const HOW_TO = (
     <div><b>VWAP lines</b> (v28): the Inputs' “VWAP lines from” picks how the script builds its VWAPs, for the lines it draws and for every setup. <b>30s bars</b> (ours, the default): built from 30-second bars, so the line is the same on your 5m and 30s charts and closer to the true VWAP. <b>Chart bars</b>: TradingView's built-in way, from each chart's own bars, so it differs by timeframe (on your alerts, a 5m chart's line sat a median 0.4% from the 30s chart's, a 10m chart's 1.6%). The alerts copy the choice when you create them. The month line has its own switch (v31), “Month VWAP from”: <b>30s bars</b> (the default) builds it from this month's hourly bars plus today's 30-second bars — the yellow line you see is then the one PULLBACK and the VB use, on every chart (on a name whose one day dwarfs the month, TradingView's own month VWAP can sit several % away: ROMA 10-28, ~6%); <b>chart bars</b> = TradingView's anchored VWAP, as before.</div>
     <div><b>4.</b> Notifications → Webhook URL: <code>https://pnldash.uz/api/tv/webhook?key=…</code> (the key is TV_WEBHOOK_SECRET).</div>
     <div><b>RVol</b> (optional): ⋯ → <b>Copy RVol script</b> → a new Pine Editor tab → Add to chart. It shows the Momentum table's RVol 1m / 5m / Day in its own pane, in the same units; set the pane's scale to Logarithmic. No alert needed.</div>
-    <div><b>TWS bridge</b> (optional, 11-26): a small program on your own computer (<code>tools/tws-bridge</code>) that talks to the TWS you are logged in to. The <b>TWS</b> button in this panel's header switches it on for this browser and holds its settings; until then nothing changes here. With it on, every row has a small <b>TWS</b> button: it makes the TWS windows linked to the bridge's display group show that ticker, and places nothing. With “Selecting a setup row also shows it in TWS” ticked, a click on a row does the same. A row whose alert is no older than 10 minutes also has <b>Buy</b>, with the shares and the limit price on it: one click places your bracket in TWS (a limit buy with a take-profit and a stop), and the row then reads what was sent, then the fill against the alert's price, with <b>Cancel</b> beside it until the buy fills. A setup that is over has no Buy: a BROKEN or a HELD row, and a PULLBACK already marked “✗ broke”. A POP has one. One alert, one order: after a buy the button is gone from that alert. Orders go from this computer straight to TWS and never through the pnldash server. The bridge refuses a live account until its own config says otherwise (<code>"paperOnly": false</code>, set by hand in its file; the button then reads <b>Buy LIVE</b>, in red). It also refuses an alert older than 10 minutes and a second order for the same ticker within 10 seconds, and it places nothing while TWS has lost IB's servers (the TWS line then reads “offline”). The prices are the bridge's settings, not this page's: the page sends the ticker, the alert's price and the alert's stop, and the shares, the limit, the take-profit and the stop are worked out by the bridge from <code>tools/tws-bridge/config.json</code> (the TWS button's panel shows them).</div>
+    <div><b>TWS bridge</b> (optional, 11-26): a small program on your own computer (<code>tools/tws-bridge</code>) that talks to the TWS you are logged in to. The <b>TWS</b> button in this panel's header switches it on for this browser and holds its settings; until then nothing changes here. With it on, a row whose alert is no older than 10 minutes has <b>Buy</b>, with the shares and the limit price on it: one click places your bracket in TWS (a limit buy with a take-profit and a stop), and the row then reads what was sent, then the fill against the alert's price, with <b>Cancel</b> beside it until the buy fills. A setup that is over has no Buy: a BROKEN or a HELD row, and a PULLBACK already marked “✗ broke”. A POP has one. One alert, one order at a time: after a buy that is working or filled the button is gone; cancel it unfilled and the button returns, with “cancelled” before it (the same when TWS refused the order). Orders go from this computer straight to TWS and never through the pnldash server. The bridge refuses a live account until its own config says otherwise (<code>"paperOnly": false</code>, set by hand in its file; the button then reads <b>Buy LIVE</b>, in red). It also refuses an alert older than 10 minutes and a second order for the same ticker within 10 seconds (a Buy clicked that soon after the order you cancelled is refused with the bridge's “duplicate” text: click again a few seconds later), and it places nothing while TWS has lost IB's servers (the TWS line then reads “offline”). The prices are the bridge's settings, not this page's: the page sends the ticker, the alert's price and the alert's stop, and the shares, the limit, the take-profit and the stop are worked out by the bridge from <code>tools/tws-bridge/config.json</code> (the TWS button's panel shows them).</div>
     <div style={{ marginTop: 8, color: '#8c8c8c' }}>
       <b>Reading the list.</b> Five setups: <b>PULLBACK</b> (price back near a VWAP line after a run; then BROKEN or HELD), the <b>VWAP + BB cross</b> (CROSS, then RETEST), (v35) the <b>EMA cross</b> over VWAP, with (v37) its <b>BOUNCE</b>, (v47) <b>TURN</b> (a bounce off a basis line that fell and turned up), and (v48) <b>POP and BACK</b> (a run gets 10% above its basis line: POP, a heads-up; then it comes back to the basis and bounces: BACK, the entry; since v49 a POP without a volume surge is weak and stays quiet, and so does its BACK). A CROSS or a RETEST pings only when the name is on Momentum (⭐) or its day high is +30% or more; an EMA cross, a BAND cross, a BOUNCE, a TURN, a POP or a BACK pings only when the name is on Momentum (since 11-15; ⚙ → <b>EMA / BAND / BOUNCE / TURN / POP / BACK: Momentum list only</b> — untick it to let a +30% day high ping off the list too). Off-list ones show dimmed. <b>Show only Momentum tickers</b> (the checkbox under the title) hides the rows without a ⭐ and silences their toasts and sounds on this dashboard (Telegram is unchanged); the browser remembers it.
       <span style={{ color: '#95de64' }}> ↺ held before</span> / <span style={{ color: '#95de64' }}>↺ touch 3+</span> on a pullback: that line already held today, or this is its 3rd+ touch. On the first 10 live days (to 10-16) those held 33–36% of the time, against 24% for the rest.
@@ -286,9 +292,12 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
   const [howTo, setHowTo] = useState(false);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState<CopiedList | null>(() => loadCopied());
-  // TWS bridge (2026-11-26): off unless switched on in this browser. Then a row can show its
-  // ticker in TWS and, on a fresh alert, place the operator's bracket order — both through a
-  // program on this computer, never through our API.
+  // TWS bridge (2026-11-26): off unless switched on in this browser. Then a fresh alert's row
+  // has a Buy button that places the operator's bracket order — through a program on this
+  // computer, never through our API — and the row shows that order, with Cancel. (The first
+  // version also had a per-row "TWS" button and a row click that moved TWS's windows to the
+  // ticker; removed 2026-11-27 at the operator's request: the Buy / Cancel pair was what they
+  // wanted.)
   const tws = useTwsBridge();
   const twsOn = tws.settings.enabled;
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -361,23 +370,18 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     return n;
   });
 
-  // TWS follows a selection made in this list while the bridge and TWS are up (the status line
-  // says why not otherwise); a row's own TWS button always asks. The call is not awaited: the
-  // click's own work is done before the bridge answers, whatever it answers.
-  const followTws = (ticker: string) => {
-    if (twsOn && tws.settings.follow && tws.view.canFocus) tws.focus(ticker);
-  };
   // One click on Buy = one /order call for that alert (the bridge controller's lock sees to it).
   // The page sends the ticker, the alert's price, its stop when it has one, and what the alert was.
   const buyRow = (c: TickerCard) => {
     const e = c.current;
     if (setupOver(c)) return;   // no button there; a second look costs nothing
-    if (performance.now() < (buyHold.current.get(e.id) ?? 0)) {
-      tws.note(c.ticker, 'The list just moved under the button: nothing was sent. Click Buy again.', false);
+    const click = clickTime();
+    if (click.sinceLoad < (buyHold.current.get(e.id) ?? 0)) {
+      tws.note(c.ticker, 'The list just moved under the button: nothing was sent. Click Buy again.');
       return;
     }
-    if (Date.now() - e.at > BRIDGE_ALERT_MAX_AGE_MS) {
-      tws.note(c.ticker, 'This alert is older than 10 minutes: nothing was sent.', false);
+    if (click.at - e.at > BRIDGE_ALERT_MAX_AGE_MS) {
+      tws.note(c.ticker, 'This alert is older than 10 minutes: nothing was sent.');
       return;
     }
     const req = bridgeOrderRequest({ ticker: c.ticker, price: e.price, stop: e.setup.stop, stage: e.setup.stage, at: e.at, id: e.id });
@@ -472,12 +476,12 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
     // candles before those ("pop · ran +31.5% · vol 212×").
     const retestStop = s.stage === 'pop' ? popRanText(s)
       : s.stage === 'retest' || s.stage === 'bounce' || s.stage === 'turn' || s.stage === 'back' ? retestStopText(s, e.price) : null;
-    // TWS bridge: the outcome of a TWS click, the Buy button of a fresh alert, the order it made.
+    // TWS bridge: the Buy button of a fresh alert, the order it made, a refusal's text.
     const t = twsOn ? bridgeCard(tws, { ticker: c.ticker, ids: e.ids, at: e.at, price: e.price, over: setupOver(c) }, now) : null;
     return (
       <div
         key={c.ticker}
-        onClick={() => { setSelected(c.ticker); toggleOpen(c.ticker); followTws(c.ticker); }}
+        onClick={() => { setSelected(c.ticker); toggleOpen(c.ticker); }}
         style={{
           padding: '5px 8px', borderBottom: '1px solid #262626', cursor: 'pointer',
           borderLeft: `3px solid ${fresh ? '#faad14' : 'transparent'}`,
@@ -488,7 +492,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
           {expanded ? <CaretDownOutlined style={{ fontSize: 9, color: '#8c8c8c' }} /> : <CaretRightOutlined style={{ fontSize: 9, color: '#595959' }} />}
           <TickerLinks ticker={c.ticker} />
-          <TickerLink ticker={c.ticker} onSelect={(tk) => { setSelected(tk); followTws(tk); }} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
+          <TickerLink ticker={c.ticker} onSelect={setSelected} stopPropagation style={{ color: '#fff', fontWeight: 600 }} />
           {r && <span style={{ color: '#fadb14', fontSize: 11 }}>⭐</span>}
           <TvStageTag stage={s.stage} dim={!e.notified} line={s.line} touch={tagNumber(s)} tfs={crossTfText(s)} />
           {/* v16: past the day's cap — pings only for a B+-or-better Momentum name */}
@@ -501,20 +505,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
           )}
           <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto', whiteSpace: 'nowrap' }}>{age(now - e.at)}</Text>
         </div>
-        <div style={{ fontSize: 11, color: '#8c8c8c', paddingLeft: t ? 0 : 59, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 5 }}>
-          {/* TWS bridge: the row's own "show it in TWS" button, in the empty indent under the two
-              link icons — the line keeps its height and its text keeps its width (54 + the 5 px
-              gap = the 59 px indent). A click beside the button is still a click on the row. */}
-          {t && (
-            <span style={{ flex: '0 0 54px', paddingLeft: 15, display: 'inline-flex' }}>
-              <Button
-                size="small" disabled={tws.focusing === c.ticker} style={TWS_BTN}
-                onClick={(ev) => { ev.stopPropagation(); tws.focus(c.ticker); }}
-              >
-                TWS
-              </Button>
-            </span>
-          )}
+        <div style={{ fontSize: 11, color: '#8c8c8c', paddingLeft: 59, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center', gap: 5 }}>
           <span style={{ color: nowChg == null ? '#595959' : nowChg >= 0 ? '#52c41a' : '#ff4d4f', fontWeight: 700, fontSize: 12 }}>
             {nowChg == null ? '—' : fmtPct(nowChg)}
           </span>
@@ -530,8 +521,6 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
               : lineDistance(s)}
             {e.tfs.length > 0 && <> · {[...e.tfs].sort(byTf).map(fmtTf).join('+')}</>}
           </span>
-          {/* TWS bridge: for 4 s after a /focus worked, "TWS → RAYA" at the end of this line. */}
-          {t?.note?.ok && <span style={{ marginLeft: 'auto', flexShrink: 0, color: '#95de64', fontSize: 10 }}>{t.note.text}</span>}
         </div>
         {/* TWS bridge: a third line only when there is something to put on it — the Buy button of
             an alert up to 10 minutes old, the order that came of it, or an error. Aligned on the
@@ -541,6 +530,11 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
             onClick={(ev) => ev.stopPropagation()}
             style={{ paddingLeft: 59, paddingTop: 3, fontSize: 11, display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', gap: '2px 6px', cursor: 'default' }}
           >
+            {/* An order that ended with nothing filled (cancelled, refused) freed its alert: its
+                line comes first, then the button — "cancelled · Buy 100 @ 0.4302". */}
+            {t.orderText && t.orderEnded && (
+              <span style={{ color: ORDER_TONE[t.orderTone] }}>{t.orderText}{t.buyLabel != null && ' ·'}</span>
+            )}
             {t.buyLabel != null && (
               <span
                 ref={(el) => { if (el) buyEls.current.set(e.id, el); else buyEls.current.delete(e.id); }}
@@ -551,8 +545,9 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
                 </Button>
               </span>
             )}
-            {/* Cancel sits in the text's own flow, after its last word, so it costs no line. */}
-            {t.orderText && (
+            {/* A working or filled order. Cancel sits in the text's own flow, after its last
+                word, so it costs no line. */}
+            {t.orderText && !t.orderEnded && (
               <span style={{ color: ORDER_TONE[t.orderTone] }}>
                 {t.orderText}{t.cancelId != null && cancelButton(t.cancelId, c.ticker)}
               </span>
@@ -564,7 +559,7 @@ export function TvSetupsSidebar({ payload }: { payload: CyclePayload | null }) {
                 {bridgeOrderCancellable(t.other) && cancelButton(t.other.order_id, c.ticker)}
               </span>
             )}
-            {t.note && !t.note.ok && <span style={{ color: '#ff7875' }}>{t.note.text}</span>}
+            {t.note && <span style={{ color: '#ff7875' }}>{t.note}</span>}
           </div>
         )}
         {expanded && (

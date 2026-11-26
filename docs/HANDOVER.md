@@ -382,6 +382,16 @@ the POP at 04:27 ET off a flat base ("suitable") and the one at 11:10 ET after a
   cancelled all three. TWS asked once whether to bypass its Order Precautions for API orders: recommended Yes on paper,
   a real decision on the live login. **Not yet seen:** a focus click moving the windows, a Buy click on a live alert,
   a fill and its slippage line. The bracket's distances are still my placeholders.
+- **The dashboard test, 11-27 00:22 on the operator's clock (11-26 14:22 ET, market closed):** I sent one synthetic
+  `POP WHLR 0.4259 … vol 25.3x` through the real webhook so a card would appear (`tier_events` id
+  `c06253f5-ad7d-4ddd-87b1-862fd50ec4b9`, the first `pop` row in the table; **to be deleted once the operator is done
+  testing, so it stays out of the grading**). In their Chrome: the card showed "Buy 100 @ 0.4302"; Buy placed the
+  bracket in TWS and Cancel removed it, from the card. The operator: "Buy/Cancel buttons are exactly what I wanted".
+  Two changes from that test: **(1) the focus step is removed from the dashboard** at their request (the row's "TWS"
+  button changed nothing they could see in TWS, although TWS's own events reported the group moving; they judged it not
+  important; the bridge keeps `/focus` and now logs every group change, unused); **(2) an order that ends with nothing
+  filled frees its alert**, so Buy returns after a cancel ("the Buy button should be re-appeared after cancelling"),
+  in the bridge (`usesUpAlert`) and the dashboard (`bridgeOrderCounts`) alike. Bridge 178 tests.
 - **For the operator (bridge):** TWS → Global Configuration → API → Settings (Enable ActiveX and Socket Clients; untick
   Read-Only API; port 7497 on the paper login; localhost only), link the TWS windows to a colour group, `npm install
   --ignore-scripts && npm start` in `tools/tws-bridge`, put the token from its `config.json` into the dashboard's TWS

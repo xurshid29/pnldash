@@ -5,10 +5,17 @@ import type { OrderRecord } from "./book.js";
 import type { Config, LimitsConfig, OrderConfig } from "./config.js";
 import { badRequest, BridgeError, errorMessage } from "./errors.js";
 import { describeDisplayGroups, parseContractInfo } from "./groups.js";
-import type { GroupReading } from "./groups.js";
+import type { GroupContent, GroupReading } from "./groups.js";
 import type { Journal } from "./journal.js";
 import { NotConnectedError, TwsRequestError, TwsTimeoutError } from "./link.js";
-import type { ExecutionEvent, OrderMessageEvent, OrderStatusEvent, TwsLink } from "./link.js";
+import type {
+  DisplayGroupEvent,
+  ExecutionEvent,
+  FocusSent,
+  OrderMessageEvent,
+  OrderStatusEvent,
+  TwsLink,
+} from "./link.js";
 import { buildBracket, formatPrice, planOrder } from "./order.js";
 import type { OrderPlan } from "./order.js";
 import { nyDate, nyTime, systemClock } from "./time.js";
@@ -21,6 +28,8 @@ export const ALERT_MAX_AGE_MS = 10 * 60 * 1000;
 /** The dashboard's server and this Mac do not share a clock: allow this much "from the future". */
 const ALERT_CLOCK_SKEW_MS = 60 * 1000;
 const CONTRACT_CACHE_MS = 12 * 60 * 60 * 1000;
+/** A display group's event names the contract a `/focus` sent within this long: the focus did it. */
+const FOCUS_ANSWER_MS = 2000;
 
 /** When a ticker has several listings, the one on one of these primary exchanges is taken. */
 export const US_PRIMARY_EXCHANGES: ReadonlySet<string> = new Set(["NASDAQ", "NYSE", "AMEX", "ARCA", "BATS"]);
@@ -305,6 +314,13 @@ export class Bridge {
   private readonly conidLookups = new Set<number>();
   /** The once-per-connection console report of the display groups: its deadline, and whether it was said. */
   private groupReport: { timer: NodeJS.Timeout | null; said: boolean } | null = null;
+  /** The last `/focus` per display group, and a count that tells one focus from the next. */
+  private readonly lastFocus = new Map<number, { conid: number; atMs: number; seq: number }>();
+  private focusCount = 0;
+  /** The last event logged per display group on this connection: an identical repeat is left out. */
+  private readonly groupTrail = new Map<number, { raw: string; focusSeq: number }>();
+  /** Contract ids the console named only by number, to be named once TWS says what they are. */
+  private readonly unnamedOnConsole = new Set<number>();
 
   constructor(options: BridgeOptions) {
     this.config = options.config;
@@ -333,7 +349,7 @@ export class Bridge {
       onExecution: (event) => this.onExecution(event),
       onOrderMessage: (event) => this.onOrderMessage(event),
       onDisplayGroups: () => this.onDisplayGroups(),
-      onDisplayGroupShows: (_group, contractInfo) => this.onDisplayGroupShows(contractInfo),
+      onDisplayGroupShows: (group, contractInfo, detail) => this.onDisplayGroupShows(group, contractInfo, detail),
       onNote: (kind, noteFields) => this.onNote(kind, noteFields),
     };
   }
@@ -373,12 +389,28 @@ export class Bridge {
     this.requireConnected();
     const contract = await this.resolveContract(ticker);
     const group = this.config.displayGroup;
+    // Noted before it is sent: TWS's own report of the change can come back at once, and is
+    // matched against this to tell "the focus did it" from "changed in TWS".
+    const previous = this.lastFocus.get(group);
+    this.focusCount += 1;
+    this.lastFocus.set(group, { conid: contract.conid, atMs: this.clock(), seq: this.focusCount });
+    let sent: FocusSent;
     try {
-      this.link.focus(group, contract.conid);
+      sent = this.link.focus(group, contract.conid);
     } catch (err) {
+      if (previous === undefined) this.lastFocus.delete(group);
+      else this.lastFocus.set(group, previous);
       throw this.linkError(err, ticker);
     }
-    this.journal.write("focus", { ticker, conid: contract.conid, group });
+    // `sent` is the exact string that went to TWS, `request_id` the subscription it went under:
+    // the group's `display_group_shows` lines carry the same id.
+    this.journal.write("focus", {
+      ticker,
+      conid: contract.conid,
+      group,
+      sent: sent.contractInfo,
+      request_id: sent.requestId,
+    });
     return { ticker, conid: contract.conid, group };
   }
 
@@ -783,7 +815,7 @@ export class Bridge {
   /**
    * Gives a buy that TWS will never report on its final status ("Inactive"): one that never went
    * out, or one TWS says it does not have. Without it such a buy would read as pending for the
-   * rest of the day, and a refused one would keep its alert used up.
+   * rest of the day and keep its alert used up, though nothing of it can ever fill.
    */
   private markNotWorking(record: OrderRecord): void {
     if (record.filled_qty > 0 || isDone(record.status)) return;
@@ -882,6 +914,9 @@ export class Bridge {
     this.endGroupReport();
     this.conidLookups.clear();
     this.conidUnknown.clear();
+    this.lastFocus.clear();
+    this.groupTrail.clear();
+    this.unnamedOnConsole.clear();
     this.journal.write("tws_down", { reason });
     this.say(`TWS not connected: ${reason} (retrying)`);
   }
@@ -924,10 +959,66 @@ export class Bridge {
     this.maybeSayDisplayGroups();
   }
 
-  private onDisplayGroupShows(contractInfo: string): void {
+  private onDisplayGroupShows(group: number, contractInfo: string, detail: DisplayGroupEvent): void {
     const content = parseContractInfo(contractInfo);
+    this.noteGroupEvent(group, contractInfo, content, detail);
     if (content.kind === "contract") this.lookUpConid(content.conid, content.exchange);
     this.maybeSayDisplayGroups();
+  }
+
+  /**
+   * Writes what a group now shows to the log, every time TWS says so, and for the configured
+   * group to the console as well: the trail to hold a `/focus` against. Nothing is thinned out;
+   * only an event that repeats the one before it word for word, with no `/focus` in between, is
+   * left out.
+   *
+   * `cause` is "focus" when the event names the contract a `/focus` sent to that group within the
+   * last 2 s, "initial" for the first thing a group says on a connection, and "tws" otherwise
+   * (the operator, or TWS itself, changed it).
+   */
+  private noteGroupEvent(group: number, contractInfo: string, content: GroupContent, detail: DisplayGroupEvent): void {
+    const focus = this.lastFocus.get(group);
+    const focusSeq = focus?.seq ?? 0;
+    const before = this.groupTrail.get(group);
+    if (before !== undefined && before.raw === detail.raw && before.focusSeq === focusSeq) return;
+    this.groupTrail.set(group, { raw: detail.raw, focusSeq });
+
+    const ticker = content.kind === "contract" ? (this.conidTickers.get(content.conid) ?? null) : null;
+    const sinceFocus = focus === undefined ? Number.NaN : this.clock() - focus.atMs;
+    const followsFocus =
+      focus !== undefined &&
+      content.kind === "contract" &&
+      content.conid === focus.conid &&
+      sinceFocus >= 0 &&
+      sinceFocus <= FOCUS_ANSWER_MS;
+    const cause = followsFocus ? "focus" : before === undefined ? "initial" : "tws";
+    this.journal.write("display_group_shows", {
+      group,
+      contract_info: detail.raw.slice(0, 256),
+      ticker,
+      request_id: detail.requestId,
+      cause,
+    });
+
+    // The console: the configured group only, and not its first reading (the report covers that).
+    if (group !== this.config.displayGroup || cause === "initial") return;
+    let what: string;
+    if (content.kind === "none") what = "nothing";
+    else if (content.kind === "combo") what = "a combo";
+    else if (ticker !== null) what = `${ticker} (${contractInfo})`;
+    else what = contractInfo;
+    if (content.kind === "contract" && ticker === null) this.unnamedOnConsole.add(content.conid);
+    this.say(`group ${group} now shows ${what} ${cause === "focus" ? "← focus" : "← changed in TWS"}`);
+  }
+
+  /** A contract id now has its ticker: logged, and said if the console showed the bare number. */
+  private onConidNamed(conid: number, ticker: string): void {
+    this.journal.write("display_group_ticker", { conid, ticker });
+    if (!this.unnamedOnConsole.delete(conid)) return;
+    const group = this.config.displayGroup;
+    const shown = this.link.getDisplayGroupContents().find((content) => content.id === group)?.contractInfo;
+    const content = shown === null || shown === undefined ? null : parseContractInfo(shown);
+    if (content?.kind === "contract" && content.conid === conid) this.say(`group ${group}: ${shown} is ${ticker}`);
   }
 
   /**
@@ -961,8 +1052,12 @@ export class Bridge {
         (details) => {
           this.conidLookups.delete(conid);
           const ticker = tickerOfConid(conid, details);
-          if (ticker === null) this.conidUnknown.add(conid);
-          else this.conidTickers.set(conid, ticker);
+          if (ticker === null) {
+            this.conidUnknown.add(conid);
+          } else {
+            this.conidTickers.set(conid, ticker);
+            this.onConidNamed(conid, ticker);
+          }
           this.maybeSayDisplayGroups();
         },
         (err: unknown) => {

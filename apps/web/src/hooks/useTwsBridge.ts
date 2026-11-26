@@ -6,33 +6,36 @@ import {
   type BridgeStatus, type BridgeView,
 } from '../api/twsBridge';
 
-// The TWS bridge on this browser (2026-11-26): its settings, the bridge's status, and the two
-// things a setup row can ask of it — show the ticker in TWS (/focus) and place the operator's
-// bracket order (/order). Device-local on purpose: the bridge runs on the operator's own computer,
-// so the switch, the address and the token live in this browser's localStorage and nowhere else.
-// Off by default: another signed-in user sees one small "TWS" button and nothing more, and no
-// call is made until the switch is on and a token is set.
+// The TWS bridge on this browser (2026-11-26): its settings, the bridge's status, and what a
+// setup row can ask of it — place the operator's bracket order (/order), follow it (/orders)
+// and cancel it (/cancel). Device-local on purpose: the bridge runs on the operator's own
+// computer, so the switch, the address and the token live in this browser's localStorage and
+// nowhere else. Off by default: another signed-in user sees one small "TWS" button and nothing
+// more, and no call is made until the switch is on and a token is set.
 //
 // The work is in TwsBridgeController, a plain object outside React (one per page, so a remount of
 // the sidebar loses nothing — above all not the one-click-one-order lock); useTwsBridge reads it.
+//
+// 2026-11-27: the first version could also make TWS's windows show a row's ticker (a per-row
+// "TWS" button, and a row click TWS followed). The operator did not need it; it is gone, with its
+// `follow` setting (a stored one from before is ignored and dropped at the next save).
 
 export interface TwsBridgeSettings {
   enabled: boolean;   // the feature, on this browser
   url: string;        // the bridge's address: http://127.0.0.1:<port>
   token: string;      // the secret from tools/tws-bridge/config.json
-  follow: boolean;    // selecting a setup row also shows it in TWS
   buy: boolean;       // show the Buy button
 }
 
 const STORAGE_KEY = 'twsBridge.settings';
-export const TWS_BRIDGE_DEFAULTS: TwsBridgeSettings = { enabled: false, url: BRIDGE_DEFAULT_URL, token: '', follow: true, buy: true };
+export const TWS_BRIDGE_DEFAULTS: TwsBridgeSettings = { enabled: false, url: BRIDGE_DEFAULT_URL, token: '', buy: true };
 
+// Only the settings this build knows: anything else in a stored value (the old `follow`) is left out.
 function clean(v: Partial<Record<keyof TwsBridgeSettings, unknown>>): TwsBridgeSettings {
   return {
     enabled: v.enabled === true,
     url: typeof v.url === 'string' && v.url.trim() !== '' ? v.url.trim() : TWS_BRIDGE_DEFAULTS.url,
     token: typeof v.token === 'string' ? v.token.trim() : '',
-    follow: v.follow !== false,
     buy: v.buy !== false,
   };
 }
@@ -58,14 +61,13 @@ export interface BridgeTiming {
   statusEveryMs: number;     // /status, while the tab is visible
   followEveryMs: number;     // /orders after a click …
   followMs: number;          // … for this long
-  noteOkMs: number;          // "TWS → RAYA" stays this long
-  noteErrMs: number;         // an error a little longer: it has to be read
+  noteMs: number;            // a row's note stays this long: it has to be read
   // A Buy click that got no answer in time: after this long, an /orders answer without an order
   // for the alert means none was placed (the bridge's own waits are a few seconds).
   unknownSettleMs: number;
 }
 const TIMING: BridgeTiming = {
-  statusEveryMs: 5_000, followEveryMs: 2_000, followMs: 60_000, noteOkMs: 4_000, noteErrMs: 8_000, unknownSettleMs: 20_000,
+  statusEveryMs: 5_000, followEveryMs: 2_000, followMs: 60_000, noteMs: 8_000, unknownSettleMs: 20_000,
 };
 
 // What a Buy click on one alert came to. Keyed by the alert's id.
@@ -79,11 +81,6 @@ export type BuyClick =
   | { phase: 'taken'; at: number; ticker: string; text: string }
   | { phase: 'error'; at: number; ticker: string; text: string };
 
-export interface RowNote {
-  text: string;
-  ok: boolean;
-}
-
 export interface TwsBridgeState {
   settings: TwsBridgeSettings;
   // the last /status answer, or the failure in its place; both null before the first answer
@@ -92,9 +89,9 @@ export interface TwsBridgeState {
   // today's orders as the bridge lists them, newest first
   orders: BridgeOrderRecord[];
   clicks: Record<string, BuyClick>;
-  // by ticker, for a few seconds: "TWS → RAYA" or an error
-  notes: Record<string, RowNote>;
-  focusing: string | null;
+  // by ticker, for a few seconds: why a click did nothing (a Cancel the bridge refused, a Buy
+  // click the page held back)
+  notes: Record<string, string>;
   cancelling: number[];
 }
 
@@ -127,10 +124,9 @@ export class TwsBridgeController {
   private followUntil = 0;
   private followTimer: Timer | null = null;
   private readonly noteTimers = new Map<string, Timer>();
-  private focusBusy = false;
-  private focusNext: string | null = null;
-  // One click = one order. An alert's id is in here while its /order call is in flight and from
-  // then on once it succeeded (or while its outcome is unknown); a ticker's ("ticker:RAYA") while
+  // One click = one order. An alert's id is in here while its /order call is in flight, while
+  // its outcome is unknown, and after a success for as long as that order is working or has a
+  // fill (an order that ended with nothing filled frees it); a ticker's ("ticker:RAYA") while
   // any /order call for it is in flight.
   private readonly locks = new Set<string>();
   private readonly cancels = new Set<number>();
@@ -139,7 +135,7 @@ export class TwsBridgeController {
     this.env = env;
     this.t = { ...TIMING, ...env.timing };
     this.state = {
-      settings: env.load(), status: null, failure: null, orders: [], clicks: {}, notes: {}, focusing: null, cancelling: [],
+      settings: env.load(), status: null, failure: null, orders: [], clicks: {}, notes: {}, cancelling: [],
     };
   }
 
@@ -243,20 +239,26 @@ export class TwsBridgeController {
     this.set({ clicks: { ...this.state.clicks, [alertId]: click } });
   }
 
-  note = (ticker: string, text: string, ok: boolean): void => {
+  // A line on one ticker's card for a few seconds: why a click did nothing.
+  note = (ticker: string, text: string): void => {
     const old = this.noteTimers.get(ticker);
     if (old != null) clearTimeout(old);
-    this.set({ notes: { ...this.state.notes, [ticker]: { text, ok } } });
+    this.set({ notes: { ...this.state.notes, [ticker]: text } });
     this.noteTimers.set(ticker, setTimeout(() => {
       this.noteTimers.delete(ticker);
       const notes = { ...this.state.notes };
       delete notes[ticker];
       this.set({ notes });
-    }, ok ? this.t.noteOkMs : this.t.noteErrMs));
+    }, this.t.noteMs));
   };
 
-  // Today's orders. Also settles a Buy click that got no answer: its order is in the list (it
-  // went out after all), or it is not and enough time has passed (it never did).
+  // Today's orders, and what they mean for the clicks made on this page:
+  // - an order placed here that has ended with nothing filled (cancelled from the card or in TWS,
+  //   refused, never sent) frees its alert: the lock is released and the click forgotten, so the
+  //   card is worked out from /orders alone — exactly what a reloaded page sees;
+  // - the same when the order the bridge refused a click for (`duplicate_alert`) has ended so;
+  // - a click that got no answer is settled: its order is in the list (it went out after all),
+  //   or it is not and enough time has passed (it never did).
   private async loadOrders(): Promise<void> {
     const s = this.state.settings;
     if (this.ordersLoading || !s.enabled || s.token === '') return;
@@ -264,27 +266,41 @@ export class TwsBridgeController {
     try {
       const orders = await twsBridge.orders(this.conn());
       this.ordersWorking = orders.some((o) => !bridgeOrderDone(o.status));
-      this.set({ orders });
-      for (const [alertId, c] of Object.entries(this.state.clicks)) {
-        if (c.phase !== 'unknown') continue;
-        const rec = orders.find((o) => o.asked.alert_id === alertId
-          || (o.ticker === c.ticker && Date.parse(o.placed_at) >= c.at - 2_000));
-        if (rec) {
-          this.setClick(alertId, {
-            phase: 'sent', at: c.at, ticker: c.ticker,
-            order: {
-              order_id: rec.order_id, ticker: rec.ticker, qty: rec.sent.qty, limit: rec.sent.limit,
-              take_profit: rec.sent.take_profit, stop: rec.sent.stop, stop_limit: rec.sent.stop_limit, status: rec.status,
-            },
-          });
-        } else if (Date.now() - c.at > this.t.unknownSettleMs) {
-          this.locks.delete(alertId);
-          this.setClick(alertId, {
-            phase: 'error', at: Date.now(), ticker: c.ticker,
-            text: 'The bridge gave no answer and lists no order for this alert: nothing was sent.',
-          });
+      const clicks = { ...this.state.clicks };
+      for (const [alertId, c] of Object.entries(clicks)) {
+        if (c.phase === 'sent') {
+          const own = orders.find((o) => o.order_id === c.order.order_id);
+          if (own != null && !bridgeOrderCounts(own)) {
+            this.locks.delete(alertId);
+            delete clicks[alertId];
+          }
+        } else if (c.phase === 'taken') {
+          const theirs = orders.filter((o) => o.asked.alert_id === alertId);
+          if (theirs.length > 0 && !theirs.some(bridgeOrderCounts)) {
+            this.locks.delete(alertId);
+            delete clicks[alertId];
+          }
+        } else if (c.phase === 'unknown') {
+          const rec = orders.find((o) => o.asked.alert_id === alertId
+            || (o.ticker === c.ticker && Date.parse(o.placed_at) >= c.at - 2_000));
+          if (rec) {
+            clicks[alertId] = {
+              phase: 'sent', at: c.at, ticker: c.ticker,
+              order: {
+                order_id: rec.order_id, ticker: rec.ticker, qty: rec.sent.qty, limit: rec.sent.limit,
+                take_profit: rec.sent.take_profit, stop: rec.sent.stop, stop_limit: rec.sent.stop_limit, status: rec.status,
+              },
+            };
+          } else if (Date.now() - c.at > this.t.unknownSettleMs) {
+            this.locks.delete(alertId);
+            clicks[alertId] = {
+              phase: 'error', at: Date.now(), ticker: c.ticker,
+              text: 'The bridge gave no answer and lists no order for this alert: nothing was sent.',
+            };
+          }
         }
       }
+      this.set({ orders, clicks });
     } catch {
       // the status line says what is wrong; the next poll asks again
     } finally {
@@ -310,35 +326,11 @@ export class TwsBridgeController {
     this.followTimer = setTimeout(step, this.t.followEveryMs);
   }
 
-  // Shows a ticker in TWS. One /focus at a time, and the last ticker asked for wins: a row
-  // clicked while a call is in flight waits for it (replacing any other that was waiting), so TWS
-  // ends on the last click. Not awaited by the caller: the outcome arrives as the row's note.
-  focus = (ticker: string): void => {
-    if (!this.state.settings.enabled) return;
-    if (this.focusBusy) { this.focusNext = ticker; return; }
-    this.focusBusy = true;
-    void (async () => {
-      let t: string | null = ticker;
-      while (t != null) {
-        this.set({ focusing: t });
-        try {
-          const d = await twsBridge.focus(this.conn(), t);
-          this.note(t, `TWS → ${d.ticker}`, true);
-        } catch (err) {
-          this.note(t, toBridgeFailure(err).message, false);
-        }
-        t = this.focusNext;
-        this.focusNext = null;
-      }
-      this.focusBusy = false;
-      this.set({ focusing: null });
-    })();
-  };
-
   // Places the bracket for one alert: one /order call, never retried. An error answer leaves the
   // alert free for another click; no answer in time keeps it locked until /orders shows what
-  // happened; a success keeps it locked for good, and so does the bridge's own "this alert
-  // already has an order" (`duplicate_alert`).
+  // happened. A success keeps it locked while the order is working or has a fill, and so does
+  // the bridge's own "this alert already has an order" (`duplicate_alert`); once /orders shows
+  // that order ended with nothing filled, loadOrders releases the lock.
   buy = (alertId: string, req: BridgeOrderRequest): void => {
     const tickerLock = `ticker:${req.ticker}`;
     if (!this.state.settings.enabled || this.locks.has(alertId) || this.locks.has(tickerLock)) return;
@@ -388,7 +380,7 @@ export class TwsBridgeController {
       try {
         await twsBridge.cancel(this.conn(), orderId);
       } catch (err) {
-        this.note(ticker, toBridgeFailure(err).message, false);
+        this.note(ticker, toBridgeFailure(err).message);
       } finally {
         this.cancels.delete(orderId);
         this.set({ cancelling: [...this.cancels] });
@@ -433,8 +425,9 @@ export interface BridgeCardAlert {
   over?: boolean;
 }
 export interface BridgeCard {
-  // for a few seconds: "TWS → RAYA" (ok) or an error
-  note: RowNote | null;
+  // for a few seconds: why a click did nothing (the bridge refused a Cancel; the page held a
+  // Buy click back)
+  note: string | null;
   // "Buy 100 @ 0.5858" / "Buy LIVE 100 @ 0.5858"; null = this card has no Buy button
   buyLabel: string | null;
   // the click's /order call is in flight: the button is shown, disabled
@@ -442,6 +435,9 @@ export interface BridgeCard {
   // the alert's order: "sent: …", "filled …", "cancelled", TWS's own message
   orderText: string | null;
   orderTone: 'working' | 'filled' | 'done' | 'error';
+  // that order ended with nothing filled, so the alert is free again: its line goes before the
+  // Buy button ("cancelled · Buy 100 @ 0.4302"), so it is clear what happened
+  orderEnded: boolean;
   // the buy can still be cancelled: its order id
   cancelId: number | null;
   // the bridge's answer to a Buy click it refused, or the note that no answer came
@@ -458,15 +454,28 @@ export function bridgeCard(
   now: number,
 ): BridgeCard {
   const note = tws.notes[alert.ticker] ?? null;
-  // This alert's order as the bridge lists it today (by the id of any of the alert's merged
-  // copies), so a reloaded page knows the alert was bought; and the click made on this page.
-  const rec = tws.orders.find((o) => o.asked.alert_id != null && alert.ids.includes(o.asked.alert_id)) ?? null;
   const click = alert.ids.map((id) => tws.clicks[id]).find((x) => x != null) ?? null;
   const sending = click?.phase === 'sending';
-  // One order per alert: bought once (or its click still unanswered), the button is gone. An
-  // order TWS refused does not count, and neither does a click the bridge answered with an error
-  // — except its "this alert already has an order", which does.
-  const used = (rec != null && bridgeOrderCounts(rec)) || (click != null && click.phase !== 'error');
+  const sentOrder = click?.phase === 'sent' ? click.order : null;
+  // An order this page has just placed that /orders does not list yet: the /order answer stands
+  // in for it, and the alert is used.
+  const fresh = sentOrder != null && !tws.orders.some((o) => o.order_id === sentOrder.order_id) ? sentOrder : null;
+  // The alert's orders as the bridge lists them today, newest first (by the id of any of the
+  // alert's merged copies) — all a reloaded page has, and all this page goes by once they are in.
+  const recs = tws.orders
+    .filter((o) => (o.asked.alert_id != null && alert.ids.includes(o.asked.alert_id)) || o.order_id === sentOrder?.order_id)
+    .sort((a, b) => Date.parse(b.placed_at) - Date.parse(a.placed_at) || b.order_id - a.order_id);
+  // The one the card shows: an order that uses up the alert (working, or with a fill) if there
+  // is one; else the latest that ended with nothing filled.
+  const rec = fresh != null ? null : recs.find(bridgeOrderCounts) ?? recs[0] ?? null;
+  const ended = rec != null && !bridgeOrderCounts(rec);
+  // One working-or-filled order per alert. The alert is used while a click is in flight or its
+  // outcome unknown, and while its order is working or has any fill. An order that ended with
+  // nothing filled (cancelled here or in TWS, refused, never sent) frees it, and so does a click
+  // the bridge answered with an error. The bridge's "this alert already has an order" counts
+  // until /orders shows which order that is; then the order decides.
+  const used = sending || click?.phase === 'unknown' || fresh != null
+    || (rec != null ? !ended : click?.phase === 'taken');
   const buyLabel = tws.settings.buy && tws.view.canOrder && tws.status != null && alert.over !== true
     && typeof alert.price === 'number' && alert.price > 0
     && now - alert.at <= BRIDGE_ALERT_MAX_AGE_MS && (!used || sending)
@@ -474,39 +483,39 @@ export function bridgeCard(
     : null;
   // Another alert's buy on this ticker, so a second Buy is a choice and not a slip: one that is
   // still working (always shown: it can be cancelled here), or, beside a Buy button, the last one
-  // that filled today.
-  const other = rec != null ? null
-    : tws.orders.find((o) => o.ticker === alert.ticker && !bridgeOrderDone(o.status))
-      ?? (buyLabel != null ? tws.orders.find((o) => o.ticker === alert.ticker && o.filled_qty > 0) : undefined)
+  // that filled today. Not while this alert's own order is working or filled: that one is shown.
+  const others = tws.orders.filter((o) => o.ticker === alert.ticker && !recs.includes(o));
+  const other = fresh != null || (rec != null && !ended) ? null
+    : others.find((o) => !bridgeOrderDone(o.status))
+      ?? (buyLabel != null ? others.find((o) => o.filled_qty > 0) : undefined)
       ?? null;
   // A refusal's text stays a minute. The bridge's "this alert already has an order" stays until
   // that order is on the card, so a card without a Buy button always says why.
   const error = click?.phase === 'unknown' ? click.text
     : click?.phase === 'taken' && (rec == null || now - click.at < BUY_ERROR_MS) ? click.text
       : click?.phase === 'error' && now - click.at < BUY_ERROR_MS ? click.text : null;
-  const orderText = rec != null
-    ? (error != null && !bridgeOrderCounts(rec) ? null : bridgeOrderText(rec))   // a refused order: the click's error says it already
-    : click?.phase === 'sent' ? bridgeSentText(click.order) : null;
+  const orderText = fresh != null ? bridgeSentText(fresh)
+    : rec == null ? null
+      : error != null && ended && rec.error != null ? null   // an order TWS refused at the click: the click's error says it already
+        : bridgeOrderText(rec);
   const orderTone = rec == null ? 'working'
     : rec.error ? 'error' : rec.status === 'Filled' ? 'filled' : bridgeOrderDone(rec.status) ? 'done' : 'working';
-  const cancelId = rec != null
-    ? (bridgeOrderCancellable(rec) ? rec.order_id : null)
-    : click?.phase === 'sent' && bridgeOrderCancellable(click.order) ? click.order.order_id : null;
-  const any = buyLabel != null || orderText != null || error != null || other != null || (note != null && !note.ok);
-  return { note, buyLabel, sending, orderText, orderTone, cancelId, error, other, any };
+  const cancelId = fresh != null ? (bridgeOrderCancellable(fresh) ? fresh.order_id : null)
+    : rec != null && bridgeOrderCancellable(rec) ? rec.order_id : null;
+  const any = buyLabel != null || orderText != null || error != null || other != null || note != null;
+  return { note, buyLabel, sending, orderText, orderTone, orderEnded: orderText != null && ended, cancelId, error, other, any };
 }
 
 export interface TwsBridge extends TwsBridgeState {
   // enabled, with a token and a usable address: /status is polled
   active: boolean;
-  // what the status line reads, and whether a focus / an order can work
+  // what the status line reads, and whether an order can be placed
   view: BridgeView;
   update: (patch: Partial<TwsBridgeSettings>) => void;
-  focus: (ticker: string) => void;
   buy: (alertId: string, req: BridgeOrderRequest) => void;
   cancel: (orderId: number, ticker: string) => void;
   halt: (halted: boolean) => Promise<string | null>;
-  note: (ticker: string, text: string, ok: boolean) => void;
+  note: (ticker: string, text: string) => void;
 }
 
 export function useTwsBridge(): TwsBridge {
@@ -532,7 +541,7 @@ export function useTwsBridge(): TwsBridge {
   const active = settings.enabled && settings.token !== '' && bridgeOrigin(settings.url) != null;
   return {
     ...state, active, view,
-    update: controller.update, focus: controller.focus, buy: controller.buy,
+    update: controller.update, buy: controller.buy,
     cancel: controller.cancel, halt: controller.halt, note: controller.note,
   };
 }

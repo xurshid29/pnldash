@@ -158,10 +158,16 @@ export class FakeIb implements IbApi {
     this.calls.push({ name: "updateDisplayGroup", args: [reqId, contractInfo] });
     for (const [groupId, subscriptionId] of this.groupSubscriptions) {
       if (subscriptionId !== reqId) continue;
+      if (this.world.ignoreGroupUpdates) continue;
       this.world.groupShows.set(groupId, contractInfo);
       queueMicrotask(() => this.emit("displayGroupUpdated", reqId, contractInfo));
     }
     return this;
+  }
+
+  /** The request id a display group was subscribed with on this connection. */
+  subscriptionOf(groupId: number): number | undefined {
+    return this.groupSubscriptions.get(groupId);
   }
 
   /** The operator picks something else in a TWS window linked to this group. */
@@ -207,6 +213,8 @@ export class FakeTws {
   readonly groupShows = new Map<number, string>();
   /** Groups that do not say what they show when subscribed to. */
   readonly silentGroups = new Set<number>();
+  /** TWS takes an `updateDisplayGroup` and nothing happens: no window moves, no event comes back. */
+  ignoreGroupUpdates = false;
   /** TWS never answers a contract lookup. */
   silentLookups = false;
   /** Make the Nth placeOrder call on a connection throw (1 = the first). */

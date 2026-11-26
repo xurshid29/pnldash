@@ -35,6 +35,8 @@ displayGroup is 1 but the linked windows look like group 4: set "displayGroup": 
 
 The group that shows the ticker your windows show is yours. The second line appears only when `displayGroup` looks wrong, and it is a guess (a group no window is linked to shows nothing, so a single group that shows something is taken to be the linked one). It is said once per connection; `GET /status` carries the same, kept current, as `display_groups`. Reading the groups changes no window and sends nothing but the group subscriptions and ticker lookups.
 
+After that the console says each time the configured group changes, and whether a focus did it (`group 4 now shows RAYA (755531415@SMART) ← focus`) or it was changed in TWS (`← changed in TWS`). If a focus is marked there and no window moved, the windows are linked to another group. The log keeps the same trail for every group (see "The log").
+
 ## Start
 
 ```bash
@@ -104,6 +106,19 @@ Try it on the paper login first: one focus, one preview, one small order, one ca
 
 Not every request is a line. The dashboard's polls (`GET /status`, `GET /orders`) are left out when they are answered; one that fails is logged. Refused calls (wrong token, wrong origin) are logged up to 30 a minute and counted beyond that.
 
+To check a focus against what TWS did with it:
+
+- `focus`: `ticker`, `conid`, `group`, `sent` (the exact string that went to TWS, `"<conid>@SMART"`) and `request_id` (the group's subscription it went under).
+- `display_group_shows`: one line every time TWS says what a group shows: `group`, `contract_info` (exactly as TWS sent it), `ticker` (when known), `request_id`, and `cause`: `focus` (it names the contract a focus sent to that group within the last 2 s), `initial` (the group's first word on a connection) or `tws` (changed in TWS). Nothing is thinned out; only an event that repeats the one before it word for word, with no focus in between, is left out.
+- `display_group_ticker`: the name of a contract id, when TWS gives it.
+
+A `focus` line with no `display_group_shows` line after it means TWS took the request and reported no change. A `display_group_shows` line with `cause: "focus"` while no window moved means TWS changed that group and the windows are linked to another one. For the configured group the console says the same as it happens:
+
+```
+group 4 now shows RAYA (755531415@SMART) ← focus
+group 4 now shows WHLR (700@SMART) ← changed in TWS
+```
+
 The files are not cleaned up; delete old ones when you like. Today's file is what the day's orders are read back from at a start: the daily count, the duplicate window and the one-order-per-alert rule all survive a restart through it.
 
 ## HTTP API
@@ -134,7 +149,7 @@ Notes on the calls:
 - **`/cancel`** takes the `order_id` of a buy from `/orders` that has not filled; TWS cancels its exits with it. A filled buy is refused (`already_filled`): its take-profit and stop stay in TWS.
 - **`/halt`** is the off switch, saved to `config.json`. `paperOnly` and `enabled` cannot be changed over HTTP.
 
-One order per alert: when `/order` (or `/preview`) carries an `alert_id` that an order placed today already carries, it is refused with `duplicate_alert` and the text "this alert already has an order (order 123, RAYA, 04:27:31 New York)". This holds across tabs, reloads and a restart of the bridge. An order you cancelled still uses up its alert. The one exception is an order that was stopped before any fill and has nothing left working (TWS refused it, or it could not be sent): its alert can be ordered again. The same ticker inside `duplicateWindowSec` is refused separately (`duplicate`), with or without an `alert_id`.
+One order per alert: when `/order` (or `/preview`) carries an `alert_id` that an order placed today already carries, it is refused with `duplicate_alert` and the text "this alert already has an order (order 123, RAYA, 04:27:31 New York)". This holds across tabs, reloads and a restart of the bridge. An alert is used up only while its order is still working, or once anything of it has filled. An order that has ended with nothing filled frees its alert, whoever ended it: you cancelled it (from the dashboard or in TWS), TWS refused it, or it could not be sent. "Ended" means TWS has confirmed it (`Cancelled`, `Inactive`); while a cancel is only asked for (`PendingCancel`) the buy can still fill and the alert stays taken. A cancelled order that had a partial fill keeps its alert. A cancelled order still counts toward `maxOrdersPerDay`, and the same ticker inside `duplicateWindowSec` is refused separately (`duplicate`), with or without an `alert_id`.
 
 | Status | `code` |
 |---|---|
