@@ -1,0 +1,23 @@
+{
+  "name": "tws-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local bridge between the pnldash dashboard (browser) and the TWS running on this Mac: focus a ticker, place the usual bracket order. Human-clicked orders only.",
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "test": "tsx --test test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "dependencies": {
+    "@stoqey/ib": "1.6.15",
+    "tsx": "4.23.15"
+  },
+  "devDependencies": {
+    "@types/node": "25.9.12",
+    "typescript": "5.9.3"
+  }
+}

@@ -1,0 +1,130 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { Bridge } from "./bridge.js";
+import { ConfigError, loadOrCreateConfig, persistHalted } from "./config.js";
+import type { Config } from "./config.js";
+import { errorMessage } from "./errors.js";
+import { createIbApi } from "./ib.js";
+import { FileJournal } from "./journal.js";
+import { TwsLink } from "./link.js";
+import { createBridgeServer, listenOnLoopback } from "./server.js";
+import { systemClock } from "./time.js";
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const configFile = path.join(root, "config.json");
+const logsDir = path.join(root, "logs");
+
+function say(message: string): void {
+  console.log(`${new Date().toTimeString().slice(0, 8)}  ${message}`);
+}
+
+function readVersion(): string {
+  try {
+    const pkg: unknown = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+    if (typeof pkg === "object" && pkg !== null && "version" in pkg && typeof pkg.version === "string") return pkg.version;
+  } catch {
+    // Fall through.
+  }
+  return "0.0.0";
+}
+
+function loadConfig(): Config | null {
+  try {
+    const { config, created } = loadOrCreateConfig(configFile);
+    if (created) {
+      console.log(`Created ${configFile} from the defaults (readable by you only).`);
+      console.log('The dashboard needs the value of its "token" field; it is not printed here.');
+    } else if (process.platform !== "win32" && (fs.statSync(configFile).mode & 0o077) !== 0) {
+      console.log(`Note: ${configFile} is readable by other users of this Mac; \`chmod 600\` it (it holds the token).`);
+    }
+    return config;
+  } catch (err) {
+    console.error(err instanceof ConfigError ? err.message : `Cannot read ${configFile}: ${errorMessage(err)}`);
+    console.error("The bridge did not start.");
+    return null;
+  }
+}
+
+async function main(): Promise<void> {
+  const version = readVersion();
+  const config = loadConfig();
+  if (config === null) {
+    process.exitCode = 1;
+    return;
+  }
+
+  const journal = new FileJournal(logsDir, systemClock, [config.token]);
+  const link = new TwsLink({
+    factory: createIbApi,
+    host: config.tws.host,
+    port: config.tws.port,
+    clientId: config.tws.clientId,
+  });
+  const bridge = new Bridge({
+    config,
+    link,
+    journal,
+    version,
+    saveHalted: (halted) => persistHalted(configFile, halted),
+    say,
+  });
+  const server = createBridgeServer({
+    bridge,
+    token: config.token,
+    allowedOrigins: config.allowedOrigins,
+    journal,
+  });
+
+  try {
+    await listenOnLoopback(server, config.http.port);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    console.error(
+      code === "EADDRINUSE"
+        ? `Port ${config.http.port} is taken: is the bridge already running? (http.port in config.json)`
+        : `Cannot listen on 127.0.0.1:${config.http.port}: ${errorMessage(err)}`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
+  const portKind = config.tws.port === 7497 ? " (TWS paper)" : config.tws.port === 7496 ? " (TWS LIVE)" : "";
+  console.log(`tws-bridge ${version}`);
+  console.log(`  config   ${configFile}`);
+  console.log(`  log      ${logsDir}${path.sep}`);
+  console.log(`  http     http://127.0.0.1:${config.http.port}   origins: ${config.allowedOrigins.join(", ") || "none"}`);
+  console.log(`  TWS      ${config.tws.host}:${config.tws.port}${portKind}, client id ${config.tws.clientId}, display group ${config.displayGroup}`);
+  console.log(
+    `  orders   ${config.paperOnly ? "paper accounts only" : "LIVE ACCOUNTS ALLOWED (paperOnly is off)"}` +
+      `${config.enabled ? "" : ", DISABLED"}${config.halted ? ", HALTED" : ""}`,
+  );
+  journal.write("start", {
+    version,
+    http_port: config.http.port,
+    tws_port: config.tws.port,
+    paper_only: config.paperOnly,
+    enabled: config.enabled,
+    halted: config.halted,
+    order: config.order,
+    limits: config.limits,
+  });
+
+  link.start();
+
+  let stopping = false;
+  const shutdown = (signal: string): void => {
+    if (stopping) return;
+    stopping = true;
+    say(`${signal}: stopping. Orders already in TWS stay in TWS.`);
+    journal.write("stop", { signal });
+    link.stop();
+    server.close(() => process.exit(0));
+    server.closeAllConnections();
+    setTimeout(() => process.exit(0), 2000).unref();
+  };
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+}
+
+void main();

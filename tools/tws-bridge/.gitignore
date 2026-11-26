@@ -1,0 +1,8 @@
+# The live config holds the access token: never commit it.
+config.json
+config.json.tmp
+
+# One JSONL file per New York trading day.
+logs/
+
+node_modules/

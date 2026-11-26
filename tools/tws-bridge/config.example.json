@@ -1,0 +1,33 @@
+{
+  "tws": {
+    "host": "127.0.0.1",
+    "port": 7497,
+    "clientId": 77
+  },
+  "http": {
+    "port": 8765
+  },
+  "token": "",
+  "allowedOrigins": ["https://pnldash.uz", "http://localhost:5173"],
+  "displayGroup": 1,
+  "paperOnly": true,
+  "enabled": true,
+  "halted": false,
+  "order": {
+    "qty": 100,
+    "priceFrom": "alert",
+    "limitOffsetPct": 1.0,
+    "maxChasePct": 3.0,
+    "takeProfitPct": 10.0,
+    "stopPct": 5.0,
+    "stopLimitOffsetPct": 1.0,
+    "useAlertStop": true,
+    "outsideRth": true
+  },
+  "limits": {
+    "maxShares": 500,
+    "maxNotionalUsd": 1000,
+    "maxOrdersPerDay": 20,
+    "duplicateWindowSec": 10
+  }
+}
