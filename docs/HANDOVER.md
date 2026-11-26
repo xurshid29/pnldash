@@ -338,6 +338,9 @@ the POP at 04:27 ET off a flat base ("suitable") and the one at 11:10 ET after a
   reading in rows and a History column. `verify-tv-setups.ts` 916 checks; `pinesim` 41 lines.
 - **Checked through the MCP** (4 calls + 2 compile runs): compiles; against the saved v48 on SVRE 1m only the POP marker
   differs (v48's 11 POPs = 8 strong + 3 weak at a 3× minimum); the replica gives the same marks on the same candles.
+- **Deployed `9b13706` (US holiday, no trading) and checked on prod:** the three v49 example messages through `?dry=1`
+  parse (`vol_x` 212.4 / 6.2 / 212.4, `weak` false / true / false), a v48 message without `vol` still does, and the
+  bundle carries v49. Not checked: a real delivery, and the dashboard in a browser.
 - **No POP or BACK row had reached prod when this was built** (v48 deployed 11-25 15:22 ET; the alerts were not yet
   recreated, or nothing fired before the holiday). The operator goes straight to v49.
 - **The order problem.** The operator: "when I see them, I need to switch the window to IBKR, add the ticker … and place
