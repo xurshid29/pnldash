@@ -9,7 +9,11 @@ import type { IbApi, IbApiFactory } from "./ib.js";
  */
 export const REQUEST_ID_BASE = 900_000_000;
 
-/** TWS tick type of the real-time ask. Delayed asks (type 67) are never used as a price. */
+/**
+ * TWS tick types of the real-time bid and ask. The delayed ones (types 66 and 67) are never used
+ * as a price.
+ */
+const TICK_BID = 1;
 const TICK_ASK = 2;
 
 /**
@@ -73,6 +77,30 @@ export interface OrderMessageEvent {
   nonFatal: boolean;
 }
 
+/**
+ * TWS's own report of an order of this client, as it stands in TWS now: sent after the order is
+ * placed or changed (by the bridge or by hand in TWS) and in answer to `syncOrders`.
+ */
+export interface OpenOrderEvent {
+  orderId: number;
+  /** "BUY" or "SELL", when TWS says. */
+  action: string | null;
+  /** The order's whole quantity (filled and unfilled together). */
+  totalQuantity: number | null;
+  /** The limit price; for a stop-limit order, the stop's own limit. */
+  lmtPrice: number | null;
+  /** For a stop-limit order, the stop (trigger) price. */
+  auxPrice: number | null;
+}
+
+/** One line of the accounts' positions. */
+export interface PositionRow {
+  account: string;
+  conid: number;
+  /** Shares held: positive = long, negative = short. */
+  position: number;
+}
+
 export interface LinkHandlers {
   onUp?(info: { accounts: string[]; nextValidId: number }): void;
   onAccounts?(accounts: string[]): void;
@@ -80,6 +108,7 @@ export interface LinkHandlers {
   onOrderStatus?(event: OrderStatusEvent): void;
   onExecution?(event: ExecutionEvent): void;
   onOrderMessage?(event: OrderMessageEvent): void;
+  onOpenOrder?(event: OpenOrderEvent): void;
   /** TWS listed its display groups: once per connection, if it answers at all. */
   onDisplayGroups?(groups: number[]): void;
   /** A display group said what it shows: `"<conid>@<exchange>"`, `"none"` or `"combo"`. */
@@ -133,10 +162,23 @@ type Pending =
     }
   | {
       kind: "snapshot";
-      resolve: (ask: number | null) => void;
+      /** The tick type waited for: the bid or the ask. */
+      field: number;
+      resolve: (price: number | null) => void;
       reject: (err: Error) => void;
       timer: NodeJS.Timeout;
     };
+
+/** One read of the positions in flight; a second caller in the meantime gets the same answer. */
+interface PositionsRead {
+  rows: PositionRow[];
+  waiters: Array<{ resolve: (rows: PositionRow[]) => void; reject: (err: Error) => void }>;
+  timer: NodeJS.Timeout;
+}
+
+function finiteOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
 
 /**
  * The connection to TWS: connects, reconnects with backoff, hands out order ids and matches
@@ -170,6 +212,7 @@ export class TwsLink {
   /** Display group → what TWS last said it shows. */
   private readonly groupShows = new Map<number, string>();
   private readonly pending = new Map<number, Pending>();
+  private positionsRead: PositionsRead | null = null;
   /** What the bridge sends for itself, waiting its turn: see {@link inBackground}. */
   private backgroundQueue: Array<() => void> = [];
   private backgroundTimer: NodeJS.Timeout | null = null;
@@ -277,8 +320,41 @@ export class TwsLink {
     this.requireApi().placeOrder(orderId, contract, order);
   }
 
+  /**
+   * Changes an order TWS already has. On the wire it is the same message as placing one: the
+   * whole order again under its own id, with the new price. Throws when the connection is not up.
+   */
+  modifyOrder(orderId: number, contract: Contract, order: Order): void {
+    this.requireApi().placeOrder(orderId, contract, order);
+  }
+
   cancelOrder(orderId: number): void {
     this.requireApi().cancelOrder(orderId);
+  }
+
+  /**
+   * The positions of every account of this login, read fresh from TWS: the stream is started,
+   * read up to its end marker and stopped again. Rejects after `timeoutMs` (the caller must then
+   * not act on a guess). Reads only.
+   */
+  positions(timeoutMs: number): Promise<PositionRow[]> {
+    const api = this.requireApi();
+    return new Promise<PositionRow[]>((resolve, reject) => {
+      if (this.positionsRead !== null) {
+        this.positionsRead.waiters.push({ resolve, reject });
+        return;
+      }
+      const timer = setTimeout(() => {
+        const read = this.positionsRead;
+        if (read === null) return;
+        this.positionsRead = null;
+        if (this.api === api) api.cancelPositions();
+        const err = new TwsTimeoutError(`TWS did not report the positions within ${timeoutMs} ms`);
+        for (const waiter of read.waiters) waiter.reject(err);
+      }, timeoutMs);
+      this.positionsRead = { rows: [], waiters: [{ resolve, reject }], timer };
+      api.reqPositions();
+    });
   }
 
   /** Asks TWS again for this client's open orders and today's fills. Reads only. */
@@ -308,6 +384,15 @@ export class TwsLink {
    * per request.
    */
   askSnapshot(contract: Contract, timeoutMs: number): Promise<number | null> {
+    return this.quoteSnapshot(contract, timeoutMs, TICK_ASK);
+  }
+
+  /** The same snapshot, read for its real-time bid. */
+  bidSnapshot(contract: Contract, timeoutMs: number): Promise<number | null> {
+    return this.quoteSnapshot(contract, timeoutMs, TICK_BID);
+  }
+
+  private quoteSnapshot(contract: Contract, timeoutMs: number, field: number): Promise<number | null> {
     const api = this.requireApi();
     const reqId = this.takeRequestId();
     return new Promise<number | null>((resolve, reject) => {
@@ -316,7 +401,7 @@ export class TwsLink {
         if (this.api === api) api.cancelMktData(reqId);
         resolve(null);
       }, timeoutMs);
-      this.pending.set(reqId, { kind: "snapshot", resolve, reject, timer });
+      this.pending.set(reqId, { kind: "snapshot", field, resolve, reject, timer });
       api.reqMktData(reqId, contract, "", true, false);
     });
   }
@@ -475,7 +560,7 @@ export class TwsLink {
 
     on(EventName.tickPrice, (reqId: number, field: number, value: number) => {
       const pending = this.pending.get(reqId);
-      if (pending?.kind !== "snapshot" || field !== TICK_ASK) return;
+      if (pending?.kind !== "snapshot" || field !== pending.field) return;
       if (!Number.isFinite(value) || value <= 0) return;
       this.settle(reqId);
       pending.resolve(value);
@@ -507,6 +592,38 @@ export class TwsLink {
         avgPrice: execution.avgPrice ?? null,
         time: execution.time ?? null,
       });
+    });
+
+    on(EventName.openOrder, (orderId: number, _contract: Contract, order: Order) => {
+      if (!Number.isInteger(orderId) || orderId < 1) return;
+      // An order of another API client (or one typed into TWS) can carry any id: not ours.
+      if (order?.clientId !== undefined && order.clientId !== this.clientId) return;
+      this.handlers.onOpenOrder?.({
+        orderId,
+        action: typeof order?.action === "string" ? order.action : null,
+        totalQuantity: finiteOrNull(order?.totalQuantity),
+        lmtPrice: finiteOrNull(order?.lmtPrice),
+        auxPrice: finiteOrNull(order?.auxPrice),
+      });
+    });
+
+    on(EventName.position, (account: string, contract: Contract, pos: number) => {
+      const read = this.positionsRead;
+      const conid = contract?.conId;
+      if (read === null || conid === undefined || !Number.isInteger(conid)) return;
+      // A line without a usable number is kept as "not a number": the reader refuses on it
+      // instead of taking the position for whatever the other lines say.
+      read.rows.push({ account: String(account), conid, position: typeof pos === "number" ? pos : Number.NaN });
+    });
+
+    on(EventName.positionEnd, () => {
+      const read = this.positionsRead;
+      if (read === null) return;
+      this.positionsRead = null;
+      clearTimeout(read.timer);
+      // Only the one reading was wanted: the stream of later changes is switched off again.
+      api.cancelPositions();
+      for (const waiter of read.waiters) waiter.resolve([...read.rows]);
     });
 
     on(EventName.displayGroupList, (_reqId: number, groups: string) => {
@@ -617,6 +734,12 @@ export class TwsLink {
       pending.reject(new NotConnectedError("the TWS connection dropped"));
     }
     this.pending.clear();
+    const read = this.positionsRead;
+    if (read !== null) {
+      this.positionsRead = null;
+      clearTimeout(read.timer);
+      for (const waiter of read.waiters) waiter.reject(new NotConnectedError("the TWS connection dropped"));
+    }
 
     const reason = this.lastError ?? fallbackReason;
     this.lastError = null;

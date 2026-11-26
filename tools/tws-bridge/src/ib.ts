@@ -28,8 +28,12 @@ export interface IbApi {
     regulatorySnapshot: boolean,
   ): unknown;
   cancelMktData(reqId: number): unknown;
+  /** Places an order; with the id of an order TWS already has, changes that order. */
   placeOrder(id: number, contract: Contract, order: Order): unknown;
   cancelOrder(orderId: number): unknown;
+  /** Starts the stream of the accounts' positions: all of them, `positionEnd`, then every change. */
+  reqPositions(): unknown;
+  cancelPositions(): unknown;
   queryDisplayGroups(reqId: number): unknown;
   subscribeToGroupEvents(reqId: number, groupId: number): unknown;
   updateDisplayGroup(reqId: number, contractInfo: string): unknown;

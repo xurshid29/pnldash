@@ -440,6 +440,8 @@ test("the real library object: every call the bridge needs exists, and building 
     "cancelMktData",
     "placeOrder",
     "cancelOrder",
+    "reqPositions",
+    "cancelPositions",
     "queryDisplayGroups",
     "subscribeToGroupEvents",
     "updateDisplayGroup",
@@ -452,4 +454,139 @@ test("the real library object: every call the bridge needs exists, and building 
   }
   assert.equal(api["isConnected"], false);
   assert.equal(dotenvLoaded(), false);
+});
+
+// ------------------------------------------- what /chase and /sell read
+
+test("link: the bid comes from the same plain snapshot, read for its own tick", async (t) => {
+  const world = new FakeTws();
+  world.asks.set("ABCD", 2.52);
+  world.bids.set("ABCD", 2.47);
+  const link = makeLink(t, world);
+  link.start();
+  await until(() => link.isReady(), "ready");
+
+  assert.equal(await link.bidSnapshot(STOCK, 50), 2.47);
+  assert.equal(await link.askSnapshot(STOCK, 50), 2.52); // the two never read each other's tick
+  for (const call of world.current.callsOf("reqMktData")) {
+    assert.deepEqual(call.args.slice(1), [STOCK, "", true, false]); // snapshot true, regulatorySnapshot false
+  }
+
+  // An ask alone is not a bid; nor is a delayed bid (tick type 66) or "no data".
+  world.asks.clear();
+  world.bids.clear();
+  const pending = link.bidSnapshot(STOCK, 30);
+  const reqId = world.current.callsOf("reqMktData")[2]?.args[0];
+  world.current.emit("tickPrice", reqId, 2, 2.52);
+  world.current.emit("tickPrice", reqId, 66, 2.47);
+  world.current.emit("tickPrice", reqId, 1, -1);
+  assert.equal(await pending, null);
+  assert.deepEqual(world.current.callsOf("cancelMktData").map((call) => call.args), [[reqId]]);
+
+  // TWS ending the snapshot without a bid is "none", at once.
+  const ended = link.bidSnapshot(STOCK, 5000);
+  world.current.emit("tickSnapshotEnd", world.current.callsOf("reqMktData")[3]?.args[0]);
+  assert.equal(await ended, null);
+});
+
+test("link: positions are read fresh, up to TWS's end marker, and the stream is stopped again", async (t) => {
+  const world = new FakeTws();
+  world.positions.set(111, 100);
+  world.positions.set(222, -5);
+  world.otherPositions = [{ account: "DU7654321", conId: 111, shares: 30 }];
+  const link = makeLink(t, world);
+  link.start();
+  await until(() => link.isReady(), "ready");
+
+  assert.deepEqual(await link.positions(50), [
+    { account: "DU1234567", conid: 111, position: 100 },
+    { account: "DU1234567", conid: 222, position: -5 },
+    { account: "DU7654321", conid: 111, position: 30 },
+  ]);
+  assert.equal(world.current.callsOf("reqPositions").length, 1);
+  assert.equal(world.current.callsOf("cancelPositions").length, 1);
+
+  // A second read asks TWS again: nothing is remembered from the first.
+  world.positions.set(111, 40);
+  assert.equal((await link.positions(50))[0]?.position, 40);
+  assert.equal(world.current.callsOf("reqPositions").length, 2);
+
+  // Two callers at the same moment share one request and one answer.
+  const [a, b] = await Promise.all([link.positions(50), link.positions(50)]);
+  assert.deepEqual(a, b);
+  assert.equal(world.current.callsOf("reqPositions").length, 3);
+
+  // A line whose number TWS left out is kept as "not a number", not dropped.
+  world.otherPositions = [{ account: "DU1234567", conId: 333, shares: undefined }];
+  const rows = await link.positions(50);
+  assert.ok(Number.isNaN(rows.find((row) => row.conid === 333)?.position));
+
+  // A position line with nobody asking (a late one, after the stream was stopped) is ignored.
+  world.current.emit("position", "DU1234567", { conId: 111 }, 999, 0);
+  world.current.emit("positionEnd");
+  assert.equal(world.current.callsOf("cancelPositions").length, 4);
+});
+
+test("link: positions that do not come in time are an error, not an empty list", async (t) => {
+  const world = new FakeTws();
+  world.silentPositions = true;
+  const link = makeLink(t, world);
+  link.start();
+  await until(() => link.isReady(), "ready");
+
+  await assert.rejects(link.positions(20), (err: unknown) => err instanceof TwsTimeoutError && /within 20 ms/.test(err.message));
+  assert.equal(world.current.callsOf("cancelPositions").length, 1);
+
+  // Lines without the end marker are not an answer either.
+  const partial = link.positions(20);
+  world.current.emit("position", "DU1234567", { conId: 111 }, 100, 0);
+  await assert.rejects(partial, TwsTimeoutError);
+
+  const hanging = link.positions(5000);
+  world.drop();
+  await assert.rejects(hanging, NotConnectedError);
+  await assert.rejects(async () => link.positions(50), NotConnectedError);
+});
+
+test("link: TWS's own report of an order is passed on only for this client's orders", async (t) => {
+  const world = new FakeTws();
+  const reports: unknown[] = [];
+  const link = makeLink(t, world, { onOpenOrder: (event) => reports.push(event) });
+  link.start();
+  await until(() => link.isReady(), "ready");
+  const ib = world.current;
+
+  ib.emit("openOrder", 1000, STOCK, { action: "BUY", orderType: "LMT", totalQuantity: 100, lmtPrice: 2.53, clientId: 77 }, { status: "Submitted" });
+  ib.emit("openOrder", 1002, STOCK, { action: "SELL", orderType: "STP LMT", totalQuantity: 100, lmtPrice: 2.37, auxPrice: 2.4, clientId: 77 }, {});
+  // Another API client's order, an order typed into TWS (id 0), and one with no id at all.
+  ib.emit("openOrder", 1000, STOCK, { action: "BUY", totalQuantity: 5, lmtPrice: 9, clientId: 5 }, {});
+  ib.emit("openOrder", 0, STOCK, { action: "BUY", totalQuantity: 5, lmtPrice: 9, clientId: 77 }, {});
+  ib.emit("openOrder", undefined, STOCK, { action: "BUY", totalQuantity: 5, lmtPrice: 9 }, {});
+  // Prices TWS leaves out arrive as "no price", not as a number.
+  ib.emit("openOrder", 1001, STOCK, { action: "SELL", totalQuantity: 100, lmtPrice: undefined, auxPrice: Number.NaN }, {});
+
+  assert.deepEqual(reports, [
+    { orderId: 1000, action: "BUY", totalQuantity: 100, lmtPrice: 2.53, auxPrice: null },
+    { orderId: 1002, action: "SELL", totalQuantity: 100, lmtPrice: 2.37, auxPrice: 2.4 },
+    { orderId: 1001, action: "SELL", totalQuantity: 100, lmtPrice: null, auxPrice: null },
+  ]);
+});
+
+test("link: a change to an order goes out as the order itself again, and never while the connection is down", async (t) => {
+  const world = new FakeTws();
+  const link = makeLink(t, world);
+  link.start();
+  await until(() => link.isReady(), "ready");
+  const id = link.allocateOrderIds(1);
+  link.placeOrder(id, STOCK, BUY);
+  link.modifyOrder(id, STOCK, { ...BUY, lmtPrice: 1.02 });
+  assert.deepEqual(world.current.placed().map((p) => [p.id, p.order.lmtPrice]), [[id, 1]]);
+  assert.deepEqual(world.current.modified().map((p) => [p.id, p.order.lmtPrice]), [[id, 1.02]]);
+
+  world.drop();
+  assert.throws(() => link.modifyOrder(id, STOCK, { ...BUY, lmtPrice: 1.05 }), NotConnectedError);
+  await until(() => link.isReady(), "ready again");
+  await sleep(20);
+  assert.deepEqual(world.current.modified(), []); // nothing was kept for later
+  assert.equal(world.allModified().length, 1);
 });

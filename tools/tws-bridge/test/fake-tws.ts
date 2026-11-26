@@ -39,12 +39,40 @@ export class FakeIb implements IbApi {
     return this.calls.filter((call) => call.name === name);
   }
 
+  /** The new orders sent on this connection. A change to an order is not one: see {@link modified}. */
   placed(): PlacedOrder[] {
     return this.callsOf("placeOrder").map((call) => ({
       id: call.args[0] as number,
       contract: call.args[1] as Contract,
       order: call.args[2] as Order,
     }));
+  }
+
+  /**
+   * The changes sent on this connection: on the wire each is a `placeOrder` for an id TWS already
+   * has, and it is kept apart here (as `modifyOrder`) so "nothing new was placed" stays easy to say.
+   */
+  modified(): PlacedOrder[] {
+    return this.callsOf("modifyOrder").map((call) => ({
+      id: call.args[0] as number,
+      contract: call.args[1] as Contract,
+      order: call.args[2] as Order,
+    }));
+  }
+
+  /** The order with this id as it was last sent (placed or changed) on this connection. */
+  lastSent(id: number): PlacedOrder | undefined {
+    return [...this.placed(), ...this.modified()].filter((sent) => sent.id === id).pop();
+  }
+
+  /**
+   * TWS reports an order as it has it now (`openOrder`): by default exactly as it was last sent
+   * on this connection, with `overrides` for what TWS has differently (a price dragged by hand).
+   */
+  reports(id: number, overrides: Partial<Order> = {}): void {
+    const sent = this.lastSent(id);
+    const order = { ...(sent?.order ?? {}), clientId: this.options.clientId, ...overrides } as Order;
+    this.emit("openOrder", id, sent?.contract ?? {}, order, { status: "Submitted" });
   }
 
   on(event: string, listener: Listener): this {
@@ -110,11 +138,16 @@ export class FakeIb implements IbApi {
     regulatorySnapshot: boolean,
   ): this {
     this.calls.push({ name: "reqMktData", args: [reqId, contract, genericTickList, snapshot, regulatorySnapshot] });
-    const ask = this.world.asks.get(contract.symbol ?? "");
-    if (ask === undefined) return this;
+    // What happens in TWS between the bridge asking for a quote and getting it (a fill, say).
+    this.world.onMktData?.(this, reqId);
+    const symbol = contract.symbol ?? "";
+    const ask = this.world.asks.get(symbol);
+    // A bid of its own, or one cent under the ask when only the ask is set.
+    const bid = this.world.bids.get(symbol) ?? (ask === undefined ? undefined : ask - 0.01);
+    if (ask === undefined && bid === undefined) return this;
     queueMicrotask(() => {
-      this.emit("tickPrice", reqId, 1, ask - 0.01);
-      this.emit("tickPrice", reqId, 2, ask);
+      if (bid !== undefined) this.emit("tickPrice", reqId, 1, bid);
+      if (ask !== undefined) this.emit("tickPrice", reqId, 2, ask);
       this.emit("tickSnapshotEnd", reqId);
     });
     return this;
@@ -125,14 +158,41 @@ export class FakeIb implements IbApi {
     return this;
   }
 
+  /**
+   * As TWS does: an id it does not have is a new order, an id it has is a change to that order.
+   * The two are logged under different names (`placeOrder` / `modifyOrder`).
+   */
   placeOrder(id: number, contract: Contract, order: Order): this {
-    this.calls.push({ name: "placeOrder", args: [id, contract, order] });
-    if (this.world.failPlaceOrderAt === this.callsOf("placeOrder").length) throw new Error("encoder blew up");
+    const change = this.world.orderIds.has(id);
+    this.world.orderIds.add(id);
+    this.calls.push({ name: change ? "modifyOrder" : "placeOrder", args: [id, contract, order] });
+    if (!change && this.world.failPlaceOrderAt === this.callsOf("placeOrder").length) throw new Error("encoder blew up");
+    if (change && this.world.failModifyAt === this.callsOf("modifyOrder").length) throw new Error("encoder blew up");
+    this.world.onOrder?.(this, id, order, change);
     return this;
   }
 
   cancelOrder(orderId: number): this {
     this.calls.push({ name: "cancelOrder", args: [orderId] });
+    this.world.onCancel?.(this, orderId);
+    return this;
+  }
+
+  /** As TWS does: every position line, then the end marker (and then changes, which the fake has none of). */
+  reqPositions(): this {
+    this.calls.push({ name: "reqPositions", args: [] });
+    if (this.world.silentPositions) return this;
+    queueMicrotask(() => {
+      const account = (this.world.accounts ?? "").split(",")[0] ?? "";
+      for (const [conId, shares] of this.world.positions) this.emit("position", account, { conId }, shares, 0);
+      for (const row of this.world.otherPositions) this.emit("position", row.account, { conId: row.conId }, row.shares, 0);
+      this.emit("positionEnd");
+    });
+    return this;
+  }
+
+  cancelPositions(): this {
+    this.calls.push({ name: "cancelPositions", args: [] });
     return this;
   }
 
@@ -207,6 +267,25 @@ export class FakeTws {
     ["BRK B", [listing("BRK B", 555, "NYSE")]],
   ]);
   readonly asks = new Map<string, number>();
+  /** The live bid per symbol. A symbol with an ask and no bid here bids one cent under its ask. */
+  readonly bids = new Map<string, number>();
+  /** The (first) account's position per contract id. A contract not in here has no position line. */
+  readonly positions = new Map<number, number>();
+  /** Position lines of other accounts, or lines TWS garbles (`shares` not a number). */
+  otherPositions: Array<{ account: string; conId: number; shares: number | undefined }> = [];
+  /** TWS never answers the positions request. */
+  silentPositions = false;
+  /** Every order id TWS has been sent, on any connection: a `placeOrder` for one of them is a change. */
+  readonly orderIds = new Set<number>();
+  /** Make the Nth change to an order on a connection throw (1 = the first). */
+  failModifyAt = 0;
+  /**
+   * TWS's side of the story, told at the moment the bridge acts. Each is called inside the
+   * bridge's own call; to answer as TWS does (afterwards), emit from a `queueMicrotask`.
+   */
+  onOrder: ((ib: FakeIb, id: number, order: Order, change: boolean) => void) | null = null;
+  onCancel: ((ib: FakeIb, id: number) => void) | null = null;
+  onMktData: ((ib: FakeIb, reqId: number) => void) | null = null;
   /** The display groups TWS lists, most used first ("4|1|2|5"); null = it never answers the question. */
   groups: string | null = null;
   /** What a display group shows: "<conid>@<exchange>", "none" or "combo". A group not in here shows "none". */
@@ -238,9 +317,14 @@ export class FakeTws {
     this.current.emit("disconnected");
   }
 
-  /** Every order sent on any connection, in order. */
+  /** Every new order sent on any connection, in order. */
   allPlaced(): PlacedOrder[] {
     return this.instances.flatMap((ib) => ib.placed());
+  }
+
+  /** Every change to an order sent on any connection, in order. */
+  allModified(): PlacedOrder[] {
+    return this.instances.flatMap((ib) => ib.modified());
   }
 }
 

@@ -61,6 +61,10 @@ test("the defaults are a valid config with the documented values", () => {
     stopLimitOffsetPct: 1,
     useAlertStop: true,
     outsideRth: true,
+    maxChases: 5,
+    sellOffsetPct: 2,
+    amountUsd: 0,
+    askFallback: "alert",
   });
   assert.deepEqual(config.limits, { maxShares: 500, maxNotionalUsd: 1000, maxOrdersPerDay: 20, duplicateWindowSec: 10 });
 });
@@ -216,4 +220,104 @@ test("saving the halt switch changes only `halted` in the file on disk", (t) => 
 
   persistHalted(file, false);
   assert.equal(loadOrCreateConfig(file).config.halted, false);
+});
+
+// ------------------------------------------ settings newer than the file
+
+/** The settings added after the first config.json files were written, with their defaults. */
+const NEWER = { maxChases: 5, sellOffsetPct: 2, amountUsd: 0, askFallback: "alert" } as const;
+
+test("a config.json written before the newer settings existed still loads, each of them at its default", (t) => {
+  const old = withChange((c) => {
+    for (const key of Object.keys(NEWER)) delete c.order[key];
+  }) as Record<string, any>;
+  assert.deepEqual(Object.keys(old["order"]), [
+    "qty",
+    "priceFrom",
+    "limitOffsetPct",
+    "maxChasePct",
+    "takeProfitPct",
+    "stopPct",
+    "stopLimitOffsetPct",
+    "useAlertStop",
+    "outsideRth",
+  ]);
+  assert.deepEqual(problemsOf(old), []);
+  assert.deepEqual(validateConfig(old), defaultConfig(TOKEN));
+  assert.deepEqual(
+    Object.fromEntries(Object.keys(NEWER).map((key) => [key, (validateConfig(old).order as unknown as Record<string, unknown>)[key]])),
+    NEWER,
+  );
+
+  // From the file on disk, as the running installation has it: it loads, and is not rewritten.
+  const file = path.join(tempDir(t), "config.json");
+  fs.writeFileSync(file, `${JSON.stringify(old, null, 2)}\n`, { mode: 0o600 });
+  const before = fs.readFileSync(file, "utf8");
+  const loaded = loadOrCreateConfig(file);
+  assert.equal(loaded.created, false);
+  assert.deepEqual(loaded.config, defaultConfig(TOKEN));
+  assert.equal(fs.readFileSync(file, "utf8"), before);
+
+  // Saving the halt switch leaves it loadable, and still does not write the newer settings in.
+  persistHalted(file, true);
+  assert.equal(loadOrCreateConfig(file).config.halted, true);
+  assert.deepEqual(Object.keys((JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, any>)["order"]), Object.keys(old["order"]));
+
+  // Any one of them may be there without the others.
+  for (const [key, value] of [["maxChases", 3], ["sellOffsetPct", 1.5], ["amountUsd", 400], ["askFallback", "none"]] as const) {
+    const some = JSON.parse(JSON.stringify(old)) as Record<string, any>;
+    some["order"][key] = value;
+    assert.deepEqual(validateConfig(some).order, { ...defaultConfig(TOKEN).order, [key]: value });
+  }
+});
+
+test("only the newer settings may be missing: the others are still required, and a typo is still refused", () => {
+  assertRefused(withChange((c) => delete c.order.stopPct), /order\.stopPct is missing/);
+  assertRefused(withChange((c) => delete c.order.qty), /order\.qty is missing/);
+  assertRefused(withChange((c) => delete c.limits.maxShares), /limits\.maxShares is missing/);
+  assertRefused(withChange((c) => (c.order.maxChase = 3)), /order\.maxChase is not a known setting/);
+  assertRefused(withChange((c) => (c.order.sellOffset = 2)), /order\.sellOffset is not a known setting/);
+  assertRefused(withChange((c) => (c.order.amountUSD = 400)), /order\.amountUSD is not a known setting/);
+  // They are settings of `order`, nowhere else.
+  assertRefused(withChange((c) => (c.maxChases = 3)), /^maxChases is not a known setting$/);
+  assertRefused(withChange((c) => (c.limits.amountUsd = 400)), /limits\.amountUsd is not a known setting/);
+});
+
+test("the newer settings are checked like the others", () => {
+  assertRefused(withChange((c) => (c.order.maxChases = -1)), /order\.maxChases must be at least 0/);
+  assertRefused(withChange((c) => (c.order.maxChases = 21)), /order\.maxChases must be at most 20/);
+  assertRefused(withChange((c) => (c.order.maxChases = 2.5)), /order\.maxChases must be a whole number/);
+  assertRefused(withChange((c) => (c.order.maxChases = "5")), /order\.maxChases must be a number/);
+  assertRefused(withChange((c) => (c.order.maxChases = null)), /order\.maxChases must be a number/);
+  assertRefused(withChange((c) => (c.order.sellOffsetPct = 0)), /order\.sellOffsetPct must be at least 0\.1/);
+  assertRefused(withChange((c) => (c.order.sellOffsetPct = 0.05)), /order\.sellOffsetPct must be at least 0\.1/);
+  assertRefused(withChange((c) => (c.order.sellOffsetPct = 20.5)), /order\.sellOffsetPct must be at most 20/);
+  assertRefused(withChange((c) => (c.order.amountUsd = -400)), /order\.amountUsd must be at least 0/);
+  assertRefused(withChange((c) => (c.order.amountUsd = "400")), /order\.amountUsd must be a number/);
+  assertRefused(withChange((c) => (c.order.askFallback = "bid")), /order\.askFallback must be "alert" or "none"/);
+  assertRefused(withChange((c) => (c.order.askFallback = true)), /order\.askFallback must be "alert" or "none"/);
+  assertRefused(withChange((c) => (c.order.askFallback = null)), /order\.askFallback must be "alert" or "none"/);
+
+  // The edges are allowed: 0 switches chasing (or dollar sizing) off.
+  for (const [key, value] of [["maxChases", 0], ["maxChases", 20], ["sellOffsetPct", 0.1], ["sellOffsetPct", 20], ["amountUsd", 0], ["askFallback", "none"]] as const) {
+    assert.deepEqual(problemsOf(withChange((c) => (c.order[key] = value))), [], `${key} = ${value}`);
+  }
+});
+
+test("order.amountUsd may not be above limits.maxNotionalUsd", () => {
+  assertRefused(
+    withChange((c) => (c.order.amountUsd = 1500)),
+    /^order\.amountUsd \(1500\) is above limits\.maxNotionalUsd \(1000\): an order may not cost more than that$/,
+  );
+  assert.deepEqual(problemsOf(withChange((c) => (c.order.amountUsd = 1000))), []);
+  assert.deepEqual(
+    problemsOf(
+      withChange((c) => {
+        c.order.amountUsd = 400;
+        c.limits.maxNotionalUsd = 400;
+      }),
+    ),
+    [],
+  );
+  assert.equal(validateConfig(withChange((c) => (c.order.amountUsd = 400))).order.amountUsd, 400);
 });

@@ -118,7 +118,7 @@ test("auth: every request needs the X-Bridge-Token header", async (t) => {
   assert.equal((await call(s.port, { token: null, headers: { Authorization: `Bearer ${TOKEN}` } })).status, 401);
   // Without the token nothing is done, on any path.
   for (const path of ["/orders", "/nothing"]) assert.equal((await call(s.port, { token: null, path })).status, 401);
-  for (const path of ["/focus", "/preview", "/order", "/cancel", "/halt"]) {
+  for (const path of ["/focus", "/preview", "/order", "/cancel", "/halt", "/chase", "/sell"]) {
     assert.equal((await call(s.port, { token: null, path, json: { ticker: "ABCD", alert_price: 2.5, halted: true } })).status, 401);
   }
   assert.deepEqual(s.world.allPlaced(), []);
@@ -344,14 +344,38 @@ test("flow: status, focus, preview, order, orders, cancel, halt over HTTP", asyn
   assert.equal(preview.status, 200);
   assert.deepEqual(
     { ...preview.body.data, checks: preview.body.data.checks.length },
-    { ticker: "ABCD", qty: 100, limit: 2.53, take_profit: 2.78, stop: 2.42, stop_limit: 2.39, notional: 253, checks: 11 },
+    {
+      ticker: "ABCD",
+      qty: 100,
+      sizing: { mode: "shares" },
+      limit: 2.53,
+      take_profit: 2.78,
+      stop: 2.42,
+      stop_limit: 2.39,
+      notional: 253,
+      price_from: "alert",
+      note: null,
+      checks: 11,
+    },
   );
   assert.deepEqual(Object.keys(preview.body.data.checks[0]), ["name", "detail"]);
   assert.deepEqual(s.world.allPlaced(), []);
 
   const order = await call(s.port, { ...from, path: "/order", json: request });
   assert.deepEqual(order.body, {
-    data: { order_id: 1000, ticker: "ABCD", qty: 100, limit: 2.53, take_profit: 2.78, stop: 2.42, stop_limit: 2.39, status: "PendingSubmit" },
+    data: {
+      order_id: 1000,
+      ticker: "ABCD",
+      qty: 100,
+      sizing: { mode: "shares" },
+      limit: 2.53,
+      take_profit: 2.78,
+      stop: 2.42,
+      stop_limit: 2.39,
+      price_from: "alert",
+      note: null,
+      status: "PendingSubmit",
+    },
   });
   assert.equal(s.world.allPlaced().length, 3);
 
@@ -392,6 +416,112 @@ test("flow: status, focus, preview, order, orders, cancel, halt over HTTP", asyn
   assert.equal((await call(s.port, from)).body.data.halted, true);
   assert.deepEqual((await call(s.port, from)).body.data.today, { orders: 1, filled: 0 });
   assert.equal(s.world.allPlaced().length, 3);
+});
+
+test("flow: chase and sell over HTTP: a click each, by order id, and nothing but the order id", async (t) => {
+  const s = await serve(t, { world: (w) => (w.asks.set("ABCD", 2.54), w.bids.set("ABCD", 2.4)) });
+  const from = { origin: DASHBOARD };
+  assert.deepEqual([(await call(s.port, from)).body.data.order.maxChases, (await call(s.port, from)).body.data.order.sellOffsetPct], [5, 2]);
+
+  await call(s.port, { ...from, path: "/order", json: { ticker: "ABCD", alert_price: 2.5 } });
+  const ib = s.world.current;
+  ib.emit("orderStatus", 1000, "Submitted", 0, 100, 0);
+  s.clock.now += 1000;
+
+  // Both take POST only, a token, an allowed origin and { order_id }.
+  for (const path of ["/chase", "/sell"]) {
+    assert.equal((await call(s.port, { path })).status, 405);
+    assert.equal((await call(s.port, { path, json: { order_id: 1000 }, token: "wrong" })).status, 401);
+    assert.equal((await call(s.port, { path, json: { order_id: 1000 }, origin: "https://evil.example" })).status, 403);
+    assert.equal((await call(s.port, { ...from, path, json: { order_id: 1000, limit: 3 } })).body.code, "bad_request");
+    assert.equal((await call(s.port, { ...from, path, json: { ticker: "ABCD" } })).status, 400);
+    const unknown = await call(s.port, { ...from, path, json: { order_id: 55 } });
+    assert.deepEqual([unknown.status, unknown.body.code], [404, "unknown_order"]);
+  }
+  assert.deepEqual(s.world.allModified(), []);
+
+  const chase = await call(s.port, { ...from, path: "/chase", json: { order_id: 1000 } });
+  assert.equal(chase.status, 200);
+  assert.deepEqual(chase.body, {
+    data: { order_id: 1000, limit: 2.57, take_profit: 2.83, stop: 2.44, stop_limit: 2.41, chases: 1, status: "Submitted" },
+  });
+  const tooSoon = await call(s.port, { ...from, path: "/chase", json: { order_id: 1000 } });
+  assert.deepEqual([tooSoon.status, tooSoon.body.code], [409, "too_soon"]);
+  assert.deepEqual(Object.keys(tooSoon.body), ["error", "code"]);
+
+  // Nothing is held yet: there is nothing to sell.
+  const early = await call(s.port, { ...from, path: "/sell", json: { order_id: 1000 } });
+  assert.deepEqual([early.status, early.body.code], [409, "nothing_to_sell"]);
+
+  ib.emit("execDetails", -1, {}, { orderId: 1000, execId: "e1", shares: 100, price: 2.56, cumQty: 100, avgPrice: 2.56 });
+  ib.emit("orderStatus", 1000, "Filled", 100, 0, 2.56);
+  ib.emit("orderStatus", 1001, "Submitted", 0, 100, 0);
+  s.world.positions.set(111, 100);
+  s.clock.now += 1000;
+  // A halt does not stand in the way of getting out.
+  await call(s.port, { ...from, path: "/halt", json: { halted: true } });
+  const sell = await call(s.port, { ...from, path: "/sell", json: { order_id: 1000 } });
+  assert.equal(sell.status, 200);
+  assert.deepEqual(sell.body, { data: { order_id: 1000, qty: 100, limit: 2.35, status: "Submitted", via: "take_profit" } });
+  const chased = await call(s.port, { ...from, path: "/chase", json: { order_id: 1000 } });
+  assert.deepEqual([chased.status, chased.body.code], [409, "halted"]);
+
+  // /orders: the chase count, the current and the first prices, what is held, and the sell.
+  const [item] = (await call(s.port, { ...from, path: "/orders" })).body.data;
+  assert.deepEqual(Object.keys(item), [
+    "order_id",
+    "ticker",
+    "conid",
+    "placed_at",
+    "asked",
+    "sizing",
+    "sent",
+    "chases",
+    "status",
+    "filled_qty",
+    "avg_fill_price",
+    "slip_pct",
+    "held_qty",
+    "legs",
+    "exit",
+    "loose_exit",
+    "error",
+    "note",
+  ]);
+  assert.deepEqual(
+    [item.chases, item.held_qty, item.sent.limit, item.sent.first_limit, item.sent.take_profit, item.sent.first_take_profit],
+    [1, 100, 2.57, 2.53, 2.35, 2.78],
+  );
+  assert.deepEqual(Object.keys(item.exit), [
+    "via",
+    "order_id",
+    "qty",
+    "limit",
+    "first_limit",
+    "bid",
+    "reprices",
+    "sent_at",
+    "status",
+    "filled_qty",
+    "avg_fill_price",
+    "exit_pct",
+  ]);
+  assert.deepEqual([item.exit.via, item.exit.order_id, item.exit.limit, item.exit.status], ["take_profit", 1001, 2.35, "Submitted"]);
+
+  // The request log has each click with its order id, and its refusal when there was one.
+  const clicks = s.journal
+    .ofType("request")
+    .filter((line) => (line["path"] === "/chase" || line["path"] === "/sell") && line["order_id"] === 1000 && line["status"] !== 400 && line["status"] !== 401 && line["status"] !== 403)
+    .map((line) => [line["path"], line["status"], line["code"]]);
+  assert.deepEqual(clicks, [
+    ["/chase", 200, undefined],
+    ["/chase", 409, "too_soon"],
+    ["/sell", 409, "nothing_to_sell"],
+    ["/sell", 200, undefined],
+    ["/chase", 409, "halted"],
+  ]);
+  assert.equal(s.world.allPlaced().length, 3);
+  assert.deepEqual(s.world.allModified().map((sent) => sent.id), [1000, 1001, 1002, 1001]);
 });
 
 test("flow: with TWS down, /status still answers and the rest is 503", async (t) => {

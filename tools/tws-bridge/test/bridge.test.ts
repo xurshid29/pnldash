@@ -28,6 +28,10 @@ test("status: the shape the dashboard reads, with masked accounts", async (t) =>
       stopLimitOffsetPct: 1,
       useAlertStop: true,
       outsideRth: true,
+      maxChases: 5,
+      sellOffsetPct: 2,
+      amountUsd: 0,
+      askFallback: "alert",
     },
     limits: { maxShares: 500, maxNotionalUsd: 1000, maxOrdersPerDay: 20, duplicateWindowSec: 10 },
     today: { orders: 0, filled: 0 },
@@ -97,11 +101,14 @@ test("preview: the order that would be sent, the checks it passed, and nothing s
     {
       ticker: "ABCD",
       qty: 100,
+      sizing: { mode: "shares" },
       limit: 2.53,
       take_profit: 2.78,
       stop: 2.42,
       stop_limit: 2.39,
       notional: 253,
+      price_from: "alert",
+      note: null,
       checks: ["switches", "account", "shares", "daily", "duplicate", "contract", "limit", "take_profit", "stop", "notional"],
     },
   );
@@ -137,10 +144,13 @@ test("order: the bracket goes out as three orders, in order, on the resolved con
     order_id: 1000,
     ticker: "ABCD",
     qty: 100,
+    sizing: { mode: "shares" },
     limit: 2.53,
     take_profit: 2.78,
     stop: 2.42,
     stop_limit: 2.39,
+    price_from: "alert",
+    note: null,
     status: "PendingSubmit",
   });
 
@@ -163,25 +173,35 @@ test("order: the bracket goes out as three orders, in order, on the resolved con
     conid: 111,
     placed_at: new Date(T0).toISOString(),
     asked: { alert_price: 2.5, alert_stop: 2.42, qty: null, stage: "band", alert_at: alertAt, alert_id: "987" },
+    sizing: { mode: "shares" },
     sent: {
       qty: 100,
       limit: 2.53,
       take_profit: 2.78,
       stop: 2.42,
       stop_limit: 2.39,
+      // The prices the bracket was placed with: these stay when a chase or a sell moves the others.
+      first_limit: 2.53,
+      first_take_profit: 2.78,
+      first_stop: 2.42,
+      first_stop_limit: 2.39,
       price_from: "alert",
       stop_from: "alert",
       outside_rth: true,
       order_ids: { parent: 1000, take_profit: 1001, stop: 1002 },
     },
+    chases: 0,
     status: "PendingSubmit",
     filled_qty: 0,
     avg_fill_price: null,
     slip_pct: null,
+    held_qty: 0,
     legs: {
       take_profit: { order_id: 1001, status: "PendingSubmit", filled_qty: 0, avg_fill_price: null },
       stop: { order_id: 1002, status: "PendingSubmit", filled_qty: 0, avg_fill_price: null },
     },
+    exit: null,
+    loose_exit: false,
     error: null,
     note: null,
   });
@@ -421,7 +441,15 @@ test("rail: the price running away is refused before anything is sent", async (t
 });
 
 test('order: priceFrom "ask" takes one free snapshot and prices off its ask', async (t) => {
-  const r = await rig(t, { config: (c) => (c.order.priceFrom = "ask"), world: (w) => w.asks.set("ABCD", 2.52) });
+  const r = await rig(t, {
+    config: (c) => {
+      c.order.priceFrom = "ask";
+      // Without a live ask this refuses, as it always did; the fallback to the alert's price
+      // (the default since) has its own tests in sizing.test.ts.
+      c.order.askFallback = "none";
+    },
+    world: (w) => w.asks.set("ABCD", 2.52),
+  });
   const result = await r.bridge.order(buy());
   assert.equal(result.limit, 2.55); // 2.52 + 1%
   assert.equal(result.take_profit, 2.81);

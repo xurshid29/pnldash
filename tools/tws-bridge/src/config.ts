@@ -19,7 +19,30 @@ export interface OrderConfig {
   stopLimitOffsetPct: number;
   useAlertStop: boolean;
   outsideRth: boolean;
+  /**
+   * Most `/chase` clicks on one buy, and most re-prices of one `/sell`. 0 switches `/chase` off.
+   * Optional in config.json (see {@link OPTIONAL_ORDER_DEFAULTS}).
+   */
+  maxChases: number;
+  /** A `/sell` limit sits this many percent under the bid. Optional in config.json. */
+  sellOffsetPct: number;
+  /**
+   * Dollars per buy: above 0, a click that names no quantity buys as many whole shares as this
+   * pays for at the buy's limit, and `qty` is not used. 0 = off. Optional in config.json.
+   */
+  amountUsd: number;
+  /**
+   * With `priceFrom: "ask"`, what a buy does when TWS gives no live ask at the click: "alert"
+   * prices it from the alert instead, "none" refuses. Optional in config.json.
+   */
+  askFallback: "alert" | "none";
 }
+
+/**
+ * Settings added after the first config.json files were written. A file without them still
+ * loads: each takes the value here. Every other setting must be in the file.
+ */
+export const OPTIONAL_ORDER_DEFAULTS = { maxChases: 5, sellOffsetPct: 2.0, amountUsd: 0, askFallback: "alert" } as const;
 
 export interface LimitsConfig {
   maxShares: number;
@@ -80,6 +103,10 @@ export function defaultConfig(token: string): Config {
       stopLimitOffsetPct: 1.0,
       useAlertStop: true,
       outsideRth: true,
+      maxChases: OPTIONAL_ORDER_DEFAULTS.maxChases,
+      sellOffsetPct: OPTIONAL_ORDER_DEFAULTS.sellOffsetPct,
+      amountUsd: OPTIONAL_ORDER_DEFAULTS.amountUsd,
+      askFallback: OPTIONAL_ORDER_DEFAULTS.askFallback,
     },
     limits: { maxShares: 500, maxNotionalUsd: 1000, maxOrdersPerDay: 20, duplicateWindowSec: 10 },
   };
@@ -103,15 +130,19 @@ interface NumberRule {
 class Checker {
   readonly problems: string[] = [];
 
-  /** An object with exactly these keys: an unknown key is a typo, a missing key is never defaulted. */
-  section(value: unknown, path: string, keys: readonly string[]): Record<string, unknown> {
+  /**
+   * An object with these keys and no others: an unknown key is a typo, and a missing key is
+   * never defaulted, except the `optional` ones (settings newer than the config files already in
+   * use), which take their default when the file does not have them.
+   */
+  section(value: unknown, path: string, keys: readonly string[], optional: readonly string[] = []): Record<string, unknown> {
     if (!isPlainObject(value)) {
       this.problems.push(`${path || "the file"} must be an object`);
       return {};
     }
     const prefix = path ? `${path}.` : "";
     for (const key of Object.keys(value)) {
-      if (!keys.includes(key)) this.problems.push(`${prefix}${key} is not a known setting`);
+      if (!keys.includes(key) && !optional.includes(key)) this.problems.push(`${prefix}${key} is not a known setting`);
     }
     for (const key of keys) {
       if (!(key in value)) this.problems.push(`${prefix}${key} is missing`);
@@ -119,8 +150,9 @@ class Checker {
     return value;
   }
 
-  number(section: Record<string, unknown>, path: string, key: string, rule: NumberRule): number {
-    if (!(key in section)) return Number.NaN;
+  /** `whenMissing` is what an optional setting is when the file does not have it. */
+  number(section: Record<string, unknown>, path: string, key: string, rule: NumberRule, whenMissing = Number.NaN): number {
+    if (!(key in section)) return whenMissing;
     const value = section[key];
     const name = path ? `${path}.${key}` : key;
     if (typeof value !== "number" || !Number.isFinite(value)) {
@@ -226,17 +258,22 @@ export function validateConfig(raw: unknown): Config {
 
   const order =
     "order" in root
-      ? c.section(root["order"], "order", [
-          "qty",
-          "priceFrom",
-          "limitOffsetPct",
-          "maxChasePct",
-          "takeProfitPct",
-          "stopPct",
-          "stopLimitOffsetPct",
-          "useAlertStop",
-          "outsideRth",
-        ])
+      ? c.section(
+          root["order"],
+          "order",
+          [
+            "qty",
+            "priceFrom",
+            "limitOffsetPct",
+            "maxChasePct",
+            "takeProfitPct",
+            "stopPct",
+            "stopLimitOffsetPct",
+            "useAlertStop",
+            "outsideRth",
+          ],
+          Object.keys(OPTIONAL_ORDER_DEFAULTS),
+        )
       : {};
   const qty = c.number(order, "order", "qty", { integer: true, min: 1 });
   const priceFrom = order["priceFrom"];
@@ -250,6 +287,13 @@ export function validateConfig(raw: unknown): Config {
   const stopLimitOffsetPct = c.number(order, "order", "stopLimitOffsetPct", { min: 0, below: 100 });
   const useAlertStop = c.boolean(order, "order", "useAlertStop");
   const outsideRth = c.boolean(order, "order", "outsideRth");
+  const maxChases = c.number(order, "order", "maxChases", { integer: true, min: 0, max: 20 }, OPTIONAL_ORDER_DEFAULTS.maxChases);
+  const sellOffsetPct = c.number(order, "order", "sellOffsetPct", { min: 0.1, max: 20 }, OPTIONAL_ORDER_DEFAULTS.sellOffsetPct);
+  const amountUsd = c.number(order, "order", "amountUsd", { min: 0 }, OPTIONAL_ORDER_DEFAULTS.amountUsd);
+  const askFallback = "askFallback" in order ? order["askFallback"] : OPTIONAL_ORDER_DEFAULTS.askFallback;
+  if (askFallback !== "alert" && askFallback !== "none") {
+    c.problems.push('order.askFallback must be "alert" or "none"');
+  }
   if (priceFrom === "alert" && limitOffsetPct > maxChasePct) {
     c.problems.push(
       `order.limitOffsetPct (${limitOffsetPct}) is above order.maxChasePct (${maxChasePct}): ` +
@@ -267,6 +311,12 @@ export function validateConfig(raw: unknown): Config {
   const duplicateWindowSec = c.number(limits, "limits", "duplicateWindowSec", { min: 0 });
   if (qty > maxShares) {
     c.problems.push(`order.qty (${qty}) is above limits.maxShares (${maxShares}): the default order would be refused`);
+  }
+  if (amountUsd > maxNotionalUsd) {
+    c.problems.push(
+      `order.amountUsd (${amountUsd}) is above limits.maxNotionalUsd (${maxNotionalUsd}): ` +
+        "an order may not cost more than that",
+    );
   }
 
   if (c.problems.length > 0) throw new ConfigError(c.problems);
@@ -290,6 +340,10 @@ export function validateConfig(raw: unknown): Config {
       stopLimitOffsetPct,
       useAlertStop,
       outsideRth,
+      maxChases,
+      sellOffsetPct,
+      amountUsd,
+      askFallback: askFallback as "alert" | "none",
     },
     limits: { maxShares, maxNotionalUsd, maxOrdersPerDay, duplicateWindowSec },
   };

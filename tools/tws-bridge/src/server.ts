@@ -145,6 +145,8 @@ export function createBridgeServer(options: ServerOptions): http.Server {
     "/preview": { method: "POST", run: (body) => bridge.preview(body) },
     "/order": { method: "POST", run: (body) => bridge.order(body) },
     "/cancel": { method: "POST", run: (body) => bridge.cancel(body) },
+    "/chase": { method: "POST", run: (body) => bridge.chase(body) },
+    "/sell": { method: "POST", run: (body) => bridge.sell(body) },
     "/halt": { method: "POST", run: (body) => bridge.halt(body) },
   };
 

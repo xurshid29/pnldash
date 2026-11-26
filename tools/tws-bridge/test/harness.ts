@@ -22,6 +22,17 @@ export interface RigOptions {
   journal?: Journal;
   ackWaitMs?: number;
   contractTimeoutMs?: number;
+  /** How long a `/sell` waits for the positions (default here: 40 ms). */
+  positionTimeoutMs?: number;
+  /** How long a `/sell` waits for a cancel it sent to be confirmed (default here: 300 ms). */
+  cancelWaitMs?: number;
+  /** How long a `/sell` gives TWS to say what became of the exits (default here: 15 ms). */
+  exitsSettleMs?: number;
+  /**
+   * How long a sell order may stay working on an order that holds nothing before the bridge
+   * cancels it. Default here: a minute, so it plays no part in a test that does not ask for it.
+   */
+  exitGraceMs?: number;
   /** The gap between the bridge's own background messages (default here: 1 ms). */
   backgroundGapMs?: number;
   /** How long the display-group report waits for the groups to answer (default here: 1 s). */
@@ -76,6 +87,10 @@ export async function rig(t: TestContext, options: RigOptions = {}): Promise<Rig
     ackWaitMs: options.ackWaitMs ?? 0,
     contractTimeoutMs: options.contractTimeoutMs ?? 1000,
     askTimeoutMs: 40,
+    positionTimeoutMs: options.positionTimeoutMs ?? 40,
+    cancelWaitMs: options.cancelWaitMs ?? 300,
+    exitsSettleMs: options.exitsSettleMs ?? 15,
+    exitGraceMs: options.exitGraceMs ?? 60_000,
     groupReportMs: options.groupReportMs ?? 1000,
     groupLookupTimeoutMs: options.groupLookupTimeoutMs ?? 1000,
   });

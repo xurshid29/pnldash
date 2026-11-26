@@ -22,7 +22,11 @@
     "stopPct": 5.0,
     "stopLimitOffsetPct": 1.0,
     "useAlertStop": true,
-    "outsideRth": true
+    "outsideRth": true,
+    "maxChases": 5,
+    "sellOffsetPct": 2.0,
+    "amountUsd": 0,
+    "askFallback": "alert"
   },
   "limits": {
     "maxShares": 500,
