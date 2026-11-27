@@ -65,6 +65,9 @@ test("the defaults are a valid config with the documented values", () => {
     sellOffsetPct: 2,
     amountUsd: 0,
     askFallback: "alert",
+    entryStopPct: 3,
+    entryStopLimitPct: 1,
+    entryValidSec: 300,
   });
   assert.deepEqual(config.limits, { maxShares: 500, maxNotionalUsd: 1000, maxOrdersPerDay: 20, duplicateWindowSec: 10 });
 });
@@ -225,7 +228,15 @@ test("saving the halt switch changes only `halted` in the file on disk", (t) => 
 // ------------------------------------------ settings newer than the file
 
 /** The settings added after the first config.json files were written, with their defaults. */
-const NEWER = { maxChases: 5, sellOffsetPct: 2, amountUsd: 0, askFallback: "alert" } as const;
+const NEWER = {
+  maxChases: 5,
+  sellOffsetPct: 2,
+  amountUsd: 0,
+  askFallback: "alert",
+  entryStopPct: 3,
+  entryStopLimitPct: 1,
+  entryValidSec: 300,
+} as const;
 
 test("a config.json written before the newer settings existed still loads, each of them at its default", (t) => {
   const old = withChange((c) => {

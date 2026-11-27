@@ -26,7 +26,10 @@
     "maxChases": 5,
     "sellOffsetPct": 2.0,
     "amountUsd": 0,
-    "askFallback": "alert"
+    "askFallback": "alert",
+    "entryStopPct": 3.0,
+    "entryStopLimitPct": 1.0,
+    "entryValidSec": 300
   },
   "limits": {
     "maxShares": 500,

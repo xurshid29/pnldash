@@ -116,7 +116,7 @@ function logFields(body: unknown): JournalFields {
   const out: JournalFields = {};
   if (typeof body !== "object" || body === null || Array.isArray(body)) return out;
   const source = body as Record<string, unknown>;
-  for (const key of ["ticker", "stage", "alert_id", "alert_at"]) {
+  for (const key of ["ticker", "stage", "alert_id", "alert_at", "entry"]) {
     const value = source[key];
     if (typeof value === "string") out[key] = value.slice(0, 80);
     else if (typeof value === "number" && Number.isFinite(value)) out[key] = value;

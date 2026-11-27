@@ -24,14 +24,17 @@ import {
   formatPct,
   formatPrice,
   formatUsd,
+  ibUtcDateTime,
   planChase,
   planOrder,
   sellLimit,
   sellOrder,
+  stopEntryGoodUntil,
+  stopEntryOff,
   stopOrder,
   takeProfitOrder,
 } from "./order.js";
-import type { LegName, OrderPlan, Sizing } from "./order.js";
+import type { Entry, LegName, OrderPlan, Sizing } from "./order.js";
 import { nyDate, nyTime, systemClock } from "./time.js";
 import type { Clock } from "./time.js";
 
@@ -53,6 +56,12 @@ export const CHANGE_SPACING_MS = 300;
 const CHANGE_ANSWER_MS = 5000;
 /** Two prices are the same price when they are this close (TWS reports them as binary fractions). */
 const PRICE_EPS = 1e-9;
+/**
+ * A stop entry that TWS reports cancelled this close to its end (or after it), with nothing filled
+ * and no cancel asked by the bridge, is taken to have expired: IB's clock and this Mac's are not
+ * one clock.
+ */
+const EXPIRY_CLOCK_SLACK_MS = 2000;
 /** How many times `/sell` looks at an order again when it changed while TWS was being asked. */
 const SELL_PASSES = 4;
 
@@ -131,10 +140,16 @@ export interface FocusData {
 
 export interface PreviewData {
   ticker: string;
+  /** "now" (a limit buy) or "stop" (a stop-limit buy that waits above the alert). */
+  entry: Entry;
   qty: number;
   /** How the quantity was arrived at: `amountUsd` dollars' worth, or a number of shares. */
   sizing: Sizing;
   limit: number;
+  /** A stop entry's trigger; null for a buy now. */
+  trigger: number | null;
+  /** When a stop entry would stop waiting (ISO time); null for a buy now. */
+  good_until: string | null;
   take_profit: number | null;
   stop: number | null;
   stop_limit: number | null;
@@ -149,9 +164,12 @@ export interface PreviewData {
 export interface OrderData {
   order_id: number;
   ticker: string;
+  entry: Entry;
   qty: number;
   sizing: Sizing;
   limit: number;
+  trigger: number | null;
+  good_until: string | null;
   take_profit: number | null;
   stop: number | null;
   stop_limit: number | null;
@@ -221,6 +239,7 @@ interface OrderRequest {
   alertAtMs: number | null;
   alertAt: string | null;
   alertId: string | null;
+  entry: Entry;
 }
 
 export interface BridgeOptions {
@@ -323,7 +342,7 @@ function parseAlertAt(value: unknown): { ms: number; text: string } {
   return { ms, text: new Date(ms).toISOString() };
 }
 
-const ORDER_FIELDS = ["ticker", "alert_price", "alert_stop", "qty", "stage", "alert_at", "alert_id"] as const;
+const ORDER_FIELDS = ["ticker", "alert_price", "alert_stop", "qty", "stage", "alert_at", "alert_id", "entry"] as const;
 
 function parseOrderRequest(body: unknown): OrderRequest {
   const f = fields(body, ORDER_FIELDS);
@@ -355,8 +374,15 @@ function parseOrderRequest(body: unknown): OrderRequest {
     else throw badRequest("alert_id must be a short string or a number");
   }
 
+  let entry: Entry = "now";
+  if (given(f["entry"])) {
+    const value = f["entry"];
+    if (value !== "now" && value !== "stop") throw badRequest('entry must be "now" or "stop"');
+    entry = value;
+  }
+
   const at = given(f["alert_at"]) ? parseAlertAt(f["alert_at"]) : null;
-  return { ticker, alertPrice, alertStop, qty, stage, alertAtMs: at?.ms ?? null, alertAt: at?.text ?? null, alertId };
+  return { ticker, alertPrice, alertStop, qty, stage, alertAtMs: at?.ms ?? null, alertAt: at?.text ?? null, alertId, entry };
 }
 
 /**
@@ -574,12 +600,15 @@ export class Bridge {
   /** The order `/order` would send right now, or the error it would give. Sends nothing. */
   async preview(body: unknown): Promise<PreviewData> {
     const request = parseOrderRequest(body);
-    const { plan, checks, priceNote } = await this.prepare(request);
+    const { plan, checks, priceNote, goodUntilMs } = await this.prepare(request);
     return {
       ticker: request.ticker,
+      entry: plan.entry,
       qty: plan.qty,
       sizing: plan.sizing,
       limit: plan.limit,
+      trigger: plan.trigger,
+      good_until: goodUntilMs === null ? null : new Date(goodUntilMs).toISOString(),
       take_profit: plan.takeProfit,
       stop: plan.stop,
       stop_limit: plan.stopLimit,
@@ -604,9 +633,12 @@ export class Bridge {
     return {
       order_id: record.order_id,
       ticker: record.ticker,
+      entry: record.entry,
       qty: record.sent.qty,
       sizing: record.sizing,
       limit: record.sent.limit,
+      trigger: record.sent.trigger,
+      good_until: record.sent.good_until,
       take_profit: record.sent.take_profit,
       stop: record.sent.stop,
       stop_limit: record.sent.stop_limit,
@@ -790,18 +822,35 @@ export class Bridge {
    * preview answers exactly what an order placed at the same moment would.
    *
    * `priceNote` says why the price did not come from where the config says (no live ask, so it
-   * was worked out from the alert), or is null.
+   * was worked out from the alert), or is null. `goodUntilMs` is when a stop entry sent now would
+   * stop waiting; null for a buy now.
    */
-  private async prepare(
-    request: OrderRequest,
-  ): Promise<{ plan: OrderPlan; contract: ResolvedContract; checks: Check[]; priceNote: string | null }> {
+  private async prepare(request: OrderRequest): Promise<{
+    plan: OrderPlan;
+    contract: ResolvedContract;
+    checks: Check[];
+    priceNote: string | null;
+    goodUntilMs: number | null;
+  }> {
     const { order: orderCfg, limits } = this.config;
     const checks: Check[] = [];
     const now = this.clock();
     const { ticker } = request;
+    const stopEntry = request.entry === "stop";
+    const goodUntilMs = stopEntry ? stopEntryGoodUntil(now, orderCfg.entryValidSec) : null;
 
     this.assertTradingOn();
     checks.push({ name: "switches", detail: "orders are enabled and not halted" });
+
+    if (stopEntry) {
+      if (!(orderCfg.entryStopPct > 0)) throw stopEntryOff();
+      checks.push({
+        name: "entry",
+        detail:
+          `stop entry: a BUY STP LMT ${orderCfg.entryStopPct}% above the alert's price, priced from the alert alone; ` +
+          `it waits ${orderCfg.entryValidSec} s, then IB cancels it if nothing has filled`,
+      });
+    }
 
     this.assertOnline();
     const paper = this.assertAccount();
@@ -878,7 +927,8 @@ export class Bridge {
 
     let ask: number | null = null;
     let priceNote: string | null = null;
-    if (orderCfg.priceFrom === "ask") {
+    // A stop entry reads no ask: its prices come from the alert alone.
+    if (!stopEntry && orderCfg.priceFrom === "ask") {
       try {
         ask = await this.readQuote("ask", ticker, this.ibContract(contract));
       } catch (err) {
@@ -897,6 +947,7 @@ export class Bridge {
       alertPrice: request.alertPrice,
       alertStop: request.alertStop,
       ask,
+      entry: request.entry,
     });
     if (sizedInUsd) {
       const amount = `${formatUsd(orderCfg.amountUsd)} at ${formatPrice(plan.limit)}`;
@@ -912,20 +963,36 @@ export class Bridge {
         detail: `${plan.qty} of ${limits.maxShares} allowed (${amount})`,
       });
     }
-    checks.push({
-      name: "limit",
-      detail:
-        `${formatPrice(plan.limit)} = the ${plan.priceFrom === "ask" ? "ask" : "alert's price"} ` +
-        `${formatPrice(plan.basePrice)} + ${orderCfg.limitOffsetPct}%; ` +
-        `${plan.chasePct.toFixed(1)}% past the alert (max ${orderCfg.maxChasePct}%)` +
-        (priceNote === null ? "" : ` (${priceNote})`),
-    });
+    if (plan.trigger !== null && goodUntilMs !== null) {
+      checks.push({
+        name: "trigger",
+        detail:
+          `${formatPrice(plan.trigger)} = the alert's price ${formatPrice(plan.basePrice)} + ${orderCfg.entryStopPct}%; ` +
+          `the buy waits for it until ${nyTime(goodUntilMs)} New York (${orderCfg.entryValidSec} s)`,
+      });
+      checks.push({
+        name: "limit",
+        detail:
+          `${formatPrice(plan.limit)} = the trigger + ${orderCfg.entryStopLimitPct}%, rounded up; ` +
+          `${plan.chasePct.toFixed(1)}% past the alert. maxChasePct does not apply to a stop entry: ` +
+          "its distance from the alert is entryStopPct + entryStopLimitPct",
+      });
+    } else {
+      checks.push({
+        name: "limit",
+        detail:
+          `${formatPrice(plan.limit)} = the ${plan.priceFrom === "ask" ? "ask" : "alert's price"} ` +
+          `${formatPrice(plan.basePrice)} + ${orderCfg.limitOffsetPct}%; ` +
+          `${plan.chasePct.toFixed(1)}% past the alert (max ${orderCfg.maxChasePct}%)` +
+          (priceNote === null ? "" : ` (${priceNote})`),
+      });
+    }
     checks.push({
       name: "take_profit",
       detail:
         plan.takeProfit === null
           ? "none (takeProfitPct is 0)"
-          : `${formatPrice(plan.takeProfit)}, ${orderCfg.takeProfitPct}% above the limit`,
+          : `${formatPrice(plan.takeProfit)}, ${orderCfg.takeProfitPct}% above the ${plan.trigger === null ? "limit" : "trigger"}`,
     });
     checks.push({ name: "stop", detail: this.describeStop(plan) });
 
@@ -940,7 +1007,7 @@ export class Bridge {
     }
     checks.push({ name: "notional", detail: `$${plan.notional.toFixed(2)} of $${limits.maxNotionalUsd} allowed` });
 
-    return { plan, contract, checks, priceNote };
+    return { plan, contract, checks, priceNote, goodUntilMs };
   }
 
   /**
@@ -972,7 +1039,7 @@ export class Bridge {
     if (plan.stop === null || plan.stopLimit === null) return `none (stopPct is 0)${ignored}`;
     const prices = `${formatPrice(plan.stop)}, limit ${formatPrice(plan.stopLimit)}`;
     if (plan.stopFrom === "alert") return `${prices}: the alert's stop`;
-    return `${prices}: ${this.config.order.stopPct}% under the limit${ignored}`;
+    return `${prices}: ${this.config.order.stopPct}% under the ${plan.trigger === null ? "limit" : "trigger"}${ignored}`;
   }
 
   // ------------------------------------------------------------- sending
@@ -991,7 +1058,10 @@ export class Bridge {
     } catch (err) {
       throw this.linkError(err, request.ticker);
     }
-    const legs = buildBracket(plan, firstId, this.config.order.outsideRth);
+    // A stop entry waits until this moment; IB cancels it then, and the bridge does nothing about it.
+    const goodUntilMs = plan.entry === "stop" ? stopEntryGoodUntil(now, this.config.order.entryValidSec) : null;
+    const goodTillDate = goodUntilMs === null ? null : ibUtcDateTime(goodUntilMs);
+    const legs = buildBracket(plan, firstId, this.config.order.outsideRth, goodTillDate);
     const takeProfitId = plan.takeProfit === null ? null : firstId + 1;
     const stopId = plan.stop === null ? null : firstId + 2;
 
@@ -1009,9 +1079,12 @@ export class Bridge {
         alert_id: request.alertId,
       },
       sizing: plan.sizing,
+      entry: plan.entry,
       sent: {
         qty: plan.qty,
         limit: plan.limit,
+        trigger: plan.trigger,
+        good_until: goodUntilMs === null ? null : new Date(goodUntilMs).toISOString(),
         take_profit: plan.takeProfit,
         stop: plan.stop,
         stop_limit: plan.stopLimit,
@@ -1044,9 +1117,10 @@ export class Bridge {
       note: priceNote,
     };
 
-    // The log line comes first: an order that cannot be written down is not sent.
+    // The log line comes first: an order that cannot be written down is not sent. A stop entry's
+    // line also has the time exactly as it goes to TWS.
     try {
-      this.journal.writeOrThrow("order_placed", { ...record });
+      this.journal.writeOrThrow("order_placed", { ...record, ...(goodTillDate === null ? {} : { good_till_date: goodTillDate }) });
     } catch (err) {
       throw new BridgeError(500, "log_failed", `the order was NOT sent: the log cannot be written (${errorMessage(err)})`);
     }
@@ -1074,8 +1148,13 @@ export class Bridge {
       throw new BridgeError(502, "send_failed", `order ${firstId} for ${record.ticker} was not placed: ${record.error}`);
     }
 
+    const buying =
+      plan.trigger === null || goodUntilMs === null
+        ? `buy ${plan.qty} @ ${formatPrice(plan.limit)}`
+        : `stop buy ${plan.qty}, trigger ${formatPrice(plan.trigger)}, limit ${formatPrice(plan.limit)}, ` +
+          `until ${nyTime(goodUntilMs)} New York`;
     this.say(
-      `order ${firstId} ${record.ticker}: buy ${plan.qty} @ ${formatPrice(plan.limit)}` +
+      `order ${firstId} ${record.ticker}: ${buying}` +
         (plan.sizing.amount_usd === undefined ? "" : ` (${formatUsd(plan.sizing.amount_usd)})`) +
         (plan.takeProfit === null ? "" : `, take-profit ${formatPrice(plan.takeProfit)}`) +
         (plan.stop === null || plan.stopLimit === null
@@ -1145,6 +1224,19 @@ export class Bridge {
   private assertChaseable(record: OrderRecord): void {
     const max = this.config.order.maxChases;
     const id = record.order_id;
+    // A stop entry's buy is a stop-limit: a chase would send a limit buy in its place. One that is
+    // over (filled or ended) is refused below as any buy is.
+    const buyOver = record.status === "Filled" || record.sent.qty - record.filled_qty <= 0 || isDone(record.status);
+    if (record.entry === "stop" && !buyOver) {
+      const trigger = record.sent.trigger === null ? "its trigger" : formatPrice(record.sent.trigger);
+      throw new BridgeError(
+        409,
+        "not_chaseable",
+        record.filled_qty > 0
+          ? `order ${id} is a stop entry (trigger ${trigger}) and has part-filled: it cannot be chased`
+          : `this buy waits for ${trigger}: cancel it and buy now instead`,
+      );
+    }
     if (max === 0) {
       throw new BridgeError(409, "chase_limit", "chasing is switched off: order.maxChases is 0 in config.json");
     }
@@ -1401,6 +1493,7 @@ export class Bridge {
     } catch (err) {
       throw this.linkError(err, record.ticker);
     }
+    this.book.markCancelAsked(orderId);
     this.journal.write("cancel", { order_id: orderId, ticker: record.ticker, ...(forSell ? { for: "sell" } : {}) });
     this.onOrderStatus({
       orderId,
@@ -1795,6 +1888,7 @@ export class Bridge {
     this.cleanedUp.add(record.order_id);
     try {
       this.link.cancelOrder(record.order_id);
+      this.book.markCancelAsked(record.order_id);
       this.journal.write("order_cleanup", { order_id: record.order_id, ticker: record.ticker });
     } catch {
       // Not connected: nothing can be cancelled now; the error stays on the record.
@@ -2261,12 +2355,35 @@ export class Bridge {
         avg_fill_price: state.avg_fill_price,
         ...(leg === "parent" ? { alert_price: record.asked.alert_price, slip_pct: record.slip_pct } : {}),
       });
-      if (leg === "parent") this.ackWaiters.get(record.order_id)?.();
+      if (leg === "parent") {
+        this.noteExpiry(record);
+        this.ackWaiters.get(record.order_id)?.();
+      }
       this.watchFlat(record);
     }
     // TWS's word on the order, also when it only repeats itself: whoever waits on this order looks again.
     this.heard(event.orderId);
     this.stateChanged();
+  }
+
+  /**
+   * A stop entry that has ended Cancelled with nothing filled, at (or after) its time, and that
+   * the bridge was not asked to cancel, has expired: IB cancelled it as it was told to. The order
+   * gets a note that says so, once, and the log a line that brings the note back at a start.
+   * Nothing is sent: the alert is free again by the usual rule (ended, nothing filled).
+   */
+  private noteExpiry(record: OrderRecord): void {
+    const id = record.order_id;
+    if (record.entry !== "stop" || record.sent.good_until === null) return;
+    if (record.status !== "Cancelled" || record.filled_qty > 0) return;
+    if (this.book.isExpired(id) || this.book.cancelAsked(id)) return;
+    const untilMs = Date.parse(record.sent.good_until);
+    if (!Number.isFinite(untilMs) || this.clock() < untilMs - EXPIRY_CLOCK_SLACK_MS) return;
+    const note = `expired unfilled at ${nyTime(untilMs)} New York`;
+    this.book.markExpired(id);
+    record.note = note;
+    this.journal.write("entry_expired", { order_id: id, ticker: record.ticker, good_until: record.sent.good_until, note });
+    this.say(`order ${id} ${record.ticker}: the stop entry ${note}`);
   }
 
   /**
@@ -2294,6 +2411,8 @@ export class Bridge {
     const prices: PriceChange = {};
     if (leg === "parent") {
       if (limit !== null && differs(limit, sent.limit)) prices.limit = limit;
+      // A stop entry's trigger is the buy's stop price.
+      if (aux !== null && sent.trigger !== null && differs(aux, sent.trigger)) prices.trigger = aux;
       if (qty !== null && Number.isInteger(qty) && qty !== sent.qty) prices.qty = qty;
     } else if (leg === "take_profit") {
       if (limit !== null && sent.take_profit !== null && differs(limit, sent.take_profit)) prices.take_profit = limit;
@@ -2410,7 +2529,9 @@ export class Bridge {
     }
 
     if (event.nonFatal || CANCEL_NOTICE_CODES.has(event.code)) {
-      record.note = message;
+      // A notice about the buy of a stop entry that expired ("Order Canceled", say) does not take
+      // the place of the note that says it expired.
+      if (!(leg === "parent" && this.book.isExpired(record.order_id))) record.note = message;
       this.journal.write("order_note", entry);
       // TWS has no such order (the answer to a cancel of one it refused outright, or that never
       // reached it): no status will ever come for it, so it gets its final one here.

@@ -3,7 +3,7 @@
 A small program that runs on this Mac, next to TWS. It lets the dashboard in the browser do four things in the TWS you are already logged in to:
 
 1. **Focus**: make the TWS windows linked to one display group jump to an alert's ticker.
-2. **Order**: place your usual bracket (limit buy + take-profit + stop-limit) with one click.
+2. **Order**: place your usual bracket (limit buy + take-profit + stop-limit) with one click; or, as a **stop entry**, the same bracket with a buy that waits above the alert's price and fills only if the price gets there (see "Stop entry").
 3. **Chase**: move a buy that has not filled up to the ask, with one click (see "Chase").
 4. **Sell**: get out of what an order bought, at the bid, with one click (see "Sell").
 
@@ -92,20 +92,38 @@ Read once, at the start: after an edit, restart the bridge. A missing or unknown
 | `order.outsideRth` | `true` | Orders may work in the pre-market and after hours. |
 | `order.maxChases` | `5` | *Optional.* Most chases of one buy, and most later moves of one sell. A whole number, 0 to 20; `0` switches `/chase` off. |
 | `order.sellOffsetPct` | `2.0` | *Optional.* A sell's limit = TWS's bid − this %. 0.1 to 20. |
+| `order.entryStopPct` | `3.0` | *Optional.* A stop entry's trigger = the alert's price + this %. 0 to 50; `0` = no stop entries (`entry: "stop"` is refused, `stop_entry_off`). |
+| `order.entryStopLimitPct` | `1.0` | *Optional.* A stop entry's limit = its trigger + this %: the most it pays once triggered. 0.1 to 20. |
+| `order.entryValidSec` | `300` | *Optional.* How long a stop entry waits, in whole seconds, before IB cancels it. 10 to 3600. |
 | `limits.maxShares` | `500` | Most shares in one order. |
 | `limits.maxNotionalUsd` | `1000` | Most dollars in one order (shares × limit). |
 | `limits.maxOrdersPerDay` | `20` | Orders per New York date. Counted from the log, so a restart does not reset it. |
 | `limits.duplicateWindowSec` | `10` | The same ticker again within this many seconds is refused as a duplicate. |
 
-Prices are rounded to the US tick: $0.01 from $1 up, $0.0001 below $1. The buy limit and the take-profit go to the nearest tick, the stop, its limit and a sell's limit down.
+Prices are rounded to the US tick: $0.01 from $1 up, $0.0001 below $1. The buy limit and the take-profit go to the nearest tick, the stop, its limit and a sell's limit down. A stop entry's trigger goes to the nearest tick and its limit up, so the limit is never under the trigger.
 
-The buy is a `DAY` limit order; the take-profit and the stop are `GTC` and stay until one fills or you cancel them. A sell order the bridge places itself is a `DAY` limit order.
+The buy is a `DAY` limit order; the take-profit and the stop are `GTC` and stay until one fills or you cancel them. A sell order the bridge places itself is a `DAY` limit order. A stop entry's buy is a stop-limit good till its time (`GTD`); its exits are `GTC` as always.
 
 ### Sizing a buy in dollars
 
 With `order.amountUsd` above `0`, the quantity of a buy is `amountUsd ÷ limit`, rounded down to whole shares, where the limit is the rounded price the order carries: `$400` at a limit of `2.53` is 158 shares (`$399.74`). A click that names a quantity (`qty`) uses that quantity instead. All the limits still apply to the result, and say so in dollars: "$400 at 0.0412 is 9,708 shares, above maxShares (500)". If one share costs more than the amount, the order is refused (`too_expensive`). `/preview`, `/order` and each item of `/orders` carry `sizing`: `{ "mode": "usd", "amount_usd": 400 }` or `{ "mode": "shares" }`.
 
 A chase never changes the quantity. The buy then costs more than the amount, by what the chase added to the price and no more (at most `maxChasePct` above the alert).
+
+## Stop entry
+
+A buy that waits above the alert's price: if the price keeps going up it is caught, if not nothing is bought. `/order` (and `/preview`) with `"entry": "stop"`; `"entry": "now"`, or no `entry` at all, is the buy as before.
+
+- The buy is a `BUY STP LMT`: it triggers when the price trades at the **trigger** = the alert's price + `entryStopPct` (nearest tick), and then buys at no more than its **limit** = the trigger + `entryStopLimitPct` (rounded up to the tick). With the defaults, an alert at 0.3566 waits for 0.3673 and pays at most 0.3710; an alert at 2.50 waits for 2.58 and pays at most 2.61.
+- It is priced from the alert alone: no ask is read, whatever `priceFrom` says, and `price_from` is `"alert"`. `maxChasePct` does not apply to it: its distance from the alert is `entryStopPct` + `entryStopLimitPct` (the `limit` check of `/preview` says so).
+- It waits at most `entryValidSec`: it goes to TWS with time in force `GTD` and `goodTillDate` = the time of the click + `entryValidSec`, on a whole second, in IB's UTC form `YYYYMMDD-HH:MM:SS` (`20261125-15:05:00`). IB cancels it then by itself, and its exits with it: nothing in the bridge times it or cancels it. `outsideRth` is as configured.
+- The exits are the usual ones, measured from the trigger (the fill is expected at it or just above): take-profit = trigger + `takeProfitPct`, stop = trigger − `stopPct` (or the alert's stop, when it is below the trigger and no more than 3 × `stopPct` under it), the stop's own limit under it. They stay `GTC`. A take-profit that would not be above the buy's limit is refused (`bad_prices`).
+- Sized in dollars (`amountUsd`), the shares are worked out at the buy's limit, the most a share can cost; `maxNotionalUsd` is checked at the limit too.
+- Every rail of `/order` holds: enabled, the halt, `paperOnly`, TWS connected and online, the daily count, the ticker's duplicate window, one order per alert, a stale alert, `maxShares`, `maxNotionalUsd`. A stop entry that waits is a working order: it holds its alert and counts for the day. When IB expires it, or you cancel it, with nothing filled, the alert is free again (the usual rule).
+- While it waits TWS usually reports it `PreSubmitted`: it is working, nothing has filled, and nothing the bridge does on its own touches it.
+- `/chase` refuses it, `409 not_chaseable` ("this buy waits for 0.3673: cancel it and buy now instead"). `/cancel` works as for any buy. Once it fills it is an order like any other: `/sell`, the exits and the clean-up of a sell order left working are unchanged.
+- When IB cancels it at its time with nothing filled, `/orders` shows it `Cancelled` with `note` "expired unfilled at 10:05:00 New York" (the time is its `good_until`). That is worked out, not said by TWS: `Cancelled`, nothing filled, at or after `good_until` (2 s of slack for the two clocks), and no cancel asked for by the bridge (`/cancel`, a `/sell` that had to, or a clean-up). A notice from TWS about it afterwards does not replace that note.
+- What the bridge cannot see: an expiry that happens while the bridge is not running. TWS's list of open orders at a connection holds only working orders, so after such a restart the order may go on reading as working (and holding its alert) until TWS says something about it. Look at it in TWS.
 
 ## Chase
 
@@ -119,7 +137,7 @@ For a buy that has not filled because the price ran away from it. `POST /chase {
 - At most `order.maxChases` chases per order (`chase_limit`), and none within 300 ms of the last change to the order (`too_soon`).
 - It needs what an order needs: TWS connected and online, not halted, `enabled`, `paperOnly`. The daily order count, the ticker's duplicate window and `maxNotionalUsd` do not apply: it is the same order and the same shares.
 
-Which buys: one the bridge placed today (New York date) that is still working with something left to fill. A filled buy is `already_filled`; a cancelled one, or one being cancelled, is `already_done`.
+Which buys: one the bridge placed today (New York date) that is still working with something left to fill. A filled buy is `already_filled`; a cancelled one, or one being cancelled, is `already_done`. A stop entry is never chased while it works (`not_chaseable`, before any other check): its buy is a stop-limit, and a chase would put a limit buy in its place.
 
 How it is sent: a change to an order is the whole order again under its own id, with the new price. A chase is up to three such messages, in this order: **the buy, then the take-profit, then the stop**. The buy goes first because its price is what the click is for, and because of what a failure part-way leaves: the buy at its new limit with an exit still at its old, lower price, which is a bracket with a wider stop or a nearer target than intended, never one whose stop sits above the buy.
 
@@ -184,6 +202,18 @@ The tests run against a fake TWS. These are the things only the real one can con
 11. **A restart with orders open.** Stop the bridge while a filled order's exits are working, start it again: `/orders` should show the same order, and nothing should be cancelled (no `exit_cleanup` line), because the order still holds its shares.
 12. **`priceFrom: "ask"` and its fallback.** With `"priceFrom": "ask"`, `/preview` an alert: `price_from` should be `"ask"` in market hours. Outside them, or on a stock with no live data, it should be `"alert"` with the note "no live ask from TWS in 800 ms: priced from the alert".
 
+The stop entry, all of it built against a fake TWS. For a stop that does not trigger at once, send an `alert_price` some 5–10 % above the stock's price (the trigger is 3 % above that). Set `"entryValidSec": 60` for the duration of these tries.
+
+13. **The time format is taken.** `/order` with `"entry": "stop"`: the answer should be `PreSubmitted` (or `Submitted`), not `502 tws_refused`. In TWS the buy should show type `STP LMT`, time in force `GTD`, and an expiry one minute ahead in your local time. The `order_placed` line carries `good_till_date` exactly as sent (`YYYYMMDD-HH:MM:SS`, UTC). A refusal naming the date, or an `order_note` line about a time zone (TWS's warning 2174, for one), means the format needs changing: say what TWS wrote.
+14. **A `STP LMT` buy with exits attached.** In TWS the take-profit and the stop should hang under the stop buy as one bracket, inactive until it fills; three orders, ids in a row.
+15. **What a waiting stop reports.** The buy's `order_status` lines and `/orders` `status`: `PreSubmitted` is expected; `Submitted` works the same. Anything else, note it.
+16. **What TWS says at expiry.** Wait out the minute. Expected: `order_status` lines `Cancelled` for the buy and both exits, then an `entry_expired` line, and `/orders` showing `note` "expired unfilled at … New York". Note any `order_note` line that comes with it (code 202?), and the time of the `Cancelled` line against `good_until`: the note needs it no more than 2 s early. If the status is another word (`ApiCancelled`, `Inactive`), there is no note, though the alert is still freed.
+17. **A trigger already passed.** Send an `alert_price` some 3 % under the price, so the trigger is at the market: does it trigger at once and fill up to its limit, or does TWS refuse a buy stop that is not above the market?
+18. **The pre-market.** In the pre-market, with `outsideRth` on, place one whose trigger the stock is likely to reach: does it trigger outside regular hours? TWS may say a stop does not trigger outside them, in an `order_note` line or in its order window.
+19. **Triggered and filled.** When one fills, check it against a normal buy once: the fill price against `trigger` and `limit`, the exits at the prices `/orders` shows, and Sell moving the take-profit as usual.
+20. **The bridge not running at expiry.** Place one, stop the bridge, start it again after `good_until`: does `/orders` show it `Cancelled`, or still `PreSubmitted` (TWS did not report on it at the connection)? In the second case its alert stays taken until TWS says something.
+21. **A trigger moved by hand.** Drag the buy's trigger in TWS: `/orders` should show the new `sent.trigger` (an `order_open` line with `prices.trigger`).
+
 ## Live accounts
 
 The bridge refuses to place orders on a live account until you set `"paperOnly": false` in `config.json` by hand and restart it. There is no way to change that from the dashboard or over HTTP. For a live login also set `tws.port` to TWS's live port (`7496`).
@@ -202,6 +232,8 @@ A chase and a sell are logged like an order, before anything is sent (one that c
 - `order_open`: TWS reported an order with a price or quantity other than the book's (a change made by hand in TWS); `leg` and the new `prices`.
 - `chase_failed` / `sell_failed`: a message could not be sent; `sell_cleanup`: a refused sell order was cancelled by its id; `cancel` with `for: "sell"`: a cancel a sell had to send first.
 - `exit_cleanup`: a sell order left working on an order that holds nothing was cancelled by the bridge; `leg`, `leg_order_id`, `why` and the `note` put on the order.
+- `order_placed` of a stop entry also has `good_till_date`: the time exactly as it went to TWS.
+- `entry_expired`: a stop entry ended `Cancelled` with nothing filled at its time, and the bridge had not asked to cancel it; `good_until` and the `note` put on the order.
 
 The sell order's own status changes and fills are `order_status` and `fill` lines with `leg: "exit"`.
 
@@ -220,7 +252,7 @@ group 4 now shows RAYA (755531415@SMART) ← focus
 group 4 now shows WHLR (700@SMART) ← changed in TWS
 ```
 
-The files are not cleaned up; delete old ones when you like. Today's file is what the day's orders are read back from at a start: the daily count, the duplicate window and the one-order-per-alert rule all survive a restart through it, and so do the chases (their count and the prices they left), a sell and what it has sold, and what each order still holds. A file written by an older bridge reads back too.
+The files are not cleaned up; delete old ones when you like. Today's file is what the day's orders are read back from at a start: the daily count, the duplicate window and the one-order-per-alert rule all survive a restart through it, and so do the chases (their count and the prices they left), a sell and what it has sold, what each order still holds, a stop entry's trigger and time, an expiry the bridge saw, and a cancel it asked for (so that TWS's confirmation after a restart is not taken for an expiry). A file written by an older bridge reads back too (its orders as buys now).
 
 ## HTTP API
 
@@ -231,10 +263,10 @@ JSON in and out. Every request except `OPTIONS` needs the `X-Bridge-Token` heade
 
 | Call | Body | `data` |
 |---|---|---|
-| `GET /status` | – | `{ version, tws: { connected, port, paper, accounts, offline }, enabled, halted, paper_only, display_group, display_groups: [{ id, shows }], order, limits, today: { orders, filled } }` (`order` has every setting of the table above, `order.maxChases`, `order.sellOffsetPct`, `order.amountUsd` and `order.askFallback` among them) |
+| `GET /status` | – | `{ version, tws: { connected, port, paper, accounts, offline }, enabled, halted, paper_only, display_group, display_groups: [{ id, shows }], order, limits, today: { orders, filled } }` (`order` has every setting of the table above, `order.maxChases`, `order.sellOffsetPct`, `order.amountUsd`, `order.askFallback`, `order.entryStopPct`, `order.entryStopLimitPct` and `order.entryValidSec` among them) |
 | `POST /focus` | `{ ticker }` | `{ ticker, conid, group }` |
-| `POST /preview` | the same body as `/order` | `{ ticker, qty, sizing, limit, take_profit, stop, stop_limit, notional, price_from, note, checks }` |
-| `POST /order` | `{ ticker, alert_price, alert_stop?, qty?, stage?, alert_at?, alert_id? }` | `{ order_id, ticker, qty, sizing, limit, take_profit, stop, stop_limit, price_from, note, status }` |
+| `POST /preview` | the same body as `/order` | `{ ticker, entry, qty, sizing, limit, trigger, good_until, take_profit, stop, stop_limit, notional, price_from, note, checks }` |
+| `POST /order` | `{ ticker, alert_price, alert_stop?, qty?, stage?, alert_at?, alert_id?, entry? }` | `{ order_id, ticker, entry, qty, sizing, limit, trigger, good_until, take_profit, stop, stop_limit, price_from, note, status }` |
 | `GET /orders` | – | today's orders (New York date), newest first |
 | `POST /cancel` | `{ order_id }` | `{ order_id, status }` |
 | `POST /chase` | `{ order_id }` | `{ order_id, limit, take_profit, stop, stop_limit, chases, status }` |
@@ -245,13 +277,14 @@ Notes on the calls:
 
 - **`/status`**: `tws.connected` means the socket to TWS is up and TWS has finished its handshake. `tws.accounts` are masked (`DU…67`); `tws.paper` is true when every one of them starts with `D`. `tws.offline` is true while TWS is connected to the bridge but says it has lost IB's servers: orders are refused (`tws_offline`) until it is back, because TWS would hold them and send them later. `display_group` is the configured group; `display_groups` is what each of TWS's groups shows now, by group number: `shows` is a ticker, the raw `"<conid>@<exchange>"` while the ticker is not known, `"combo"`, or `null` for nothing (the list is empty while TWS is not connected or has not listed its groups). `order` and `limits` are the settings from `config.json`. `today.filled` counts the orders with any fill.
 - **`/focus`** works when orders are disabled, halted or the account is live: it places nothing.
-- **`/order`**: `ticker` is upper-cased and must look like a US symbol. `alert_price` and `alert_stop` are JSON numbers above 0 and under 100000. `qty` is a whole number (default `order.qty`). `alert_at` is ISO text or epoch milliseconds / seconds; an alert older than 10 minutes is refused. `alert_id` is a string or a number and is kept as a string; `stage` is free text up to 40 characters. Both are stored with the order.
+- **`/order`**: `ticker` is upper-cased and must look like a US symbol. `alert_price` and `alert_stop` are JSON numbers above 0 and under 100000. `qty` is a whole number (default `order.qty`). `alert_at` is ISO text or epoch milliseconds / seconds; an alert older than 10 minutes is refused. `alert_id` is a string or a number and is kept as a string; `stage` is free text up to 40 characters. Both are stored with the order. `entry` is `"now"` (the default: a limit buy) or `"stop"` (a stop entry, see "Stop entry"); anything else is a 400.
+  `entry` in the answer says which it is. For a stop entry `limit` is its limit, `trigger` its trigger and `good_until` (ISO time) when IB cancels it if nothing has filled; for a buy now `trigger` and `good_until` are `null`.
   The answer waits up to 1 s for TWS's first word: `status` is TWS's own (`PreSubmitted`, `Submitted`, …) or `PendingSubmit` when none came in time. If TWS refuses within that second the answer is 502 `tws_refused` with TWS's text.
   `sizing` says how `qty` was arrived at (`{ mode: "usd", amount_usd }` or `{ mode: "shares" }`). `price_from` is what the limit was worked out from: with `priceFrom: "ask"` it is `"ask"`, or `"alert"` when there was no live ask and `askFallback` is `"alert"`; `note` then says why ("no live ask from TWS in 800 ms: priced from the alert") and is `null` otherwise.
-- **`/preview`** runs every check `/order` would, with the same body, and sends nothing: the order that would go out, or the error `/order` would give. `checks` is a list of `{ name, detail }`, one per check passed (`switches`, `account`, `alert`, `alert_age`, `shares`, `daily`, `duplicate`, `contract`, `limit`, `take_profit`, `stop`, `notional`; `alert` and `alert_age` only when the body carries `alert_id` / `alert_at`). `take_profit`, `stop` and `stop_limit` are `null` when that leg is switched off.
-- **`/orders`**: each item is `{ order_id, ticker, conid, placed_at, asked, sizing, sent, chases, status, filled_qty, avg_fill_price, slip_pct, held_qty, legs, exit, loose_exit, error, note }`. `asked` is what the page sent (`alert_price`, `alert_stop`, `qty`, `stage`, `alert_at`, `alert_id`); `sent` is what went to TWS (`qty`, `limit`, `take_profit`, `stop`, `stop_limit`, the four `first_…` prices the bracket was placed with, `price_from`, `stop_from`, `outside_rth`, `order_ids`), its prices being the current ones. `chases` counts the chases. `status`, `filled_qty` and `avg_fill_price` are the buy's; `legs.take_profit` and `legs.stop` carry the exits' own. `held_qty` is what the order bought and has not sold; `exit` is the last sell (see "Sell"), `null` until Sell is clicked. `loose_exit` is `true` while the order holds nothing and a sell order of its own is still working in TWS after the bridge asked to cancel it (see "What the bridge does on its own"): worth a plain warning on the page. `error` is the last message from TWS that stopped the order or a leg, or refused a change to one; `note` the last warning or notice (at first, why the price came from the alert when the ask was asked for; later, a sell order the bridge cancelled on its own). A buy that never reached TWS, or that TWS says it does not have, reads `Inactive`.
+- **`/preview`** runs every check `/order` would, with the same body, and sends nothing: the order that would go out, or the error `/order` would give. `checks` is a list of `{ name, detail }`, one per check passed (`switches`, `account`, `alert`, `alert_age`, `shares`, `daily`, `duplicate`, `contract`, `limit`, `take_profit`, `stop`, `notional`; `alert` and `alert_age` only when the body carries `alert_id` / `alert_at`). A stop entry adds `entry` after `switches` and `trigger` before `limit`, and its `limit` check says that `maxChasePct` does not apply. `take_profit`, `stop` and `stop_limit` are `null` when that leg is switched off. `good_until` of a preview is the time a stop entry placed at that moment would have.
+- **`/orders`**: each item is `{ order_id, ticker, conid, placed_at, asked, sizing, entry, sent, chases, status, filled_qty, avg_fill_price, slip_pct, held_qty, legs, exit, loose_exit, error, note }`. `asked` is what the page sent (`alert_price`, `alert_stop`, `qty`, `stage`, `alert_at`, `alert_id`); `entry` is `"now"` or `"stop"`; `sent` is what went to TWS (`qty`, `limit`, `trigger`, `good_until`, `take_profit`, `stop`, `stop_limit`, the four `first_…` prices the bracket was placed with, `price_from`, `stop_from`, `outside_rth`, `order_ids`), its prices being the current ones (`trigger` and `good_until` are a stop entry's, `null` for a buy now; a trigger moved in TWS is followed). A stop entry that IB cancelled at its time with nothing filled has `note` "expired unfilled at HH:MM:SS New York". `chases` counts the chases. `status`, `filled_qty` and `avg_fill_price` are the buy's; `legs.take_profit` and `legs.stop` carry the exits' own. `held_qty` is what the order bought and has not sold; `exit` is the last sell (see "Sell"), `null` until Sell is clicked. `loose_exit` is `true` while the order holds nothing and a sell order of its own is still working in TWS after the bridge asked to cancel it (see "What the bridge does on its own"): worth a plain warning on the page. `error` is the last message from TWS that stopped the order or a leg, or refused a change to one; `note` the last warning or notice (at first, why the price came from the alert when the ask was asked for; later, a sell order the bridge cancelled on its own). A buy that never reached TWS, or that TWS says it does not have, reads `Inactive`.
 - **`/cancel`** takes the `order_id` of a buy from `/orders` that has not filled; TWS cancels its exits with it. A filled buy is refused (`already_filled`): its take-profit and stop stay in TWS. A halt does not block it.
-- **`/chase`** and **`/sell`** take the `order_id` of a buy placed today and nothing else: no price and no quantity can be sent in. Both wait up to 1 s for TWS's answer to what they sent, so `status` is TWS's own and a refusal within that second is the answer (502 `tws_refused`). See "Chase" and "Sell".
+- **`/chase`** and **`/sell`** take the `order_id` of a buy placed today and nothing else: no price and no quantity can be sent in. Both wait up to 1 s for TWS's answer to what they sent, so `status` is TWS's own and a refusal within that second is the answer (502 `tws_refused`). See "Chase" and "Sell". A stop entry that still works is not chased (409 `not_chaseable`).
 - **`/halt`** is the off switch, saved to `config.json`. `paperOnly` and `enabled` cannot be changed over HTTP.
 
 One order per alert: when `/order` (or `/preview`) carries an `alert_id` that an order placed today already carries, it is refused with `duplicate_alert` and the text "this alert already has an order (order 123, RAYA, 04:27:31 New York)". This holds across tabs, reloads and a restart of the bridge. An alert is used up only while its order is still working, or once anything of it has filled. An order that has ended with nothing filled frees its alert, whoever ended it: you cancelled it (from the dashboard or in TWS), TWS refused it, or it could not be sent. "Ended" means TWS has confirmed it (`Cancelled`, `Inactive`); while a cancel is only asked for (`PendingCancel`) the buy can still fill and the alert stays taken. A cancelled order that had a partial fill keeps its alert. A cancelled order still counts toward `maxOrdersPerDay`, and the same ticker inside `duplicateWindowSec` is refused separately (`duplicate`), with or without an `alert_id`.
@@ -263,10 +296,10 @@ One order per alert: when `/order` (or `/preview`) carries an `alert_id` that an
 | 403 | `origin_not_allowed`, `bad_host` (the call was not addressed to `127.0.0.1` / `localhost`) |
 | 404 | `not_found` (no such path), `unknown_ticker`, `unknown_order` |
 | 405 | `method_not_allowed` |
-| 409 | `disabled`, `halted`, `paper_only`, `duplicate_alert`, `daily_limit`, `duplicate`, `ambiguous_ticker`, `already_filled`, `already_done`, `no_change` (a chase that would not move the buy up; a sell already at or under the new limit), `chase_limit` (`maxChases` reached, or `0`), `too_soon` (within 300 ms of the last change to that order), `nothing_to_sell` (nothing bought, nothing left, or no position in the account), `busy` (the order kept changing under a sell: click again) |
+| 409 | `disabled`, `halted`, `paper_only`, `duplicate_alert`, `daily_limit`, `duplicate`, `ambiguous_ticker`, `already_filled`, `already_done`, `no_change` (a chase that would not move the buy up; a sell already at or under the new limit), `chase_limit` (`maxChases` reached, or `0`), `too_soon` (within 300 ms of the last change to that order), `nothing_to_sell` (nothing bought, nothing left, or no position in the account), `busy` (the order kept changing under a sell: click again), `stop_entry_off` ("stop entries are switched off: order.entryStopPct is 0 in config.json"), `not_chaseable` (a stop entry that still works: "this buy waits for 0.3673: cancel it and buy now instead"; once part-filled, "order N is a stop entry (trigger 0.3673) and has part-filled: it cannot be chased") |
 | 413 | `body_too_large` (over 4 KB) |
 | 415 | `not_json` |
-| 422 | `stale_alert` (older than 10 min), `too_many_shares`, `too_large`, `too_expensive` (one share costs more than `amountUsd`), `chase` (an order or a chase too far above the alert), `bad_prices` |
+| 422 | `stale_alert` (older than 10 min), `too_many_shares`, `too_large`, `too_expensive` (one share costs more than `amountUsd`), `chase` (an order or a chase too far above the alert), `bad_prices` (among them a stop entry whose trigger rounds onto the alert's price, or whose take-profit is not above its limit) |
 | 500 | `not_saved` (halt applied but not written to `config.json`), `log_failed` (nothing was sent), `internal` |
 | 502 | `tws_refused` (TWS said no to the order, the chase or the sell), `send_failed`, `tws_error`, `no_ask` / `no_bid` (TWS answered the quote request with an error), `no_position` (TWS's position line could not be read) |
 | 503 | `tws_down` (TWS not connected), `tws_offline` (TWS has lost IB's servers) |

@@ -36,13 +36,30 @@ export interface OrderConfig {
    * prices it from the alert instead, "none" refuses. Optional in config.json.
    */
   askFallback: "alert" | "none";
+  /**
+   * A stop entry (`entry: "stop"`) is a buy that waits above the alert: it triggers this many
+   * percent above the alert's price. 0 = no stop entries. Optional in config.json.
+   */
+  entryStopPct: number;
+  /** A stop entry's limit sits this many percent above its trigger. Optional in config.json. */
+  entryStopLimitPct: number;
+  /** How many seconds a stop entry waits before IB cancels it (GTD). Optional in config.json. */
+  entryValidSec: number;
 }
 
 /**
  * Settings added after the first config.json files were written. A file without them still
  * loads: each takes the value here. Every other setting must be in the file.
  */
-export const OPTIONAL_ORDER_DEFAULTS = { maxChases: 5, sellOffsetPct: 2.0, amountUsd: 0, askFallback: "alert" } as const;
+export const OPTIONAL_ORDER_DEFAULTS = {
+  maxChases: 5,
+  sellOffsetPct: 2.0,
+  amountUsd: 0,
+  askFallback: "alert",
+  entryStopPct: 3.0,
+  entryStopLimitPct: 1.0,
+  entryValidSec: 300,
+} as const;
 
 export interface LimitsConfig {
   maxShares: number;
@@ -107,6 +124,9 @@ export function defaultConfig(token: string): Config {
       sellOffsetPct: OPTIONAL_ORDER_DEFAULTS.sellOffsetPct,
       amountUsd: OPTIONAL_ORDER_DEFAULTS.amountUsd,
       askFallback: OPTIONAL_ORDER_DEFAULTS.askFallback,
+      entryStopPct: OPTIONAL_ORDER_DEFAULTS.entryStopPct,
+      entryStopLimitPct: OPTIONAL_ORDER_DEFAULTS.entryStopLimitPct,
+      entryValidSec: OPTIONAL_ORDER_DEFAULTS.entryValidSec,
     },
     limits: { maxShares: 500, maxNotionalUsd: 1000, maxOrdersPerDay: 20, duplicateWindowSec: 10 },
   };
@@ -294,6 +314,22 @@ export function validateConfig(raw: unknown): Config {
   if (askFallback !== "alert" && askFallback !== "none") {
     c.problems.push('order.askFallback must be "alert" or "none"');
   }
+  const entryStopPct = c.number(order, "order", "entryStopPct", { min: 0, max: 50 }, OPTIONAL_ORDER_DEFAULTS.entryStopPct);
+  const entryStopLimitPct = c.number(
+    order,
+    "order",
+    "entryStopLimitPct",
+    { min: 0.1, max: 20 },
+    OPTIONAL_ORDER_DEFAULTS.entryStopLimitPct,
+  );
+  // Whole seconds: the time IB is given to cancel the order at has no fractions.
+  const entryValidSec = c.number(
+    order,
+    "order",
+    "entryValidSec",
+    { integer: true, min: 10, max: 3600 },
+    OPTIONAL_ORDER_DEFAULTS.entryValidSec,
+  );
   if (priceFrom === "alert" && limitOffsetPct > maxChasePct) {
     c.problems.push(
       `order.limitOffsetPct (${limitOffsetPct}) is above order.maxChasePct (${maxChasePct}): ` +
@@ -344,6 +380,9 @@ export function validateConfig(raw: unknown): Config {
       sellOffsetPct,
       amountUsd,
       askFallback: askFallback as "alert" | "none",
+      entryStopPct,
+      entryStopLimitPct,
+      entryValidSec,
     },
     limits: { maxShares, maxNotionalUsd, maxOrdersPerDay, duplicateWindowSec },
   };

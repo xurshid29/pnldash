@@ -1,6 +1,6 @@
 import type { JournalFields } from "./journal.js";
 import type { ExecutionEvent, OrderStatusEvent } from "./link.js";
-import type { LegName, Sizing } from "./order.js";
+import type { Entry, LegName, Sizing } from "./order.js";
 import { nyDate } from "./time.js";
 
 export interface LegState {
@@ -56,6 +56,8 @@ export interface OrderRecord {
   };
   /** How the quantity was arrived at: `amountUsd` dollars' worth, or a number of shares. */
   sizing: Sizing;
+  /** "now": a limit buy. "stop": a stop-limit buy that waits above the alert's price until `sent.good_until`. */
+  entry: Entry;
   /**
    * What went to TWS. The prices are the current ones: a chase, a sell through the take-profit
    * leg, and TWS's own report of an order (after a change made by hand in TWS, too) move them.
@@ -63,7 +65,12 @@ export interface OrderRecord {
    */
   sent: {
     qty: number;
+    /** The buy's limit; for a stop entry, the most it pays once triggered. */
     limit: number;
+    /** A stop entry's trigger (its stop price); null for a buy now. */
+    trigger: number | null;
+    /** A stop entry's end (ISO time): IB cancels it then if nothing has filled. Null for a buy now. */
+    good_until: string | null;
     take_profit: number | null;
     stop: number | null;
     stop_limit: number | null;
@@ -109,6 +116,8 @@ export interface OrderRecord {
 export interface PriceChange {
   qty?: number;
   limit?: number;
+  /** A stop entry's trigger. */
+  trigger?: number;
   take_profit?: number;
   stop?: number;
   stop_limit?: number;
@@ -158,6 +167,10 @@ interface Tracked {
   /** Every sell order a `/sell` placed for this bracket, by its TWS order id. */
   exits: Map<number, LegState>;
   tallies: Map<number, FillTally>;
+  /** The bridge has asked TWS to cancel this buy (`/cancel`, a `/sell` that had to, a clean-up). */
+  cancelAsked: boolean;
+  /** A stop entry that IB cancelled at its time with nothing filled: its note says so. */
+  expired: boolean;
 }
 
 export interface LegRef {
@@ -187,6 +200,8 @@ export class OrderBook {
       },
       exits: new Map(),
       tallies: new Map(),
+      cancelAsked: false,
+      expired: false,
     };
     this.byParent.set(record.order_id, tracked);
     const ids = record.sent.order_ids;
@@ -235,6 +250,26 @@ export class OrderBook {
     if (stop !== null) orders.push({ leg: "stop", state: stop });
     for (const state of tracked.exits.values()) orders.push({ leg: "exit", state });
     return orders;
+  }
+
+  /** Notes that the bridge asked TWS to cancel this buy: when it then ends, it did not expire. */
+  markCancelAsked(parentId: number): void {
+    const tracked = this.byParent.get(parentId);
+    if (tracked !== undefined) tracked.cancelAsked = true;
+  }
+
+  cancelAsked(parentId: number): boolean {
+    return this.byParent.get(parentId)?.cancelAsked === true;
+  }
+
+  /** Notes that this stop entry expired unfilled (its `note` says when). */
+  markExpired(parentId: number): void {
+    const tracked = this.byParent.get(parentId);
+    if (tracked !== undefined) tracked.expired = true;
+  }
+
+  isExpired(parentId: number): boolean {
+    return this.byParent.get(parentId)?.expired === true;
   }
 
   /** The highest TWS order id of any leg on the book, or 0. */
@@ -294,6 +329,7 @@ export class OrderBook {
     const { sent } = tracked.record;
     if (change.qty !== undefined) sent.qty = change.qty;
     if (change.limit !== undefined) sent.limit = change.limit;
+    if (change.trigger !== undefined && sent.trigger !== null) sent.trigger = change.trigger;
     if (change.take_profit !== undefined && sent.take_profit !== null) sent.take_profit = change.take_profit;
     if (change.stop !== undefined && sent.stop !== null) sent.stop = change.stop;
     if (change.stop_limit !== undefined && sent.stop_limit !== null) sent.stop_limit = change.stop_limit;
@@ -411,7 +447,21 @@ export class OrderBook {
           const record = typeof parent === "number" ? this.get(parent) : undefined;
           if (record === undefined || typeof message !== "string") break;
           if (type === "order_error") record.error = message;
-          else record.note = message;
+          // A notice about the buy of a stop entry that expired does not take the place of the expiry.
+          else if (!(event["leg"] === "parent" && this.isExpired(record.order_id))) record.note = message;
+          break;
+        }
+        case "cancel":
+        case "order_cleanup": {
+          // A cancel the bridge asked for: of the buy (and with it the bracket), not of one exit.
+          const parent = event["order_id"];
+          if (typeof parent === "number" && !("leg" in event)) this.markCancelAsked(parent);
+          break;
+        }
+        case "entry_expired": {
+          const parent = event["order_id"];
+          if (typeof parent === "number") this.markExpired(parent);
+          this.restoreState(event);
           break;
         }
         default:
@@ -433,7 +483,7 @@ export class OrderBook {
     const prices = obj(event["prices"]);
     if (prices !== null) {
       const change: PriceChange = {};
-      for (const key of ["qty", "limit", "take_profit", "stop", "stop_limit"] as const) {
+      for (const key of ["qty", "limit", "trigger", "take_profit", "stop", "stop_limit"] as const) {
         const value = num(prices[key]);
         if (value !== null && value > 0) change[key] = value;
       }
@@ -580,9 +630,13 @@ export function recordFromJournal(event: JournalFields): OrderRecord | null {
       alert_id: str(asked["alert_id"]),
     },
     sizing: sizingFromJournal(event["sizing"]),
+    // A line written before stop entries existed is a buy now.
+    entry: event["entry"] === "stop" ? "stop" : "now",
     sent: {
       qty,
       limit,
+      trigger: num(sent["trigger"]),
+      good_until: str(sent["good_until"]),
       take_profit: takeProfit,
       stop,
       stop_limit: stopLimit,

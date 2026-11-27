@@ -10,8 +10,10 @@ const EPS = 1e-9;
 export const ALERT_STOP_MAX_MULTIPLE = 3;
 
 /** US stocks trade in cents from $1 up and in hundredths of a cent below $1. */
-function roundToTick(price: number, mode: "nearest" | "down"): number {
+function roundToTick(price: number, mode: "nearest" | "down" | "up"): number {
   const scale = price >= 1 - EPS ? 100 : 10000;
+  // The small nudge keeps a price that is on a tick on it (1.15 * 100 is 114.99999999999999).
+  if (mode === "up") return Math.ceil(price * scale - 1e-6) / scale;
   const ticks = price * scale + 1e-6;
   return (mode === "down" ? Math.floor(ticks) : Math.round(ticks)) / scale;
 }
@@ -22,6 +24,36 @@ export function roundNearest(price: number): number {
 
 export function roundDown(price: number): number {
   return roundToTick(price, "down");
+}
+
+export function roundUp(price: number): number {
+  return roundToTick(price, "up");
+}
+
+/**
+ * How a buy enters: "now" is a limit buy at the alert (or the ask) plus `limitOffsetPct`; "stop"
+ * is a stop-limit buy that waits above the alert's price and fills only if the price gets there.
+ */
+export type Entry = "now" | "stop";
+
+/** When a stop entry placed at `nowMs` stops waiting: `validSec` later, on a whole second (IB's time has no fractions). */
+export function stopEntryGoodUntil(nowMs: number, validSec: number): number {
+  return Math.floor((nowMs + validSec * 1000) / 1000) * 1000;
+}
+
+/** An instant in the IB API's UTC form, `YYYYMMDD-HH:MM:SS`: what `goodTillDate` carries. */
+export function ibUtcDateTime(ms: number): string {
+  const d = new Date(ms);
+  const two = (n: number): string => String(n).padStart(2, "0");
+  return (
+    `${d.getUTCFullYear()}${two(d.getUTCMonth() + 1)}${two(d.getUTCDate())}-` +
+    `${two(d.getUTCHours())}:${two(d.getUTCMinutes())}:${two(d.getUTCSeconds())}`
+  );
+}
+
+/** The refusal of a stop entry while `entryStopPct` is 0. */
+export function stopEntryOff(): BridgeError {
+  return new BridgeError(409, "stop_entry_off", "stop entries are switched off: order.entryStopPct is 0 in config.json");
 }
 
 export function formatPrice(price: number): string {
@@ -53,23 +85,32 @@ export interface PlanInput {
   alertPrice: number;
   /** The stop the alert itself carries, when it has one. */
   alertStop: number | null;
-  /** TWS's ask at the click; needed only with `priceFrom: "ask"`. */
+  /** TWS's ask at the click; needed only with `priceFrom: "ask"` (and never for a stop entry). */
   ask: number | null;
+  /** "now" when not given. */
+  entry?: Entry;
 }
 
 export interface OrderPlan {
+  entry: Entry;
   qty: number;
   sizing: Sizing;
+  /** The buy's limit. For a stop entry, the limit of the stop-limit buy: the most it pays once triggered. */
   limit: number;
+  /** A stop entry's trigger (the buy's stop price); null for a buy now. */
+  trigger: number | null;
   takeProfit: number | null;
   stop: number | null;
   stopLimit: number | null;
   /** qty × limit, in dollars. */
   notional: number;
   priceFrom: "alert" | "ask";
-  /** The price the limit was worked out from: the alert's price or the ask. */
+  /** The price the limit (a stop entry: the trigger) was worked out from: the alert's price or the ask. */
   basePrice: number;
-  /** How far the limit sits above the alert's price, in percent (negative when below). */
+  /**
+   * How far the limit sits above the alert's price, in percent (negative when below). For a stop
+   * entry it is only said: `maxChasePct` does not apply to one.
+   */
   chasePct: number;
   stopFrom: "alert" | "pct" | null;
   /** Why the alert's own stop was not used, when one was given and ignored. */
@@ -82,22 +123,50 @@ function refuse(code: string, message: string): BridgeError {
 
 /**
  * Works out every price of the bracket from the config and the alert. Nothing here comes from the
- * web page except the alert's price, the alert's stop and the quantity.
+ * web page except the alert's price, the alert's stop, the quantity and how to enter.
+ *
+ * A buy now is a limit at the alert's price (or the ask) + `limitOffsetPct`, capped by
+ * `maxChasePct`. A stop entry is priced from the alert alone: the trigger is the alert's price +
+ * `entryStopPct` (nearest tick), its limit the trigger + `entryStopLimitPct` (rounded up, so never
+ * under the trigger), and `maxChasePct` does not apply (the two settings are its distance from the
+ * alert). The exits are measured from the price the buy is expected to fill at: the limit of a buy
+ * now, the trigger of a stop entry. Dollars are turned into shares at the limit either way, the
+ * most a share can cost.
  */
 export function planOrder(cfg: OrderConfig, input: PlanInput): OrderPlan {
   const { alertPrice, alertStop } = input;
+  const entry = input.entry ?? "now";
 
   let basePrice = alertPrice;
-  if (cfg.priceFrom === "ask") {
-    if (input.ask === null || !(input.ask > 0)) throw refuse("no_ask", "no ask price to work from");
-    basePrice = input.ask;
+  let priceFrom = cfg.priceFrom;
+  let trigger: number | null = null;
+  let limit: number;
+  if (entry === "stop") {
+    if (!(cfg.entryStopPct > 0)) throw stopEntryOff();
+    priceFrom = "alert";
+    trigger = roundNearest(alertPrice * (1 + cfg.entryStopPct / 100));
+    if (!(trigger > alertPrice + EPS)) {
+      throw refuse(
+        "bad_prices",
+        `the stop entry's trigger, ${formatPct(cfg.entryStopPct)} above the alert's ${formatPrice(alertPrice)}, ` +
+          `rounds to ${formatPrice(trigger)}: not above the alert`,
+      );
+    }
+    limit = roundUp(trigger * (1 + cfg.entryStopLimitPct / 100));
+    if (!(limit >= trigger - EPS)) {
+      throw refuse("bad_prices", `the stop entry's limit (${formatPrice(limit)}) is under its trigger (${formatPrice(trigger)})`);
+    }
+  } else {
+    if (cfg.priceFrom === "ask") {
+      if (input.ask === null || !(input.ask > 0)) throw refuse("no_ask", "no ask price to work from");
+      basePrice = input.ask;
+    }
+    limit = roundNearest(basePrice * (1 + cfg.limitOffsetPct / 100));
+    if (!(limit > 0)) throw refuse("bad_prices", "the buy limit rounds to zero");
   }
 
-  const limit = roundNearest(basePrice * (1 + cfg.limitOffsetPct / 100));
-  if (!(limit > 0)) throw refuse("bad_prices", "the buy limit rounds to zero");
-
   const chasePct = (limit / alertPrice - 1) * 100;
-  if (chasePct > cfg.maxChasePct + EPS) {
+  if (entry === "now" && chasePct > cfg.maxChasePct + EPS) {
     throw refuse(
       "chase",
       `price has run ${chasePct.toFixed(1)}% past the alert ` +
@@ -126,13 +195,19 @@ export function planOrder(cfg: OrderConfig, input: PlanInput): OrderPlan {
     sizing = { mode: "shares" };
   }
 
+  // The price the exits are measured from, and its name in the texts.
+  const from = trigger ?? limit;
+  const fromWord = trigger === null ? "limit" : "trigger";
+
   let takeProfit: number | null = null;
   if (cfg.takeProfitPct > 0) {
-    takeProfit = roundNearest(limit * (1 + cfg.takeProfitPct / 100));
+    takeProfit = roundNearest(from * (1 + cfg.takeProfitPct / 100));
+    // Above the most the buy can pay, also for a stop entry (whose limit is above its trigger).
     if (!(takeProfit > limit)) {
       throw refuse(
         "bad_prices",
-        `after rounding, the take-profit (${formatPrice(takeProfit)}) is not above the limit (${formatPrice(limit)})`,
+        `after rounding, the take-profit (${formatPrice(takeProfit)}) is not above the ` +
+          `${trigger === null ? "limit" : "buy's limit"} (${formatPrice(limit)})`,
       );
     }
   }
@@ -146,12 +221,12 @@ export function planOrder(cfg: OrderConfig, input: PlanInput): OrderPlan {
     } else {
       const candidate = roundDown(alertStop);
       const maxAwayPct = ALERT_STOP_MAX_MULTIPLE * cfg.stopPct;
-      const awayPct = ((limit - candidate) / limit) * 100;
-      if (!(candidate < limit)) {
-        alertStopIgnored = `it (${formatPrice(candidate)}) is not below the limit (${formatPrice(limit)})`;
+      const awayPct = ((from - candidate) / from) * 100;
+      if (!(candidate < from)) {
+        alertStopIgnored = `it (${formatPrice(candidate)}) is not below the ${fromWord} (${formatPrice(from)})`;
       } else if (awayPct > maxAwayPct + EPS) {
         alertStopIgnored =
-          `it (${formatPrice(candidate)}) is ${formatPct(awayPct)} under the limit, ` +
+          `it (${formatPrice(candidate)}) is ${formatPct(awayPct)} under the ${fromWord}, ` +
           `more than ${ALERT_STOP_MAX_MULTIPLE} × stopPct (${formatPct(maxAwayPct)})`;
       } else {
         stop = candidate;
@@ -160,16 +235,16 @@ export function planOrder(cfg: OrderConfig, input: PlanInput): OrderPlan {
     }
   }
   if (stop === null && cfg.stopPct > 0) {
-    stop = roundDown(limit * (1 - cfg.stopPct / 100));
+    stop = roundDown(from * (1 - cfg.stopPct / 100));
     stopFrom = "pct";
   }
 
   let stopLimit: number | null = null;
   if (stop !== null) {
-    if (!(stop > 0) || !(stop < limit)) {
+    if (!(stop > 0) || !(stop < from)) {
       throw refuse(
         "bad_prices",
-        `after rounding, the stop (${formatPrice(stop)}) is not below the limit (${formatPrice(limit)})`,
+        `after rounding, the stop (${formatPrice(stop)}) is not below the ${fromWord} (${formatPrice(from)})`,
       );
     }
     stopLimit = roundDown(stop * (1 - cfg.stopLimitOffsetPct / 100));
@@ -179,14 +254,16 @@ export function planOrder(cfg: OrderConfig, input: PlanInput): OrderPlan {
   }
 
   return {
+    entry,
     qty,
     sizing,
     limit,
+    trigger,
     takeProfit,
     stop,
     stopLimit,
     notional: Math.round(qty * limit * 100) / 100,
-    priceFrom: cfg.priceFrom,
+    priceFrom,
     basePrice,
     chasePct,
     stopFrom,
@@ -308,6 +385,33 @@ export function buyOrder(qty: number, limit: number, outsideRth: boolean, transm
   };
 }
 
+/**
+ * A stop entry's buy: a stop-limit that triggers at `trigger` and then buys at no more than
+ * `limit`. It is good till `goodTillDate` (IB's UTC form, `YYYYMMDD-HH:MM:SS`): IB cancels it
+ * itself then, so nothing in the bridge times it.
+ */
+export function stopBuyOrder(
+  qty: number,
+  trigger: number,
+  limit: number,
+  outsideRth: boolean,
+  goodTillDate: string,
+  transmit: boolean,
+): Order {
+  return {
+    action: OrderAction.BUY,
+    orderType: OrderType.STP_LMT,
+    totalQuantity: qty,
+    auxPrice: trigger,
+    lmtPrice: limit,
+    tif: TimeInForce.GTD,
+    goodTillDate,
+    outsideRth,
+    parentId: 0,
+    transmit,
+  };
+}
+
 export function takeProfitOrder(qty: number, price: number, outsideRth: boolean, parentId: number, transmit: boolean): Order {
   return {
     action: OrderAction.SELL,
@@ -362,18 +466,27 @@ export function sellOrder(qty: number, limit: number, outsideRth: boolean): Orde
  *
  * `transmit` is false on every leg but the last: TWS holds the earlier ones and sends the whole
  * bracket when the last arrives, so a bracket never goes out without its exits.
+ *
+ * The buy of a stop entry is a stop-limit good till `goodTillDate`; the exits are the same either way.
  */
-export function buildBracket(plan: OrderPlan, firstOrderId: number, outsideRth: boolean): BracketLeg[] {
+export function buildBracket(
+  plan: OrderPlan,
+  firstOrderId: number,
+  outsideRth: boolean,
+  goodTillDate: string | null = null,
+): BracketLeg[] {
   const hasTakeProfit = plan.takeProfit !== null;
   const hasStop = plan.stop !== null && plan.stopLimit !== null;
+  const transmitBuy = !hasTakeProfit && !hasStop;
 
-  const legs: BracketLeg[] = [
-    {
-      leg: "parent",
-      orderId: firstOrderId,
-      order: buyOrder(plan.qty, plan.limit, outsideRth, !hasTakeProfit && !hasStop),
-    },
-  ];
+  let buy: Order;
+  if (plan.entry === "stop") {
+    if (plan.trigger === null || goodTillDate === null) throw new Error("a stop entry needs its trigger and the time it is good till");
+    buy = stopBuyOrder(plan.qty, plan.trigger, plan.limit, outsideRth, goodTillDate, transmitBuy);
+  } else {
+    buy = buyOrder(plan.qty, plan.limit, outsideRth, transmitBuy);
+  }
+  const legs: BracketLeg[] = [{ leg: "parent", orderId: firstOrderId, order: buy }];
 
   if (plan.takeProfit !== null) {
     legs.push({
