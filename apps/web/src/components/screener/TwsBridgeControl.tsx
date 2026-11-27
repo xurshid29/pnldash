@@ -5,6 +5,22 @@ import type { TwsBridge } from '../../hooks/useTwsBridge';
 
 const { Text } = Typography;
 
+// "5 min", "90 s", "5 min 30 s": a stop entry's wait.
+function waitText(sec: number): string {
+  if (sec < 60 || !Number.isInteger(sec)) return `${sec} s`;
+  const min = Math.floor(sec / 60);
+  return sec % 60 === 0 ? `${min} min` : `${min} min ${sec % 60} s`;
+}
+
+// "triggers 5% above the alert's price, limit 1% above that, cancelled after 5 min if not reached ·
+// take-profit and stop from the trigger" — the stop entry, in the words of the card's button.
+function stopEntryText(pct: number, limitPct: number | undefined, validSec: number | undefined): string {
+  const parts = [`triggers ${pct}% above the alert's price`];
+  if (limitPct != null) parts.push(`limit ${limitPct}% above that`);
+  if (validSec != null) parts.push(`cancelled after ${waitText(validSec)} if not reached`);
+  return `${parts.join(', ')} · take-profit and stop from the trigger`;
+}
+
 // The bridge's own order settings, as /status returns them. Read-only here: they are changed in
 // tools/tws-bridge/config.json, then the bridge is restarted.
 function orderRows(s: BridgeStatus): Array<[string, string]> {
@@ -26,11 +42,16 @@ function orderRows(s: BridgeStatus): Array<[string, string]> {
   const chase: Array<[string, string]> = o.maxChases == null ? []
     : [['Chase', o.maxChases > 0 ? `up to ${o.maxChases} move${o.maxChases === 1 ? '' : 's'}, never more than ${o.maxChasePct}% past the alert` : 'off']];
   const sell: Array<[string, string]> = o.sellOffsetPct == null ? [] : [['Sell', `the live bid − ${o.sellOffsetPct}%`]];
+  // The stop entry (the card's "Buy if ≥" button) came with a later bridge still: an older one
+  // sends none of its settings, and the row is left out.
+  const stopEntry: Array<[string, string]> = o.entryStopPct == null ? []
+    : [['Buy if above', o.entryStopPct > 0 ? stopEntryText(o.entryStopPct, o.entryStopLimitPct, o.entryValidSec) : 'off']];
   return [
     size,
     ['Limit', `${from} · no order over ${o.maxChasePct}% past the alert`],
     ['Take-profit', o.takeProfitPct > 0 ? `limit + ${o.takeProfitPct}%` : 'none'],
     ['Stop', stop],
+    ...stopEntry,
     ...chase,
     ...sell,
     ['Max per order', `$${l.maxNotionalUsd.toLocaleString('en-US')} · ${l.maxShares} shares`],
@@ -101,7 +122,7 @@ export function TwsBridgePanel({ bridge }: { bridge: TwsBridge }) {
         )}
       </div>
       <Checkbox checked={settings.buy} onChange={(e) => bridge.update({ buy: e.target.checked })}>
-        <span style={{ fontSize: 12 }}>Show the Buy button on alerts up to 10 minutes old</span>
+        <span style={{ fontSize: 12 }}>Show the Buy buttons on alerts up to 10 minutes old</span>
       </Checkbox>
       {settings.enabled && status != null && (
         <>

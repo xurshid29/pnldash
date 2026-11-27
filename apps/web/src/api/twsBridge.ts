@@ -36,7 +36,19 @@ export interface BridgeOrderSettings {
   sellOffsetPct?: number;             // a sell's limit = the live bid − this %
   amountUsd?: number;                 // dollars per buy; 0 = sized in shares (`qty`)
   askFallback?: 'alert' | 'none';     // with priceFrom "ask": what a buy does when TWS gives no live ask
+  // Since the bridge's stop-entry version (2026-11-27); an older bridge sends none of them, and the
+  // page then shows no second button.
+  entryStopPct?: number;              // a stop entry's trigger = the alert's price + this %; 0 = stop entries off
+  entryStopLimitPct?: number;         // its limit = the trigger + this %: the most it pays once triggered
+  entryValidSec?: number;             // IB cancels it after this many seconds if nothing has filled
 }
+
+// How a buy enters (2026-11-27, the operator after the first live morning: "if price's intention
+// is going up, we will catch it, if not, we just don't buy it"):
+//   now  — the limit buy at the alert's price (or the ask) + limitOffsetPct, as before;
+//   stop — a stop-limit buy that waits above the alert's price (+ entryStopPct) and fills only if
+//          the price gets there; IB cancels it by itself after entryValidSec.
+export type BridgeEntry = 'now' | 'stop';
 
 // How an order's quantity was arrived at: so many dollars' worth, or a number of shares.
 export interface BridgeSizing {
@@ -73,13 +85,19 @@ export interface BridgeOrderRequest {
   stage?: string;
   alert_at?: string | number;   // ISO text or epoch milliseconds
   alert_id?: string | number;
+  // Sent for a stop entry only; left out, the bridge places a buy now (an older bridge would
+  // answer 400 to the field).
+  entry?: BridgeEntry;
 }
 
 export interface BridgePreview {
   ticker: string;
+  entry?: BridgeEntry;
   qty: number;
   sizing?: BridgeSizing;
   limit: number;
+  trigger?: number | null;
+  good_until?: string | null;
   take_profit: number | null;
   stop: number | null;
   stop_limit: number | null;
@@ -92,9 +110,13 @@ export interface BridgePreview {
 export interface BridgeOrder {
   order_id: number;
   ticker: string;
+  // asOrder fills these three in for an older bridge (a buy now).
+  entry: BridgeEntry;
   qty: number;
   sizing?: BridgeSizing;
-  limit: number;
+  limit: number;                 // a stop entry's: the most it pays once triggered
+  trigger: number | null;        // a stop entry's trigger; null for a buy now
+  good_until: string | null;     // ISO: when IB cancels a stop entry that has not filled; null for a buy now
   take_profit: number | null;
   stop: number | null;
   stop_limit: number | null;
@@ -165,11 +187,14 @@ export interface BridgeOrderRecord {
     alert_id: string | null;
   };
   sizing?: BridgeSizing;
+  entry?: BridgeEntry;             // "now" or "stop" (a stop entry)
   // The prices are the current ones (a chase, a sell through the take-profit leg and a change
   // made by hand in TWS move them); `first_limit` is what the buy was placed with.
   sent: {
     qty: number;
     limit: number;
+    trigger?: number | null;       // a stop entry's trigger (a trigger moved in TWS is followed); null for a buy now
+    good_until?: string | null;    // ISO: when IB cancels a stop entry that has not filled; null for a buy now
     take_profit: number | null;
     stop: number | null;
     stop_limit: number | null;
@@ -188,7 +213,9 @@ export interface BridgeOrderRecord {
   // The last message from TWS that stopped the order or a leg, or refused a change to one. It
   // can be set on an order that is still working (a refused chase or sell move).
   error: string | null;
-  note: string | null;             // the last warning or notice about it (at first: why the price came from the alert)
+  // The last warning or notice about it (at first: why the price came from the alert). A stop
+  // entry that IB cancelled at its time with nothing filled: "expired unfilled at HH:MM:SS New York".
+  note: string | null;
 }
 
 // Every failure in one shape. `status` is the HTTP status, 0 when the bridge gave no answer;
@@ -319,9 +346,18 @@ function asStatus(d: unknown): BridgeStatus {
   throw notTheBridge('/status');
 }
 
+// The stop-entry fields are filled in, so the card can read them: an older bridge (or one of the
+// wrong kind) is a buy now.
 function asOrder(d: unknown): BridgeOrder {
   if (isObj(d) && isNum(d.order_id) && typeof d.ticker === 'string' && isNum(d.qty) && isNum(d.limit)
-    && numOrNull(d.take_profit) && numOrNull(d.stop) && typeof d.status === 'string') return d as unknown as BridgeOrder;
+    && numOrNull(d.take_profit) && numOrNull(d.stop) && typeof d.status === 'string') {
+    return {
+      ...(d as unknown as BridgeOrder),
+      entry: d.entry === 'stop' ? 'stop' : 'now',
+      trigger: isNum(d.trigger) ? d.trigger : null,
+      good_until: typeof d.good_until === 'string' ? d.good_until : null,
+    };
+  }
   throw notTheBridge('/order');
 }
 
@@ -347,7 +383,13 @@ function cleanRecord(o: BridgeOrderRecord): BridgeOrderRecord {
     : null;
   return {
     ...o,
-    sent: { ...o.sent, first_limit: isNum(o.sent.first_limit) ? o.sent.first_limit : o.sent.limit },
+    entry: raw.entry === 'stop' ? 'stop' : 'now',
+    sent: {
+      ...o.sent,
+      first_limit: isNum(o.sent.first_limit) ? o.sent.first_limit : o.sent.limit,
+      trigger: isNum(o.sent.trigger) ? o.sent.trigger : null,
+      good_until: typeof o.sent.good_until === 'string' ? o.sent.good_until : null,
+    },
     chases: isNum(raw.chases) ? raw.chases : 0,
     held_qty: isNum(raw.held_qty) ? raw.held_qty : undefined,
     legs: { take_profit: isLeg(legs.take_profit) ? legs.take_profit : null, stop: isLeg(legs.stop) ? legs.stop : null },
@@ -403,12 +445,57 @@ export function bridgePx(p: number): string {
   return p >= 1 ? p.toFixed(2) : p.toFixed(4);
 }
 
+// A price to the nearest US tick ($0.01 from $1 up, $0.0001 below), as the bridge rounds it
+// (roundNearest in tools/tws-bridge/src/order.ts, its nudges against binary floating point included).
+function nearestTick(raw: number): number {
+  const scale = raw >= 1 - 1e-9 ? 100 : 10000;
+  return Math.round(raw * scale + 1e-6) / scale;
+}
+
 // The buy limit the bridge works out from an alert's price (its roundNearest): the price plus
 // limitOffsetPct, to the nearest US tick ($0.01 from $1 up, $0.0001 below).
 export function bridgeLimit(alertPrice: number, limitOffsetPct: number): number {
-  const raw = alertPrice * (1 + limitOffsetPct / 100);
-  const scale = raw >= 1 - 1e-9 ? 100 : 10000;
-  return Math.round(raw * scale + 1e-6) / scale;
+  return nearestTick(alertPrice * (1 + limitOffsetPct / 100));
+}
+
+// The trigger of a stop entry, as the bridge works it out (its planOrder): the alert's price plus
+// entryStopPct, to the nearest tick — the same sum and the same rounding, so the button shows the
+// price the bridge will send. Null when there is no stop entry to offer: entryStopPct is 0, or
+// missing (an older bridge), or the trigger rounds onto the alert's price (which the bridge
+// refuses, `bad_prices`).
+export function bridgeStopTrigger(order: Pick<BridgeOrderSettings, 'entryStopPct'>, alertPrice: number): number | null {
+  const pct = order.entryStopPct;
+  if (typeof pct !== 'number' || !Number.isFinite(pct) || pct <= 0) return null;
+  const trigger = nearestTick(alertPrice * (1 + pct / 100));
+  return trigger > alertPrice + 1e-9 ? trigger : null;
+}
+
+// What the second button carries (the stop entry), from /status's order settings:
+//   "100 if ≥ 0.3744 (+5%)"    sized in shares
+//   "$400 if ≥ 0.3744 (+5%)"   sized in dollars: the shares are worked out by the bridge at the
+//                              click, at the order's limit (the trigger + entryStopLimitPct), and
+//                              the waiting line then says how many
+// Always the trigger: a stop entry is priced from the alert's price, whatever priceFrom says.
+// Null when there is no stop entry to offer (bridgeStopTrigger).
+export function bridgeStopNumbers(order: BridgeOrderSettings, alertPrice: number): string | null {
+  const trigger = bridgeStopTrigger(order, alertPrice);
+  if (trigger == null) return null;
+  const usd = order.amountUsd != null && order.amountUsd > 0 ? order.amountUsd : null;
+  return `${usd != null ? bridgeUsd(usd) : order.qty} if ≥ ${bridgePx(trigger)} (+${order.entryStopPct ?? 0}%)`;
+}
+
+// A time on the operator's clock (Asia/Tashkent, like every time on the 📐 sidebar), to the
+// second: "15:06:30". A stop entry ends on a whole second.
+const OPERATOR_TZ = 'Asia/Tashkent';
+function operatorClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString('en-GB', {
+    timeZone: OPERATOR_TZ, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  });
+}
+// "until 15:06:30" and the like, from an ISO time; null when there is none to read.
+function clockOf(iso: string | null | undefined): string | null {
+  const ms = iso != null ? Date.parse(iso) : Number.NaN;
+  return Number.isFinite(ms) ? operatorClock(ms) : null;
 }
 
 // Dollars as the bridge writes them, without needless cents: "$400", "$412.50".
@@ -469,9 +556,31 @@ function bracketText(
   return parts.join(' · ');
 }
 
+// A stop entry that waits for its trigger: "waiting: buy 1069 if the price reaches 0.3744 (limit
+// 0.3782) · until 15:06:30 · take-profit 0.4118 · stop 0.3557" — the time IB cancels it if it has
+// not filled, on the operator's clock.
+function waitingText(o: {
+  qty: number; limit: number; trigger: number; good_until?: string | null; take_profit: number | null; stop: number | null;
+}): string {
+  const parts = [`waiting: buy ${o.qty} if the price reaches ${bridgePx(o.trigger)} (limit ${bridgePx(o.limit)})`];
+  const until = clockOf(o.good_until);
+  if (until != null) parts.push(`until ${until}`);
+  if (o.take_profit != null) parts.push(`take-profit ${bridgePx(o.take_profit)}`);
+  if (o.stop != null) parts.push(`stop ${bridgePx(o.stop)}`);
+  return parts.join(' · ');
+}
+
 // The answer of /order, before /orders has reported on it.
 export function bridgeSentText(o: BridgeOrder): string {
+  if (o.entry === 'stop' && o.trigger != null) return waitingText({ ...o, trigger: o.trigger });
   return `sent: ${bracketText(o)}`;
+}
+
+// A stop entry that IB cancelled at its time with nothing filled. The bridge says so in the
+// order's note ("expired unfilled at 10:05:00 New York"); the card prints the time on the
+// operator's clock instead, from `good_until`.
+function bridgeOrderExpired(o: BridgeOrderRecord): boolean {
+  return o.entry === 'stop' && bridgeOrderDone(o.status) && o.filled_qty === 0 && /^expired unfilled\b/.test(o.note ?? '');
 }
 
 // A buy that can still be cancelled: not done, and not already being cancelled.
@@ -498,6 +607,7 @@ export interface BridgeOrderView {
   // Cancel the buy ("Cancel"), or what has not filled of it ("Cancel the rest"); null = nothing to cancel.
   cancel: 'Cancel' | 'Cancel the rest' | null;
   // A working buy with something left to fill and chases left (order.maxChases; 0 = no Chase).
+  // Never a stop entry: the bridge does not chase one (`not_chaseable`).
   chase: boolean;
   // Shares held: "Sell", "Sell 40" (not all of the order: a part fill, or part already sold), and
   // "Sell lower" while a sell is working. `lower` tells the two kinds of click apart.
@@ -506,6 +616,9 @@ export interface BridgeOrderView {
 
 // The line of one order:
 //   working buy          "sent: 929 @ 0.4410 (moved 2×, first 0.4302) · take-profit 0.4851 · stop 0.4190"
+//   stop entry, waiting  "waiting: buy 1069 if the price reaches 0.3744 (limit 0.3782) · until 15:06:30 · take-profit 0.4118 · stop 0.3557"
+//   stop entry, expired  "expired unfilled at 15:06:30" (IB cancelled it at its time, nothing filled)
+//   stop entry, filled   as any fill, with its trigger: "filled 1069 @ 0.3749 (+5.1% vs the alert, triggered at 0.3744) · holding …"
 //   part filled, working "filled 40 of 100 @ 2.52 (+0.8% vs the alert) · 60 still working at 2.53"
 //   being cancelled      "cancelling…" / "cancelling the rest… · filled 40 of 100 @ 2.52 (+0.8% vs the alert)"
 //   filled, held         "filled 929 @ 0.4301 (+1.0% vs the alert) · holding 929 · take-profit 0.4731 · stop 0.4086"
@@ -535,11 +648,20 @@ export function bridgeOrderView(o: BridgeOrderRecord, settings: Pick<BridgeOrder
   const st = o.legs.stop;
   const alive = (l: BridgeLeg | null) => l != null && !bridgeOrderDone(l.status);
   const vsBuy = (p: number | null) => (p != null && avg != null && avg > 0 ? ` (${signedPct((p / avg - 1) * 100)} vs the buy)` : '');
+  // A stop entry (a buy that waited above the alert's price), and the price it waited for.
+  const stopEntry = o.entry === 'stop';
+  const trigger = stopEntry ? o.sent.trigger ?? null : null;
 
-  // "929 @ 0.4301 (+1.0% vs the alert)" / "40 of 100 @ 2.52 (…)"; `short` leaves the alert out.
-  const fill = (short: boolean): string | null => (avg != null && filled > 0
-    ? `${filled === qty ? `${qty}` : `${filled} of ${qty}`} @ ${bridgePx(avg)}${!short && o.slip_pct != null ? ` (${signedPct(o.slip_pct)} vs the alert)` : ''}`
-    : null);
+  // "929 @ 0.4301 (+1.0% vs the alert)" / "40 of 100 @ 2.52 (…)"; `short` leaves the alert out. A
+  // stop entry that filled says where it triggered: "(+5.1% vs the alert, triggered at 0.3744)".
+  const fill = (short: boolean): string | null => {
+    if (avg == null || filled <= 0) return null;
+    const asides = short ? [] : [
+      ...(o.slip_pct != null ? [`${signedPct(o.slip_pct)} vs the alert`] : []),
+      ...(trigger != null ? [`triggered at ${bridgePx(trigger)}`] : []),
+    ];
+    return `${filled === qty ? `${qty}` : `${filled} of ${qty}`} @ ${bridgePx(avg)}${asides.length > 0 ? ` (${asides.join(', ')})` : ''}`;
+  };
   // What is held and what stands between it and a loss: the bracket's exits still working in TWS.
   const holding = (): string => {
     const exits: string[] = [];
@@ -580,7 +702,9 @@ export function bridgeOrderView(o: BridgeOrderRecord, settings: Pick<BridgeOrder
       const moved = { chases, first: o.sent.first_limit ?? o.sent.limit };
       text = f != null
         ? `filled ${f} · ${Math.max(0, qty - filled)} still working at ${bridgePx(o.sent.limit)}${chases > 0 ? ` (moved ${chases}×, first ${bridgePx(moved.first)})` : ''}`
-        : `sent: ${bracketText(o.sent, moved)}`;
+        : trigger != null
+          ? waitingText({ ...o.sent, trigger })
+          : `sent: ${bracketText(o.sent, moved)}`;
       tone = 'working';
     } else if (cancelling) {
       const f = fill(false);
@@ -589,6 +713,11 @@ export function bridgeOrderView(o: BridgeOrderRecord, settings: Pick<BridgeOrder
     } else if (o.status === 'Filled') {
       text = `filled ${fill(false) ?? `${qty}`}${after()}`;
       tone = knowsHeld && held === 0 ? 'done' : 'filled';
+    } else if (bridgeOrderExpired(o)) {
+      // The bridge's note has the time in New York's; the card's times are the operator's.
+      const at = clockOf(o.sent.good_until);
+      text = at != null ? `expired unfilled at ${at}` : 'expired unfilled';
+      tone = 'done';
     } else {
       const word = o.status === 'Cancelled' || o.status === 'ApiCancelled' ? 'cancelled' : o.status;
       const f = fill(false);
@@ -607,7 +736,7 @@ export function bridgeOrderView(o: BridgeOrderRecord, settings: Pick<BridgeOrder
     note: !done || exitWorking ? o.note ?? null : null,
     loose: o.loose_exit === true,
     cancel: bridgeOrderCancellable(o) ? (filled > 0 ? 'Cancel the rest' : 'Cancel') : null,
-    chase: !done && !cancelling && filled < qty && maxChases > 0 && chases < maxChases,
+    chase: !stopEntry && !done && !cancelling && filled < qty && maxChases > 0 && chases < maxChases,
     sell: held > 0 ? { lower: exitWorking, label: exitWorking ? 'Sell lower' : held === qty ? 'Sell' : `Sell ${held}` } : null,
   };
 }

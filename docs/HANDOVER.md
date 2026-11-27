@@ -343,6 +343,24 @@ THE MOMENTUM LIST.** The operator at the open: "Pre-market started, and everythi
   "off Momentum" and the "Show only Momentum tickers" checkbox no longer hides it (`docs/vwap-setup.md` §22.9).
   `verify-tv-setups.ts` 946 checks. A POP with no volume reading stays Momentum-only.
 - **To watch:** the number of alerts in the first minutes after 04:00, and off-list against on-list outcomes.
+- **"Buy if ≥" (the same day).** The operator on their four paper trades: the 10% take-profit was "jumped over" without
+  filling (MNDR), and "TRUG, TGHL POPs couldn't move, dropped almost at the price where POP fired … Maybe, we should place
+  them with offset, for example, 3% (or bigger percentage) from the alert price? Because, if price's intention is going
+  up, we will catch it, if not, we just don't buy it"; then "maybe, +3% is too risky? Maybe, we do 5%?". Built: the
+  bridge's `/order { entry: "stop" }` (`ce269d3`, 327 tests): a BUY STP LMT triggering `entryStopPct` above the alert's
+  price, limit `entryStopLimitPct` above the trigger, GTD for `entryValidSec` so IB cancels it; exits from the trigger;
+  no Chase. The dashboard: a second, outlined button `Buy $400 if ≥ 0.3744 (+5%)`, a waiting line with Cancel, "expired
+  unfilled at …" with both buttons back. Their `config.json`: `entryStopPct` 5, `entryStopLimitPct` 1, `entryValidSec`
+  300. **Not yet run against a real TWS** (the bridge README items 13–21: the goodTillDate format, a STP LMT parent with
+  children, the waiting status, the expiry, pre-market triggering).
+- **Owed: the measurement of that idea.** `research/ema-vwap/pop_entry_study.py` is written and not yet run: the
+  scratchpad's study rows and venv were cleared overnight, and the export from prod must not run 07:00–11:00 ET
+  (`vwap-pullback/export-rows.sql`). Run it after the close: at the alert price against buy stops at +1/2/3/5/8%, with
+  take-profits of 5 / 10 / 20% and a 5% stop. What the earlier tables already say: half of POPs never get more than 3–4%
+  above the alert's price, 27–29% reach +10%. Told the operator the 3%-or-5% question is open until then, and that IBKR's
+  commission on a $400 trade in a sub-$1 stock is near its cap (0.5–1% a side).
+- **A subagent hit the account's Fable usage limit mid-session** (resets 12-03 05:00 Tashkent) before changing
+  anything; the two agents after it were started on Opus.
 
 **2026-11-26 (Thu, US holiday, ~07:00 ET) — SCRIPT v49: THE POP'S VOLUME TEST; A TWS BRIDGE STARTED.** The operator, with v48 on
 the chart: "POP is Amazing. I see a big potential with it … the biggest 5-6 POPs happen after the pre-market open

@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import {
   BRIDGE_ALERT_MAX_AGE_MS, BRIDGE_DEFAULT_URL, bridgeBuyNumbers, bridgeOrderBusy, bridgeOrderCancellable,
-  bridgeOrderCounts, bridgeOrderLive, bridgeOrderView, bridgeOrigin, bridgeSentText, describeBridge,
+  bridgeOrderCounts, bridgeOrderLive, bridgeOrderView, bridgeOrigin, bridgeSentText, bridgeStopNumbers, describeBridge,
   toBridgeFailure, twsBridge,
-  type BridgeConn, type BridgeFailure, type BridgeOrder, type BridgeOrderRecord, type BridgeOrderRequest,
+  type BridgeConn, type BridgeEntry, type BridgeFailure, type BridgeOrder, type BridgeOrderRecord, type BridgeOrderRequest,
   type BridgeOrderView, type BridgeStatus, type BridgeView,
 } from '../api/twsBridge';
 
@@ -20,6 +20,11 @@ import {
 // 2026-11-27: the first version could also make TWS's windows show a row's ticker (a per-row
 // "TWS" button, and a row click TWS followed). The operator did not need it; it is gone, with its
 // `follow` setting (a stored one from before is ignored and dropped at the next save).
+//
+// 2026-11-27, later: beside Buy, a second button places the stop entry (/order with entry
+// "stop"): the same bracket with a buy that waits above the alert's price and fills only if the
+// price gets there; IB cancels it by itself after the bridge's entryValidSec. It shares Buy's
+// lock, click state and error handling.
 
 export interface TwsBridgeSettings {
   enabled: boolean;   // the feature, on this browser
@@ -75,9 +80,11 @@ const TIMING: BridgeTiming = {
 // flight its three buttons take no click.
 export type OrderAction = 'cancel' | 'chase' | 'sell';
 
-// What a Buy click on one alert came to. Keyed by the alert's id.
+// What a Buy click on one alert came to — either of its two buttons, Buy (entry "now") or the
+// stop entry (entry "stop"): one alert, one click at a time. Keyed by the alert's id.
 export type BuyClick =
-  | { phase: 'sending'; at: number; ticker: string }
+  // `entry`: which of the two buttons the call is for (it reads "sending…"; both take no click)
+  | { phase: 'sending'; at: number; ticker: string; entry: BridgeEntry }
   | { phase: 'sent'; at: number; ticker: string; order: BridgeOrder }
   // no answer in time: the order may have gone out; /orders is asked until it is known
   | { phase: 'unknown'; at: number; ticker: string; text: string }
@@ -307,7 +314,8 @@ export class TwsBridgeController {
             clicks[alertId] = {
               phase: 'sent', at: c.at, ticker: c.ticker,
               order: {
-                order_id: rec.order_id, ticker: rec.ticker, qty: rec.sent.qty, limit: rec.sent.limit,
+                order_id: rec.order_id, ticker: rec.ticker, entry: rec.entry ?? 'now', qty: rec.sent.qty, limit: rec.sent.limit,
+                trigger: rec.sent.trigger ?? null, good_until: rec.sent.good_until ?? null,
                 take_profit: rec.sent.take_profit, stop: rec.sent.stop, stop_limit: rec.sent.stop_limit, status: rec.status,
               },
             };
@@ -371,13 +379,18 @@ export class TwsBridgeController {
   // happened. A success keeps it locked while the order is working or has a fill, and so does
   // the bridge's own "this alert already has an order" (`duplicate_alert`); once /orders shows
   // that order ended with nothing filled, loadOrders releases the lock.
+  //
+  // Both of an alert's buttons come here — Buy, and the stop entry (`req.entry` "stop", the buy
+  // that waits above the alert's price) — and share the one lock: a click on either while the
+  // other's call is in flight, or after it placed an order that still counts, sends nothing. A
+  // stop entry that IB expires unfilled has ended with nothing filled, so it frees the alert too.
   buy = (alertId: string, req: BridgeOrderRequest): void => {
     const tickerLock = `ticker:${req.ticker}`;
     if (!this.state.settings.enabled || this.locks.has(alertId) || this.locks.has(tickerLock)) return;
     this.locks.add(alertId);
     this.locks.add(tickerLock);
     const at = Date.now();
-    this.setClick(alertId, { phase: 'sending', at, ticker: req.ticker });
+    this.setClick(alertId, { phase: 'sending', at, ticker: req.ticker, entry: req.entry ?? 'now' });
     void (async () => {
       try {
         const order = await twsBridge.order(this.conn(), req);
@@ -497,8 +510,13 @@ export interface BridgeCard {
   note: string | null;
   // "Buy 100 @ 0.5858" / "Buy $400 ≈ 929 @ 0.4302" / "Buy LIVE …"; null = this card has no Buy button
   buyLabel: string | null;
-  // the click's /order call is in flight: the button is shown, disabled
-  sending: boolean;
+  // The second button, beside Buy: the stop entry, a buy that waits above the alert's price.
+  // "Buy 100 if ≥ 0.3744 (+5%)" / "Buy $400 if ≥ 0.3744 (+5%)" / "Buy LIVE …"; only beside a Buy
+  // button, and only when the bridge has stop entries on (order.entryStopPct above 0).
+  stopLabel: string | null;
+  // which button's /order call is in flight ("now" = Buy, "stop" = the stop entry): both are
+  // shown, disabled, and that one reads "sending…"; null = none
+  sending: BridgeEntry | null;
   // the alert's own order, with its buttons
   order: BridgeOrderBlock | null;
   // that order ended with nothing filled, so the alert is free again: its line goes before the
@@ -538,7 +556,7 @@ export function bridgeCard(
     };
   };
   const click = alert.ids.map((id) => tws.clicks[id]).find((x) => x != null) ?? null;
-  const sending = click?.phase === 'sending';
+  const sending = click?.phase === 'sending' ? click.entry : null;
   const sentOrder = click?.phase === 'sent' ? click.order : null;
   // An order this page has just placed that /orders does not list yet: the /order answer stands
   // in for it, and the alert is used.
@@ -557,13 +575,18 @@ export function bridgeCard(
   // nothing filled (cancelled here or in TWS, refused, never sent) frees it, and so does a click
   // the bridge answered with an error. The bridge's "this alert already has an order" counts
   // until /orders shows which order that is; then the order decides.
-  const used = sending || click?.phase === 'unknown' || fresh != null
+  const used = sending != null || click?.phase === 'unknown' || fresh != null
     || (rec != null ? !ended : click?.phase === 'taken');
-  const buyLabel = tws.settings.buy && tws.view.canOrder && tws.status != null && alert.over !== true
-    && typeof alert.price === 'number' && alert.price > 0
-    && now - alert.at <= BRIDGE_ALERT_MAX_AGE_MS && (!used || sending)
-    ? `${tws.view.live ? 'Buy LIVE' : 'Buy'} ${bridgeBuyNumbers(tws.status.order, alert.price)}`
-    : null;
+  // The two buttons stand and go together: Buy, and beside it the stop entry when the bridge
+  // offers one (both shown, disabled, while either's call is in flight).
+  const orderSettings = tws.status?.order ?? null;   // the bridge's, from /status
+  const price = typeof alert.price === 'number' && alert.price > 0 ? alert.price : null;
+  const offered = orderSettings != null && price != null && tws.settings.buy && tws.view.canOrder && alert.over !== true
+    && now - alert.at <= BRIDGE_ALERT_MAX_AGE_MS && (!used || sending != null);
+  const buyWord = tws.view.live ? 'Buy LIVE' : 'Buy';
+  const buyLabel = offered ? `${buyWord} ${bridgeBuyNumbers(orderSettings, price)}` : null;
+  const stopNumbers = offered ? bridgeStopNumbers(orderSettings, price) : null;
+  const stopLabel = stopNumbers != null ? `${buyWord} ${stopNumbers}` : null;
   // Other alerts' orders on this ticker. One that is working or holds shares is always in view,
   // with its buttons: it can be cancelled or sold here whatever alert the card's row shows now.
   // Beside a Buy button, with no order of this alert's own in the way, the last one that filled
@@ -594,7 +617,7 @@ export function bridgeCard(
     order = block(rec);
   }
   const any = buyLabel != null || order != null || error != null || others.length > 0 || note != null;
-  return { note, buyLabel, sending, order, orderEnded: order != null && ended, error, others, any };
+  return { note, buyLabel, stopLabel, sending, order, orderEnded: order != null && ended, error, others, any };
 }
 
 export interface TwsBridge extends TwsBridgeState {
