@@ -28,7 +28,7 @@ import {
   parseStageList, DEFAULT_ANNOUNCED, TV_STAGE_ORDER, pastCap, gradeAtLeast, tfMinutes, stageSwitch, readStoredStages, storedStages,
   emaByBand, emaFields, EMA_BAND_LABEL, readStoredRules, emaLineStage, storedSetupFields, storedStage,
   EMA_STAGES, LINE_CROSS_STAGES, TV_STAGE_LABEL, turnFields, vbFields, VB_STAGES, PULLBACK_STAGES,
-  popFields, BASIS_STAGES, POP_STAGES, WEAK_STAGES, isWeak,
+  popFields, BASIS_STAGES, POP_STAGES, WEAK_STAGES, isWeak, popFreeOfList, momentumRuleText,
   type TvSetupSignal,
 } from '../src/services/tv-setups.js';
 import * as tvSetups from '../src/services/tv-setups.js';
@@ -1539,13 +1539,20 @@ console.log('POP and BACK: the volume test (v49, 2026-11-26)');
     (() => { const k = new TvSetupGate();
       return k.admit(ps!, T0, false, true) === 'notify' && k.admit(ps!, T0 + 5, false, true) === 'drop' && k.admit({ ...ps!, pop_n: 2 }, T0 + 180, false, true) === 'notify'
         && k.admit(bs!, T0, false, true) === 'notify' && k.admit(bs!, T0 + 5, false, true) === 'drop' && k.admit({ ...bs!, back_n: 2 }, T0 + 180, false, true) === 'notify'; })());
-  check('v49: gate — …off Momentum quiet (with the rule off and their +29% / +156% day highs: the POP quiet, the BACK announced), past the cap quiet, switched off quiet',
-    new TvSetupGate().admit(ps!, T0, false, false) === 'quiet' && new TvSetupGate().admit(bs!, T0, false, false) === 'quiet'
-      && lax().admit(ps!, T0, false, false) === 'quiet' && lax().admit({ ...ps!, day_gain: 30 }, T0, false, false) === 'notify' && lax().admit(bs!, T0, false, false) === 'notify'
+  // 2026-11-27: a POP / BACK that is not weak and reads TV_SETUP.pp_free_vol (10×) or more is announced off the Momentum
+  // list too (its own section below). These two read 212.4×, so off the list they are announced now, with the rule on or
+  // off. Until then this check expected `quiet` for the first three (ps and bs off the list, and ps off the list with the
+  // rule off at its +29% day high). What it said holds as before for the same two reading 9.9×, under the floor.
+  check('v49: gate — …off Momentum: (2026-11-27) announced with their 212.4× reading, the rule on or off; reading 9.9× they are quiet as before (with the rule off and their +29% / +156% day highs: the POP quiet, the BACK announced); past the cap quiet, switched off quiet',
+    new TvSetupGate().admit(ps!, T0, false, false) === 'notify' && new TvSetupGate().admit(bs!, T0, false, false) === 'notify'
+      && lax().admit(ps!, T0, false, false) === 'notify' && lax().admit({ ...ps!, day_gain: 30 }, T0, false, false) === 'notify' && lax().admit(bs!, T0, false, false) === 'notify'
+      && new TvSetupGate().admit({ ...ps!, vol_x: 9.9 }, T0, false, false) === 'quiet' && new TvSetupGate().admit({ ...bs!, vol_x: 9.9 }, T0, false, false) === 'quiet'
+      && lax().admit({ ...ps!, vol_x: 9.9 }, T0, false, false) === 'quiet' && lax().admit({ ...ps!, vol_x: 9.9, day_gain: 30 }, T0, false, false) === 'notify'
+      && lax().admit({ ...bs!, vol_x: 9.9 }, T0, false, false) === 'notify'
       && new TvSetupGate().admit({ ...ps!, pop_n: 4 }, T0, false, true) === 'quiet' && new TvSetupGate().admit({ ...bs!, back_n: 4 }, T0, false, true) === 'quiet'
       && new TvSetupGate().admit({ ...ps!, pop_n: 3 }, T0, false, true) === 'notify' && new TvSetupGate().admit({ ...bs!, back_n: 3 }, T0, false, true) === 'notify'
       && only(['back']).admit(ps!, T0, false, true) === 'quiet' && only(['pop']).admit(bs!, T0, false, true) === 'quiet');
-  check('v49: gate — the reading alone decides nothing here: a strong POP with a small `vol`, or with none, announces; only the message\'s `| weak` makes one quiet',
+  check('v49: gate — on the Momentum list the reading alone decides nothing: a strong POP with a small `vol`, or with none, announces; only the message\'s `| weak` makes one quiet (2026-11-27: off the list the reading counts, the section below)',
     new TvSetupGate().admit({ ...ps!, vol_x: 0 }, T0, false, true) === 'notify' && new TvSetupGate().admit({ ...ps!, vol_x: null }, T0, false, true) === 'notify'
       && new TvSetupGate().admit({ ...bs!, vol_x: 0.5 }, T0, false, true) === 'notify' && new TvSetupGate().admit({ ...pw!, vol_x: 5000 }, T0, false, true) === 'quiet'
       && new TvSetupGate().admit(p48, T0, false, true) === 'notify' && new TvSetupGate().admit(b48, T0, false, true) === 'notify');
@@ -1574,17 +1581,25 @@ console.log('POP and BACK: the volume test (v49, 2026-11-26)');
       && new TvSetupGate().admit(parseTvMessage(POP_EDGE_MSG.replace(' | vol 10x', ''))!, T0, false, true) === 'quiet'
       && parseTvMessage(POP_EDGE_MSG.replace(' | vol 10x', ''))?.vol_x === null);
   {
-    // No code on the server holds a volume minimum or compares the reading: `vol_x` is stored, passed on and printed
+    // The server never calls a POP weak by its reading: `vol_x` is stored, passed on and printed. Since 2026-11-27 it is
+    // held against a number in one place, popFreeOfList (the Momentum-list exception, for one that is not weak), and
+    // TV_SETUP has one volume number, that floor. Until then this check expected no comparison at all and no such key
+    // ("the server never judges the reading … TV_SETUP holds no volume minimum").
     const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
     const sources = ['services/tv-setups.ts', 'routes/tv.ts', 'routes/screener.ts'].map((f) => readFileSync(resolve(srcDir, f), 'utf8'));
     const pollerSrc = readFileSync(resolve(srcDir, 'services/poller.ts'), 'utf8');
     const deliver = pollerSrc.slice(pollerSrc.indexOf('  deliverTvSetup(sig: TvSetupSignal'), pollerSrc.indexOf('  private pushOpportunityAlerts('));
     const code = [...sources, deliver].map((src) => src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n'));
-    check('v49: the server never judges the reading — no comparison of `vol_x` with a number in tv-setups.ts, the two routes or deliverTvSetup (only "is there one"), and TV_SETUP holds no volume minimum',
-      code.every((src) => src.length > 0 && !/vol_x\s*(?:[<>]=?|[!=]==?)\s*(?!null\b)\S/.test(src) && !/(?<!=)[<>]=?\s*(?:sig|s|m|o)\.vol_x/.test(src))
+    const compared = code.map((src) => (src.match(/vol_x\s*(?:[<>]=?|[!=]==?)\s*(?!null\b)\S[^\n]*/g) ?? []).map((m) => m.trim()));
+    check('v49 / 2026-11-27: the server never calls one weak by its reading — `vol_x` is held against a number in one place only, popFreeOfList\'s floor for the Momentum list (`sig.vol_x >= TV_SETUP.pp_free_vol`, after "not weak"); nowhere else in tv-setups.ts, the two routes or deliverTvSetup; TV_SETUP\'s one volume number is pp_free_vol',
+      JSON.stringify(compared) === JSON.stringify([['vol_x >= TV_SETUP.pp_free_vol;'], [], [], []])
+        && code.every((src) => src.length > 0 && !/(?<!=)[<>]=?\s*(?:sig|s|m|o)\.vol_x/.test(src))
         && code.every((src) => (src.match(/vol_x\s*!=\s*null/g) ?? []).length === (src.match(/vol_x\s*[!=]==?/g) ?? []).length)
-        && deliver.length > 2000 && Object.keys(TV_SETUP).every((k) => !/vol/i.test(k))
-        && code[0].includes('weak: /\\|\\s*weak\\b/i.test(text),') && code[0].includes('weak: o.weak === true,'));
+        && deliver.length > 2000 && JSON.stringify(Object.keys(TV_SETUP).filter((k) => /vol/i.test(k))) === '["pp_free_vol"]'
+        && code[0].includes('weak: /\\|\\s*weak\\b/i.test(text),') && code[0].includes('weak: o.weak === true,')
+        && sources[0].includes('export function popFreeOfList(sig: TvSetupSignal): boolean {\n  return POP_STAGES.has(sig.stage) && sig.weak !== true\n'
+          + '    && sig.vol_x != null && Number.isFinite(sig.vol_x) && sig.vol_x >= TV_SETUP.pp_free_vol;\n}'),
+      JSON.stringify(compared));
   }
   // A weak one's number is not its own (the day's count without it), so it is never past the cap: not in its row, not in
   // its alert, not in the webhook's reason. Until this the row of a weak POP sent after the day's fourth strong one said `capped`.
@@ -1776,6 +1791,184 @@ console.log('POP and BACK: the volume test (v49, 2026-11-26)');
         && deliver.includes('(mode === \'quiet\' ? (why === \'weak\' ? (back ? \' · quiet (after a weak POP)\' : \' · quiet (the volume test calls it weak)\')')
         && deliver.includes('(sig.vol_x != null ? ` · ${back ? \'POP vol\' : \'vol\'} ${sig.vol_x}x` : \'\')'));
   }
+}
+
+// 2026-11-27, the first live morning (04:00–05:30 New York): 57 POPs, 12 of them strong, 2 announced. The other 10
+// strong ones were on names not on our Momentum list at that moment, so the ⚙ rule "Momentum list only" kept them
+// quiet, and those are the pops the operator wants: a stock with no volume that suddenly pops is not on the Momentum
+// screen yet. So a POP that passes a volume floor alerts whatever the Momentum list says: a `pop` or a `back` that is
+// not weak and whose `vol_x` is TV_SETUP.pp_free_vol (10) or more is announced on or off the list, with the rule ticked
+// or not. (A BACK carries its POP's reading: the heads-up and the entry are announced together.) Its own ⚙ stage switch,
+// the day's cap, the duplicate window and "weak is quiet" still apply. No reading, or one under the floor: as before.
+// The TURN and every other stage: unchanged. The floor is the server's own number, not the script's `ppVolMin`.
+console.log('POP off the Momentum list: the volume floor (2026-11-27)');
+{
+  const T0 = 1_795_770_000;
+  // a strong POP / BACK with the reading given (null = the message has no `| vol`), and the weak ones with a big reading
+  const popV = (vol: string | null) => parseTvMessage(vol == null ? POP_VOL_MSG.replace(' | vol 212.4x', '') : POP_VOL_MSG.replace('vol 212.4x', `vol ${vol}`))!;
+  const backV = (vol: string | null) => parseTvMessage(vol == null ? BACK_VOL_MSG.replace(' | vol 212.4x', '') : BACK_VOL_MSG.replace('vol 212.4x', `vol ${vol}`))!;
+  const popWeak50 = parseTvMessage(POP_WEAK_MSG.replace('vol 6.2x', 'vol 50x'))!;
+  const backWeak50 = parseTvMessage(BACK_WEAK_MSG.replace('vol 6.2x', 'vol 50x'))!;
+  const turn = parseTvMessage(TURN_MSG)!;
+  const lax = () => { const x = new TvSetupGate(); x.setEmaMomentumOnly(false); return x; };
+  const only = (stages: Parameters<TvSetupGate['setAnnounced']>[0]) => { const x = new TvSetupGate(); x.setAnnounced(stages); return x; };
+  const off = (s: TvSetupSignal, g = new TvSetupGate()) => g.admit(s, T0, false, false);   // the ticker is not on the Momentum list
+  const on = (s: TvSetupSignal, g = new TvSetupGate()) => g.admit(s, T0, false, true);     // it is
+
+  check('the floor is TV_SETUP.pp_free_vol = 10, and the messages read as meant: `vol 10x` 10, `vol 212.4x` 212.4, `vol 9.9x` 9.9, no `vol` none; none of the four weak; the weak ones 50 and weak',
+    TV_SETUP.pp_free_vol === 10 && popV('10x').vol_x === 10 && popV('212.4x').vol_x === 212.4 && popV('9.9x').vol_x === 9.9 && popV(null).vol_x === null
+      && backV('10x').vol_x === 10 && backV('212.4x').vol_x === 212.4 && backV('9.9x').vol_x === 9.9 && backV(null).vol_x === null
+      && [popV('10x'), popV('212.4x'), popV('9.9x'), popV(null), backV('10x'), backV('212.4x'), backV('9.9x'), backV(null)].every((s) => s.weak === false && !isWeak(s))
+      && popV('10x').stage === 'pop' && backV('10x').stage === 'back' && popV('10x').pop_n === 1 && backV('10x').back_n === 1
+      && popWeak50.vol_x === 50 && popWeak50.weak === true && popWeak50.stage === 'pop' && backWeak50.vol_x === 50 && backWeak50.weak === true && backWeak50.stage === 'back');
+  check('popFreeOfList: a POP or a BACK that is not weak and reads 10 or more — at the floor, over it, far over it; not under it, not without a reading, not weak',
+    [popV('10x'), popV('10.1x'), popV('212.4x'), popV('5000x'), backV('10x'), backV('212.4x')].every((s) => popFreeOfList(s))
+      && [popV('9.9x'), popV('0x'), popV('5x'), popV(null), backV('9.9x'), backV(null), popWeak50, backWeak50].every((s) => !popFreeOfList(s))
+      && !popFreeOfList({ ...popV('10x'), weak: true }) && popFreeOfList({ ...popWeak50, weak: false }) && popFreeOfList({ ...popV('10x'), weak: undefined })
+      && !popFreeOfList({ ...popV('10x'), vol_x: 9.999 }) && !popFreeOfList({ ...popV('10x'), vol_x: NaN }) && !popFreeOfList({ ...popV('10x'), vol_x: Infinity })
+      && !popFreeOfList({ ...popV('10x'), vol_x: -50 }));
+  check('popFreeOfList: never another stage, whatever `vol_x` it carries — a TURN, a CROSS, a RETEST, a PULLBACK, an EMA cross, a band cross, a BOUNCE',
+    !popFreeOfList({ ...turn, vol_x: 500 }) && !popFreeOfList(turn)
+      && (['turn', 'cross', 'retest', 'pullback', 'broken', 'held', 'ema', 'band', 'bounce'] as const).every((stage) => !popFreeOfList({ ...popV('212.4x'), stage }))
+      && !popFreeOfList(parseTvMessage('CROSS AIXI 2.61 | sVWAP 2.47 (+5.7%) | upper 2.58 (+1.2%) | open 2.5 | candle 5 | bb 2 | cross 1 | day high +25% | vol 50x | tf 30S')!)
+      && !popFreeOfList(parseTvMessage('PULLBACK SAIQ 6.2 | sVWAP 6.16 (+0.7%) | line session | touch 2 | peak +17% | day high +336% | vol 50x | run -9.6% | tf 1')!));
+
+  // The gate, off the Momentum list
+  check('gate — off the list, a strong POP reading `vol 10x` is announced, and one reading `vol 212.4x`', off(popV('10x')) === 'notify' && off(popV('212.4x')) === 'notify');
+  check('gate — off the list, a strong POP reading `vol 9.9x` is quiet, and one with no `vol` is quiet', off(popV('9.9x')) === 'quiet' && off(popV(null)) === 'quiet'
+    && off(popV('0x')) === 'quiet' && off(popV('5x')) === 'quiet');
+  check('gate — off the list, a weak POP reading `vol 50x` is quiet (weak is always quiet), and on the list too', off(popWeak50) === 'quiet' && on(popWeak50) === 'quiet'
+    && off({ ...popV('212.4x'), weak: true }) === 'quiet' && off(parseTvMessage(POP_EDGE_MSG)!) === 'quiet');
+  check('gate — the same for a BACK: `vol 10x` and `vol 212.4x` announced off the list; `vol 9.9x` and no `vol` quiet; weak with `vol 50x` quiet',
+    off({ ...backV('10x'), day_gain: 12 }) === 'notify' && off(backV('212.4x')) === 'notify' && off(backV('10x')) === 'notify'
+      && off(backV('9.9x')) === 'quiet' && off(backV(null)) === 'quiet' && off(backWeak50) === 'quiet' && on(backWeak50) === 'quiet'
+      && off(parseTvMessage(BACK_EDGE_MSG)!) === 'quiet');
+  check('gate — the ⚙ rule plays no part for one over the floor: off the list it is announced with the rule ticked (the default) and unticked, whatever its day high',
+    new TvSetupGate().emaMomentumOnly() && !lax().emaMomentumOnly()
+      && [popV('10x'), popV('212.4x'), backV('10x'), backV('212.4x')].every((s) => off(s) === 'notify' && off(s, lax()) === 'notify'
+        && off({ ...s, day_gain: 0 }) === 'notify' && off({ ...s, day_gain: null }) === 'notify' && off({ ...s, day_gain: 0 }, lax()) === 'notify'));
+  check('gate — under the floor the rule decides as before: ticked, quiet off the list at any day high; unticked, the +30% day-high path still announces a POP reading 9.9× or with no reading, and under +30% it is quiet',
+    [popV('9.9x'), popV(null), backV('9.9x'), backV(null)].every((s) => off({ ...s, day_gain: 300 }) === 'quiet' && off({ ...s, day_gain: 29 }) === 'quiet'
+      && off({ ...s, day_gain: TV_SETUP.vb_fresh_gain }, lax()) === 'notify' && off({ ...s, day_gain: 300 }, lax()) === 'notify'
+      && off({ ...s, day_gain: TV_SETUP.vb_fresh_gain - 1 }, lax()) === 'quiet' && off({ ...s, day_gain: null }, lax()) === 'quiet')
+      && popV('9.9x').day_gain === 29 && off(popV('9.9x'), lax()) === 'quiet');
+  check('gate — its own ⚙ stage switch still holds it: off the list and over the floor, a POP with the POP switch off is quiet, a BACK with the BACK switch off is quiet; each announces on its own switch alone',
+    off(popV('212.4x'), only(TV_STAGE_ORDER.filter((s) => s !== 'pop'))) === 'quiet' && off(backV('212.4x'), only(TV_STAGE_ORDER.filter((s) => s !== 'back'))) === 'quiet'
+      && off(popV('212.4x'), only([])) === 'quiet' && off(backV('212.4x'), only([])) === 'quiet' && off(popV('212.4x'), only(['back', 'turn'])) === 'quiet'
+      && off(popV('212.4x'), only(['pop'])) === 'notify' && off(backV('212.4x'), only(['back'])) === 'notify'
+      && off(backV('212.4x'), only(TV_STAGE_ORDER.filter((s) => s !== 'pop'))) === 'notify');
+  check('gate — the day\'s cap still holds it: off the list and over the floor, `pop 4` is quiet and `pop 3` announced; `back 4` quiet and `back 3` announced; a grade exemption changes nothing',
+    off({ ...popV('212.4x'), pop_n: TV_SETUP.pp_cap + 1 }) === 'quiet' && off({ ...popV('212.4x'), pop_n: TV_SETUP.pp_cap }) === 'notify'
+      && off({ ...backV('212.4x'), back_n: TV_SETUP.pp_cap + 1 }) === 'quiet' && off({ ...backV('212.4x'), back_n: TV_SETUP.pp_cap }) === 'notify'
+      && new TvSetupGate().admit({ ...popV('212.4x'), pop_n: 4 }, T0, true, false) === 'quiet' && off({ ...popV('212.4x'), pop_n: 4 }, lax()) === 'quiet'
+      && TV_SETUP.pp_cap === 3);
+  check('gate — the duplicate window still holds it: off the list and over the floor, a re-delivery within 20 s is dropped, and the next POP minutes later is announced',
+    (() => { const k = new TvSetupGate();
+      return k.admit(popV('212.4x'), T0, false, false) === 'notify' && k.admit(popV('212.4x'), T0 + 5, false, false) === 'drop'
+        && k.admit({ ...popV('50x'), pop_n: 2 }, T0 + 180, false, false) === 'notify' && k.admit(backV('212.4x'), T0 + 200, false, false) === 'notify'
+        && k.admit(backV('212.4x'), T0 + 205, false, false) === 'drop'; })());
+  check('gate — on the list, all as before: over the floor, under it and without a reading a strong one is announced; a weak one is quiet; past the cap quiet; switched off quiet',
+    [popV('10x'), popV('212.4x'), popV('9.9x'), popV(null), backV('10x'), backV('212.4x'), backV('9.9x'), backV(null)].every((s) => on(s) === 'notify' && on(s, lax()) === 'notify')
+      && on(popWeak50) === 'quiet' && on(backWeak50) === 'quiet' && on({ ...popV('212.4x'), pop_n: 4 }) === 'quiet' && on({ ...backV('9.9x'), back_n: 4 }) === 'quiet'
+      && on(popV('212.4x'), only(['back'])) === 'quiet' && on(backV('212.4x'), only(['pop'])) === 'quiet');
+  check('gate — the floor is the server\'s own number, not the script\'s minimum: were `ppVolMin` lowered to 5, a POP reading 5× to 9.9× would come strong (no `| weak`) and is still Momentum names only here; announced on the list',
+    ['5x', '6.2x', '9x', '9.9x'].every((v) => !popV(v).weak && off(popV(v)) === 'quiet' && on(popV(v)) === 'notify' && off(backV(v)) === 'quiet' && on(backV(v)) === 'notify'));
+  check('gate — …and it takes nothing from `weak` but "weak is quiet": a 9.96 printed `vol 10x | … | weak` is quiet on and off the list, and the same message without `| weak` is announced off it',
+    off(parseTvMessage(POP_EDGE_MSG)!) === 'quiet' && on(parseTvMessage(POP_EDGE_MSG)!) === 'quiet'
+      && off(parseTvMessage(POP_EDGE_MSG.replace(' | weak', ''))!) === 'notify' && off({ ...parseTvMessage(BACK_EDGE_MSG.replace(' | weak', ''))!, back_n: 1 }) === 'notify');
+  check('gate — a BACK is judged on its own reading and conditions: over the floor it is announced off the list after a POP that was quiet (under the floor, weak, switched off) and with no POP at all',
+    (() => { const k = new TvSetupGate();
+      return k.admit(popV('9.9x'), T0, false, false) === 'quiet' && k.admit(backV('212.4x'), T0 + 300, false, false) === 'notify'; })()
+      && (() => { const k = new TvSetupGate();
+        return k.admit(popWeak50, T0, false, false) === 'quiet' && k.admit(backV('212.4x'), T0 + 300, false, false) === 'notify'; })()
+      && off(backV('212.4x'), only(['back'])) === 'notify' && off(backV('212.4x')) === 'notify');
+  check('gate — a quiet off-list POP uses nothing up: the same ticker\'s next POP, over the floor and off the list, is announced; so is a strong one right after a weak one',
+    (() => { const k = new TvSetupGate();
+      return k.admit(popV('9.9x'), T0, false, false) === 'quiet' && k.admit({ ...popV('212.4x'), pop_n: 2 }, T0 + 240, false, false) === 'notify'; })()
+      && (() => { const k = new TvSetupGate();
+        return k.admit(popWeak50, T0, false, false) === 'quiet' && k.admit(popV('212.4x'), T0 + 1, false, false) === 'notify'; })());
+
+  // The other stages: the floor is the POP's and the BACK's alone
+  const band = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.13 (-0.5%) | bb 30S | mid 8.02 (+0.9%) | line session | candle 2 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S')!;
+  const ema = parseTvMessage('EMA OMH 8.09 | sVWAP 8.01 (+1.0%) | ema 9 8.03 | line session | candle 3 | cross 1 | under 12 | flips 1 | day high +25% | vwap 30s | tf 30S')!;
+  const bounce = parseTvMessage('BOUNCE OMH 8.2 | stop 8.0 | sVWAP 8.01 (+2.4%) | ema 9 8.1 | line session | from ema | candle 1 | bounce 1 | since 3 | vwap 30s | tf 30S')!;
+  const cross = parseTvMessage('CROSS OMH 8.09 | sVWAP 8.01 (+1.0%) | upper 8.0 (+1.1%) | open 7.9 | line session | candle 5 | bb 45S | cross 1 | day high +25% | vol 50x | tf 30S')!;
+  check('the TURN is unchanged: off the list it is still quiet, with a `vol_x` of 500 on it too; with the rule unticked its +30% day-high path is as it was; on the list announced',
+    off(turn) === 'quiet' && off({ ...turn, vol_x: 500 }) === 'quiet' && off({ ...turn, vol_x: 500, day_gain: 300 }) === 'quiet'
+      && off({ ...turn, vol_x: 500 }, lax()) === 'quiet' && off({ ...turn, day_gain: TV_SETUP.vb_fresh_gain }, lax()) === 'notify'
+      && off({ ...turn, vol_x: 500, day_gain: TV_SETUP.vb_fresh_gain - 1 }, lax()) === 'quiet' && on(turn) === 'notify' && on({ ...turn, vol_x: 500 }) === 'notify');
+  check('the EMA cross, the band cross and the BOUNCE are unchanged: off the list quiet, with a `vol_x` of 500 on them too; the rule unticked and +30% announces as before',
+    [ema, band, bounce].every((s) => off(s) === 'quiet' && off({ ...s, vol_x: 500 }) === 'quiet' && off({ ...s, vol_x: 500, day_gain: 29 }, lax()) === 'quiet'
+      && off({ ...s, day_gain: 31 }, lax()) === 'notify' && on(s) === 'notify'));
+  check('the CROSS and the PULLBACK are unchanged: a CROSS off the list is quiet under a +30% day high whatever its own `vol` (50×) and announced at +30%; a PULLBACK announces off the list as it always did',
+    cross.vol_x === 50 && off(cross) === 'quiet' && off({ ...cross, day_gain: 31 }) === 'notify' && on(cross) === 'notify'
+      && off(parseTvMessage('PULLBACK AIXI 1.48 | sVWAP 1.45 (+2.1%) | mVWAP 1.57 (-5.7%) | line session | touch 1 | day high +41% | tf 1')!) === 'notify');
+  {
+    const src = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../src/services/tv-setups.ts'), 'utf8');
+    check('the gate reads the floor in the basis stages\' branch alone (popFreeOfList is false for a TURN): one `&& !free` on the list\'s condition there; the EMA family\'s and the VB\'s conditions are the two they were',
+      src.includes('      const free = popFreeOfList(sig);\n      const quiet = !this.announced.has(sig.stage) || weakPop || pastCap(sig)\n'
+        + '        || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh && !free);\n      return quiet ? \'quiet\' : \'notify\';')
+        && (src.match(/popFreeOfList\(sig\)/g) ?? []).length === 1 && (src.match(/&& !free\b/g) ?? []).length === 1
+        && (src.match(/\|\| \(TV_SETUP\.vb_momentum_only && !onMomentum && !fresh\);/g) ?? []).length === 2
+        && src.includes('  pp_free_vol: 10,\n'));
+  }
+
+  // The rule in words: the log lines of routes/tv.ts, and the poller's line for a POP / BACK
+  check('the rule\'s description, ticked and unticked, names the exception with the floor\'s number',
+    momentumRuleText(true) === 'Momentum names only; a POP / BACK with a volume reading of 10× or more is announced off the list too'
+      && momentumRuleText(false) === 'Momentum names, or a +30% day high; a POP / BACK with a volume reading of 10× or more is announced off the list too'
+      && momentumRuleText(true).includes(`${TV_SETUP.pp_free_vol}×`) && momentumRuleText(false).includes(`+${TV_SETUP.vb_fresh_gain}%`));
+  {
+    const srcDir = resolve(dirname(fileURLToPath(import.meta.url)), '../src');
+    const tvSrc = readFileSync(resolve(srcDir, 'routes/tv.ts'), 'utf8');
+    const pollerSrc = readFileSync(resolve(srcDir, 'services/poller.ts'), 'utf8');
+    const deliver = pollerSrc.slice(pollerSrc.indexOf('  deliverTvSetup(sig: TvSetupSignal'), pollerSrc.indexOf('  private pushOpportunityAlerts('));
+    const tvCode = tvSrc.split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    check('routes/tv.ts states the rule through that description in both its log lines (at load and when the rule is saved), and words it nowhere else',
+      tvSrc.includes('console.log(`[tv-setup] EMA / BAND / BOUNCE / TURN / POP / BACK: ${momentumRuleText(gate.emaMomentumOnly())}${rulesRow ? \'\' : \' (default)\'}`);')
+        && tvSrc.includes('console.log(`[tv-setup] EMA / BAND / BOUNCE / TURN / POP / BACK set to: ${momentumRuleText(rules.ema_momo_only)}`);')
+        && (tvCode.match(/momentumRuleText\(/g) ?? []).length === 2 && !tvCode.includes('Momentum names only') && !tvCode.includes('day high'));
+    check('routes/tv.ts: the quiet reason is as it was — muted, weak, capped, else "offlist" — so an off-list POP under the floor is still "offlist"; the gate alone decides who is announced',
+      /: !gate\.announces\(sig\.stage\) \? 'muted'\s*\n\s*: isWeak\(sig\) \? 'weak'\s*\n\s*: capped && !capExempt \? 'capped' : 'offlist';/.test(tvSrc)
+        && tvCode.includes('const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt, onMomentum);')
+        && !tvCode.includes('pp_free_vol') && !tvCode.includes('popFreeOfList') && !tvCode.includes('vol_x'));
+    check('GET / PUT /api/tv/settings carry the rule\'s switch and no description, and take no new setting: the floor is not in the response, the request or the stored rules',
+      tvCode.includes('announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED, ema_momo_only: gate.emaMomentumOnly(),\n});')
+        && tvCode.includes('const settingsSchema = z.object({\n  announced: z.array(z.enum(TV_STAGE_ORDER as [string, ...string[]])).optional(),\n  ema_momo_only: z.boolean().optional(),\n})')
+        && JSON.stringify(Object.keys(readStoredRules({ ema_momo_only: false, pp_free_vol: 5 }))) === '["ema_momo_only"]'
+        && JSON.stringify(readStoredRules({ ema_momo_only: false, pp_free_vol: 5 })) === '{"ema_momo_only":false}' && TV_SETUP.pp_free_vol === 10);
+    check('the poller\'s POP / BACK log line says when one was announced off the list for its volume, and what kept a quiet off-list one under the floor',
+      deliver.includes('(mode === \'notify\' && row == null && popFreeOfList(sig) ? ` · off our Momentum list, announced for its volume (${TV_SETUP.pp_free_vol}x or more)` : \'\') +')
+        && deliver.includes(': why === \'offlist\' ? ` · quiet (off our Momentum list, ${sig.vol_x != null ? `volume under ${TV_SETUP.pp_free_vol}x` : \'no volume reading\'})`')
+        && (deliver.match(/popFreeOfList\(sig\)/g) ?? []).length === 2
+        && (deliver.match(/' · quiet \(off our Momentum list\)'/g) ?? []).length === 4);
+    check('…and on the phone it buzzes like an on-list one: every other off-list setup is still a silent message (TV_SETUP.offscreen_silent), a POP / BACK over the floor is left out of that',
+      TV_SETUP.offscreen_silent === true && deliver.includes('const silent = outcome || (row == null && TV_SETUP.offscreen_silent && !popFreeOfList(sig));'));
+  }
+
+  // Telegram: an off-list one's text keeps the "not on our Momentum list" line, and says nothing untrue
+  const links = '<a href="https://www.tradingview.com/chart/?symbol=NASDAQ%3ARAYA">TradingView</a> · <a href="https://finviz.com/quote.ashx?t=RAYA">Finviz</a>';
+  const popOff = formatTvSetupAlert(popV('212.4x'), 'NASDAQ:RAYA', null);
+  check('Telegram — a POP announced off the list, whole: no ⭐, its volume, and the "not on our Momentum list" line as before',
+    popOff === ['📐 💥 <b>POP</b>  <b>RAYA</b>  $0.5800',
+      '<i>a pop: the run\'s high got 31.5% above its 1m basis (SMA 15) — a heads-up, no entry: the entry is the BACK, the first pullback to the basis</i>',
+      'pop 1 today (first) · volume 212.4× the 20 candles before the pop',
+      'basis $0.4600 (+26.1%) · sVWAP $0.4700 (+23.4%)',
+      '<i>not on our Momentum list</i>',
+      'day high +29% · tf 1',
+      links].join('\n'), popOff);
+  const backOff = formatTvSetupAlert(backV('212.4x'), 'NASDAQ:RAYA', null);
+  check('Telegram — a BACK announced off the list, whole',
+    backOff === ['📐 🎯 <b>BACK</b>  <b>RAYA</b>  $0.9100',
+      '<i>the first pullback after the pop: price came back to its 1m basis (SMA 15) and bounced (at the 1m close) — the entry</i>',
+      'stop $0.8200 (-9.9%, under the pullback\'s low) · back 1 today (first) · the run\'s high got 150.2% above the basis · its POP\'s volume 212.4× the 20 candles before it · 11 candles after the POP · MACD green',
+      'basis $0.9000 (+1.1%) · sVWAP $0.8800 (+3.4%)',
+      '<i>not on our Momentum list</i>',
+      'day high +156% · tf 1',
+      links].join('\n'), backOff);
+  check('Telegram — …neither claims the list: no ⭐ and no "on Momentum" but in "not on our Momentum list"; on the list the text is the one pinned in the section above',
+    [popOff, backOff].every((h) => !h.includes('⭐') && !h.includes('<b>on Momentum</b>') && (h.match(/Momentum/g) ?? []).length === 1 && !h.includes('null') && !h.includes('undefined'))
+      && formatTvSetupAlert(popV('212.4x'), 'NASDAQ:RAYA', { change_pct: 24.1, grade: 'B+', float_m: 3.2 }).includes('⭐ <b>on Momentum</b> · grade B+'));
 }
 
 console.log('Contract — the Pine script still emits what the parser reads');

@@ -6,7 +6,7 @@ import { useAlertsArmed } from '../../hooks/useAlertsArmed';
 import { useHiddenTickers } from '../../hooks/useHiddenTickers';
 import { getAlertKinds } from '../../hooks/useAlertKinds';
 import { mutedByMomoOnly } from '../../hooks/useTvMomoOnly';
-import { opportunityBody, opportunityTitle } from '../../hooks/useScreenerAlerts';
+import { opportunityBody, opportunityTitle, tvFullPriority } from '../../hooks/useScreenerAlerts';
 import { isWeakSetup } from '../common/TvStageTag';
 
 const KIND_COLOR: Record<OpportunityKind, string> = {
@@ -48,7 +48,8 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
       if (seen.current.has(a.id)) continue;
       seen.current.add(a.id);
       if (!armed || hiddenRef.current.has(a.ticker)) continue;
-      // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names.
+      // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names
+      // (11-27: except a POP or a BACK that alerts on any name — mutedByMomoOnly lets it through).
       // v49: a weak setup (a filtered EMA / band cross or its BOUNCE, a POP under the script's
       // volume minimum, the BACK after one) gets no toast, like its sound (useScreenerAlerts).
       const kinds = a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && (mutedByMomoOnly(a, payload) || (a.setup != null && isWeakSetup(a.setup)))));
@@ -59,7 +60,9 @@ export function AlertToasts({ payload }: { payload: CyclePayload | null }) {
       const setupOnly = kinds.length === 1 && kinds[0] === 'tv_setup';
       // A pullback's outcome (BROKEN / HELD) is a short plain toast either way.
       const outcome = a.setup?.stage === 'broken' || a.setup?.stage === 'held';
-      const priority = setupOnly && a.setup?.on_screen === true && !outcome;
+      // 11-27: a POP or a BACK that alerts on any name is an off-list setup here too: the short
+      // plain toast, with "off Momentum" in its text (tvFullPriority, the sound's own test).
+      const priority = setupOnly && tvFullPriority(a) && !outcome;
       notification.open({
         key: a.id,
         title: opportunityTitle(shown),

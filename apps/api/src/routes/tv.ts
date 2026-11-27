@@ -7,7 +7,7 @@ import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
 import {
-  DEFAULT_ANNOUNCED, isWeak, parseStageList, parseTvMessage, pastCap, readStoredRules, readStoredStages, storedStages, TV_STAGE_ORDER,
+  DEFAULT_ANNOUNCED, isWeak, momentumRuleText, parseStageList, parseTvMessage, pastCap, readStoredRules, readStoredStages, storedStages, TV_STAGE_ORDER,
   TvSetupGate, type TvAlertRules,
 } from '../services/tv-setups.js';
 
@@ -28,6 +28,9 @@ const gate = new TvSetupGate();
 // v47 (2026-11-25): TURN has a switch of its own, on unless a saved list knows it and leaves it
 // off; the Momentum-names rule governs it too.
 // v48 (2026-11-26): the same for POP and for BACK, two switches of their own.
+// 2026-11-27: the Momentum-names rule has one exception, which is not a setting: a POP or a BACK
+// that is not weak and reads a volume of TV_SETUP.pp_free_vol (10×) or more is announced off the
+// list too, with the rule on or off (tv-setups.ts popFreeOfList). The rule's line in the log says so.
 const STAGES_KEY = 'tv_alert_stages';
 const RULES_KEY = 'tv_alert_rules';
 let settingsLoad: Promise<void> | null = null;
@@ -42,7 +45,7 @@ function loadSettings(): Promise<void> {
       console.log(`[tv-setup] announced stages: ${gate.announcedStages().join(', ') || 'none'}${stages ? '' : ' (default)'}`);
       const rulesRow = rows.find((r) => r.key === RULES_KEY);
       gate.setEmaMomentumOnly(readStoredRules(rulesRow?.value).ema_momo_only);
-      console.log(`[tv-setup] EMA / BAND / BOUNCE / TURN / POP / BACK: ${gate.emaMomentumOnly() ? 'Momentum names only' : 'Momentum names, or a +30% day high'}${rulesRow ? '' : ' (default)'}`);
+      console.log(`[tv-setup] EMA / BAND / BOUNCE / TURN / POP / BACK: ${momentumRuleText(gate.emaMomentumOnly())}${rulesRow ? '' : ' (default)'}`);
     })
     .catch((err) => {
       console.error('[tv-setup] stage settings load failed (defaults in use):', err instanceof Error ? err.message : err);
@@ -86,7 +89,8 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     const capExempt = capped && sig.stage === 'pullback' && poller.tvCapExempt(sig.ticker);
     // A CROSS / RETEST pings only for a ticker on our Momentum list (or a fresh runner); an EMA
     // cross, a band cross, a BOUNCE, (v47) a TURN or (v48) a POP / BACK only for one on the list (the
-    // ⚙ rule, 2026-11-15).
+    // ⚙ rule, 2026-11-15). 2026-11-27: a POP / BACK that is not weak and reads a volume of
+    // TV_SETUP.pp_free_vol or more pings off the list too, whatever the rule says (the gate decides).
     const onMomentum = poller.tvOnMomentum(sig.ticker);
     const verdict = gate.admit(sig, Math.floor(Date.now() / 1000), capExempt, onMomentum);
     if (verdict === 'flood') {
@@ -100,6 +104,9 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     // v48: a quiet POP or BACK the same (`pop N` / `back N` past pp_cap).
     // v49: a POP the script's volume test calls weak is quiet for that, and the BACK after it
     // (isWeak: the EMA family's stages and these two; a TURN has no weak notion).
+    // 2026-11-27: a POP / BACK with enough volume is announced off the list, so it is never quiet
+    // for the list. A quiet one that reaches "offlist" here is off the list with no reading or a
+    // reading under the floor (and, with the rule unticked, a day high under +30%): still "offlist".
     const why = verdict !== 'quiet' ? undefined
       : !gate.announces(sig.stage) ? 'muted'
         : isWeak(sig) ? 'weak'
@@ -117,7 +124,10 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
 // graded and shown in the 📐 sidebar.
 // `ema_momo_only` (2026-11-15): the menu's rule — an EMA cross, a band cross, a BOUNCE, (v47) a
 // TURN or (v48) a POP / BACK announces on Momentum names only (true, the default), or also off the
-// list with a +30% day high (false).
+// list with a +30% day high (false). 2026-11-27: either way, a POP / BACK that is not weak and
+// reads a volume of TV_SETUP.pp_free_vol (10×) or more is announced off the list too. That floor
+// is the server's constant, not a setting: the response carries the rule's switch and no words
+// for it, so there is no description here to extend (the ⚙ menu's label is the dashboard's).
 const settingsBody = () => ({
   announced: gate.announcedStages(), stages: TV_STAGE_ORDER, defaults: DEFAULT_ANNOUNCED, ema_momo_only: gate.emaMomentumOnly(),
 });
@@ -156,7 +166,7 @@ router.put('/settings', authMiddleware, async (req, res) => {
       const rules: TvAlertRules = { ema_momo_only: parsed.data.ema_momo_only };
       await saveSetting(RULES_KEY, JSON.stringify(rules));
       gate.setEmaMomentumOnly(rules.ema_momo_only);
-      console.log(`[tv-setup] EMA / BAND / BOUNCE / TURN / POP / BACK set to: ${rules.ema_momo_only ? 'Momentum names only' : 'Momentum names, or a +30% day high'}`);
+      console.log(`[tv-setup] EMA / BAND / BOUNCE / TURN / POP / BACK set to: ${momentumRuleText(rules.ema_momo_only)}`);
     }
   } catch (err) {
     console.error('[tv-setup] alert settings save failed:', err instanceof Error ? err.message : err);

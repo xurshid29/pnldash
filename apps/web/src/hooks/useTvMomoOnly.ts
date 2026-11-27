@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { CyclePayload, OpportunityAlert } from '../api/types';
+import { isFreePop } from '../components/common/TvStageTag';
 
 // 📐 "Show only Momentum tickers" (2026-11-03): the setups sidebar's checkbox.
 // It keeps only the ⭐ rows (on the Momentum screen right now) and, since the
@@ -7,6 +8,9 @@ import type { CyclePayload, OpportunityAlert } from '../api/types';
 // also mutes the dashboard's toast, sound and notification for a 📐 setup on a
 // ticker off the screen. Device-local like the alert switches (useAlertKinds);
 // the phone's Telegram pings are server-side and unchanged.
+// 2026-11-27, the one exception: a POP or a BACK the server announces on any
+// name (isFreePop: not weak, a volume reading of POP_FREE_VOL or more) stays in
+// the list and keeps its toast and sound, off the screen too.
 const STORAGE_KEY = 'tvSidebar.momoOnly';
 const CHANGE_EVENT = 'tv-momo-only-changed';
 
@@ -29,9 +33,11 @@ export function setTvMomoOnly(on: boolean): void {
 }
 
 // A 📐 setup the switch silences: it's on and the ticker isn't on the screen
-// in this payload (the same test as the sidebar's ⭐).
+// in this payload (the same test as the sidebar's ⭐). Not a POP or a BACK
+// that alerts on any name (2026-11-27): the sidebar keeps that card too.
 export function mutedByMomoOnly(a: OpportunityAlert, payload: CyclePayload): boolean {
-  return current && !(payload.rows ?? []).some((r) => r.ticker === a.ticker);
+  if (!current || (a.setup != null && isFreePop(a.setup))) return false;
+  return !(payload.rows ?? []).some((r) => r.ticker === a.ticker);
 }
 
 export function useTvMomoOnly(): boolean {

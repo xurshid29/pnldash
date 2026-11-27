@@ -21,7 +21,7 @@ import { fetchHalts, type TradeHalt } from './halts.js';
 import { broadcast } from './sse.js';
 import { sendTelegram, telegramEnabled, escapeHtml, alertDisabled, type AlertComponent } from './telegram.js';
 import { telegramHiddenTickers } from './telegram-hidden.js';
-import { emaByBand, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, popFields, turnFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
+import { emaByBand, emaFields, formatTvSetupAlert, gradeAtLeast, lineTokens, pastCap, popFields, popFreeOfList, turnFields, TV_SETUP, TV_STAGE_LABEL, type TvSetupSignal, vbFields, VB_STAGES } from './tv-setups.js';
 import { scoreRunner, type RunnerScoreBreakdown } from './runner-score.js';
 import { EMA_CROSS } from './ema-cross.js';
 import type { TickEvent } from './tick-detect.js';
@@ -3970,6 +3970,11 @@ class PollerService {
   // v49: why 'weak' = the POP failed the script's volume test (a BACK: its POP did). Rows carry
   // `weak` (popFields) and `vol_x`, the POP's volume reading (the largest of the POP candle and the
   // two before it ÷ the average of the 20 before those three). A weak one is never `capped`.
+  // 2026-11-27: a POP / BACK that is not weak and reads a volume of TV_SETUP.pp_free_vol or more is
+  // announced off our Momentum list too (the gate; tv-setups.ts popFreeOfList). Its log line says
+  // so, and a quiet 'offlist' one says what kept it under that floor. Its row needs no new field:
+  // `on_screen: false`, `notified: true` and `vol_x` say it. On the phone it buzzes like an
+  // on-list one: it is left out of the off-list silence (TV_SETUP.offscreen_silent).
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist' | 'weak', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
@@ -4066,9 +4071,12 @@ class PollerService {
         (back && sig.macd_green != null ? ` · MACD ${sig.macd_green ? 'green' : 'not green'}` : '') +
         ` · day ${sig.day_gain ?? '?'}% · tf ${sig.tf ?? '?'}` +
         `${row ? ` · on screen, grade ${row.grade ?? '?'}` : ' · off screen'}` +
+        // 2026-11-27: announced off the list because its volume reading is at the floor or over it
+        (mode === 'notify' && row == null && popFreeOfList(sig) ? ` · off our Momentum list, announced for its volume (${TV_SETUP.pp_free_vol}x or more)` : '') +
         (mode === 'quiet' ? (why === 'weak' ? (back ? ' · quiet (after a weak POP)' : ' · quiet (the volume test calls it weak)')
           : why === 'capped' ? ` · quiet (past the cap: ${back ? 'back' : 'pop'} ${n} today)`
-          : why === 'offlist' ? ' · quiet (off our Momentum list)' : ' · quiet (stage switched off)') : ''));
+          : why === 'offlist' ? ` · quiet (off our Momentum list, ${sig.vol_x != null ? `volume under ${TV_SETUP.pp_free_vol}x` : 'no volume reading'})`
+          : ' · quiet (stage switched off)') : ''));
     } else if (VB_STAGES.has(sig.stage)) {
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'} · ${sig.line ?? 'session'} line · ${sig.candle_tf ?? '?'} candle / ${sig.bb_tf ?? '?'} BB` +
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
@@ -4102,11 +4110,13 @@ class PollerService {
       const yearOnly = lineTokens(sig.stage, sig.line).join('+') === 'year';
       const yearMuted = yearOnly && alertDisabled('tv_year');
       if (telegramEnabled() && !this.alertsMuted && !alertDisabled('tv_setup') && !alertDisabled(stageSlug) && !yearMuted) {
-        // Priority: on our Momentum list → normal push; off the list → silent message.
+        // Priority: on our Momentum list → normal push; off the list → silent message, except a
+        // POP / BACK announced off the list for its volume (2026-11-27): that one is the alert the
+        // operator asked for, so it buzzes like an on-list one.
         // A pullback's outcome (BROKEN / HELD) is never a buzzing push.
         const outcome = sig.stage === 'broken' || sig.stage === 'held';
         const text = formatTvSetupAlert(sig, tvSymbol(sig.ticker), row);
-        const silent = outcome || (row == null && TV_SETUP.offscreen_silent);
+        const silent = outcome || (row == null && TV_SETUP.offscreen_silent && !popFreeOfList(sig));
         // A ticker hidden on the dashboard today is skipped on the phone too (2026-10-07).
         void telegramHiddenTickers().then((hidden) => {
           if (hidden.has(sig.ticker)) {

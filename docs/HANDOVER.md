@@ -327,6 +327,23 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-27 (Fri, ~06:30 ET, pre-market) — THE FIRST LIVE MORNING OF POP / BACK AND THE BRIDGE; A STRONG POP NOW ALERTS OFF
+THE MOMENTUM LIST.** The operator at the open: "Pre-market started, and everything is working great what we built".
+- **The bridge on the paper TWS, from its log (four orders: TRUG, MNDR, BFLR, TGHL):** live-ask pricing and $400 sizing
+  worked; all four filled without a chase, 0.5–8.3% under the alert's price (the price had come back by the click).
+  Confirmed on the real TWS: a Sell moves the take-profit, it fills and TWS cancels the stop (code 202); a stop that
+  fills cancels the take-profit; hand-made changes are reported. Not yet exercised: Chase, a part-filled buy, the
+  leftover-exit clean-up. MNDR +10.6% (sold by click), TRUG flat, TGHL stopped −6.1% in 2.5 min, BFLR's stop sold 20,890
+  of 21,390 at −6.1% and its rest was cancelled (500 shares held with no exit by the book: told the operator).
+- **The alerts (v49, created 11-27 03:07 UTC; the VB and the EMA / band setups are switched off in both, pointed out to
+  the operator):** 04:00–05:30 ET: 57 POPs, 45 weak, 12 strong, 9 of the 12 at 04:01–04:03. **Only 2 of the 12 were
+  announced: the other 10 were on names not on the Momentum list at that moment.** Asked, the operator: "yes, please".
+- **Built:** `TV_SETUP.pp_free_vol` 10: a `pop` / `back` that is not weak with `vol_x` ≥ 10 is announced on any name
+  (stage switch and cap still apply), buzzes on the phone and sounds at full strength on the dashboard; its card reads
+  "off Momentum" and the "Show only Momentum tickers" checkbox no longer hides it (`docs/vwap-setup.md` §22.9).
+  `verify-tv-setups.ts` 946 checks. A POP with no volume reading stays Momentum-only.
+- **To watch:** the number of alerts in the first minutes after 04:00, and off-list against on-list outcomes.
+
 **2026-11-26 (Thu, US holiday, ~07:00 ET) — SCRIPT v49: THE POP'S VOLUME TEST; A TWS BRIDGE STARTED.** The operator, with v48 on
 the chart: "POP is Amazing. I see a big potential with it … the biggest 5-6 POPs happen after the pre-market open
 [04:00–05:00 ET], or very fewer around [08:00 ET] … the rvol for that moment should be very high … the stocks which are

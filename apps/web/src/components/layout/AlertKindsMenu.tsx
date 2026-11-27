@@ -2,6 +2,7 @@ import { Button, Checkbox, Divider, Popover, Space, Typography } from 'antd';
 import { SettingOutlined } from '@ant-design/icons';
 import { DASHBOARD_KINDS, setAlertKind, useAlertKinds, type AlertKind } from '../../hooks/useAlertKinds';
 import { useTvAlertStages } from '../../hooks/useTvAlertStages';
+import { POP_FREE_VOL } from '../common/TvStageTag';
 import type { TvStage } from '../../api/types';
 
 const { Text } = Typography;
@@ -53,10 +54,16 @@ export function AlertKindsMenu() {
         <Text type="secondary" style={{ fontSize: 11 }}>loading…</Text>
       )}
       {/* 2026-11-15 (operator: "ema cross must be checked only with momentum list … make it configurable"):
-          server-side like the switches above. Off = the VWAP + BB cross's rule (a +30% day high pings off the list too). */}
+          server-side like the switches above. Off = the VWAP + BB cross's rule (a +30% day high pings off the list too).
+          2026-11-27, the rule's one exception, on its own line of the label (on one line the menu would be twice as
+          wide): a POP or a BACK with a volume reading of POP_FREE_VOL or more is announced on any name, whatever
+          this box says (server: TV_SETUP.pp_free_vol). */}
       {settings && (
         <Checkbox checked={settings.ema_momo_only} onChange={(e) => saveEmaMomoOnly(e.target.checked)}>
           <span style={{ fontWeight: 600 }}>EMA / BAND / BOUNCE / TURN / POP / BACK: Momentum list only</span>
+          <span style={{ fontSize: 12, display: 'block' }}>
+            (a POP or BACK with volume {POP_FREE_VOL}× and over alerts on any name)
+          </span>
           <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
             off = also pings off the list when the day high is +30% or more
           </Text>

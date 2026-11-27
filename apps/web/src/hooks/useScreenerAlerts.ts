@@ -1,4 +1,4 @@
-import { isBandCross, isLineCross, isWeakSetup, lineTokens, popVolText } from '../components/common/TvStageTag';
+import { isBandCross, isFreePop, isLineCross, isWeakSetup, lineTokens, popVolText } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { useHiddenTickers } from './useHiddenTickers';
@@ -296,6 +296,9 @@ export function opportunityBody(a: OpportunityAlert): string {
     if (s.day_gain != null) bits.push(`day high ${s.day_gain >= 0 ? '+' : ''}${Math.round(s.day_gain)}%`);
     if (s.ah_gain != null) bits.push(`after hours +${Math.round(s.ah_gain)}%`);
     if (a.grade) bits.push(`grade ${a.grade}`);
+    // 2026-11-27: a POP or a BACK that rang on a name off the Momentum list (the volume rule,
+    // isFreePop) says so, where an on-list one has its grade.
+    if (!s.on_screen && isFreePop(s)) bits.push('off Momentum');
     if (s.tf) bits.push(`tf ${s.tf}`);
     return bits.filter(Boolean).join(' · ');
   }
@@ -305,6 +308,33 @@ export function opportunityBody(a: OpportunityAlert): string {
   if (a.float_m != null) parts.push(`float ${a.float_m.toFixed(1)}M`);
   const line = parts.filter(Boolean).join(' · ');
   return a.news && !a.kinds.every((k) => k === 'news') ? `${line}\n📰 ${a.news.title.slice(0, 90)}` : line;
+}
+
+// A 📐 setup that sounds and toasts at full priority: its ticker was on the Momentum list at the
+// signal. A setup on a name off the list is the soft tone and the short plain toast. The one
+// exception is a POP or a BACK that alerts on any name (2026-11-27, isFreePop): it is the alert
+// the operator asked for, so it sounds and toasts like an on-list one, and the server makes its
+// phone push buzz the same way (it is left out of TV_SETUP.offscreen_silent). The sound and the
+// toast both read this one test.
+export function tvFullPriority(a: OpportunityAlert): boolean {
+  return a.setup?.on_screen === true || (a.setup != null && isFreePop(a.setup));
+}
+
+// The sound of a cycle's new alerts: one per cycle, the loudest wins. A+ / 📐 CROSS (v21) /
+// RETEST (v28) bright pair > fast-move radar > 📐 PULLBACK triple > news chime > soft single
+// tone (every 📐 stage on a ticker that is NOT on our Momentum list — lower priority). A v35 EMA
+// cross, its v37 BOUNCE, a v40 BAND cross, a v47 TURN and a v48 POP or BACK sound like a CROSS.
+// 📐 BROKEN / HELD never arrive here while switched off: the server stores them quietly
+// (TV_SETUP.quiet_stages in tv-setups.ts).
+export type OpportunitySound = 'bright' | 'radar' | 'ready' | 'chime' | 'soft';
+const BRIGHT_STAGES: readonly TvStage[] = ['cross', 'retest', 'ema', 'bounce', 'band', 'turn', 'pop', 'back'];
+export function opportunitySound(audible: OpportunityAlert[]): OpportunitySound {
+  const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st && tvFullPriority(a));
+  if (audible.some((a) => a.kinds.includes('grade_aplus')) || BRIGHT_STAGES.some(tvStage)) return 'bright';
+  if (audible.some((a) => a.kinds.includes('fast_move'))) return 'radar';
+  if (tvStage('pullback')) return 'ready';
+  if (audible.some((a) => a.kinds.includes('news'))) return 'chime';
+  return 'soft';
 }
 
 export function useScreenerAlerts(payload: CyclePayload | null) {
@@ -376,26 +406,21 @@ export function useScreenerAlerts(payload: CyclePayload | null) {
     const kindsOn = getAlertKinds();
     const audible = newAlerts
       .filter((a) => !hiddenRef.current.has(a.ticker))
-      // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names.
+      // 11-03: a 📐 setup off Momentum stays quiet while the sidebar shows only ⭐ names
+      // (11-27: except a POP or a BACK that alerts on any name — mutedByMomoOnly lets it through).
       // v49: a weak setup (an EMA / band cross or a BOUNCE the script's filter kept quiet, a POP
       // under its volume minimum, the BACK after one) never sounds. The server doesn't put one
       // in payload.alerts; this holds it here too.
       .map((a) => ({ ...a, kinds: a.kinds.filter((k) => kindsOn[k] && !(k === 'tv_setup' && (mutedByMomoOnly(a, payload) || (a.setup != null && isWeakSetup(a.setup))))) }))
       .filter((a) => a.kinds.length > 0);
     if (audible.length > 0) {
-      // Loudest wins: A+ / 📐 CROSS (v21) / RETEST (v28) bright pair > fast-move radar >
-      // 📐 PULLBACK triple > news chime > soft single tone (every 📐 stage on a
-      // ticker that is NOT on our Momentum list — lower priority). 📐 BROKEN / HELD
-      // never arrive here while switched off: the server stores them quietly
-      // (TV_SETUP.quiet_stages in tv-setups.ts).
-      const tvStage = (st: TvStage) => audible.some((a) => a.kinds.includes('tv_setup') && a.setup?.stage === st
-        && a.setup?.on_screen === true);
+      // Loudest wins (opportunitySound has the order).
       try {
-        // (a v35 EMA cross, its v37 BOUNCE, a v40 BAND cross, a v47 TURN and a v48 POP or BACK sound like a CROSS)
-        if (audible.some((a) => a.kinds.includes('grade_aplus')) || tvStage('cross') || tvStage('retest') || tvStage('ema') || tvStage('bounce') || tvStage('band') || tvStage('turn') || tvStage('pop') || tvStage('back')) crossConfirmPing();
-        else if (audible.some((a) => a.kinds.includes('fast_move'))) radarPing();
-        else if (tvStage('pullback')) setupReadyPing();
-        else if (audible.some((a) => a.kinds.includes('news'))) chime();
+        const sound = opportunitySound(audible);
+        if (sound === 'bright') crossConfirmPing();
+        else if (sound === 'radar') radarPing();
+        else if (sound === 'ready') setupReadyPing();
+        else if (sound === 'chime') chime();
         else watchPing();
       } catch { /* audio context not unlocked */ }
       for (const a of audible.slice(0, 4)) notify(opportunityTitle(a), opportunityBody(a));

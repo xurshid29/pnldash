@@ -127,7 +127,8 @@ export function emaLineStage(sig: { stage: TvStage; ema?: number | null; bb_tf?:
 //   BACK  the entry: after the POP candle a low comes back down to the basis, and that candle or a
 //         later one closes green above it with the basis rising; stop a tick under the pullback's low
 // Two stages, each with its own ⚙ switch (on by default) and its own day's number (`pop N`,
-// `back N`), announced like the TURN: Momentum names (the same ⚙ rule), up to TV_SETUP.pp_cap a day
+// `back N`), announced like the TURN: Momentum names (the same ⚙ rule; since 2026-11-27 with an
+// exception for one with enough volume, below), up to TV_SETUP.pp_cap a day
 // per ticker. The script reads the gainer filter at each alert's own candle, so a BACK can arrive
 // after a POP that was never sent: a BACK is announced on its own conditions. A TURN and a BACK can
 // fire on one candle; they are separate setups and both are delivered.
@@ -141,8 +142,19 @@ export function emaLineStage(sig: { stage: TvStage; ema?: number | null; bb_tf?:
 // and never announced, whatever its ⚙ switch, the Momentum rule and the cap say (the way a weak EMA
 // cross is quiet). The script gives a weak one no number: its `pop N` / `back N` is the count so far
 // (it can be 0). A weak POP takes nothing from a later strong one.
-// Weak is the script's word alone (`| weak`): the server holds no minimum and never judges `vol_x`.
+// Weak is the script's word alone (`| weak`): the server never calls one weak by its `vol_x`.
 // The script prints the reading to one decimal, so a 9.96 arrives as `| vol 10x | … | weak`.
+// 2026-11-27 (the first live morning, 04:00–05:30 New York: 57 POPs, 12 of them strong, 2 of those
+// announced. The other 10 were on names not on our Momentum list at that moment, so the ⚙ rule
+// "Momentum list only" kept them quiet, and they are the pops the operator wants: a stock with no
+// volume that suddenly pops is not on the Momentum screen yet): a POP that passes a volume floor
+// announces whatever the Momentum list says. A `pop` or a `back` that is not weak and whose `vol_x`
+// is TV_SETUP.pp_free_vol (10) or more is announced on or off the list, with the ⚙ rule ticked or
+// not (popFreeOfList). A BACK carries its POP's reading, so the heads-up and the entry are
+// announced together. Everything else still holds it: its own ⚙ stage switch, the day's cap, the
+// duplicate window, and weak is always quiet. One with no reading, or a reading under the floor, is
+// as before: Momentum names only, and with the rule unticked a day high of +30% too. The TURN and
+// every other stage are unchanged. This is the one thing the server reads `vol_x` for.
 // The setups judged on the candles of a basis's own timeframe and sent from the alert on that
 // timeframe (1m) alone: no other timeframe's copy to merge, no VWAP line named. The TURN has no
 // weak filter; the POP and the BACK have one since v49 (POP_STAGES).
@@ -292,6 +304,8 @@ export const TV_SETUP = {
   // list only" (app_settings `tv_alert_rules`, TvSetupGate.setEmaMomentumOnly); switched off,
   // they follow the VB's rule again (a day high ≥ vb_fresh_gain still announces).
   // v47: a TURN follows the same rule and the same switch. v48: a POP and a BACK too.
+  // 2026-11-27: except a POP or a BACK with a volume reading of pp_free_vol or more (below), which
+  // announces off the list whatever this rule says.
   em_momentum_only: true,
   // v47 TURN: past this many TURNs on a ticker in a day (the message's `turn N`), a TURN is stored
   // and shown, not announced. Untested, like the other caps.
@@ -302,6 +316,19 @@ export const TV_SETUP = {
   // v49: a weak POP or BACK is quiet before the cap is looked at; the script gives it no number, so
   // it is never past the cap (pastCap).
   pp_cap: 3,
+  // 2026-11-27, the volume floor that frees a POP from the Momentum list: a POP or a BACK that is
+  // not weak and whose `vol_x` (the POP's volume reading; a BACK carries its POP's) is at least this
+  // is announced whether or not its ticker is on our Momentum list, whatever the ⚙ rule "Momentum
+  // list only" says (operator, after the first live morning: of 12 strong POPs, 10 were on names
+  // not on the list yet, and those are the pops they want). Its stage switch, pp_cap and the
+  // duplicate window still apply, and a weak one stays quiet. One with no reading or a reading
+  // under the floor follows the rule as before.
+  // The floor is the server's own number. It is not the script's `ppVolMin` (also 10 today) and
+  // does not follow it, and it takes nothing from the message's `weak` beyond "weak is always
+  // quiet": if the operator lowers the script's minimum to 5, a POP reading 5–10× is strong for the
+  // script and still Momentum names only here. It is held against the reading as the message
+  // prints it (one decimal).
+  pp_free_vol: 10,
   // Priority (operator, 2026-10-04): a setup on a ticker that is on our Momentum
   // list right now is the one to act on — ⭐ and a normal (buzzing) Telegram push.
   // Off-list setups still go out, but as silent messages.
@@ -333,6 +360,24 @@ export function pastCap(sig: TvSetupSignal): boolean {
   if (sig.stage === 'cross') return sig.cross_n != null && sig.cross_n > TV_SETUP.vb_cap;
   if (sig.stage === 'retest') return sig.retest_n != null && sig.retest_n > TV_SETUP.vb_cap;
   return sig.stage === 'pullback' && sig.fails != null && sig.fails >= TV_SETUP.pb_cap;
+}
+
+// 2026-11-27: a POP or a BACK that is announced whether or not its ticker is on our Momentum list:
+// not weak, and a volume reading (`vol_x`; a BACK carries its POP's) of TV_SETUP.pp_free_vol or
+// more. It answers the Momentum-list question alone: the gate still holds such a one to its ⚙
+// stage switch, the day's cap and the duplicate window. No reading is no pass. Never a TURN or any
+// other stage, whatever `vol_x` it carries (a PULLBACK's and a CROSS's `vol` is another reading).
+export function popFreeOfList(sig: TvSetupSignal): boolean {
+  return POP_STAGES.has(sig.stage) && sig.weak !== true
+    && sig.vol_x != null && Number.isFinite(sig.vol_x) && sig.vol_x >= TV_SETUP.pp_free_vol;
+}
+
+// The ⚙ rule "Momentum list only" in words, as the API's log lines state it (routes/tv.ts): what it
+// says for the EMA cross, the band cross, the BOUNCE, the TURN, the POP and the BACK with the rule
+// ticked or not, and the exception a POP and its BACK have had since 2026-11-27.
+export function momentumRuleText(momoOnly: boolean): string {
+  return `${momoOnly ? 'Momentum names only' : `Momentum names, or a +${TV_SETUP.vb_fresh_gain}% day high`}`
+    + `; a POP / BACK with a volume reading of ${TV_SETUP.pp_free_vol}× or more is announced off the list too`;
 }
 
 // The VWAP + BB cross's fields (CROSS v21; RETEST v28) for the alert's setup info and
@@ -525,7 +570,7 @@ export function readStoredStages(v: unknown): TvStage[] | null {
 // The ⚙ menu's alert rules beside the stage switches (app_settings `tv_alert_rules`), as stored →
 // each rule's value, a missing or malformed one at its default.
 export interface TvAlertRules {
-  ema_momo_only: boolean;   // EMA / BAND / BOUNCE, (v47) TURN and (v48) POP / BACK announce on Momentum names only (TV_SETUP.em_momentum_only)
+  ema_momo_only: boolean;   // EMA / BAND / BOUNCE, (v47) TURN and (v48) POP / BACK announce on Momentum names only (TV_SETUP.em_momentum_only); 2026-11-27: a POP / BACK with a volume reading of pp_free_vol or more announces off the list either way
 }
 export function readStoredRules(v: unknown): TvAlertRules {
   const o = v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
@@ -809,11 +854,13 @@ export class TvSetupGate {
   private lastEvent = new Map<string, number>();   // ticker|stage|line → epoch sec of the event's first copy
   private lastNotify = new Map<string, number>();  // ticker|stage (PULLBACK: ticker|pullback|line) → last announcement
   private announced = new Set<TvStage>(DEFAULT_ANNOUNCED);  // the ⚙ stage switches
-  private emaMomoOnly: boolean = TV_SETUP.em_momentum_only;  // the ⚙ rule: EMA / BAND / BOUNCE, (v47) TURN and (v48) POP / BACK on Momentum names only
+  private emaMomoOnly: boolean = TV_SETUP.em_momentum_only;  // the ⚙ rule: EMA / BAND / BOUNCE, (v47) TURN and (v48) POP / BACK on Momentum names only (2026-11-27: but for a POP / BACK with enough volume, popFreeOfList)
   private recent: number[] = [];
 
   // The ⚙ menu's "EMA / BAND / BOUNCE: Momentum list only". Off = a day high ≥ vb_fresh_gain
   // announces off the list too, as for a CROSS. v47: a TURN follows it too. v48: a POP and a BACK too.
+  // 2026-11-27: on or off, a POP or a BACK with a volume reading of pp_free_vol or more announces
+  // off the list (popFreeOfList); the switch decides only for the ones under that floor.
   setEmaMomentumOnly(on: boolean): void {
     this.emaMomoOnly = on;
   }
@@ -839,6 +886,8 @@ export class TvSetupGate {
   // our Momentum list now; off it, a CROSS or RETEST is quiet (vb_momentum_only)
   // unless its day high is ≥ vb_fresh_gain %. An EMA cross, a band cross, a BOUNCE,
   // a TURN, a POP or a BACK off the list is quiet whatever its day high, unless the ⚙ rule is off.
+  // 2026-11-27: except a POP or a BACK that is not weak and reads a volume of pp_free_vol or more:
+  // that one is announced off the list too, with the rule on or off.
   admit(sig: TvSetupSignal, nowSec: number, capExempt = false, onMomentum = true): TvVerdict {
     this.recent = this.recent.filter((t) => nowSec - t < 60);
     if (this.recent.length >= TV_SETUP.max_per_min) return 'flood';
@@ -877,10 +926,17 @@ export class TvSetupGate {
     // v49: a weak POP and a weak BACK (the message's own `| weak`) are quiet, whatever the switch,
     // the list and the cap say. The gate keeps nothing about them, so the next strong one is
     // judged as if they had not come. A TURN has no weak notion: a `weak` in its message changes nothing.
+    // 2026-11-27: off the Momentum list, a POP or a BACK that is not weak and reads a volume of
+    // TV_SETUP.pp_free_vol or more is announced all the same, with the ⚙ rule ticked or not
+    // (popFreeOfList; a stock with no volume that suddenly pops is not on the Momentum screen yet).
+    // It lifts the list's condition alone: the switch, weak and the cap are judged before it, as for
+    // any other. Under the floor or with no reading, the list decides as before (and with the rule
+    // unticked, a day high ≥ vb_fresh_gain). A TURN never gets this pass.
     if (basis) {
       const fresh = !this.emaMomoOnly && sig.day_gain != null && sig.day_gain >= TV_SETUP.vb_fresh_gain;
+      const free = popFreeOfList(sig);
       const quiet = !this.announced.has(sig.stage) || weakPop || pastCap(sig)
-        || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh);
+        || (TV_SETUP.vb_momentum_only && !onMomentum && !fresh && !free);
       return quiet ? 'quiet' : 'notify';
     }
     // v35 EMA cross: one per candle and line from the 30s alert alone, limited like a CROSS —

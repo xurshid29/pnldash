@@ -20,7 +20,9 @@ export interface TvAlertSettings {
   defaults: TvStage[];
   // 2026-11-15, the menu's rule: an EMA cross, a band cross, a BOUNCE, (v47) a TURN or (v48) a POP
   // or a BACK announces on Momentum names only (true, the default) — false also lets a +30% day
-  // high announce off the list.
+  // high announce off the list. 2026-11-27, its one exception, whatever this is set to: a POP or
+  // a BACK that is not weak, with a volume reading of 10 or more, is announced on any name
+  // (server: TV_SETUP.pp_free_vol; here POP_FREE_VOL and isFreePop in TvStageTag.tsx).
   ema_momo_only: boolean;
 }
 

@@ -3472,3 +3472,38 @@ only), and the dashboard in a browser.
 **To grade** (with §22.7): POPs by `vol_x` (under 10×, 10–30×, 30×+, and the hundreds a pop out
 of nowhere gives) and by the hour, against what the price did after. TradingView sees every
 candle of every watchlist name, so these rows will hold the pops our own bars lack.
+
+### 22.9 A strong POP alerts off the Momentum list (server, 2026-11-27)
+
+The first live morning (11-27, 04:00–05:30 New York, v49 in both alerts): 57 POPs, 45 weak and
+12 strong; 9 of the 12 strong ones in the first three minutes after 04:00, as the operator had
+observed. **Only 2 of the 12 were announced.** The other 10 were on names that were not on our
+Momentum list at that moment, and the "Momentum list only" rule (§18.4, extended to TURN and
+then to POP / BACK) kept them quiet. That rule works against this setup: a stock with no volume
+that suddenly pops is by definition not on the Momentum screen yet. MNDR's 04:01 POP (ran 43.5%,
+volume 27.6×) was one of the ten; the operator traded it only because its card still shows in
+the list.
+
+Asked whether a POP that passes the volume test should alert regardless of the list, the
+operator: "yes, please".
+
+**The rule** (`TV_SETUP.pp_free_vol` = 10): a `pop` or a `back` that is not weak and whose
+`vol_x` is 10 or more is announced whether or not the ticker is on the Momentum list, whatever
+the ⚙ rule says. A BACK carries its POP's reading, so the heads-up and its entry are announced
+together. Its own ⚙ stage switch, the daily cap and weak = quiet still apply. A POP or BACK with
+no reading, or one under the floor, is treated as before. The floor is the server's own number:
+it does not move with the script's `ppVolMin`. TURN and the other setups are unchanged.
+
+It alerts at full strength: on the phone it buzzes like an on-list setup (every other off-list
+setup is still a silent message, `TV_SETUP.offscreen_silent`), and on the dashboard it has the
+bright sound and the full toast. Its card reads "off Momentum" where the ⭐ would be and is not
+dimmed; the "Show only Momentum tickers" checkbox no longer hides it or silences it; the ⚙
+rule's label states the exception. The dashboard holds the same number (`POP_FREE_VOL` in
+`TvStageTag.tsx`, `isFreePop`): change the two together.
+
+Not included: a POP with no reading (the 20 candles before had no volume at all, which the
+script counts as a surge). It stays Momentum-only, because the rule needs a number.
+
+**To watch:** how many more alerts this is (12 strong POPs against 2 over those ninety minutes,
+most of them in the first minutes after the open) and whether the off-list ones do better or
+worse than the on-list ones (`on_screen` on each row).

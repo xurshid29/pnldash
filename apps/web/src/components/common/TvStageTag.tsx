@@ -27,6 +27,20 @@ export function isPopBack(stage: TvStage): boolean {
   return stage === 'pop' || stage === 'back';
 }
 
+// 2026-11-27: a POP or a BACK whose volume reading is this many times or more is announced on any
+// name, on the Momentum list or not (server: TV_SETUP.pp_free_vol — the server's own number, it
+// does not move with the script's minimum). The first live morning had 12 strong POPs and only 2
+// pinged: the other 10 were on names not on the list at that moment, and a stock with no volume
+// that suddenly pops is not on the Momentum screen yet.
+export const POP_FREE_VOL = 10;
+// The test, in one place for the sidebar's "Show only Momentum tickers" checkbox, the off-list
+// dimming, the toasts and the sounds: a POP or a BACK, not weak, with a reading of POP_FREE_VOL or
+// more (a BACK carries its POP's reading). A row with no reading does not pass. Whether such a row
+// was announced is its `notified`: the ⚙ stage switch and the day's cap can still keep it quiet.
+export function isFreePop(s: TvSetupInfo): boolean {
+  return isPopBack(s.stage) && s.weak !== true && s.vol_x != null && s.vol_x >= POP_FREE_VOL;
+}
+
 // The individual lines of a signal (server: tv-setups.ts lineTokens). The legacy
 // 'both' (v10–v13) was session + month. A CROSS without a line (script v21) is the
 // session line; v22 names session / month / year.
