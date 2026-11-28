@@ -427,6 +427,30 @@ for (pct, how, held, _), t in big:
     print(f"  {t['day']} {t['t'] // 60:02d}:{t['t'] % 60:02d} {t['ticker']:<6} bought {t['E']:.4f}  {pct:>+7.1f}% in {held} min ({how}); "
           f"with take-profit +20%: {play(t, tp=20)[0]:+.1f}%")
 
+# ---------------------------------------------------------------- 14: the operator's choice
+# "I would prefer 1 and 2" (2026-11-28): the stop to the entry once the price has gained a little,
+# half sold at +20%, the other half trailing 20% under the high. At which gain should the stop move?
+CHOICE = [("as built: take-profit +20%, nothing moved", dict(tp=20)),
+          ("half +20%, rest trails 20%; stop to entry at +5%", dict(half=20, lock=[(5, 0)], trail=(20, 20))),
+          ("…stop to entry at +7.5%", dict(half=20, lock=[(7.5, 0)], trail=(20, 20))),
+          ("…stop to entry at +10%", dict(half=20, lock=[(10, 0)], trail=(20, 20))),
+          ("…stop to entry at +15%", dict(half=20, lock=[(15, 0)], trail=(20, 20))),
+          ("…stop to entry only at +20% (option 2 alone)", dict(half=20, lock=[(20, 0)], trail=(20, 20))),
+          ("…at +10%, the rest trails 15%", dict(half=20, lock=[(10, 0)], trail=(20, 15))),
+          ("…at +10%, the rest trails 25%", dict(half=20, lock=[(10, 0)], trail=(20, 25)))]
+show("14) The operator's choice, 1 and 2 together: alerts at $0.50 and over, careful order", CHOICE, HI_IN, HI_OUT)
+show("14b) …the same, worst order inside every candle", [(label, dict(rule, hard=True)) for label, rule in CHOICE], HI_IN, HI_OUT)
+print("\n14c) …and how those rules end, and what their best trades carry (alerts at $0.50 and over, both halves, careful order)")
+HI = HI_IN + HI_OUT
+for label, rule in CHOICE:
+    res = [play(t, **rule) for t in HI]
+    pct = sorted((r[0] for r in res), reverse=True)
+    how = {}
+    for r in res:
+        how[r[1]] = how.get(r[1], 0) + 1
+    ends = ', '.join(f"{k} {100 * v / len(res):.0f}%" for k, v in sorted(how.items(), key=lambda kv: -kv[1]))
+    print(f"  {label:<50}| avg {statistics.fmean(pct):+.2f}%, without its best 5 {statistics.fmean(pct[5:]):+.2f}% | lost 5% or more: {100 * sum(p <= -5 for p in pct) / len(pct):.0f}% of trades | {ends}")
+
 RV = [t for t in TRADES if t['rv1'] is not None]
 if RV:
     cutv = 11745.0

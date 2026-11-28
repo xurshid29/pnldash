@@ -102,7 +102,7 @@ function autoConfirmText(a: AutoStatus, s: BridgeStatus): string {
     + `${floor != null ? ` priced ${floor} or more` : ''}, `
     + `a waiting buy ${r.entry_stop_pct}% above the alert's price (cancelled after ${waitText(r.entry_valid_sec)} if the price does not get there), `
     + `${usd(r.amount_usd)} each, at most ${r.slots} at a time and ${r.max_trades} trades a day; `
-    + `take-profit +${r.take_profit_pct}%, stop −${r.stop_pct}%. It runs while the helper runs, also with this page closed.`;
+    + `${exitsText(r)}. It runs while the helper runs, also with this page closed.`;
 }
 
 // What it would do right now, in one line: the bridge's own reason when it would place nothing.
@@ -123,13 +123,23 @@ function minPriceText(min: number | undefined): string | null {
   return typeof min === 'number' && min > 0 ? `$${min.toFixed(2)}` : null;
 }
 
+// The exits in words, from the rule: "take-profit +20% on half, the rest trails 20% under the
+// high · stop −10%, to the entry at +10%". A bridge from before the rule: "take-profit +20% · stop −10%".
+function exitsText(r: AutoStatus['rule']): string {
+  const part = typeof r.take_profit_portion === 'number' && r.take_profit_portion < 1 ? r.take_profit_portion : null;
+  const share = part == null ? '' : part === 0.5 ? ' on half' : ` on ${Math.round(part * 100)}%`;
+  const trail = part != null && typeof r.trail_pct === 'number' && r.trail_pct > 0 ? `, the rest trails ${r.trail_pct}% under the high` : '';
+  const even = typeof r.stop_to_entry_at_pct === 'number' && r.stop_to_entry_at_pct > 0 ? `, to the entry at +${r.stop_to_entry_at_pct}%` : '';
+  return `take-profit +${r.take_profit_pct}%${share}${trail} · stop −${r.stop_pct}%${even}`;
+}
+
 // "$400 × 5 = $2,000 · buy if ≥ +5% (5 min) · take-profit +20% · stop −10% · 14:00–15:00 · $0.50 and over"
 function autoRuleLine(a: AutoStatus): string {
   const r = a.rule;
   const h = autoHours(a);
   const floor = minPriceText(r.min_price);
   return `${usd(r.amount_usd)} × ${r.slots} = ${usd(r.budget_usd)} · buy if ≥ +${r.entry_stop_pct}% (${waitText(r.entry_valid_sec)}) · `
-    + `take-profit +${r.take_profit_pct}% · stop −${r.stop_pct}% · ${h.start}–${h.end}${floor != null ? ` · ${floor} and over` : ''}`;
+    + `${exitsText(r)} · ${h.start}–${h.end}${floor != null ? ` · ${floor} and over` : ''}`;
 }
 
 // "Today: 2 of 5 trades · 1 waiting · 1 held · 12 yellow and 30 gray POPs seen"

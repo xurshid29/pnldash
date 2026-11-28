@@ -92,8 +92,19 @@ export interface OrderRecord {
     /** A stop entry's end (ISO time): IB cancels it then if nothing has filled. Null for a buy now. */
     good_until: string | null;
     take_profit: number | null;
+    /**
+     * How many shares the take-profit order is for: all of `qty`, or for a buy of the automation
+     * a part of it (`auto.takeProfitPortion`). Null with no take-profit.
+     */
+    take_profit_qty: number | null;
     stop: number | null;
     stop_limit: number | null;
+    /**
+     * False while the stop is the bracket's own (a child of the buy). True once the automation's
+     * exit watch has put a stop order of its own in its place, after the bracket's was gone:
+     * `order_ids.stop` is then that order, and a change to it is sent as an order with no parent.
+     */
+    stop_own: boolean;
     first_limit: number;
     first_take_profit: number | null;
     first_stop: number | null;
@@ -202,7 +213,17 @@ export interface LegRef {
 }
 
 /** Log lines that carry a new state of a bracket (`prices`, `chases`, `exit`, `error`, `note`) to put back at a start. */
-const STATE_LINES = new Set(["chase", "chase_failed", "sell", "sell_failed", "change_refused", "order_open", "exit_cleanup"]);
+const STATE_LINES = new Set([
+  "chase",
+  "chase_failed",
+  "sell",
+  "sell_failed",
+  "change_refused",
+  "order_open",
+  "exit_cleanup",
+  "stop_moved",
+  "stop_move_failed",
+]);
 
 /** The brackets this bridge has placed: kept in memory, rebuilt from the day's log at a start. */
 export class OrderBook {
@@ -385,6 +406,26 @@ export class OrderBook {
     this.refresh(tracked);
   }
 
+  /**
+   * A stop order of its own takes the place of the bracket's stop, which is gone (ended with
+   * nothing sold): from here on `orderId` is the bracket's stop leg, with these prices. The old
+   * order is forgotten; it sold nothing, so nothing of what the bracket holds is lost with it.
+   */
+  replaceStop(parentId: number, orderId: number, stop: number, stopLimit: number): void {
+    const tracked = this.byParent.get(parentId);
+    if (tracked === undefined || this.byLeg.has(orderId)) return;
+    const { record } = tracked;
+    const old = record.sent.order_ids.stop;
+    if (old !== null) this.byLeg.delete(old);
+    record.sent.order_ids.stop = orderId;
+    record.sent.stop = stop;
+    record.sent.stop_limit = stopLimit;
+    record.sent.stop_own = true;
+    record.legs.stop = { order_id: orderId, status: "PendingSubmit", filled_qty: 0, avg_fill_price: null };
+    this.byLeg.set(orderId, { parent: parentId, leg: "stop" });
+    this.refresh(tracked);
+  }
+
   /** Applies a status report. Returns the leg when something changed, else null. */
   applyStatus(event: OrderStatusEvent): LegRef | null {
     const ref = this.findLeg(event.orderId);
@@ -392,8 +433,11 @@ export class OrderBook {
     const { state } = ref;
     const filled = Number.isFinite(event.filled) ? Math.max(state.filled_qty, event.filled) : state.filled_qty;
     const avg = Number.isFinite(event.avgFillPrice) && event.avgFillPrice > 0 ? event.avgFillPrice : state.avg_fill_price;
-    if (state.status === event.status && state.filled_qty === filled && state.avg_fill_price === avg) return null;
-    state.status = event.status;
+    // An order the fills have shown to be filled in full (see applyExecution) is not made to read
+    // as working again by a status that was on its way from before its last fill.
+    const status = state.status === "Filled" && !isDone(event.status) ? state.status : event.status;
+    if (state.status === status && state.filled_qty === filled && state.avg_fill_price === avg) return null;
+    state.status = status;
     state.filled_qty = filled;
     state.avg_fill_price = avg;
     this.refreshOf(ref);
@@ -422,6 +466,13 @@ export class OrderBook {
       ref.state.filled_qty = cumQty;
       ref.state.avg_fill_price = avgPrice;
     }
+    // The buy, or the take-profit, has filled all it was for: it is Filled, whatever its status
+    // last read. TWS sends the fills of an order that ended while the bridge was not connected,
+    // and never its status: without this such an order reads as working for the rest of the day,
+    // and everything that asks "is it over?" (a sell, the exit watch) gets the wrong answer.
+    const { sent } = tracked.record;
+    const whole = ref.leg === "parent" ? sent.qty : ref.leg === "take_profit" ? (sent.take_profit_qty ?? sent.qty) : null;
+    if (whole !== null && ref.state.filled_qty >= whole && !isDone(ref.state.status)) ref.state.status = "Filled";
     this.refresh(tracked);
     return ref;
   }
@@ -491,6 +542,18 @@ export class OrderBook {
           const parent = event["order_id"];
           if (typeof parent === "number") this.markExpired(parent);
           this.restoreState(event);
+          break;
+        }
+        case "stop_placed": {
+          // The exit watch put a stop of its own in the place of the bracket's.
+          const parent = event["order_id"];
+          const orderId = event["leg_order_id"];
+          const prices = obj(event["prices"]);
+          const stop = num(prices?.["stop"]);
+          const stopLimit = num(prices?.["stop_limit"]);
+          if (typeof parent === "number" && typeof orderId === "number" && stop !== null && stopLimit !== null) {
+            this.replaceStop(parent, orderId, stop, stopLimit);
+          }
           break;
         }
         default:
@@ -669,8 +732,13 @@ export function recordFromJournal(event: JournalFields): OrderRecord | null {
       trigger: num(sent["trigger"]),
       good_until: str(sent["good_until"]),
       take_profit: takeProfit,
+      // A line written before a take-profit could be for a part of the position: it was for all of it.
+      take_profit_qty: takeProfit === null ? null : (num(sent["take_profit_qty"]) ?? qty),
       stop,
       stop_limit: stopLimit,
+      // An order_placed line is the bracket as it went out: its stop is its own child. A stop the
+      // exit watch placed later comes back with its `stop_placed` line.
+      stop_own: false,
       first_limit: num(sent["first_limit"]) ?? limit,
       first_take_profit: num(sent["first_take_profit"]) ?? takeProfit,
       first_stop: num(sent["first_stop"]) ?? stop,

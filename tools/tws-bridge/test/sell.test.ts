@@ -575,12 +575,27 @@ test("sell: shares another order's unfinished sell has spoken for are not sold t
   assert.equal(ib.modified().length, 1);
 });
 
-test("sell: the quantity of a change is never above what TWS says the order has", async (t) => {
-  const r = await rig(t, { world: BID });
+test("sell: a take-profit TWS has for less than is held is not moved: it is cancelled, then the stop, and one sell order goes for all", async (t) => {
+  const confirming = (w: FakeTws): void => {
+    BID(w);
+    w.onCancel = (tws, id) => queueMicrotask(() => tws.emit("orderStatus", id, "Cancelled", 0, 100, 0));
+  };
+  const r = await rig(t, { world: confirming });
   const ib = await filled(r);
-  ib.reports(1001, { totalQuantity: 80 }); // TWS has the take-profit at 80
-  assert.equal((await r.bridge.sell({ order_id: 1000 })).qty, 80);
-  assert.deepEqual(changes(ib), [[1001, 80, 2.35, undefined]]);
+  ib.reports(1001, { totalQuantity: 80 }); // TWS has the take-profit at 80, with 100 held
+  assert.deepEqual(await r.bridge.sell({ order_id: 1000 }), { order_id: 1000, qty: 100, limit: 2.35, status: "PendingSubmit", via: "new_order" });
+  assert.deepEqual(ib.modified(), []); // the take-profit is not changed at all, so never for more than TWS has it
+  assert.deepEqual(ib.callsOf("cancelOrder").map((call) => call.args[0]), [1001, 1002]);
+  assert.deepEqual(ib.placed().slice(3).map((p) => [p.id, p.order.totalQuantity, p.order.lmtPrice]), [[1003, 100, 2.35]]);
+
+  // One that is for at least what is held is moved, and a change never carries more than TWS says it has.
+  const s = await rig(t, { world: BID });
+  const tws = await filled(s);
+  tws.reports(1001, { totalQuantity: 80 });
+  fill(tws, 1002, "x1", 30, 2.38, 30); // the stop sold 30: 70 held
+  s.world.positions.set(111, 70);
+  assert.equal((await s.bridge.sell({ order_id: 1000 })).via, "take_profit");
+  assert.deepEqual(changes(tws), [[1001, 70, 2.35, undefined]]);
 });
 
 // ------------------------------------------- when the stop got there first

@@ -1,12 +1,12 @@
 import type { Contract } from "@stoqey/ib";
 import { isDone } from "./book.js";
 import type { OrderRecord } from "./book.js";
-import type { SellData } from "./bridge.js";
+import type { SellData, SellScope, StopMove } from "./bridge.js";
 import type { AutoConfig } from "./config.js";
 import { BridgeError, errorMessage } from "./errors.js";
 import type { Journal } from "./journal.js";
 import type { QuoteField, QuoteListener } from "./link.js";
-import { formatPrice } from "./order.js";
+import { formatPrice, roundDown } from "./order.js";
 import { systemClock } from "./time.js";
 import type { Clock } from "./time.js";
 
@@ -30,6 +30,20 @@ import type { Clock } from "./time.js";
 // take-profit's only while the bid is above cost). Each sell is `Bridge.autoSell`, the same sell
 // a click on Sell sends, so it never sells more than the order holds or the account has.
 //
+// It also tends the stop of a position that is doing well, the operator's choice of the same day
+// ("I would prefer 1 and 2"), with nothing sold by the watch itself:
+//
+//   a. Once the price has traded `auto.stopToEntryAtPct` above what the shares cost, the stop is
+//      moved up to that cost: a trade that was up 10% no longer ends 10% down.
+//   b. The take-profit is for a part of the position (`auto.takeProfitPortion`, half). When it has
+//      sold, the stop is made to fit what is left (TWS may have shrunk it, left it, or taken it
+//      away with the take-profit: all three are handled), stands at the cost at least, and from
+//      then on follows the highest price `auto.trailPct` under it, never down.
+//
+// Each of those is `Bridge.autoMoveStop`: one stop order changed, or one placed when the bracket's
+// is gone. A stop cannot be put at or above the bid (it would sell at once), so when the price is
+// already under where the stop should stand, that is the stop being due, and rule 2 takes over.
+//
 // What it leaves alone: an order that was clicked, not placed by the automation; an exit the
 // operator has cancelled in TWS (it chases only exits that exist); and anything while TWS is not
 // connected. It works while orders are halted and after the automation's hour: getting out is
@@ -51,6 +65,30 @@ const GIVE_UP_CODES = new Set(["not_auto", "unknown_order"]);
  */
 const NO_SHARES_TRIES = 3;
 const NO_SHARES_MS = 20_000;
+/** A stop is put no nearer to the bid than this many percent under it: nearer, it would sell on the next tick. */
+const STOP_ROOM_PCT = 1.0;
+/** A trailing stop is moved only when it would go up by at least this many percent: every move is a message to TWS. */
+const STOP_STEP_PCT = 1.0;
+/** After the take-profit's first fill, how long TWS is given to say what became of the stop before the watch touches it. */
+const HALF_SETTLE_MS = 700;
+/** After a stop move that failed, how long before the next try. */
+const MOVE_RETRY_MS = 15_000;
+/** A stop of the wrong size is made to fit this soon after the last move (the bridge keeps changes to one order 300 ms apart). */
+const FIT_GAP_MS = 500;
+/**
+ * A stop that was still working this long after the take-profit's last fill, and is gone later,
+ * was cancelled by hand: TWS takes a bracket's stop away with the fill itself, not seconds after.
+ */
+const HAND_AFTER_MS = 3000;
+/**
+ * Refusals of a stop move after which the stop is left alone for good. "stop_gone" is not one:
+ * whether a stop that is gone was cancelled by hand is `tend`'s to judge, with time to do it in.
+ */
+const MOVE_OFF_CODES = new Set(["not_auto", "unknown_order"]);
+/** After this many stop moves in a row that TWS or the bridge refused, the watch stops trying for that order and says so. */
+const MOVE_GIVE_UP = 5;
+/** Failures that are the connection's, not a refusal: they do not count toward giving up. */
+const MOVE_WAIT_CODES = new Set(["tws_down", "tws_offline", "tws_timeout", "no_position"]);
 
 /** What the watch needs of the bridge. */
 export interface WatchHost {
@@ -59,7 +97,13 @@ export interface WatchHost {
   onLinkDown: (() => void) | null;
   allOrders(): OrderRecord[];
   contractFor(record: OrderRecord): Contract;
-  autoSell(orderId: number, bid: number | null): Promise<SellData>;
+  /** `scope` "target": only the take-profit order's own shares; "all": everything the order holds. */
+  autoSell(orderId: number, bid: number | null, scope: SellScope): Promise<SellData>;
+  autoMoveStop(orderId: number, stop: number): Promise<StopMove>;
+  /** The stop order's own size as last sent or reported; null when not known. */
+  stopQtyOf(record: OrderRecord): number | null;
+  /** The bridge itself asked TWS to cancel the order's current stop (one TWS answered with an error). */
+  stopCleanedUp(record: OrderRecord): boolean;
 }
 
 /** The quote streams of the connection to TWS (`TwsLink`). */
@@ -108,6 +152,47 @@ interface Watched {
    */
   stopLetGo: boolean;
   takeProfitLetGo: boolean;
+  /** The highest trade seen since the watch began: what sends the stop to the entry. Kept when a stream ends. */
+  hi: number | null;
+  /**
+   * The highest bid seen since the watch began: what the stop trails. The bid and not the trade,
+   * because one stray print far above the market would lift a trail for good, to a level over
+   * the bid, and that would sell the position at once; a stray print does not move the bid.
+   */
+  hiBid: number | null;
+  /** When the last stop move went out (or failed). */
+  lastMoveMs: number | null;
+  /** A stop move is on its way to TWS. */
+  moving: boolean;
+  /** No stop move before this time (the gap between two moves, or the wait after one that failed). */
+  moveAfterMs: number;
+  /** The stop is left alone altogether: it was cancelled by hand. */
+  moveOff: boolean;
+  /**
+   * The watch has given up moving the stop: its moves were refused too often. No more stop orders
+   * are tried; if no stop is working, the rule's own level still stands in for one.
+   */
+  gaveUp: boolean;
+  /** Stop moves refused in a row. */
+  moveFailures: number;
+  lastMoveErrorCode: string | null;
+  /** When the take-profit was first seen to have sold something. */
+  halfSeenMs: number | null;
+  /** When the stop was first seen gone. */
+  stopGoneMs: number | null;
+  /** When the stop was last seen working. */
+  stopSeenMs: number | null;
+  /** When the watch last placed a stop of its own for this order. */
+  stopPlacedMs: number | null;
+  /** How much the take-profit had sold at the last look, and when that last changed (null: not looked yet). */
+  targetFilled: number | null;
+  targetFillMs: number | null;
+  /**
+   * Where the rule's stop stands when no order could be put there: the bid was already at or
+   * under it. A bid at or under this level is the stop being due, as a trade under the order's
+   * price is.
+   */
+  level: number | null;
 }
 
 export class ExitWatch {
@@ -214,6 +299,22 @@ export class ExitWatch {
       noSharesCount: 0,
       stopLetGo: false,
       takeProfitLetGo: false,
+      hi: null,
+      hiBid: null,
+      lastMoveMs: null,
+      moving: false,
+      moveAfterMs: 0,
+      moveOff: false,
+      gaveUp: false,
+      moveFailures: 0,
+      lastMoveErrorCode: null,
+      halfSeenMs: null,
+      stopGoneMs: null,
+      stopSeenMs: null,
+      stopPlacedMs: null,
+      targetFilled: null,
+      targetFillMs: null,
+      level: null,
     };
     this.watched.set(record.order_id, watch);
     this.journal.write("auto_watch", {
@@ -283,8 +384,10 @@ export class ExitWatch {
     if (field === "bid") {
       watch.bid = price;
       watch.bidAtMs = this.clock();
+      if (watch.hiBid === null || price > watch.hiBid) watch.hiBid = price;
     } else if (field === "last") {
       watch.last = price;
+      if (watch.hi === null || price > watch.hi) watch.hi = price;
       // A new trade: whatever was let go on the one before is open again.
       watch.stopLetGo = false;
       watch.takeProfitLetGo = false;
@@ -307,6 +410,8 @@ export class ExitWatch {
     const { record, last, bid } = watch;
     const stop = record.sent.stop;
     const leg = record.legs.stop;
+    // The rule's own level, where no order could be put (`tend`): the bid at or under it.
+    if (watch.level !== null && bid !== null && bid <= watch.level + PRICE_EPS) return true;
     if (stop === null || leg === null) return false;
     if (leg.filled_qty > 0) return true;
     if (isDone(leg.status) || last === null || last > stop + PRICE_EPS) return false;
@@ -362,10 +467,13 @@ export class ExitWatch {
     const bid = watch.bid;
     if (due.state === "stop_due") {
       if (watch.sells > 0 || this.stopSoldPart(watch)) return "sell";
-      const stop = record.sent.stop;
       const leg = record.legs.stop;
-      // The stop was cancelled (by hand, or with a Sell of the operator's) while the watch waited.
-      if (stop === null || leg === null || isDone(leg.status)) return "clear";
+      const working = record.sent.stop !== null && leg !== null && !isDone(leg.status);
+      // The stop was cancelled (by hand, or with a Sell of the operator's) while the watch waited,
+      // and the rule has no level of its own standing: nothing to chase.
+      if (!working && watch.level === null) return "clear";
+      // Where the stop stands: the order's price, or the rule's level where no order could be put.
+      const stop = Math.max(working ? (record.sent.stop ?? 0) : 0, watch.level ?? 0);
       if (bid !== null) return bid <= stop + PRICE_EPS ? "sell" : "clear";
       // No live bid to go by: the last trade is all there is.
       if (watch.last !== null) return watch.last <= stop + PRICE_EPS ? "sell" : "clear";
@@ -402,6 +510,26 @@ export class ExitWatch {
       this.say(`auto order ${record.order_id} ${record.ticker}: no live price from TWS yet; the take-profit cannot be watched without one`);
     }
 
+    // The take-profit that was passed over has sold now (by itself, or through the watch's sell):
+    // that chase is over. What the order still holds is the stop's, which is tended below.
+    if (watch.due?.state === "tp_crossed") {
+      const leg = record.legs.take_profit;
+      if (leg === null || isDone(leg.status)) {
+        // "target_gone": it ended without selling (cancelled in TWS): nothing left to chase either.
+        const what = (leg?.filled_qty ?? 0) > 0 ? "target_sold" : "target_gone";
+        this.journal.write("auto_watch", { order_id: record.order_id, ticker: record.ticker, what, sells: watch.sells, held: record.held_qty });
+        watch.due = null;
+        watch.sells = 0;
+        watch.lastSellMs = null;
+        record.watch = null;
+      }
+    }
+    // The stop of a position that is doing well: to the entry, to fit what is left, trailing.
+    // `soon`: it wants to look again in so many ms (TWS is settling, or a move must wait its turn).
+    // It goes on while a passed-over take-profit is being chased: that chase can last (it does not
+    // sell under cost), and the stop beside it must still fit what is held.
+    const soon = watch.due === null || watch.due.state === "tp_crossed" ? this.tend(watch, now) : null;
+
     // The stop being due outranks the take-profit having been passed: a price that came all the
     // way back down is the stop's business, and the stop sells at any price where the take-profit
     // does not sell under cost.
@@ -412,9 +540,15 @@ export class ExitWatch {
           ? "tp_crossed"
           : null;
     if (state !== null) {
+      // The stop taking over from a take-profit chase starts its own count: what that chase sent
+      // is not the stop's first sell, and the stop's first sell asks the bid.
+      if (watch.due !== null) {
+        watch.sells = 0;
+        watch.lastSellMs = null;
+      }
       watch.due = { state, sinceMs: now };
       record.watch = { state, since: new Date(now).toISOString(), sells: watch.sells, last_error: null };
-      const level = state === "tp_crossed" ? record.sent.take_profit : record.sent.stop;
+      const level = state === "tp_crossed" ? record.sent.take_profit : Math.max(record.sent.stop ?? 0, watch.level ?? 0) || null;
       this.journal.write("auto_watch", {
         order_id: record.order_id,
         ticker: record.ticker,
@@ -433,7 +567,8 @@ export class ExitWatch {
     }
 
     if (watch.due === null) {
-      this.lookAgainIn(watch, this.idleLookMs);
+      // A stop move on its way looks again itself when it is done.
+      if (!watch.moving) this.lookAgainIn(watch, soon === null ? this.idleLookMs : Math.min(this.idleLookMs, soon));
       return;
     }
     const grace = watch.due.state === "tp_crossed" ? this.auto.tpGraceMs : this.auto.stopGraceMs;
@@ -467,6 +602,7 @@ export class ExitWatch {
       if (watch.due.state === "stop_due") watch.stopLetGo = true;
       else watch.takeProfitLetGo = true;
       watch.due = null;
+      watch.level = null;
       record.watch = null;
       this.lookAgainIn(watch, this.idleLookMs);
       return;
@@ -488,6 +624,213 @@ export class ExitWatch {
     }
     // While a sell is on its way, or TWS is away, it is looked at again soon.
     this.lookAgainIn(watch, Math.min(this.idleLookMs, this.auto.resellMs));
+  }
+
+  // ------------------------------------------------------- tending the stop
+
+  /**
+   * Where the stop of this order should stand now, and a move of it when that is worth a message.
+   * Nothing is sold here. It runs while nothing is due, the buy is over, no sell is working and
+   * the stop has not begun to sell.
+   */
+  private tend(watch: Watched, now: number): number | null {
+    const { auto } = this;
+    const { record } = watch;
+    const tended = auto.stopToEntryAtPct > 0 || auto.takeProfitPortion < 1;
+    if (!tended || watch.moveOff || watch.moving || watch.selling || !this.link.isReady()) return null;
+    const cost = record.avg_fill_price;
+    if (cost === null || !(cost > 0)) return null;
+    if (!(isDone(record.status) || record.filled_qty >= record.sent.qty)) return null;
+    // A sell order for everything held has taken the stop's place. A sell through the take-profit
+    // order has not: that order is for its own shares, and the stop beside it is still tended.
+    if (record.exit !== null && !isDone(record.exit.status) && record.exit.via !== "take_profit") return null;
+    const stopLeg = record.legs.stop;
+    if (stopLeg !== null && stopLeg.filled_qty > 0) return null;
+    const stopWorking = record.sent.stop !== null && stopLeg !== null && !isDone(stopLeg.status);
+    const targetFilled = record.legs.take_profit?.filled_qty ?? 0;
+    const targetSold = targetFilled > 0;
+    if (targetFilled !== watch.targetFilled) {
+      watch.targetFilled = targetFilled;
+      watch.targetFillMs = now;
+    }
+    if (stopWorking) {
+      // A stop that is being cancelled is not one seen working: the time it waits for TWS's
+      // answer must not count as time it stood.
+      if (stopLeg.status !== "PendingCancel") watch.stopSeenMs = now;
+      watch.stopGoneMs = null;
+    } else {
+      // The stop is gone. TWS takes a bracket's stop away with a fill of its take-profit, at once;
+      // the bridge takes a stop of the watch's own away when TWS answered it with an error; a
+      // move of the watch's that TWS answers "no such order" marks it not working ("Inactive");
+      // TWS may refuse a stop of the watch's own just after it was placed. A stop that goes in
+      // any other way was cancelled by hand, and an exit cancelled by hand is left alone for
+      // good. So: with nothing sold by the take-profit it is "by hand" once the settle time has
+      // passed with still nothing sold (TWS's word that the stop is gone can arrive a moment
+      // before its word of the fill that took it). With something sold it is "by hand" when TWS
+      // says it was cancelled, the bridge did not ask for that, and it was still seen working
+      // well after the last thing that could have taken it (the take-profit's last fill; for a
+      // stop of the watch's own, its placing).
+      watch.stopGoneMs ??= now;
+      const since = Math.max(watch.targetFillMs ?? 0, watch.stopPlacedMs ?? 0);
+      const byHand = targetSold
+        ? stopLeg?.status !== "Inactive" &&
+          !this.bridge.stopCleanedUp(record) &&
+          watch.stopSeenMs !== null &&
+          watch.stopSeenMs - since > HAND_AFTER_MS
+        : now - watch.stopGoneMs >= HALF_SETTLE_MS;
+      if (byHand) {
+        watch.moveOff = true;
+        watch.level = null;
+        this.journal.write("auto_watch", { order_id: record.order_id, ticker: record.ticker, what: "stop_by_hand", held: record.held_qty });
+        this.say(`auto order ${record.order_id} ${record.ticker}: its stop was cancelled by hand: the watch leaves the stop alone from here`);
+        return null;
+      }
+      if (!targetSold) return HALF_SETTLE_MS - (now - watch.stopGoneMs);
+    }
+
+    // Where the stop should stand: never under where it stood last (also when that order is gone).
+    // The gain is the highest bid's, as the trail's is: a stray print does not move a stop.
+    const base = record.sent.stop ?? 0;
+    let want = base;
+    let why: "to_entry" | "trail" | "fit" = "fit";
+    const gained = watch.hiBid === null ? 0 : (watch.hiBid / cost - 1) * 100;
+    // To the cost: once the price has gained enough, and in any case once the take-profit has sold
+    // (what is left of a trade that reached its target does not go back under what it cost).
+    if (((auto.stopToEntryAtPct > 0 && gained >= auto.stopToEntryAtPct) || targetSold) && cost > want) {
+      want = cost;
+      why = "to_entry";
+    }
+    if (targetSold && auto.trailPct > 0 && watch.hiBid !== null && watch.hiBid * (1 - auto.trailPct / 100) > want) {
+      want = watch.hiBid * (1 - auto.trailPct / 100);
+      why = "trail";
+    }
+    want = roundDown(want);
+    if (!(want > 0)) return null;
+
+    // While no stop order is working (TWS took it with the take-profit's fill and the new one is
+    // not in yet, or could not be placed), the rule's own level stands in for it: a bid at or
+    // under it is the stop being due (`stopDue`), and what is held is sold at the bid. This comes
+    // before every wait below, so there is no moment with neither an order nor a level.
+    if (!stopWorking && watch.bid !== null && watch.bid <= want + PRICE_EPS) {
+      watch.level = want;
+      return null;
+    }
+    // The watch has given up moving this order's stop (TWS refused it too often). The level above
+    // still stands in for a stop that is not there; no more orders are tried.
+    if (watch.gaveUp) return null;
+    if (targetSold) {
+      watch.halfSeenMs ??= now;
+      // TWS has a moment to say what became of the stop when the take-profit filled.
+      if (now - watch.halfSeenMs < HALF_SETTLE_MS) return HALF_SETTLE_MS - (now - watch.halfSeenMs);
+    }
+
+    // Is a move worth a message? The stop is gone (after the take-profit sold), it is not known
+    // to be the size of what is held, or it would go up: to the entry in one move, trailing by a
+    // step. A size that is not known (after a restart TWS reports the size of every order it
+    // still has, within the settle time: one it did not report may be gone) is asked of TWS by
+    // the move itself: it takes the change, or says it has no such order.
+    const knownQty = this.bridge.stopQtyOf(record);
+    const wrongSize = stopWorking && targetSold && knownQty !== record.held_qty;
+    const up = want > base + PRICE_EPS && (why !== "trail" || want >= base * (1 + STOP_STEP_PCT / 100));
+    if (stopWorking && !wrongSize && !up) return null;
+    // Two moves are kept apart, and a move that failed waits longer. A stop of the wrong size, or
+    // no stop at all, does not wait out a failure: only a short gap since the last try.
+    const urgent = wrongSize || !stopWorking;
+    const sinceLast = (watch.lastMoveMs ?? Number.NEGATIVE_INFINITY) + (wrongSize ? FIT_GAP_MS : auto.resellMs);
+    const notBefore = urgent ? Math.min(watch.moveAfterMs, sinceLast) : watch.moveAfterMs;
+    if (now < notBefore) return notBefore - now;
+
+    // A stop at or over the bid would sell at once: no order goes there.
+    const ref = watch.bid ?? watch.last;
+    if (ref === null) {
+      // No price to hold the place against (no live quotes for this stock). The size and the
+      // presence of a stop do not need one: it is made to fit, or put back, where it stood.
+      if (!wrongSize && stopWorking) return null;
+      want = roundDown(base);
+      why = "fit";
+      if (!(want > 0)) return null;
+    }
+    const ceiling = ref === null ? Number.POSITIVE_INFINITY : ref * (1 - STOP_ROOM_PCT / 100);
+    if (want >= ceiling) {
+      const hit = watch.bid !== null && watch.bid <= want + PRICE_EPS;
+      // The bid is already at or under where the stop should stand, and no order of TWS's stands
+      // there to act on it: the rule's stop is hit. That is the stop being due (`stopDue`), and
+      // what is held is sold at the bid by that rule.
+      if (hit && (!stopWorking || want > base + PRICE_EPS)) {
+        watch.level = want;
+        return null;
+      }
+      if (!stopWorking) {
+        // No stop at all, and the place it should have is too near the bid: as near as there is room for.
+        want = roundDown(Math.min(want, ceiling));
+        if (!(want > 0)) return null;
+      } else if (wrongSize) {
+        // Too near to raise: it is still made to fit what is held, where it stands.
+        want = base;
+        why = "fit";
+      } else {
+        // Too near to raise and not hit: asked again with the next price.
+        return null;
+      }
+    }
+
+    watch.moving = true;
+    watch.lastMoveMs = now;
+    // With no stop working, this move places one.
+    if (!stopWorking) watch.stopPlacedMs = now;
+    const hi = watch.hi;
+    const hiBid = watch.hiBid;
+    this.bridge
+      .autoMoveStop(record.order_id, want)
+      .then((moved) => {
+        watch.level = null;
+        watch.lastMoveErrorCode = null;
+        watch.moveFailures = 0;
+        watch.moveAfterMs = this.clock() + this.auto.resellMs;
+        this.journal.write("auto_stop", {
+          order_id: record.order_id,
+          ticker: record.ticker,
+          why,
+          stop: moved.stop,
+          stop_limit: moved.stop_limit,
+          qty: moved.qty,
+          via: moved.via,
+          leg_order_id: moved.leg_order_id,
+          cost,
+          hi,
+          hi_bid: hiBid,
+        });
+      })
+      .catch((err: unknown) => {
+        const code = err instanceof BridgeError ? err.code : "internal";
+        // "no_change": the stop is there already. "too_soon" / "busy": asked again shortly.
+        const soon = code === "no_change" || code === "too_soon" || code === "busy";
+        watch.moveAfterMs = this.clock() + (soon ? this.auto.resellMs : MOVE_RETRY_MS);
+        if (code === "no_change") return;
+        if (MOVE_OFF_CODES.has(code)) watch.moveOff = true;
+        if (code !== watch.lastMoveErrorCode) {
+          const message = errorMessage(err);
+          this.journal.write("auto_stop_failed", { order_id: record.order_id, ticker: record.ticker, why, stop: want, code, message });
+          if (!soon) this.say(`auto order ${record.order_id} ${record.ticker}: the stop was not moved: ${message}`);
+        }
+        watch.lastMoveErrorCode = code;
+        if (!(err instanceof BridgeError)) console.error("tws-bridge: error in the exit watch:", err);
+        // The same thing refused again and again is not going to be taken: the watch stops asking,
+        // and says so where it will be seen. A connection that is away, or slow, is not a refusal.
+        if (!soon && !MOVE_WAIT_CODES.has(code)) watch.moveFailures += 1;
+        if (watch.moveFailures >= MOVE_GIVE_UP && !watch.gaveUp) {
+          watch.gaveUp = true;
+          const note = `the exit watch could not set this order's stop (${errorMessage(err)}): look at it in TWS`;
+          record.note = note;
+          this.journal.write("auto_watch", { order_id: record.order_id, ticker: record.ticker, what: "stop_gave_up", code, tries: watch.moveFailures, note });
+          this.say(`auto order ${record.order_id} ${record.ticker}: ${note}`);
+        }
+      })
+      .finally(() => {
+        watch.moving = false;
+        if (!this.closed && this.watched.get(record.order_id) === watch) this.lookAgainIn(watch, Math.min(this.idleLookMs, this.auto.resellMs));
+      });
+    return null;
   }
 
   private lookAgainIn(watch: Watched, ms: number): void {
@@ -516,7 +859,10 @@ export class ExitWatch {
     const now = this.clock();
     const bid = watch.bid !== null && now - watch.bidAtMs <= BID_FRESH_MS ? watch.bid : null;
     try {
-      const sold = await this.bridge.autoSell(record.order_id, bid);
+      // A take-profit that was passed over: its own shares, through that order. The stop due:
+      // everything the order holds.
+      const scope: SellScope = due.state === "tp_crossed" ? "target" : "all";
+      const sold = await this.bridge.autoSell(record.order_id, bid, scope);
       watch.sells += 1;
       watch.lastErrorCode = null;
       watch.noSharesSinceMs = null;

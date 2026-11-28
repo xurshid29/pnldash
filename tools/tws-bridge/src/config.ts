@@ -45,6 +45,12 @@ export interface OrderConfig {
   entryStopLimitPct: number;
   /** How many seconds a stop entry waits before IB cancels it (GTD). Optional in config.json. */
   entryValidSec: number;
+  /**
+   * Not a setting of config.json's `order`: set only for a buy of the automation
+   * (`auto.takeProfitPortion`). The part of the position the take-profit order is for; left out
+   * (a click), the take-profit is for all of it.
+   */
+  takeProfitPortion?: number;
 }
 
 /**
@@ -99,6 +105,21 @@ export interface AutoConfig {
   takeProfitPct: number;
   stopPct: number;
   stopLimitOffsetPct: number;
+  /**
+   * How much of the position the take-profit sells: 0.5 = half (rounded down, at least one
+   * share), 1 = all of it. What it does not sell stays with the stop, which then trails.
+   */
+  takeProfitPortion: number;
+  /**
+   * Once the price has traded this many percent above what the shares cost, the stop is moved up
+   * to that cost (and it is there at the latest once the take-profit has sold its part). 0 = never.
+   */
+  stopToEntryAtPct: number;
+  /**
+   * After the take-profit has sold its part, the stop of what is left follows the highest bid
+   * this many percent under it, never under the cost and never down. 0 = no trailing.
+   */
+  trailPct: number;
   /** An alert older than this when it reaches the bridge is not bought. */
   maxAlertAgeSec: number;
   /** An alert whose price is under this many dollars is not bought. 0 = no floor. */
@@ -126,6 +147,9 @@ export const AUTO_DEFAULTS: AutoConfig = {
   takeProfitPct: 20.0,
   stopPct: 10.0,
   stopLimitOffsetPct: 3.0,
+  takeProfitPortion: 0.5,
+  stopToEntryAtPct: 10.0,
+  trailPct: 20.0,
   maxAlertAgeSec: 60,
   minPrice: 0.5,
   paperOnly: true,
@@ -458,6 +482,12 @@ export function validateConfig(raw: unknown): Config {
   const autoTakeProfitPct = c.number(auto, "auto", "takeProfitPct", { above: 0 }, D.takeProfitPct);
   const autoStopPct = c.number(auto, "auto", "stopPct", { above: 0, below: 100 }, D.stopPct);
   const autoStopLimitOffsetPct = c.number(auto, "auto", "stopLimitOffsetPct", { min: 0, below: 100 }, D.stopLimitOffsetPct);
+  // 1 = the take-profit sells everything (the plain bracket); under 1 the rest is left to the stop.
+  const autoTakeProfitPortion = c.number(auto, "auto", "takeProfitPortion", { min: 0.1, max: 1 }, D.takeProfitPortion);
+  const autoStopToEntryAtPct = c.number(auto, "auto", "stopToEntryAtPct", { min: 0, max: 1000 }, D.stopToEntryAtPct);
+  // A trail under 5% is inside the ordinary swing of a minute in these stocks; 0 switches it off.
+  const autoTrailPct = c.number(auto, "auto", "trailPct", { min: 0, max: 90 }, D.trailPct);
+  if (autoTrailPct > 0 && autoTrailPct < 5) c.problems.push("auto.trailPct must be 0 (no trailing) or at least 5");
   const autoMaxAlertAgeSec = c.number(auto, "auto", "maxAlertAgeSec", { integer: true, min: 5, max: 600 }, D.maxAlertAgeSec);
   const autoMinPrice = c.number(auto, "auto", "minPrice", { min: 0, max: 10000 }, D.minPrice);
   const autoPaperOnly = "paperOnly" in auto ? c.boolean(auto, "auto", "paperOnly") : D.paperOnly;
@@ -488,6 +518,9 @@ export function validateConfig(raw: unknown): Config {
       takeProfitPct: autoTakeProfitPct,
       stopPct: autoStopPct,
       stopLimitOffsetPct: autoStopLimitOffsetPct,
+      takeProfitPortion: autoTakeProfitPortion,
+      stopToEntryAtPct: autoStopToEntryAtPct,
+      trailPct: autoTrailPct,
       maxAlertAgeSec: autoMaxAlertAgeSec,
       minPrice: autoMinPrice,
       paperOnly: autoPaperOnly,

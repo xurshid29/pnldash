@@ -27,6 +27,7 @@ import {
   ibUtcDateTime,
   planChase,
   planOrder,
+  roundDown,
   sellLimit,
   sellOrder,
   stopEntryGoodUntil,
@@ -204,7 +205,10 @@ export interface SellData {
  * back to then.
  */
 interface SentChange {
-  what: "chase" | "sell";
+  /** "stop": the exit watch moved the stop of an order the automation placed (or put a new one in its place). */
+  what: "chase" | "sell" | "stop";
+  /** The order's quantity before the change, when the change carried another: put back if TWS refuses it. Null = it was not known. */
+  backQty?: number | null;
   atMs: number;
   /** How TWS will report the order once it has taken this. */
   expect: { lmtPrice: number; auxPrice: number | null };
@@ -219,7 +223,14 @@ interface SentChange {
 }
 
 /** What `/sell` does next for an order, from where the order stands. */
-type SellStep = "reprice" | "finish_buy" | "take_profit" | "cancel_stop" | "new_order";
+type SellStep = "reprice" | "finish_buy" | "take_profit" | "cancel_target" | "cancel_stop" | "new_order";
+
+/**
+ * What a sell is for. "all": everything the order holds (a click on Sell; the exit watch when the
+ * stop is due). "target": only the shares the take-profit order is for, by moving that order (the
+ * exit watch when a take-profit for part of the position was passed over): the rest is not sold.
+ */
+export type SellScope = "all" | "target";
 
 /**
  * An order that holds nothing any more while a sell order of its own still works: the grace
@@ -283,6 +294,18 @@ export const MIN_ENTRY_WAIT_MS = 5000;
 /** After a connection, how long TWS is given to report its open orders and today's fills before a missed expiry is assumed. */
 const SYNC_SETTLE_MS = 5000;
 
+/** A stop of an automation order moved by its exit watch: where it is now, for how many shares, and how. */
+export interface StopMove {
+  order_id: number;
+  /** The TWS order that is the stop now. */
+  leg_order_id: number;
+  stop: number;
+  stop_limit: number;
+  qty: number;
+  /** "moved": the stop order was changed. "placed": it was gone, and a stop order of its own was placed. */
+  via: "moved" | "placed";
+}
+
 /** Why the automation can place nothing right now: a switch, the connection or the account. */
 export interface AutoBlocker {
   code: "disabled" | "halted" | "tws_down" | "tws_offline" | "not_paper";
@@ -302,6 +325,8 @@ export function autoOrderConfig(order: OrderConfig, auto: AutoConfig, validSec: 
     stopLimitOffsetPct: auto.stopLimitOffsetPct,
     // A POP carries no stop of its own; were one ever sent along, the automation's stop still rules.
     useAlertStop: false,
+    // The take-profit sells this part of the position; the exit watch tends the stop of the rest.
+    takeProfitPortion: auto.takeProfitPortion,
     // Its hour is before the open: an order that works in regular hours only could never trigger
     // in it, whatever a click's orders are set to.
     outsideRth: true,
@@ -860,8 +885,8 @@ export class Bridge {
    * `bid` null it is read from TWS as for a click. It still sells no more than the order holds
    * and no more than the account's position, and only an order of the automation.
    */
-  async autoSell(orderId: number, bid: number | null): Promise<SellData> {
-    return this.runSell(orderId, { bid: bid !== null && Number.isFinite(bid) && bid > 0 ? bid : null });
+  async autoSell(orderId: number, bid: number | null, scope: SellScope = "all"): Promise<SellData> {
+    return this.runSell(orderId, { bid: bid !== null && Number.isFinite(bid) && bid > 0 ? bid : null, scope });
   }
 
   /**
@@ -889,6 +914,211 @@ export class Bridge {
       this.say(`${why}: ${asked.length} waiting ${asked.length === 1 ? "buy" : "buys"} of the automation cancelled`);
     }
     return asked;
+  }
+
+  /**
+   * The bridge itself asked TWS to cancel this order's current stop: a stop of the watch's own
+   * that TWS answered with an error (`cleanUpStop`). When such a stop is then gone, nobody
+   * cancelled it by hand.
+   */
+  stopCleanedUp(record: OrderRecord): boolean {
+    const id = record.sent.order_ids.stop;
+    return id !== null && this.cleanedUp.has(id);
+  }
+
+  /** The stop order's own size, as the bridge last sent it or TWS last reported it; null when that is not known or there is no stop. */
+  stopQtyOf(record: OrderRecord): number | null {
+    const id = record.sent.order_ids.stop;
+    if (id === null || record.legs.stop === null) return null;
+    return this.orderQty.get(id) ?? null;
+  }
+
+  /**
+   * The exit watch moves the stop of an order the automation placed: up to `wanted` (never down),
+   * and for exactly the shares the order still holds. It is how the stop gets to the entry once
+   * the price has gained enough, how it is made to fit what is left after the take-profit sold
+   * its part, and how it trails after that.
+   *
+   * While the bracket's stop is still working, that order is changed (its price, and its size if
+   * the take-profit's fill has made it too large). When it is gone, because TWS took it with the
+   * take-profit's fill, a stop order of its own is placed for what is held and becomes the
+   * bracket's stop from then on. A stop that was cancelled while the take-profit had sold nothing
+   * is left alone (`stop_gone`): that was done by hand. Nothing here sells: it is a stop order
+   * placed or changed, and it is refused when the stop has begun to sell or a sell is working.
+   */
+  async autoMoveStop(orderId: number, wanted: number): Promise<StopMove> {
+    const moved = await this.managed(async () => {
+      const record = this.book.get(orderId);
+      if (record === undefined) {
+        throw new BridgeError(404, "unknown_order", `order ${orderId} is not a buy order on this bridge's book`);
+      }
+      // What the account holds, read from TWS now: a stop is never for more than that. (Shares
+      // sold by hand in TWS are still "held" by the book.) The order is looked at afresh after it.
+      const position = await this.readPosition(record);
+      return this.moveStop(orderId, wanted, position);
+    });
+    await this.waitForWord(moved.legId, moved.change);
+    if (moved.change.refused !== null) {
+      throw new BridgeError(502, "tws_refused", `TWS refused the stop of order ${orderId}: ${moved.change.refused}`);
+    }
+    return { order_id: orderId, leg_order_id: moved.legId, stop: moved.stop, stop_limit: moved.stopLimit, qty: moved.qty, via: moved.via };
+  }
+
+  /** Sends the one message of a stop move. There is no `await` in here. */
+  private moveStop(
+    orderId: number,
+    wanted: number,
+    position: number,
+  ): { legId: number; change: SentChange; stop: number; stopLimit: number; qty: number; via: "moved" | "placed" } {
+    const record = this.book.get(orderId);
+    if (record === undefined) {
+      throw new BridgeError(404, "unknown_order", `order ${orderId} is not a buy order on this bridge's book`);
+    }
+    if (record.source !== "auto") {
+      throw new BridgeError(409, "not_auto", `order ${orderId} was not placed by the automation: its stop is not moved`);
+    }
+    if (!Number.isFinite(wanted) || !(wanted > 0)) throw badRequest("the stop to move to must be a price above 0");
+    this.assertOnline();
+    this.assertAccount();
+    const { ticker, sent } = record;
+    if (record.held_qty <= 0) {
+      throw new BridgeError(409, "nothing_to_sell", `order ${orderId} holds nothing: there is no stop to move`);
+    }
+    if (!(isDone(record.status) || record.filled_qty >= sent.qty)) {
+      throw new BridgeError(409, "busy", `the buy of order ${orderId} can still fill: its stop is not moved yet`);
+    }
+    // A sell order for everything held has taken the stop's place (the stop is cancelled before
+    // such a sell goes in). A sell through the take-profit order is another matter: that order is
+    // for its own shares, and the stop beside it still has to fit what is held.
+    if (record.exit !== null && !isDone(record.exit.status) && record.exit.via !== "take_profit") {
+      throw new BridgeError(409, "busy", `a sell of order ${orderId} is working: its stop is not moved under it`);
+    }
+    const leg = record.legs.stop;
+    const legId = sent.order_ids.stop;
+    if (leg !== null && leg.filled_qty > 0) {
+      throw new BridgeError(409, "busy", `the stop of order ${orderId} has begun to sell: it is not moved`);
+    }
+
+    // For how many shares: what the order holds by the book, never more than the account holds
+    // (less what another order's sell has spoken for), and, for a stop that is still working,
+    // never more than it was for when TWS last said: a move can make a stop smaller, never larger
+    // (one the operator cut by hand in TWS stays cut).
+    const stopWorking = leg !== null && legId !== null && !isDone(leg.status);
+    const lastSize = stopWorking && legId !== null ? this.orderQty.get(legId) : undefined;
+    const claimed = this.book.claimedBySells(record.conid, orderId);
+    const qty = Math.min(record.held_qty, position - claimed, lastSize ?? Number.POSITIVE_INFINITY);
+    if (!(qty > 0)) {
+      throw new BridgeError(
+        409,
+        "nothing_to_sell",
+        `the stop of order ${orderId} was not moved: by the bridge's book it still holds ${record.held_qty} ${ticker}, ` +
+          `but the account's position in TWS is ${position}` +
+          (claimed > 0 ? `, and ${claimed} of it is being sold for another order` : "") +
+          ". The bridge puts no stop on shares the account does not hold",
+      );
+    }
+    const current = sent.stop;
+    // Never down: a stop that is already higher (moved by hand in TWS, say) stays where it is.
+    const stop = roundDown(Math.max(wanted, current ?? 0));
+    const stopLimit = roundDown(stop * (1 - this.config.auto.stopLimitOffsetPct / 100));
+    if (!(stop > 0) || !(stopLimit > 0)) {
+      throw new BridgeError(422, "bad_prices", `the stop ${formatPrice(stop)} of order ${orderId} leaves no usable limit under it`);
+    }
+    const contract = this.contractOf(record);
+    const now = this.clock();
+    const prices: PriceChange = { stop, stop_limit: stopLimit };
+    const notLogged = (err: unknown): BridgeError =>
+      new BridgeError(500, "log_failed", `the stop was NOT moved: the log cannot be written (${errorMessage(err)})`);
+
+    if (leg !== null && legId !== null && !isDone(leg.status)) {
+      if (leg.status === "PendingCancel") {
+        throw new BridgeError(409, "busy", `the stop of order ${orderId} is being cancelled: it is not moved`);
+      }
+      const knownQty = this.orderQty.get(legId);
+      if (current !== null && !differs(stop, current) && knownQty === qty) {
+        throw new BridgeError(409, "no_change", `the stop of order ${orderId} is already at ${formatPrice(current)} for ${qty}`);
+      }
+      this.assertSpacing(record, [legId]);
+      const back: PriceChange = current !== null && sent.stop_limit !== null ? { stop: current, stop_limit: sent.stop_limit } : {};
+      try {
+        this.journal.writeOrThrow("stop_moved", {
+          order_id: orderId,
+          ticker,
+          leg_order_id: legId,
+          qty,
+          from: { stop: current, stop_limit: sent.stop_limit, qty: knownQty ?? null },
+          prices,
+        });
+      } catch (err) {
+        throw notLogged(err);
+      }
+      // The same order again with its new price and size, as every change to an order is; a stop
+      // of the watch's own has no parent, the bracket's keeps the buy as its parent.
+      const order = stopOrder(qty, stop, stopLimit, sent.outside_rth, sent.stop_own ? 0 : sent.order_ids.parent, true);
+      try {
+        this.link.modifyOrder(legId, contract, order);
+      } catch (err) {
+        const message = `the stop order ${legId} of ${ticker} was not moved: ${errorMessage(err)}`;
+        this.journal.write("stop_move_failed", { order_id: orderId, ticker, leg_order_id: legId, message, prices: back });
+        throw new BridgeError(502, "send_failed", message);
+      }
+      this.book.setPrices(orderId, prices);
+      this.lastSentMs.set(legId, now);
+      this.orderQty.set(legId, qty);
+      const change: SentChange = {
+        what: "stop",
+        atMs: now,
+        expect: { lmtPrice: stopLimit, auxPrice: stop },
+        fresh: false,
+        back,
+        backQty: knownQty ?? null,
+        refused: null,
+      };
+      this.sentChanges.set(legId, change);
+      this.say(
+        `auto order ${orderId} ${ticker}: stop ${current === null ? "" : `${formatPrice(current)} → `}${formatPrice(stop)} for ${qty}` +
+          (knownQty !== undefined && knownQty !== qty ? ` (was for ${knownQty})` : ""),
+      );
+      return { legId, change, stop, stopLimit, qty, via: "moved" };
+    }
+
+    // The bracket's stop is gone. After the take-profit sold its part that is TWS's doing (the two
+    // were one bracket), and what is left gets a stop of its own. Before that, someone cancelled it.
+    if (!((record.legs.take_profit?.filled_qty ?? 0) > 0)) {
+      throw new BridgeError(
+        409,
+        "stop_gone",
+        `the stop of order ${orderId} is gone and its take-profit has sold nothing: an exit cancelled by hand is left alone`,
+      );
+    }
+    let newId: number;
+    try {
+      newId = this.link.allocateOrderIds(1);
+    } catch (err) {
+      throw this.linkError(err, ticker);
+    }
+    try {
+      this.journal.writeOrThrow("stop_placed", { order_id: orderId, ticker, leg_order_id: newId, replaces: legId, qty, prices });
+    } catch (err) {
+      throw notLogged(err);
+    }
+    this.book.replaceStop(orderId, newId, stop, stopLimit);
+    const change: SentChange = { what: "stop", atMs: now, expect: { lmtPrice: stopLimit, auxPrice: stop }, fresh: true, back: {}, refused: null };
+    try {
+      this.link.placeOrder(newId, contract, stopOrder(qty, stop, stopLimit, sent.outside_rth, 0, true));
+    } catch (err) {
+      // It never went out: TWS will not report on it, so it gets its final status here.
+      const message = `the stop order ${newId} for ${ticker} was not placed: ${errorMessage(err)}`;
+      record.error = message;
+      this.journal.write("stop_move_failed", { order_id: orderId, ticker, leg_order_id: newId, message, error: message });
+      this.markNotWorking(newId);
+      throw new BridgeError(502, "send_failed", message);
+    }
+    this.lastSentMs.set(newId, now);
+    this.orderQty.set(newId, qty);
+    this.sentChanges.set(newId, change);
+    this.say(`auto order ${orderId} ${ticker}: a stop of its own, order ${newId}, ${qty} at ${formatPrice(stop)} (the bracket's was gone)`);
+    return { legId: newId, change, stop, stopLimit, qty, via: "placed" };
   }
 
   private autoRequest(buy: AutoBuy): OrderRequest {
@@ -1025,7 +1255,7 @@ export class Bridge {
   }
 
   /** One sell, a click's (`auto` null) or the exit watch's. */
-  private async runSell(orderId: number, auto: { bid: number | null } | null): Promise<SellData> {
+  private async runSell(orderId: number, auto: { bid: number | null; scope: SellScope } | null): Promise<SellData> {
     const { record, exit, change, filledBefore } = await this.managed(() => this.sellNow(orderId, auto));
     await this.waitForWord(exit.order_id, change);
     if (change.refused !== null) {
@@ -1419,8 +1649,10 @@ export class Bridge {
         trigger: plan.trigger,
         good_until: goodUntilMs === null ? null : new Date(goodUntilMs).toISOString(),
         take_profit: plan.takeProfit,
+        take_profit_qty: plan.takeProfitQty,
         stop: plan.stop,
         stop_limit: plan.stopLimit,
+        stop_own: false,
         first_limit: plan.limit,
         first_take_profit: plan.takeProfit,
         first_stop: plan.stop,
@@ -1467,7 +1699,8 @@ export class Bridge {
         this.link.placeOrder(leg.orderId, ibContract, leg.order);
         sent += 1;
         this.lastSentMs.set(leg.orderId, now);
-        this.orderQty.set(leg.orderId, plan.qty);
+        // Each order's own quantity: the take-profit's can be a part of the position's.
+        this.orderQty.set(leg.orderId, leg.order.totalQuantity ?? plan.qty);
       }
     } catch (err) {
       // Earlier legs carry transmit=false, so TWS holds them unsent; take them back out. The
@@ -1655,7 +1888,7 @@ export class Bridge {
       steps.push({
         leg: "take_profit",
         orderId: ids.take_profit,
-        order: takeProfitOrder(this.quantityFor(ids.take_profit, sent.qty), plan.takeProfit, outsideRth, ids.parent, true),
+        order: takeProfitOrder(this.quantityFor(ids.take_profit, sent.take_profit_qty ?? sent.qty), plan.takeProfit, outsideRth, ids.parent, true),
         prices: { take_profit: plan.takeProfit },
         back: { take_profit: before.take_profit },
         expect: { lmtPrice: plan.takeProfit, auxPrice: null },
@@ -1861,17 +2094,45 @@ export class Bridge {
     }
   }
 
-  /** What a sell does next, from where the order stands. Asked again after every wait. */
-  private sellStep(record: OrderRecord): SellStep {
-    // A sell is already working: a click moves it, and never adds an order next to it.
-    if (record.exit !== null && !isDone(record.exit.status)) return "reprice";
+  /**
+   * What a sell does next, from where the order stands. Asked again after every wait.
+   *
+   * A sell of everything goes through the take-profit order only when that order is for at least
+   * what is held. The automation's take-profit is for a part of the position: moving it would
+   * sell that part and leave the rest waiting behind it, with a stop still working for all of it.
+   * So such a take-profit is taken out first ("cancel_target"), then the stop, and one sell order
+   * for everything held goes in.
+   */
+  private sellStep(record: OrderRecord, scope: SellScope = "all"): SellStep {
+    const { take_profit: takeProfit, stop } = record.legs;
+    const takeProfitId = record.sent.order_ids.take_profit;
+    const targetWorking = takeProfit !== null && takeProfitId !== null && !isDone(takeProfit.status);
+    // What the take-profit order can still sell: its own size, less what it has sold.
+    const targetLeft = targetWorking
+      ? this.quantityFor(takeProfitId, record.sent.take_profit_qty ?? record.sent.qty) - takeProfit.filled_qty
+      : 0;
+    const carries = targetWorking && targetLeft >= record.held_qty;
+    const selling = record.exit !== null && !isDone(record.exit.status);
     // The buy can still add shares: its unfilled part is cancelled first. A buy that has filled in
     // full can add none, whatever its status reads: TWS sends no status for an order that ended
     // while the bridge was not connected, only its fills, so such a buy still reads as working.
     const buyOver = isDone(record.status) || record.filled_qty >= record.sent.qty;
+
+    if (scope === "target") {
+      // Only the take-profit order is moved, and only it: nothing else of the order is touched.
+      if (selling && record.exit?.via === "take_profit") return "reprice";
+      if (!buyOver) return "finish_buy";
+      if (targetWorking && targetLeft > 0) return "take_profit";
+      throw new BridgeError(409, "nothing_to_sell", `the take-profit of order ${record.order_id} has nothing left to sell`);
+    }
+
+    if (selling) {
+      // A sell is already working: a click moves it, and never adds an order next to it. Unless it
+      // is the take-profit order and that order is for less than is held: it cannot carry the sell.
+      return record.exit?.via === "take_profit" && !carries ? "cancel_target" : "reprice";
+    }
     if (!buyOver) return "finish_buy";
-    const { take_profit: takeProfit, stop } = record.legs;
-    if (takeProfit !== null && !isDone(takeProfit.status)) return "take_profit";
+    if (targetWorking) return carries ? "take_profit" : "cancel_target";
     // No take-profit to move, and a stop still working: it must be out before a new sell goes in,
     // or the two could both sell.
     if (stop !== null && !isDone(stop.status)) return "cancel_stop";
@@ -1885,8 +2146,9 @@ export class Bridge {
    */
   private async sellNow(
     orderId: number,
-    auto: { bid: number | null } | null = null,
+    auto: { bid: number | null; scope: SellScope } | null = null,
   ): Promise<{ record: OrderRecord; exit: ExitState; change: SentChange; filledBefore: number }> {
+    const scope: SellScope = auto?.scope ?? "all";
     // A click sells an order of today. The exit watch follows an order for as long as it holds
     // shares, so its sell goes by the book alone; and it sells only what the automation bought.
     const record = auto === null ? this.todaysOrder(orderId) : this.book.get(orderId);
@@ -1898,13 +2160,17 @@ export class Bridge {
     }
     for (let pass = 0; pass < SELL_PASSES; pass += 1) {
       this.assertSellable(record);
-      const step = this.sellStep(record);
+      const step = this.sellStep(record, scope);
       if (step === "finish_buy") {
         await this.finishBuy(record);
         continue;
       }
+      if (step === "cancel_target") {
+        await this.cancelExit(record, "take_profit");
+        continue;
+      }
       if (step === "cancel_stop") {
-        await this.cancelStop(record);
+        await this.cancelExit(record, "stop");
         continue;
       }
       this.assertSellMayMove(record, step, auto !== null);
@@ -1912,7 +2178,7 @@ export class Bridge {
       const { bid, position } = await this.readBidAndPosition(record, contract, auto?.bid ?? null);
       // The bid and the position took a moment: a fill or a cancel may have come in it.
       this.assertSellable(record);
-      if (this.sellStep(record) !== step) continue;
+      if (this.sellStep(record, scope) !== step) continue;
       return this.sendSell(record, step, contract, bid, position, auto !== null);
     }
     throw new BridgeError(
@@ -1949,37 +2215,40 @@ export class Bridge {
     return (takeProfit !== null && !isDone(takeProfit.status) ? 1 : 0) + (stop !== null && !isDone(stop.status) ? 1 : 0);
   }
 
-  /** A stop with no take-profit beside it is cancelled, and confirmed cancelled, before a sell order goes in. */
-  private async cancelStop(record: OrderRecord): Promise<void> {
-    const stop = record.legs.stop;
-    if (stop === null) return;
-    if (stop.status !== "PendingCancel") {
+  /**
+   * An exit of the bracket is cancelled, and confirmed cancelled, before a sell order goes in:
+   * the stop when no take-profit is left to move, and a take-profit that is for less than is held.
+   */
+  private async cancelExit(record: OrderRecord, which: "take_profit" | "stop"): Promise<void> {
+    const leg = record.legs[which];
+    if (leg === null) return;
+    if (leg.status !== "PendingCancel") {
       try {
-        this.link.cancelOrder(stop.order_id);
+        this.link.cancelOrder(leg.order_id);
       } catch (err) {
         throw this.linkError(err, record.ticker);
       }
       this.journal.write("cancel", {
         order_id: record.order_id,
         ticker: record.ticker,
-        leg: "stop",
-        leg_order_id: stop.order_id,
+        leg: which,
+        leg_order_id: leg.order_id,
         for: "sell",
       });
       this.onOrderStatus({
-        orderId: stop.order_id,
+        orderId: leg.order_id,
         status: "PendingCancel",
-        filled: stop.filled_qty,
+        filled: leg.filled_qty,
         remaining: 0,
-        avgFillPrice: stop.avg_fill_price ?? 0,
+        avgFillPrice: leg.avg_fill_price ?? 0,
       });
     }
-    const confirmed = await this.waitUntil(() => isDone(stop.status), this.cancelWaitMs);
+    const confirmed = await this.waitUntil(() => isDone(leg.status), this.cancelWaitMs);
     if (!confirmed) {
       throw new BridgeError(
         504,
         "cancel_pending",
-        `nothing was sold yet: the stop of order ${record.order_id} has to be cancelled before a sell order goes in, ` +
+        `nothing was sold yet: the ${LEG_WORDS[which]} of order ${record.order_id} has to be cancelled before a sell order goes in, ` +
           `and TWS has not confirmed it within ${this.cancelWaitMs} ms. Click Sell again`,
       );
     }
@@ -2157,7 +2426,8 @@ export class Bridge {
         `the ${step === "reprice" ? "sell limit" : "take-profit"} ${formatPrice(current)} is already at or below ${from}`,
       );
     }
-    const bookTotal = viaTakeProfit ? record.sent.qty : (previousExit?.qty ?? target);
+    // The take-profit order's own size: the whole position, or for the automation the part it is for.
+    const bookTotal = viaTakeProfit ? (record.sent.take_profit_qty ?? record.sent.qty) : (previousExit?.qty ?? target);
     const total = Math.min(this.quantityFor(legId, bookTotal), leg.filled_qty + target);
     if (total <= leg.filled_qty) {
       throw new BridgeError(409, "nothing_to_sell", `nothing was sold: the ${LEG_WORDS[viaTakeProfit ? "take_profit" : "exit"]} order of ${id} has nothing left to sell`);
@@ -2307,6 +2577,32 @@ export class Bridge {
     }
   }
 
+  /**
+   * Cancels a stop of the exit watch's own that TWS answered with an error, once, and marks it as
+   * asked for: until TWS has answered, it counts as an order that may still be working.
+   */
+  private cleanUpStop(record: OrderRecord, orderId: number): void {
+    if (this.cleanedUp.has(orderId)) return;
+    const ref = this.book.findLeg(orderId);
+    if (ref === undefined || isDone(ref.state.status)) return;
+    this.cleanedUp.add(orderId);
+    try {
+      this.link.cancelOrder(orderId);
+    } catch {
+      // Not connected: nothing can be cancelled now. It is not known to be gone, so it is not
+      // given a final status either: the book goes by what TWS reports when it is back.
+      return;
+    }
+    this.journal.write("stop_cleanup", { order_id: record.order_id, ticker: record.ticker, leg_order_id: orderId });
+    this.onOrderStatus({
+      orderId,
+      status: "PendingCancel",
+      filled: ref.state.filled_qty,
+      remaining: 0,
+      avgFillPrice: ref.state.avg_fill_price ?? 0,
+    });
+  }
+
   // ------------------------------------------------- exits left behind
   //
   // An order that holds nothing any more must have no sell order of its own left working: such
@@ -2330,7 +2626,14 @@ export class Bridge {
         if (isDone(state.status)) return false;
         // An order that has sold its whole quantity is over, also before TWS has said "Filled"
         // (after a restart TWS reports the fills of an order it has finished, not its status).
-        const whole = leg === "exit" ? (record.exit?.order_id === state.order_id ? record.exit.qty : Number.POSITIVE_INFINITY) : record.sent.qty;
+        const whole =
+          leg === "exit"
+            ? record.exit?.order_id === state.order_id
+              ? record.exit.qty
+              : Number.POSITIVE_INFINITY
+            : leg === "take_profit"
+              ? (record.sent.take_profit_qty ?? record.sent.qty)
+              : record.sent.qty;
         return state.filled_qty < (this.orderQty.get(state.order_id) ?? whole);
       })
       .map(({ leg, state }) => ({ leg, orderId: state.order_id }));
@@ -2894,15 +3197,18 @@ export class Bridge {
     const { record, leg, state } = ref;
     const message = `${LEG_WORDS[leg]}: ${event.message} (code ${event.code})`;
     const entry = { order_id: record.order_id, ticker: record.ticker, leg, leg_order_id: event.orderId, code: event.code, message };
+    const change = this.sentChanges.get(event.orderId);
     // TWS says it has no such order. About a buy or a `/sell` order that settles it; about an
-    // exit of a bracket it does when it answers a cancel the bridge itself asked for.
+    // exit of a bracket it does when it answers a cancel the bridge itself asked for, or a move
+    // of the stop by the exit watch: a stop TWS took away while the bridge was not connected is
+    // never reported as ended, and "no such order" to the move is how the bridge learns it is gone.
     const notFound =
-      ORDER_NOT_FOUND_CODES.has(event.code) && (leg === "parent" || leg === "exit" || state.status === "PendingCancel");
+      ORDER_NOT_FOUND_CODES.has(event.code) &&
+      (leg === "parent" || leg === "exit" || state.status === "PendingCancel" || (change !== undefined && change.what === "stop"));
 
     // Is this TWS's answer to a change the bridge sent to this order a moment ago? Then it is
     // the change that was refused, not the order: the order stands as it stood, and so must the
     // book. A message about a cancel the bridge asked for is about that cancel.
-    const change = this.sentChanges.get(event.orderId);
     if (change !== undefined) {
       const cancelAsked = state.status === "PendingCancel";
       const inTime = this.clock() - change.atMs <= CHANGE_ANSWER_MS;
@@ -2942,6 +3248,11 @@ export class Bridge {
     this.say(`order ${record.order_id} ${record.ticker} refused by TWS: ${message}`);
     if (leg === "exit") this.cleanUpSell(record, event.orderId);
     else this.cleanUp(record);
+    // A stop of the exit watch's own that TWS answered with an error. Whether TWS has it or not
+    // is not known from that (some of its "errors" are about an order it has taken), and a second
+    // stop must not go in beside one that may be working: it is cancelled by its id, once, and
+    // TWS's answer to that (cancelled, or "no such order") is its last word on it.
+    if (leg === "stop" && change !== undefined && change.what === "stop" && change.fresh) this.cleanUpStop(record, event.orderId);
     this.ackWaiters.get(record.order_id)?.();
     this.heard(event.orderId);
     this.stateChanged();
@@ -2979,6 +3290,12 @@ export class Bridge {
     const id = record.order_id;
     this.book.setPrices(id, change.back);
     if (change.backExit !== undefined) this.book.setExit(id, change.backExit);
+    // A change that carried a new size: the order is the size it was (or, if that was not known,
+    // not known again until TWS reports it).
+    if (change.backQty !== undefined) {
+      if (change.backQty === null) this.orderQty.delete(event.orderId);
+      else this.orderQty.set(event.orderId, change.backQty);
+    }
     // A chase that reached TWS after the buy had filled is refused for that reason alone: worth
     // a note on the order, not an error on a buy that did what it was for.
     const filledFirst = leg === "parent" && (record.status === "Filled" || record.filled_qty >= record.sent.qty);

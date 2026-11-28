@@ -131,7 +131,11 @@ async function main(): Promise<void> {
   console.log(
     `  auto     ${autoMode}. Yellow POPs ${a.windowStart}-${a.windowEnd} New York, buy if >= +${a.entryStopPct}%, ` +
       `${formatUsd(a.amountUsd)} x ${autoSlots(a)}, at most ${a.maxTrades} trades a day, ` +
-      `take-profit +${a.takeProfitPct}%, stop -${a.stopPct}%` +
+      `take-profit +${a.takeProfitPct}%${a.takeProfitPortion < 1 ? ` on ${Math.round(a.takeProfitPortion * 100)}% of the shares` : ""}, ` +
+      `stop -${a.stopPct}%` +
+      `${a.stopToEntryAtPct > 0 ? `, to the entry at +${a.stopToEntryAtPct}%` : ""}` +
+      `${a.takeProfitPortion < 1 && a.trailPct > 0 ? `, then trailing ${a.trailPct}%` : ""}` +
+      `${a.minPrice > 0 ? `, alerts from ${formatUsd(a.minPrice)}` : ""}` +
       `${a.paperOnly ? ", paper accounts only" : ", LIVE ACCOUNTS ALLOWED (auto.paperOnly is off)"}` +
       `${state.feed === null ? "; no alert stream yet (the dashboard sets it)" : ""}`,
   );

@@ -192,8 +192,11 @@ test("order: the bracket goes out as three orders, in order, on the resolved con
       trigger: null,
       good_until: null,
       take_profit: 2.78,
+      // A click's take-profit is for the whole position.
+      take_profit_qty: 100,
       stop: 2.42,
       stop_limit: 2.39,
+      stop_own: false,
       // The prices the bracket was placed with: these stay when a chase or a sell moves the others.
       first_limit: 2.53,
       first_take_profit: 2.78,

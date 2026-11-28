@@ -5,6 +5,7 @@ import type { TestContext } from "node:test";
 import { AutoTrader } from "../src/auto.js";
 import type { AutoDecision, FeedLike } from "../src/auto.js";
 import type { OrderRecord } from "../src/book.js";
+import type { AutoBuy } from "../src/bridge.js";
 import type { FeedSetup, FeedStatus } from "../src/feed.js";
 import type { Journal, JournalFields } from "../src/journal.js";
 import type { AutoMode, BridgeState } from "../src/state.js";
@@ -304,6 +305,81 @@ export function soldAtTarget(r: Rig, orderId: number, price?: number): void {
   fill(ib, orderId + 1, `tp-${orderId}`, held, at, held);
   ib.emit("orderStatus", orderId + 1, "Filled", held, 0, at);
   ib.emit("orderStatus", orderId + 2, "Cancelled", 0, record.sent.qty, 0);
+}
+
+/** TWS confirms every cancel at once. */
+export function confirmsCancels(w: FakeTws): void {
+  w.onCancel = (ib, id) => queueMicrotask(() => ib.emit("orderStatus", id, "Cancelled", 0, 150, 0));
+}
+
+/** Several of these world settings at once, in order. */
+export function both(...settings: Array<(w: FakeTws) => void>): (w: FakeTws) => void {
+  return (w) => {
+    for (const set of settings) set(w);
+  };
+}
+
+/**
+ * TWS answers at once, so a rig that waits for its word does not wait out the whole wait: a new
+ * order (other than a bracket's exits) is PreSubmitted, a change is reported back as taken; and
+ * what `refuse` says is answered with that error instead (by default "Order rejected", code 201).
+ */
+export function answering(
+  refuse: (id: number, change: boolean) => boolean,
+  code = 201,
+  message = "Order rejected - reason: the stop price is not valid",
+): (w: FakeTws) => void {
+  return (w) => {
+    w.onOrder = (ib, id, _order, change) => {
+      if (refuse(id, change)) {
+        queueMicrotask(() => ib.emit("error", new Error(message.replaceAll("{id}", String(id))), code, id));
+      } else if (change) {
+        queueMicrotask(() => ib.reports(id));
+      } else if (id !== 1001 && id !== 1002) {
+        queueMicrotask(() => ib.emit("orderStatus", id, "PreSubmitted", 0, 150, 0));
+      }
+    };
+  };
+}
+
+/** 05:00 New York on the test day (10:00 UTC): the end of the automation's hour. */
+export const HOUR_END = Date.parse("2026-11-25T10:00:00Z");
+
+let autoBuys = 0;
+
+/** One buy of the automation as `bridge.autoOrder` takes it: ABCD at 2.50, alerted now, a fresh alert id. */
+export function autoBuyNow(r: Rig, overrides: Partial<AutoBuy> = {}): AutoBuy {
+  autoBuys += 1;
+  return { ticker: "ABCD", alertPrice: 2.5, alertAt: iso(r.clock.now), alertId: `pop-s${autoBuys}`, validSec: 300, notAfterMs: HOUR_END, ...overrides };
+}
+
+/**
+ * The automation's order, placed, taken by TWS and (a second later, so a change to it is not
+ * "too soon") bought in full at `price`. With the default rule: 150 ABCD, the take-profit 3.16
+ * for 75 of them, the stop 2.36 / 2.28 for all 150; ids 1000, 1001, 1002.
+ */
+export async function autoHolding(r: Rig, price = 2.64, overrides: Partial<AutoBuy> = {}): Promise<OrderRecord> {
+  const record = await r.bridge.autoOrder(autoBuyNow(r, overrides));
+  taken(r, record.order_id);
+  r.clock.now += 1000;
+  boughtAll(r, record.order_id, price);
+  return record;
+}
+
+/**
+ * The take-profit sells what it is for (by default all of its own quantity: half the position
+ * under the default rule) at `price`. Nothing is said about the stop: what TWS does to it then is
+ * not known, and each test says it.
+ */
+export function halfSold(r: Rig, orderId = 1000, price = 3.16, qty?: number): void {
+  const record = recordOf(r, orderId);
+  const own = record.sent.take_profit_qty ?? record.sent.qty;
+  const shares = qty ?? own;
+  const ib = r.world.current;
+  const before = record.legs.take_profit?.filled_qty ?? 0;
+  r.world.positions.set(record.conid, Math.max(0, (r.world.positions.get(record.conid) ?? 0) - shares));
+  fill(ib, orderId + 1, `tp-${orderId}-${before + shares}`, shares, price, before + shares);
+  ib.emit("orderStatus", orderId + 1, before + shares >= own ? "Filled" : "Submitted", before + shares, own - before - shares, price);
 }
 
 /** A waiting buy ends with nothing filled (cancelled, or expired at its time), and its exits with it. */

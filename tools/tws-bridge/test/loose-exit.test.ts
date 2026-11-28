@@ -476,7 +476,9 @@ test("loose exit: restart: fills TWS reports on connecting count before anything
   const f = await rig(t, { journal: new FileJournal(dir3, () => T0 + 60_000, [TOKEN]), now: T0 + 60_000, exitGraceMs: GRACE });
   fill(f.world.current, 1000, "b2", 40, 2.53, 100);
   fill(f.world.current, 1001, "x1", 100, 2.78, 100);
-  assert.deepEqual([f.bridge.orders()[0]?.status, f.bridge.orders()[0]?.filled_qty, f.bridge.orders()[0]?.held_qty], ["Submitted", 100, 0]);
+  // Its fills show it filled in full: it reads Filled, with no status from TWS.
+  assert.deepEqual([f.bridge.orders()[0]?.status, f.bridge.orders()[0]?.filled_qty, f.bridge.orders()[0]?.held_qty], ["Filled", 100, 0]);
+  assert.equal(f.bridge.orders()[0]?.legs.take_profit?.status, "Filled");
   await until(() => cancels(f.world).length > 0, "the clean-up cancel");
   assert.deepEqual(cancels(f.world), [1002]);
 });

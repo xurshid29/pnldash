@@ -744,5 +744,26 @@ already on the Momentum screen, all day (its own hour, 04:00–05:00 New York, h
 order), not a number; a stop taken to fill 1% under its level, which a halt or a gap will not
 give; no spread.
 
-**Built from it:** the floor (`auto.minPrice`, 0.5 by default, in the bridge). The exit is the
-operator's to choose; nothing about it was changed.
+**The operator's choice: "I would prefer 1 and 2"** (the stop to the entry once the trade is up,
+and half sold at +20% with the other half trailing 20%). Measured together, alerts at $0.50 and
+over (89 / 61 trades), careful order and (worst order):
+
+| the stop goes to the entry at | avg | worst order | trades that lost 5% or more |
+|---|---|---|---|
+| (as built: +20% on all, nothing moved) | +1.19% / +0.96% | same | 57% |
+| +5% | +1.87% / +5.71% | +0.80% / +3.57% | 35% |
+| +7.5% | +1.15% / +5.54% | +0.13% / +3.73% | 42% |
+| **+10%** | **+1.91% / +5.43%** | **+0.89% / +3.61%** | 45% |
+| +15% | +1.68% / +4.69% | +0.65% / +3.04% | 52% |
+| only at +20% (option 2 alone) | +1.71% / +4.38% | +0.69% / +2.73% | 57% |
+| +10%, the rest trailing 15% / 25% | +2.09% / +7.27%, +1.74% / +4.33% | +1.02% / +5.34%, +0.67% / +3.87% | 45% |
+
+The two together read at least as well as either alone in both halves and both orders. Where
+the stop moves (+5% to +15%) is inside the noise (+7.5% is the lowest in one half); +10% is the
+operator's own figure for the trades that hurt, and far enough from the fill that an ordinary
+minute does not reach it and come back. A 15% trail reads a little better than 20% and is the
+kind of number 1m candles flatter. It is still a few trades: +3.3% a trade over both halves, +0.3%
+without the best five.
+
+**Built from it:** the floor (`auto.minPrice`, 0.5 by default) and the exit (`auto.takeProfitPortion`
+0.5, `auto.stopToEntryAtPct` 10, `auto.trailPct` 20), in the bridge.

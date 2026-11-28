@@ -5,6 +5,7 @@ import { autoOrderConfig } from "../src/bridge.js";
 import type { AutoBuy } from "../src/bridge.js";
 import { AUTO_DEFAULTS, defaultConfig } from "../src/config.js";
 import type { Config } from "../src/config.js";
+import { buildBracket, planOrder } from "../src/order.js";
 import { listing, until } from "./fake-tws.js";
 import { buy, refuses, rig, T0, TOKEN } from "./harness.js";
 import type { Rig } from "./harness.js";
@@ -27,10 +28,11 @@ function autoBuy(r: Rig, overrides: Partial<AutoBuy> = {}): AutoBuy {
   return { ticker: "ABCD", alertPrice: 2.5, alertAt: iso(r.clock.now), alertId: `pop-o${alerts}`, validSec: 300, notAfterMs: CLOSE, ...overrides };
 }
 
-function bracket(gtd: string, qty = 150): Array<Record<string, unknown>> {
+/** The automation's bracket: the take-profit for half of the shares (auto.takeProfitPortion 0.5), the buy and the stop for all. */
+function bracket(gtd: string, qty = 150, takeProfitQty = 75): Array<Record<string, unknown>> {
   return [
     { action: "BUY", orderType: "STP LMT", totalQuantity: qty, auxPrice: 2.63, lmtPrice: 2.66, tif: "GTD", goodTillDate: gtd, outsideRth: true, parentId: 0, transmit: false },
-    { action: "SELL", orderType: "LMT", totalQuantity: qty, lmtPrice: 3.16, tif: "GTC", outsideRth: true, parentId: 1000, transmit: false },
+    { action: "SELL", orderType: "LMT", totalQuantity: takeProfitQty, lmtPrice: 3.16, tif: "GTC", outsideRth: true, parentId: 1000, transmit: false },
     { action: "SELL", orderType: "STP LMT", totalQuantity: qty, auxPrice: 2.36, lmtPrice: 2.28, tif: "GTC", outsideRth: true, parentId: 1000, transmit: true },
   ];
 }
@@ -66,8 +68,10 @@ test("auto order: a BUY STP LMT 5% over the alert, its limit 1% over that, exits
     trigger: 2.63,
     good_until: iso(W0 + 300 * SEC),
     take_profit: 3.16,
+    take_profit_qty: 75,
     stop: 2.36,
     stop_limit: 2.28,
+    stop_own: false,
     first_limit: 2.66,
     first_take_profit: 3.16,
     first_stop: 2.36,
@@ -358,15 +362,24 @@ test("auto order: a stop entry whose time passes while TWS is connected is left 
 });
 
 test("auto order: TWS's answer to a cancel of a buy settles it: 'cannot be cancelled, state: Filled', and 'no such order' after a part fill", async (t) => {
-  // Its fills came while TWS was away, its status never did: the cancel's answer says it filled.
+  // It filled in TWS, and neither its fills nor its status have reached the bridge yet: the
+  // cancel's answer is the first word that it filled.
   const r = await rig(t, { now: W0 });
   await r.bridge.order(buy());
   r.world.current.emit("orderStatus", 1000, "Submitted", 0, 100, 0);
-  fill(r.world.current, 1000, "b1", 100, 2.52, 100);
   r.bridge.cancel({ order_id: 1000 });
   assert.equal(r.bridge.orders()[0]?.status, "PendingCancel");
   r.world.current.emit("error", new Error("OrderId 1000 that needs to be cancelled cannot be cancelled, state: Filled."), 10148, 1000);
-  assert.deepEqual([r.bridge.orders()[0]?.status, r.bridge.orders()[0]?.filled_qty], ["Filled", 100]);
+  assert.equal(r.bridge.orders()[0]?.status, "Filled");
+  fill(r.world.current, 1000, "b1", 100, 2.52, 100);
+  assert.deepEqual([r.bridge.orders()[0]?.status, r.bridge.orders()[0]?.filled_qty, r.bridge.orders()[0]?.held_qty], ["Filled", 100, 100]);
+  // Once its fills alone show it filled in full, a cancel is refused before anything is sent.
+  const f = await rig(t, { now: W0 });
+  await f.bridge.order(buy());
+  f.world.current.emit("orderStatus", 1000, "Submitted", 0, 100, 0);
+  fill(f.world.current, 1000, "b1", 100, 2.52, 100);
+  assert.throws(() => f.bridge.cancel({ order_id: 1000 }), (err: unknown) => err instanceof Error && "code" in err && err.code === "already_filled");
+  assert.deepEqual(f.world.current.callsOf("cancelOrder"), []);
 
   // Part-filled, its cancel asked for, and TWS has no such order: the rest is gone, the 40 stay bought.
   const p = await rig(t, { now: W0 });
@@ -417,6 +430,50 @@ test("autoOrderConfig: the automation's settings over the click's, the alert's s
     stopPct: 10,
     stopLimitOffsetPct: 3,
     useAlertStop: false,
+    takeProfitPortion: 0.5,
+    outsideRth: true,
   });
   assert.deepEqual(order, before);
+});
+
+test("planOrder: the take-profit's own size is floor(qty × portion), at least one share; with portion 1, or for a click, all of it", () => {
+  const sizeFor = (qty: number, takeProfitPortion?: number): number | null =>
+    planOrder(
+      { ...defaultConfig(TOKEN).order, ...(takeProfitPortion === undefined ? {} : { takeProfitPortion }) },
+      { qty, alertPrice: 2.5, alertStop: null, ask: null, entry: "stop" },
+    ).takeProfitQty;
+  const table: Array<[number | undefined, number[]]> = [
+    [0.5, [1, 1, 1, 75]],
+    [0.33, [1, 1, 1, 49]],
+    [1, [1, 2, 3, 151]],
+    [undefined, [1, 2, 3, 151]], // a click: the config's order has no portion
+  ];
+  for (const [portion, sizes] of table) {
+    assert.deepEqual([1, 2, 3, 151].map((qty) => sizeFor(qty, portion)), sizes, `portion ${portion}`);
+  }
+  assert.equal(sizeFor(100, 0.33), 33);
+  // No take-profit, no size for it.
+  const none = planOrder({ ...defaultConfig(TOKEN).order, takeProfitPct: 0, takeProfitPortion: 0.5 }, { qty: 10, alertPrice: 2.5, alertStop: null, ask: null, entry: "stop" });
+  assert.equal(none.takeProfitQty, null);
+
+  // In the bracket: the take-profit for its part, the buy and the stop for all.
+  const plan = planOrder({ ...defaultConfig(TOKEN).order, takeProfitPortion: 0.5 }, { qty: 151, alertPrice: 2.5, alertStop: null, ask: null, entry: "stop" });
+  assert.deepEqual(buildBracket(plan, 1000, true, "20261125-09:35:00").map((leg) => [leg.leg, leg.order.totalQuantity]), [
+    ["parent", 151],
+    ["take_profit", 75],
+    ["stop", 151],
+  ]);
+});
+
+test("auto order: the bridge's record and log say the take-profit's own size; a click's is all of it", async (t) => {
+  const r = await rig(t, { now: W0 });
+  const record = await r.bridge.autoOrder({ ticker: "ABCD", alertPrice: 2.5, alertAt: iso(W0), alertId: "pop-size", validSec: 300, notAfterMs: CLOSE });
+  assert.deepEqual([record.sent.qty, record.sent.take_profit_qty, record.sent.stop_own], [150, 75, false]);
+  const line = r.journal.ofType("order_placed")[0] as { sent?: Record<string, unknown> } | undefined;
+  assert.deepEqual([line?.sent?.["take_profit_qty"], line?.sent?.["stop_own"]], [75, false]);
+  r.clock.now += 11 * SEC;
+  const click = await r.bridge.order(buy({ ticker: "WXYZ" }));
+  const clicked = r.bridge.orders().find((order) => order.order_id === click.order_id);
+  assert.deepEqual([clicked?.sent.take_profit_qty, clicked?.sent.stop_own], [100, false]);
+  assert.deepEqual(r.world.allPlaced().slice(3).map((p) => p.order.totalQuantity), [100, 100, 100]);
 });

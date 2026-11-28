@@ -777,6 +777,30 @@ test("auto: status says each rail of the bridge in blocked", async (t) => {
   assert.deepEqual(blocked(await autoRig(t, { mode: "watch", config: (c) => (c.halted = true) })), ["watch", true]);
 });
 
+test("auto: the decision says when the take-profit is for a part of the shares, and the status carries the exit's settings", async (t) => {
+  const a = await autoRig(t);
+  assert.match((await a.send(pop(W0)))?.text ?? "", /, take-profit 3\.16 for 75 of them, stop 2\.36,/);
+  const w = await autoRig(t, { mode: "watch" });
+  assert.match((await w.send(pop(W0)))?.text ?? "", /, take-profit 3\.16 for 75 of them, stop 2\.36,/);
+  // For all of them: no such words.
+  const all = await autoRig(t, { config: (c) => (c.auto.takeProfitPortion = 1) });
+  const whole = (await all.send(pop(W0)))?.text ?? "";
+  assert.match(whole, /, take-profit 3\.16, stop 2\.36,/);
+  assert.doesNotMatch(whole, /of them/);
+
+  const { rule } = a.auto.status();
+  assert.deepEqual([rule.take_profit_portion, rule.stop_to_entry_at_pct, rule.trail_pct], [0.5, 10, 20]);
+  const custom = await autoRig(t, {
+    config: (c) => {
+      c.auto.takeProfitPortion = 1;
+      c.auto.stopToEntryAtPct = 0;
+      c.auto.trailPct = 0;
+    },
+  });
+  const plainRule = custom.auto.status().rule;
+  assert.deepEqual([plainRule.take_profit_portion, plainRule.stop_to_entry_at_pct, plainRule.trail_pct], [1, 0, 0]);
+});
+
 test("auto: status: today's window in New York, the day's counts, and the decisions newest first, at most 100", async (t) => {
   const a = await autoRig(t);
   const status = a.auto.status();

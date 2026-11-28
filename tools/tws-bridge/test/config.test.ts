@@ -358,6 +358,11 @@ const AUTO_RULE: AutoConfig = {
   takeProfitPct: 20,
   stopPct: 10,
   stopLimitOffsetPct: 3,
+  // The exit chosen later the same day: half at the take-profit, the stop to the entry at +10%,
+  // then the rest trails 20% under the high.
+  takeProfitPortion: 0.5,
+  stopToEntryAtPct: 10,
+  trailPct: 20,
   maxAlertAgeSec: 60,
   // "maybe we ignore below $0.5?" (the same day, after the build)
   minPrice: 0.5,
@@ -400,6 +405,9 @@ test("auto: each of its keys may be there without the others", () => {
     takeProfitPct: 15,
     stopPct: 8,
     stopLimitOffsetPct: 2,
+    takeProfitPortion: 1,
+    stopToEntryAtPct: 0,
+    trailPct: 35,
     maxAlertAgeSec: 30,
     minPrice: 1.25,
     paperOnly: false,
@@ -542,4 +550,39 @@ test("minutesOfDay: HH:MM as minutes after midnight, else null", () => {
   assert.equal(minutesOfDay("05:00"), 300);
   assert.equal(minutesOfDay("23:59"), 1439);
   for (const text of ["4:00", "24:00", "04:60", "04:00:00", " 04:00", "0400", "", "ab:cd"]) assert.equal(minutesOfDay(text), null, text);
+});
+
+test("auto: the exit's settings: takeProfitPortion 0.1 to 1, stopToEntryAtPct 0 to 1000, trailPct 0 or 5 to 90", () => {
+  const refused: Array<[Partial<Record<keyof AutoConfig, unknown>>, RegExp]> = [
+    [{ takeProfitPortion: 0.09 }, /^auto\.takeProfitPortion must be at least 0\.1$/],
+    [{ takeProfitPortion: 0 }, /^auto\.takeProfitPortion must be at least 0\.1$/],
+    [{ takeProfitPortion: 1.01 }, /^auto\.takeProfitPortion must be at most 1$/],
+    [{ takeProfitPortion: "0.5" }, /^auto\.takeProfitPortion must be a number$/],
+    [{ stopToEntryAtPct: -1 }, /^auto\.stopToEntryAtPct must be at least 0$/],
+    [{ stopToEntryAtPct: 1000.5 }, /^auto\.stopToEntryAtPct must be at most 1000$/],
+    [{ stopToEntryAtPct: null }, /^auto\.stopToEntryAtPct must be a number$/],
+    [{ trailPct: 4.99 }, /^auto\.trailPct must be 0 \(no trailing\) or at least 5$/],
+    [{ trailPct: 1 }, /^auto\.trailPct must be 0 \(no trailing\) or at least 5$/],
+    [{ trailPct: -1 }, /^auto\.trailPct must be at least 0$/],
+    [{ trailPct: 90.5 }, /^auto\.trailPct must be at most 90$/],
+    [{ trailPct: "20" }, /^auto\.trailPct must be a number$/],
+  ];
+  for (const [change, problem] of refused) assertRefused(withChange((c) => (c.auto = change)), problem);
+  // The trail's one problem is said once, not beside a bound it does not break.
+  assert.deepEqual(problemsOf(withChange((c) => (c.auto = { trailPct: 4.99 }))), ["auto.trailPct must be 0 (no trailing) or at least 5"]);
+
+  const allowed: Array<Partial<AutoConfig>> = [
+    { takeProfitPortion: 0.1 },
+    { takeProfitPortion: 0.33 },
+    { takeProfitPortion: 1 },
+    { stopToEntryAtPct: 0 },
+    { stopToEntryAtPct: 1000 },
+    { trailPct: 0 },
+    { trailPct: 5 },
+    { trailPct: 90 },
+  ];
+  for (const change of allowed) {
+    assert.deepEqual(problemsOf(withChange((c) => (c.auto = change))), [], JSON.stringify(change));
+    assert.deepEqual(validateConfig(withChange((c) => (c.auto = change))).auto, { ...AUTO_RULE, ...change });
+  }
 });

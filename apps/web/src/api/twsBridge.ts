@@ -266,6 +266,13 @@ export interface AutoRule {
   max_alert_age_sec: number;
   // An alert under this price is not bought (0 = no floor). Missing on a bridge from before it.
   min_price?: number;
+  // The exit rule since 2026-11-28 (missing on a bridge from before it: the take-profit sells
+  // everything and the stop stays where it was put): the part of the position the take-profit
+  // sells (0.5 = half), the gain at which the stop goes to the entry (0 = never), and how far
+  // under the high the stop of the rest trails once the take-profit has sold (0 = no trailing).
+  take_profit_portion?: number;
+  stop_to_entry_at_pct?: number;
+  trail_pct?: number;
   paper_only: boolean;
   exit_watch: { tp_grace_ms: number; stop_grace_ms: number; resell_ms: number };
 }

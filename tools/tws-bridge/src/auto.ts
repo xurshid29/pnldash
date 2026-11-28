@@ -102,6 +102,12 @@ export interface AutoStatus {
     take_profit_pct: number;
     stop_pct: number;
     stop_limit_offset_pct: number;
+    /** The part of the position the take-profit sells (0.5 = half, 1 = all). */
+    take_profit_portion: number;
+    /** The stop goes to the cost once the price has traded this many percent above it; 0 = never. */
+    stop_to_entry_at_pct: number;
+    /** After the take-profit sold, the stop of the rest follows the high this many percent under it; 0 = no trailing. */
+    trail_pct: number;
     max_alert_age_sec: number;
     /** An alert under this price is not bought; 0 = no floor. */
     min_price: number;
@@ -329,6 +335,9 @@ export class AutoTrader {
         take_profit_pct: auto.takeProfitPct,
         stop_pct: auto.stopPct,
         stop_limit_offset_pct: auto.stopLimitOffsetPct,
+        take_profit_portion: auto.takeProfitPortion,
+        stop_to_entry_at_pct: auto.stopToEntryAtPct,
+        trail_pct: auto.trailPct,
         max_alert_age_sec: auto.maxAlertAgeSec,
         min_price: auto.minPrice,
         paper_only: auto.paperOnly,
@@ -601,7 +610,7 @@ export class AutoTrader {
         text:
           `buys if ≥ ${formatPrice(sent.trigger ?? sent.limit)}: ${sent.qty.toLocaleString("en-US")} shares ` +
           `(${formatUsd(auto.amountUsd)})` +
-          (sent.take_profit === null ? "" : `, take-profit ${formatPrice(sent.take_profit)}`) +
+          (sent.take_profit === null ? "" : `, take-profit ${formatPrice(sent.take_profit)}${this.forWords(sent.take_profit_qty, sent.qty)}`) +
           (sent.stop === null ? "" : `, stop ${formatPrice(sent.stop)}`) +
           `, waits ${this.waitWords(validSec)}`,
         order_id: record.order_id,
@@ -636,10 +645,15 @@ export class AutoTrader {
     return (
       `if ≥ ${formatPrice(plan.trigger ?? plan.limit)}: ${plan.qty.toLocaleString("en-US")} shares ` +
       `(${formatUsd(this.auto.amountUsd)})` +
-      (plan.takeProfit === null ? "" : `, take-profit ${formatPrice(plan.takeProfit)}`) +
+      (plan.takeProfit === null ? "" : `, take-profit ${formatPrice(plan.takeProfit)}${this.forWords(plan.takeProfitQty, plan.qty)}`) +
       (plan.stop === null ? "" : `, stop ${formatPrice(plan.stop)}`) +
       `, waiting ${this.waitWords(validSec)}`
     );
+  }
+
+  /** " for 75 of them" when the take-profit is for a part of the shares; nothing when it is for all. */
+  private forWords(takeProfitQty: number | null, qty: number): string {
+    return takeProfitQty === null || takeProfitQty >= qty ? "" : ` for ${takeProfitQty.toLocaleString("en-US")} of them`;
   }
 
   private waitWords(validSec: number): string {

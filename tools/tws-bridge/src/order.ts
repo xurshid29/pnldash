@@ -100,6 +100,11 @@ export interface OrderPlan {
   /** A stop entry's trigger (the buy's stop price); null for a buy now. */
   trigger: number | null;
   takeProfit: number | null;
+  /**
+   * How many shares the take-profit order is for: all of `qty`, or with `takeProfitPortion` under
+   * 1 (the automation) that part of it, rounded down and at least one share. Null with no take-profit.
+   */
+  takeProfitQty: number | null;
   stop: number | null;
   stopLimit: number | null;
   /** qty × limit, in dollars. */
@@ -253,6 +258,12 @@ export function planOrder(cfg: OrderConfig, input: PlanInput): OrderPlan {
     }
   }
 
+  // The take-profit sells the whole position, or (the automation's) a part of it: the rest then
+  // has only the stop, which its exit watch moves. Rounded down, so the part left is never smaller
+  // than the part sold; one share cannot be split, and its take-profit is for that one share.
+  const portion = cfg.takeProfitPortion ?? 1;
+  const takeProfitQty = takeProfit === null ? null : portion >= 1 ? qty : Math.max(1, Math.floor(qty * portion + EPS));
+
   return {
     entry,
     qty,
@@ -260,6 +271,7 @@ export function planOrder(cfg: OrderConfig, input: PlanInput): OrderPlan {
     limit,
     trigger,
     takeProfit,
+    takeProfitQty,
     stop,
     stopLimit,
     notional: Math.round(qty * limit * 100) / 100,
@@ -492,7 +504,7 @@ export function buildBracket(
     legs.push({
       leg: "take_profit",
       orderId: firstOrderId + 1,
-      order: takeProfitOrder(plan.qty, plan.takeProfit, outsideRth, firstOrderId, !hasStop),
+      order: takeProfitOrder(plan.takeProfitQty ?? plan.qty, plan.takeProfit, outsideRth, firstOrderId, !hasStop),
     });
   }
 

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { TestContext } from "node:test";
 import type { OrderRecord } from "../src/book.js";
 import type { AutoBuy } from "../src/bridge.js";
+import type { Config } from "../src/config.js";
 import { BridgeError } from "../src/errors.js";
 import { MemoryJournal } from "../src/journal.js";
 import type { QuoteListener } from "../src/link.js";
@@ -34,11 +35,23 @@ interface WatchRig extends Rig {
   watch: ExitWatch;
 }
 
+/**
+ * The plain bracket: the take-profit sells everything and the stop is never tended. The tests in
+ * this file are about selling; the tended stop of the default rule has its own file (exit-rule).
+ */
+function plain(c: Config): void {
+  c.auto.takeProfitPortion = 1;
+  c.auto.stopToEntryAtPct = 0;
+  c.auto.trailPct = 0;
+}
+
+/** A rig with the exit watch over it; the plain bracket unless `options.config` says otherwise. */
 async function watched(t: TestContext, options: RigOptions = {}): Promise<WatchRig> {
   const r = await rig(t, {
     now: W0,
     ...options,
     config: (c) => {
+      plain(c);
       c.auto.tpGraceMs = TP_GRACE;
       c.auto.stopGraceMs = STOP_GRACE;
       c.auto.resellMs = RESELL;
@@ -276,16 +289,19 @@ test("watch: the re-check goes by the stream's latest bid however old; the sell 
   assert.equal(e.bridge.orders()[0]?.watch?.state, "tp_crossed");
 });
 
-test("watch: the take-profit cancelled by hand, or a click's Sell, during its grace clears it", async (t) => {
+test("watch: the take-profit cancelled by hand during its grace ends that chase (target_gone); a click's Sell in it clears it", async (t) => {
   const r = await watched(t);
   await holding(r);
   quote(r, "bid", 3.12);
   quote(r, "last", 3.16);
   r.world.current.emit("orderStatus", 1001, "Cancelled", 0, 150, 0);
+  await until(() => watchLines(r).includes("target_gone"), "the end of the chase");
+  assert.ok(!watchLines(r).includes("target_sold"));
+  assert.equal(r.bridge.orders()[0]?.watch, null);
   r.clock.now += TP_GRACE;
-  await until(() => watchLines(r).includes("cleared"), "the clear");
   await settle();
   assert.deepEqual(r.world.allModified(), []);
+  assert.deepEqual(r.journal.ofType("auto_sell"), []);
 
   const c = await watched(t);
   await holding(c);
@@ -713,11 +729,14 @@ test("watch: a buy that filled while TWS was away (fills reported, no status aft
   await until(() => !r.link.isReady(), "TWS gone");
   r.world.mode = "accept";
   await until(() => r.link.isReady(), "TWS back");
-  // TWS reports the buy's fills and nothing else about it: its status still reads as waiting.
+  // TWS reports the buy's fills and nothing else about it: the fills alone show it filled in full.
   r.world.positions.set(111, 150);
   fill(r.world.current, 1000, "b1", 150, 2.64, 150);
   const now = r.bridge.orders()[0];
-  assert.deepEqual([now?.status, now?.filled_qty, now?.held_qty], ["PreSubmitted", 150, 150]);
+  assert.deepEqual([now?.status, now?.filled_qty, now?.held_qty], ["Filled", 150, 150]);
+  // A status TWS had on its way from before does not make it read as working again.
+  r.world.current.emit("orderStatus", 1000, "Submitted", 0, 150, 0);
+  assert.equal(r.bridge.orders()[0]?.status, "Filled");
   assert.deepEqual(r.watch.watching(), [1000]);
 
   quote(r, "bid", 2.3);
@@ -741,7 +760,7 @@ test("watch: it sells while orders are halted and outside the automation's hour"
 });
 
 test("watch: close() leaves no timer and no stream; not_auto ends the watch on that order at once", async (t) => {
-  const r = await rig(t, { now: W0 });
+  const r = await rig(t, { now: W0, config: plain });
   const record = await holding(r);
   const heard: { listener: QuoteListener | null } = { listener: null };
   const unwatched: number[] = [];
@@ -756,6 +775,12 @@ test("watch: close() leaves no timer and no stream; not_auto ends the watch on t
       asked.push(bid);
       throw new BridgeError(409, "not_auto", "order 1000 was not placed by the automation");
     },
+    // The plain bracket: nothing here should ever move its stop.
+    autoMoveStop: async () => {
+      throw new Error("the stop of a plain bracket is not tended");
+    },
+    stopQtyOf: () => null,
+    stopCleanedUp: () => false,
   };
   const quotes: QuoteSource = {
     isReady: () => true,

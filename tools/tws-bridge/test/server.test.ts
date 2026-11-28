@@ -714,9 +714,10 @@ test("polls: an order placed between polls is logged, and a restart reads it bac
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line) as Record<string, unknown>);
+  // The fill that made the order Filled is its last change: TWS's "Filled" after it repeats it.
   assert.deepEqual(
     lines.map((line) => line["type"]),
-    ["tws_up", "order_placed", "request", "order_status", "fill", "order_status"],
+    ["tws_up", "order_placed", "request", "order_status", "fill"],
   );
   assert.deepEqual(
     lines.filter((line) => line["type"] === "request").map((line) => [line["method"], line["path"], line["status"], line["ticker"]]),

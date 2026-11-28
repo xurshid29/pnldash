@@ -44,6 +44,8 @@ test("fills: filled quantity, average price and slip_pct against the alert's pri
   ib.emit("orderStatus", 1000, "Submitted", 60, 40, 2.52);
   fill(ib, 1000, "e2", 40, 2.54, 100, 2.528);
   fill(ib, 1000, "e2", 40, 2.54, 100, 2.528); // the same fill reported twice counts once
+  // Its fills reach its quantity: it reads Filled already, before TWS's status says so.
+  assert.deepEqual([r.bridge.orders()[0]?.status, r.bridge.orders()[0]?.filled_qty], ["Filled", 100]);
   ib.emit("orderStatus", 1000, "Filled", 100, 0, 2.528);
 
   order = r.bridge.orders()[0];
@@ -52,14 +54,14 @@ test("fills: filled quantity, average price and slip_pct against the alert's pri
   assert.equal(order?.avg_fill_price, 2.528);
   assert.equal(order?.slip_pct, 1.12);
 
-  // Every status change once (a status that only repeats what a fill already said is not one),
-  // every fill once, each with the slip.
+  // Every status change once (a status that only repeats what a fill already said is not one:
+  // here TWS's "Filled" came after the fill that made the order Filled), every fill once, each
+  // with the slip.
   assert.deepEqual(
     r.journal.ofType("order_status").map((line) => [line["leg"], line["status"], line["filled"], line["slip_pct"]]),
     [
       ["parent", "PreSubmitted", 0, null],
       ["parent", "Submitted", 0, null],
-      ["parent", "Filled", 100, 1.12],
     ],
   );
   assert.deepEqual(

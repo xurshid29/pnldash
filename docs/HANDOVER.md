@@ -28,7 +28,11 @@ on the paper account through the TWS bridge. What matters now, newest first:
   while the bid is above cost) or the stop is due and has not sold everything (after 1 s, if the
   bid is still at or under the stop), moving the sell down every 2 s; Off, Watch only and Halt
   cancel its waiting buys. Known limits (README): a position kept overnight is not on the book
-  after a restart; decisions go one at a time (about half a second each).
+  after a restart; decisions go one at a time (about half a second each). **Since the same
+  evening:** no alert priced under $0.50 (`auto.minPrice`), and the exit the operator chose: the
+  take-profit sells half, the stop goes to the cost once the bid has been 10% above it, and the
+  rest trails 20% under the highest bid (the watch moves the stop; what TWS itself does to the
+  stop when the half sells is unknown and is the first thing to read off the first trade).
   The bridge hears the alerts through the server's new read-only stream `GET /api/tv/feed`
   (`docs/vwap-setup.md` §22.11), set up by the dashboard. The four defaults were mine, proposed
   and accepted with "yes, lets start": first come first served; a slot back when a waiting buy
@@ -382,6 +386,24 @@ Yahoo + SEC + halts).
 These are the detailed notes behind START HERE, kept verbatim.
 
 **2026-11-28 (Sat), later — THE POP AUTOMATION BUILT (`a4af920` bridge, `e691e83` server + dashboard).**
+- **Later the same evening: the exit they chose, built.** Shown the three candidates, the operator: "I would prefer 1 and
+  2". Measured together first (`pop_exit_study.py` table 14, alerts at $0.50 and over): +1.9% / +5.4% a trade against
+  +1.2% / +1.0% as built, +0.9% / +3.6% under the worst order inside a candle; where the stop moves (+5% to +15%) is inside
+  the noise, so +10%, their own figure. Built in the bridge: the take-profit order is for half the shares
+  (`auto.takeProfitPortion` 0.5), the stop goes to the cost once the bid has been 10% above it (`auto.stopToEntryAtPct`),
+  and after the half has sold the stop of the rest trails 20% under the highest bid (`auto.trailPct`). The watch does the
+  moving through `Bridge.autoMoveStop` (one stop order changed; or one placed when TWS took the bracket's stop with the
+  take-profit's fill). **What TWS does to a full-size stop when a half-size take-profit beside it fills is not documented
+  (shrink / leave / cancel): all three are handled and tested against the fake; which one it is, is the first thing to
+  learn on paper** (README "To try", points a–d). Bid, not trade, for both the move and the trail, so one stray print does
+  nothing. Again two independent passes (a reviewer, a test-writer) found real defects, all fixed before the commit: a
+  half take-profit that filled while TWS was away blocked every sell; a sell of everything went through the half-size
+  take-profit and left the rest waiting; a stop cut by hand was sized back up; a refused stop of the watch's own was
+  doubled; moments with neither a stop nor a level; a stop the bridge itself cancelled was taken for one cancelled by
+  hand. Also changed for clicks, on purpose: an order the fills show filled in full reads `Filled` without waiting for
+  TWS's status; a Sell of everything cancels a take-profit that is for less than is held and both exits before one sell
+  order. 553 bridge tests. Their `config.json` got an `auto` section at their word ("why didn't you add them to the
+  config file?"): every trading setting of the automation is visible there now.
 - **The same evening: a price floor, and the exit measured.** The operator: "regarding the price range, maybe we ignore
   below $0.5?" and "not 20% but maybe we do some calculations? … price can move up to 10-15% but still end up with -10%
   stop-loss … and also, we can miss such great moves by taking only 20%" (XCUR, GDHG, BGLC, ZNB charts). Built: the floor,
