@@ -37,6 +37,7 @@ import { outcomes } from './outcomes.js';
 import { getContinuationCandidates, type ContinuationCandidate } from './continuation.js';
 import { classifyByRules, type Classification, type ClassifierInput } from './catalyst-rules.js';
 import { recordTierEvent } from './tier-events.js';
+import { publishFeedSetup } from './tv-feed.js';
 import { MomentumGrader, type MomentumGrade } from './momentum-grade.js';
 import {
   OpportunityAlerts, phoneKinds, normTitle,
@@ -4013,6 +4014,17 @@ class PollerService {
         on_screen: row != null, notified: mode === 'notify',
       },
     };
+    // 2026-11-28: the read-only feed for the operator's own program (services/tv-feed.ts,
+    // GET /api/tv/feed) gets every setup that reaches here, whatever the mode, with the gate's
+    // reason. A fault in the feed must never cost the row, the dashboard or the phone.
+    try {
+      publishFeedSetup({
+        id: alert.id, ticker: alert.ticker, at: alert.at, stage: sig.stage, price: alert.price,
+        mode, why: why ?? null, setup: { ...alert.setup },
+      });
+    } catch (err) {
+      console.error('[tv-feed] publish failed (delivery continues):', err instanceof Error ? err.message : err);
+    }
     recordTierEvent('alert', 'tv_setup', sig.ticker, {
       id: alert.id, at, stage: sig.stage, price: alert.price, mvwap: sig.mvwap, px_pct: sig.px_pct,
       day_gain: sig.day_gain, ah_gain: sig.ah_gain, tf: sig.tf,

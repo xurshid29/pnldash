@@ -52,4 +52,16 @@ export const tvApi = {
     const res = await apiClient.put<TvAlertSettings>('/api/tv/settings', patch);
     return knownStages(res.data);
   },
+  // 2026-11-28: a short-lived token that lets the TWS bridge on this computer listen to the
+  // server's alert stream (its automation). The caller hands it straight to the bridge's
+  // /auto/feed and keeps it nowhere: not in state, storage, a log or an error text. An older
+  // server answers 404 `{ error: 'Not found' }`.
+  async feedToken(): Promise<{ token: string; expires_at: string }> {
+    const res = await apiClient.post<{ token: string; expires_at: string }>('/api/tv/feed-token');
+    const d = res.data as unknown;
+    if (d == null || typeof d !== 'object' || typeof (d as { token?: unknown }).token !== 'string' || (d as { token: string }).token === '') {
+      throw new Error('the server did not answer as expected');
+    }
+    return d as { token: string; expires_at: string };
+  },
 };

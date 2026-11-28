@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import {
-  BRIDGE_ALERT_MAX_AGE_MS, BRIDGE_DEFAULT_URL, bridgeBuyNumbers, bridgeOrderBusy, bridgeOrderCancellable,
-  bridgeOrderCounts, bridgeOrderLive, bridgeOrderView, bridgeOrigin, bridgeSentText, bridgeStopNumbers, describeBridge,
-  toBridgeFailure, twsBridge,
-  type BridgeConn, type BridgeEntry, type BridgeFailure, type BridgeOrder, type BridgeOrderRecord, type BridgeOrderRequest,
-  type BridgeOrderView, type BridgeStatus, type BridgeView,
+  BRIDGE_ALERT_MAX_AGE_MS, BRIDGE_DEFAULT_URL, bridgeAutoMissing, bridgeBuyNumbers, bridgeGetAuto, bridgeOrderBusy,
+  bridgeOrderCancellable, bridgeOrderCounts, bridgeOrderLive, bridgeOrderView, bridgeOrigin, bridgePairFeed, bridgeSentText,
+  bridgeSetAutoMode, bridgeStopNumbers, describeBridge, toBridgeFailure, twsBridge,
+  type AutoMode, type AutoStatus, type BridgeConn, type BridgeEntry, type BridgeFailure, type BridgeOrder,
+  type BridgeOrderRecord, type BridgeOrderRequest, type BridgeOrderView, type BridgeStatus, type BridgeView,
 } from '../api/twsBridge';
+import { tvApi } from '../api/tv';
 
 // The TWS bridge on this browser (2026-11-26): its settings, the bridge's status, and what a
 // setup row can ask of it — place the operator's bracket order (/order), follow it (/orders)
@@ -25,6 +26,15 @@ import {
 // "stop"): the same bracket with a buy that waits above the alert's price and fills only if the
 // price gets there; IB cancels it by itself after the bridge's entryValidSec. It shares Buy's
 // lock, click state and error handling.
+//
+// 2026-11-28, the automation: the bridge buys every strong POP of its hour by itself. The
+// controller reads /auto with the status poll (every 5 s; every 2 s while it is on or watching
+// and its hour is open), switches its mode, and links it to the server's alert stream: a token
+// from the server (POST /api/tv/feed-token), handed straight to the bridge's /auto/feed and kept
+// nowhere. It links when the operator picks Watch only or On and the bridge has no link, and
+// again by itself (at most once a minute) while the mode is not off and the bridge reports no
+// link or a refused one. An older bridge has no /auto (404): it is asked again only every 30 s,
+// or at once when the bridge's version changes.
 
 export interface TwsBridgeSettings {
   enabled: boolean;   // the feature, on this browser
@@ -71,9 +81,13 @@ export interface BridgeTiming {
   // A Buy click that got no answer in time: after this long, an /orders answer without an order
   // for the alert means none was placed (the bridge's own waits are a few seconds).
   unknownSettleMs: number;
+  autoFastEveryMs: number;   // /auto while the automation is on or watching and its hour is open (else with /status)
+  autoMissingMs: number;     // /auto again after a 404 (an older bridge): no sooner than this
+  relinkEveryMs: number;     // a link to the server's alerts that the operator did not click for: at most this often
 }
 const TIMING: BridgeTiming = {
   statusEveryMs: 5_000, followEveryMs: 2_000, followMs: 60_000, noteMs: 12_000, unknownSettleMs: 20_000,
+  autoFastEveryMs: 2_000, autoMissingMs: 30_000, relinkEveryMs: 60_000,
 };
 
 // What is being asked of an order right now. One thing at a time per order: while a call is in
@@ -106,6 +120,17 @@ export interface TwsBridgeState {
   notes: Record<string, string>;
   // by order id: the call in flight for that order
   busy: Record<number, OrderAction>;
+  // The automation (2026-11-28). `auto`: the last /auto answer; null before it, after a failure
+  // of /status, and on a bridge without it (`autoMissing`, its 404).
+  auto: AutoStatus | null;
+  autoMissing: boolean;
+  // /auto failed in another way (no answer, an answer of another shape); the last answer stays.
+  autoFailure: string | null;
+  // the mode a switch is being made to, and why the last switch did not take
+  autoBusy: AutoMode | null;
+  autoError: string | null;
+  // why the last link to the server's alerts failed (the server's side, or the bridge's)
+  linkError: string | null;
 }
 
 export interface BridgeEnv {
@@ -149,12 +174,27 @@ export class TwsBridgeController {
   // One click = one call, for Cancel, Chase and Sell too: an order's id is in here while a call
   // for it is in flight.
   private readonly inFlight = new Map<number, OrderAction>();
+  // The automation's /auto: one call at a time (a refresh asked for meanwhile runs after it); the
+  // 2 s round's timer; after a 404, when to ask again and the bridge version that answered it; a
+  // count that goes up with each mode switch, so an answer from before the switch is dropped.
+  private autoLoading = false;
+  private autoAgain = false;
+  private autoTimer: Timer | null = null;
+  private autoRetryAt = 0;
+  private autoMissingVersion: string | null = null;
+  private autoGen = 0;
+  private lastVersion: string | null = null;
+  // The link to the server's alerts: the one in flight (a click and the background share it) and
+  // when the last one was tried.
+  private linking: Promise<string | null> | null = null;
+  private linkTriedAt = 0;
 
   constructor(env: BridgeEnv) {
     this.env = env;
     this.t = { ...TIMING, ...env.timing };
     this.state = {
       settings: env.load(), status: null, failure: null, orders: [], clicks: {}, notes: {}, busy: {},
+      auto: null, autoMissing: false, autoFailure: null, autoBusy: null, autoError: null, linkError: null,
     };
   }
 
@@ -218,8 +258,17 @@ export class TwsBridgeController {
     this.epoch += 1;
     if (this.pollTimer != null) clearInterval(this.pollTimer);
     this.pollTimer = null;
+    if (this.autoTimer != null) clearTimeout(this.autoTimer);
+    this.autoTimer = null;
+    this.autoRetryAt = 0;
+    this.linkTriedAt = 0;
+    this.lastVersion = null;
     this.ordersSig = '';
-    if (this.state.status != null || this.state.failure != null) this.set({ status: null, failure: null });
+    const st = this.state;
+    if (st.status != null || st.failure != null || st.auto != null || st.autoMissing || st.autoFailure != null
+      || st.autoError != null || st.linkError != null) {
+      this.set({ status: null, failure: null, auto: null, autoMissing: false, autoFailure: null, autoError: null, linkError: null });
+    }
     if (key == null) return;
     this.pollTimer = setInterval(() => { void this.poll(); }, this.t.statusEveryMs);
     void this.poll();
@@ -242,8 +291,18 @@ export class TwsBridgeController {
         this.ordersSig = sig;
         void this.loadOrders();
       }
+      // The automation, with the status: unless its 2 s round is on (it then asks by itself). A
+      // bridge that answered 404 and has since been restarted as another version is asked at once.
+      this.lastVersion = status.version;
+      if (this.state.autoMissing && status.version !== this.autoMissingVersion) this.autoRetryAt = 0;
+      if (this.autoTimer == null) void this.loadAuto(false);
     } catch (err) {
-      if (epoch === this.epoch) this.set({ status: null, failure: toBridgeFailure(err) });
+      // The bridge is not reachable: the panel shows the status line alone. What /auto said is
+      // dropped, so a bridge that comes back (perhaps a newer one) is asked afresh.
+      if (epoch === this.epoch) {
+        this.autoRetryAt = 0;
+        this.set({ status: null, failure: toBridgeFailure(err), auto: null, autoMissing: false, autoFailure: null });
+      }
     } finally {
       this.polling = false;
       if (this.pollAgain) {
@@ -472,6 +531,142 @@ export class TwsBridgeController {
       void this.poll();
     }
   };
+
+  // ------------------------------------------------------------- the automation (2026-11-28)
+
+  // One /auto call. `refresh`: asked for by a switch (run after the call in flight, if there is
+  // one); otherwise a call that comes while one is in flight is dropped (the next round asks).
+  // After a 404 nothing is asked before autoRetryAt.
+  private async loadAuto(refresh: boolean): Promise<void> {
+    if (this.pollKey == null || !this.env.visible()) return;
+    if (this.autoLoading) {
+      if (refresh) this.autoAgain = true;
+      return;
+    }
+    if (this.state.autoMissing && Date.now() < this.autoRetryAt) return;
+    this.autoLoading = true;
+    const epoch = this.epoch;
+    const gen = this.autoGen;
+    try {
+      const auto = await bridgeGetAuto(this.conn());
+      if (epoch !== this.epoch || gen !== this.autoGen) return;
+      this.set({ auto, autoMissing: false, autoFailure: null });
+      this.relinkIfNeeded(auto);
+    } catch (err) {
+      if (epoch !== this.epoch || gen !== this.autoGen) return;
+      const f = toBridgeFailure(err);
+      if (bridgeAutoMissing(f)) {
+        // An older bridge: one line in the panel, and /auto again in 30 s at the soonest.
+        this.autoRetryAt = Date.now() + this.t.autoMissingMs;
+        this.autoMissingVersion = this.lastVersion;
+        this.set({ auto: null, autoMissing: true, autoFailure: null });
+      } else {
+        this.set({ autoFailure: f.message });
+      }
+    } finally {
+      this.autoLoading = false;
+      if (this.autoAgain) {
+        this.autoAgain = false;
+        void this.loadAuto(false);
+      } else {
+        this.autoFast();
+      }
+    }
+  }
+
+  // Is there a reason to ask /auto every 2 s? It is on or watching, and its hour is open: that is
+  // when it decides.
+  private wantsAutoFast(): boolean {
+    const a = this.state.auto;
+    return a != null && a.mode !== 'off' && a.window.open;
+  }
+
+  // The 2 s round: one /auto call, then the next while there is still a reason. It rests while the
+  // tab is hidden or no sidebar is on screen (the status poll and wake start it again).
+  private autoFast(): void {
+    if (this.autoTimer != null || !this.wantsAutoFast()) return;
+    this.autoTimer = setTimeout(() => {
+      this.autoTimer = null;
+      if (this.pollKey == null || !this.env.visible() || !this.wantsAutoFast()) return;
+      void this.loadAuto(false);
+    }, this.t.autoFastEveryMs);
+  }
+
+  // The bridge is on or watching with no link to the server's alerts, or with one the server
+  // refused (an expired token): link it again, by itself, at most once a minute.
+  private relinkIfNeeded(a: AutoStatus): void {
+    if (a.mode === 'off' || this.state.autoBusy != null || this.linking != null) return;
+    if (a.feed.paired && a.feed.state !== 'unauthorized') return;
+    if (Date.now() - this.linkTriedAt < this.t.relinkEveryMs) return;
+    void this.link().then((failed) => { if (failed == null) void this.loadAuto(true); });
+  }
+
+  // Links the bridge to the server's alert stream: a token from the server (the signed-in user's
+  // own), handed straight to the bridge's /auto/feed with this page's origin. The token lives in
+  // this function alone. Answers null when it took, or the line the panel shows.
+  private link(): Promise<string | null> {
+    if (this.linking != null) return this.linking;
+    this.linkTriedAt = Date.now();
+    const epoch = this.epoch;
+    const conn = this.conn();
+    const failed = (text: string): string => {
+      if (epoch === this.epoch) this.set({ linkError: text });
+      return text;
+    };
+    this.linking = (async (): Promise<string | null> => {
+      let token: string;
+      try {
+        token = (await tvApi.feedToken()).token;
+      } catch (err) {
+        return failed(serverLinkFailure(err));
+      }
+      try {
+        await bridgePairFeed(conn, { server: window.location.origin, token });
+      } catch (err) {
+        return failed(`The helper could not connect to the server's alerts: ${toBridgeFailure(err).message}`);
+      }
+      if (epoch === this.epoch) this.set({ linkError: null });
+      return null;
+    })().finally(() => { this.linking = null; });
+    return this.linking;
+  }
+
+  // The operator picked a mode. Watch only and On need the server's alerts: when the bridge has
+  // no link to them (or a refused one) the link comes first, and if it fails the mode stays as
+  // the bridge has it and the panel says why. Then /auto takes the mode, and its answer is shown.
+  setAutoMode = (mode: AutoMode): void => {
+    if (!this.state.settings.enabled || this.pollKey == null || this.state.autoBusy != null) return;
+    const epoch = this.epoch;
+    this.autoGen += 1;   // an /auto answer from before the switch is dropped
+    this.set({ autoBusy: mode, autoError: null, linkError: null });
+    void (async () => {
+      try {
+        const a = this.state.auto;
+        if (mode !== 'off' && (a == null || !a.feed.paired || a.feed.state === 'unauthorized')) {
+          if ((await this.link()) != null) return;
+        }
+        const next = await bridgeSetAutoMode(this.conn(), mode);
+        if (epoch !== this.epoch) return;
+        this.autoGen += 1;
+        this.set({ auto: next, autoMissing: false, autoFailure: null });
+      } catch (err) {
+        if (epoch === this.epoch) this.set({ autoError: toBridgeFailure(err).message });
+      } finally {
+        this.set({ autoBusy: null });
+        void this.loadAuto(true);
+      }
+    })();
+  };
+}
+
+// Why the server gave no token for the link, in one line. An older server has no such call and
+// answers 404 `{ error: 'Not found' }`.
+function serverLinkFailure(err: unknown): string {
+  const msg = err instanceof Error ? err.message : '';
+  if (msg === 'Not found') return "The server cannot connect the helper to its alerts yet (it is an older version): nothing was changed.";
+  if (err instanceof SyntaxError) return 'The server gave no readable answer about the alerts for the helper: nothing was changed.';
+  if (err instanceof TypeError) return 'No answer from the server about the alerts for the helper: nothing was changed.';
+  return `The server did not connect the helper to its alerts (${msg || 'no reason given'}): nothing was changed.`;
 }
 
 // The page's one controller.
@@ -610,6 +805,7 @@ export function bridgeCard(
       order_id: fresh.order_id, placed_at: new Date(click?.at ?? now).toISOString(),
       text: bridgeSentText(fresh), tone: 'working', error: null, note: fresh.note ?? null, loose: false,
       cancel: bridgeOrderCancellable(fresh) ? 'Cancel' : null, chase: false, sell: null,
+      auto: false, watch: null,   // placed by a click on this page
       busy: tws.busy[fresh.order_id] ?? null,
     };
   } else if (rec != null && !(error != null && ended && rec.error != null)) {
@@ -632,6 +828,8 @@ export interface TwsBridge extends TwsBridgeState {
   sell: (orderId: number, ticker: string) => void;
   halt: (halted: boolean) => Promise<string | null>;
   note: (ticker: string, text: string) => void;
+  // the automation's mode: links it to the server's alerts first when it needs that
+  setAutoMode: (mode: AutoMode) => void;
 }
 
 export function useTwsBridge(): TwsBridge {
@@ -659,5 +857,6 @@ export function useTwsBridge(): TwsBridge {
     ...state, active, view,
     update: controller.update, buy: controller.buy, cancel: controller.cancel,
     chase: controller.chase, sell: controller.sell, halt: controller.halt, note: controller.note,
+    setAutoMode: controller.setAutoMode,
   };
 }

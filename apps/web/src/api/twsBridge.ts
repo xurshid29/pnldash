@@ -9,6 +9,12 @@
 // The bridge also has /focus (make TWS's linked windows show a ticker). The page used it for a
 // per-row "TWS" button and a row click that TWS followed; both were removed on 2026-11-27 at the
 // operator's request, and this client's focus() with them.
+//
+// 2026-11-28, the automation: the bridge itself buys every strong POP in one hour of the day
+// with a waiting buy and sells by itself (its /auto). The page only reads it, switches its mode
+// (off / watch only / on) and links it to the server's alert stream (/auto/feed: the server's
+// address and a short-lived token the server gives the signed-in user). That token goes from
+// the server's answer straight into the one /auto/feed call: never stored, logged or shown.
 
 export const BRIDGE_DEFAULT_URL = 'http://127.0.0.1:8765';
 
@@ -216,6 +222,87 @@ export interface BridgeOrderRecord {
   // The last warning or notice about it (at first: why the price came from the alert). A stop
   // entry that IB cancelled at its time with nothing filled: "expired unfilled at HH:MM:SS New York".
   note: string | null;
+  // Since the automation (2026-11-28); cleanRecord fills both in for an older bridge ("click", null).
+  // Who placed it: a click on a card, or the bridge's automation by itself.
+  source?: 'click' | 'auto';
+  // The automation's exit watch on one of its own orders: it has seen the take-profit crossed
+  // without a fill, or the stop due, and is selling at the bid. Null otherwise.
+  watch?: BridgeExitWatch | null;
+}
+
+export interface BridgeExitWatch {
+  state: 'tp_crossed' | 'stop_due';
+  since: string;                   // ISO
+  sells: number;                   // sells it has sent for it
+  last_error: string | null;       // TWS's or the bridge's last word against one of them
+}
+
+// ---------------------------------------------------------------- the automation (2026-11-28)
+
+// watch = a dry run: it decides and logs, and places nothing.
+export type AutoMode = 'off' | 'watch' | 'on';
+
+// Why it would place no order right now (null = it would place the next strong POP).
+export type AutoBlocked =
+  | 'off' | 'watch' | 'disabled' | 'halted' | 'tws_down' | 'tws_offline' | 'not_paper'
+  | 'no_feed' | 'outside_hours' | 'day_full' | 'no_slot';
+
+export type AutoFeedState = 'off' | 'connecting' | 'connected' | 'retrying' | 'unauthorized';
+
+export interface AutoRule {
+  stage: 'pop';
+  strong_only: boolean;
+  amount_usd: number;
+  budget_usd: number;
+  slots: number;
+  max_trades: number;
+  max_orders: number;
+  entry_stop_pct: number;
+  entry_limit_pct: number;
+  entry_valid_sec: number;
+  take_profit_pct: number;
+  stop_pct: number;
+  stop_limit_offset_pct: number;
+  max_alert_age_sec: number;
+  paper_only: boolean;
+  exit_watch: { tp_grace_ms: number; stop_grace_ms: number; resell_ms: number };
+}
+
+export interface AutoStatus {
+  mode: AutoMode;
+  blocked: AutoBlocked | null;
+  blocked_text: string | null;     // the same in plain words, from the bridge: shown as is
+  // "04:00", "05:00" in New York; start_at / end_at are today's instants (ISO), what the page shows
+  window: { start: string; end: string; tz: 'America/New_York'; start_at: string; end_at: string; open: boolean };
+  rule: AutoRule;
+  feed: {
+    paired: boolean;
+    server: string | null;
+    state: AutoFeedState;
+    connected_at: string | null;
+    last_event_at: string | null;
+    error: string | null;
+  };
+  today: { date: string; strong_pops: number; weak_pops: number; placed: number; trades: number; waiting: number; held: number; slots_free: number };
+  decisions: AutoDecision[];       // today's, newest first, at most 100
+}
+
+export type AutoAction = 'placed' | 'would_place' | 'skipped' | 'failed';
+
+export interface AutoDecision {
+  at: string;                      // ISO, when the bridge decided
+  alert_id: string;
+  alert_at: string;
+  ticker: string;
+  price: number | null;
+  vol_x: number | null;
+  rvol1: number | null;
+  mode: AutoMode;
+  action: AutoAction;
+  reason: string;                  // a code
+  text: string;                    // plain words from the bridge: shown as is
+  order_id: number | null;
+  plan: { trigger: number; limit: number; qty: number; take_profit: number | null; stop: number | null; good_until: string | null } | null;
 }
 
 // Every failure in one shape. `status` is the HTTP status, 0 when the bridge gave no answer;
@@ -396,11 +483,70 @@ function cleanRecord(o: BridgeOrderRecord): BridgeOrderRecord {
     exit,
     loose_exit: raw.loose_exit === true,
     note: typeof raw.note === 'string' ? raw.note : null,
+    source: raw.source === 'auto' ? 'auto' : 'click',
+    watch: isWatch(raw.watch)
+      ? {
+        state: raw.watch.state, since: typeof raw.watch.since === 'string' ? raw.watch.since : '',
+        sells: isNum(raw.watch.sells) ? raw.watch.sells : 0,
+        last_error: typeof raw.watch.last_error === 'string' && raw.watch.last_error !== '' ? raw.watch.last_error : null,
+      }
+      : null,
   };
+}
+function isWatch(w: unknown): w is Obj & { state: BridgeExitWatch['state'] } {
+  return isObj(w) && (w.state === 'tp_crossed' || w.state === 'stop_due');
 }
 function asOrders(d: unknown): BridgeOrderRecord[] {
   if (!Array.isArray(d)) throw notTheBridge('/orders');
   return d.filter(isRecord).map(cleanRecord);
+}
+
+const AUTO_MODES = new Set<unknown>(['off', 'watch', 'on']);
+const AUTO_ACTIONS = new Set<unknown>(['placed', 'would_place', 'skipped', 'failed']);
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const numOr = (v: unknown): number | null => (isNum(v) ? v : null);
+
+// A decision the list can print (its time, ticker, action and text); anything else is dropped.
+function asDecision(x: unknown): AutoDecision | null {
+  if (!isObj(x) || typeof x.at !== 'string' || typeof x.ticker !== 'string' || !AUTO_ACTIONS.has(x.action) || typeof x.text !== 'string') return null;
+  return {
+    ...(x as unknown as AutoDecision),
+    alert_id: typeof x.alert_id === 'string' ? x.alert_id : '',
+    alert_at: typeof x.alert_at === 'string' ? x.alert_at : '',
+    price: numOr(x.price), vol_x: numOr(x.vol_x), rvol1: numOr(x.rvol1),
+    mode: AUTO_MODES.has(x.mode) ? (x.mode as AutoMode) : 'off',
+    reason: typeof x.reason === 'string' ? x.reason : '',
+    order_id: numOr(x.order_id),
+    plan: isObj(x.plan) ? (x.plan as AutoDecision['plan']) : null,
+  };
+}
+
+// /auto's answer, with every field the panel prints checked: one of another shape (another
+// version of the bridge in the making) is a `bad_answer` failure, never a crash in the panel.
+function autoShaped(d: Obj): boolean {
+  return AUTO_MODES.has(d.mode) && (d.blocked == null || typeof d.blocked === 'string')
+    && isObj(d.window) && typeof d.window.start_at === 'string' && typeof d.window.end_at === 'string' && typeof d.window.open === 'boolean'
+    && isObj(d.rule) && typeof d.rule.strong_only === 'boolean'
+    && [d.rule.amount_usd, d.rule.budget_usd, d.rule.slots, d.rule.max_trades, d.rule.entry_stop_pct, d.rule.entry_valid_sec,
+      d.rule.take_profit_pct, d.rule.stop_pct].every((v) => isNum(v))
+    && isObj(d.feed) && typeof d.feed.paired === 'boolean' && typeof d.feed.state === 'string'
+    && isObj(d.today) && [d.today.strong_pops, d.today.weak_pops, d.today.trades, d.today.waiting, d.today.held].every((v) => isNum(v))
+    && Array.isArray(d.decisions);
+}
+function asAuto(d: unknown): AutoStatus {
+  if (!isObj(d) || !autoShaped(d)) throw notTheBridge('/auto');
+  const feed = d.feed as Obj;
+  return {
+    ...(d as unknown as AutoStatus),
+    blocked: (strOrNull(d.blocked) as AutoBlocked | null),
+    blocked_text: typeof d.blocked_text === 'string' && d.blocked_text !== '' ? d.blocked_text : null,
+    feed: {
+      ...(feed as unknown as AutoStatus['feed']),
+      server: strOrNull(feed.server), connected_at: strOrNull(feed.connected_at),
+      last_event_at: strOrNull(feed.last_event_at), error: typeof feed.error === 'string' && feed.error !== '' ? feed.error : null,
+    },
+    decisions: (d.decisions as unknown[]).map(asDecision).filter((x): x is AutoDecision => x != null).slice(0, 100),
+  };
 }
 
 function asChase(d: unknown): BridgeChase {
@@ -431,6 +577,33 @@ export const twsBridge = {
   sell: async (conn: BridgeConn, orderId: number) => asSell(await call<unknown>(conn, 'POST', '/sell', { order_id: orderId }, SELL_MS)),
   halt: (conn: BridgeConn, halted: boolean) => call<{ halted: boolean }>(conn, 'POST', '/halt', { halted }, SHORT_MS),
 };
+
+// The automation's state: its mode, why it would place nothing now, its rule, the alert stream
+// and today's decisions. An older bridge answers 404 `not_found` (bridgeAutoMissing).
+export async function bridgeGetAuto(conn: BridgeConn): Promise<AutoStatus> {
+  return asAuto(await call<unknown>(conn, 'GET', '/auto', undefined, SHORT_MS));
+}
+
+// Switches it: off, watch only (decides and logs, places nothing) or on. Answers the new state.
+export async function bridgeSetAutoMode(conn: BridgeConn, mode: AutoMode): Promise<AutoStatus> {
+  return asAuto(await call<unknown>(conn, 'POST', '/auto', { mode }, SHORT_MS));
+}
+
+// Links the bridge to the server's alert stream: the server's address (the page's own origin)
+// and the token the server just gave. The token is in this one call's body and nowhere else;
+// the errors thrown here never carry it. The bridge may check it against the server first, so
+// it gets longer than the short calls.
+const FEED_MS = 6000;
+export async function bridgePairFeed(conn: BridgeConn, link: { server: string; token: string }): Promise<{ paired: true; server: string }> {
+  const d = await call<unknown>(conn, 'POST', '/auto/feed', { server: link.server, token: link.token }, FEED_MS);
+  if (isObj(d) && d.paired === true) return { paired: true, server: typeof d.server === 'string' ? d.server : link.server };
+  throw notTheBridge('/auto/feed');
+}
+
+// An older bridge, without the automation: it has no /auto.
+export function bridgeAutoMissing(f: BridgeFailure): boolean {
+  return f.code === 'not_found' || f.status === 404;
+}
 
 // ---------------------------------------------------------------- what the page prints
 
@@ -496,6 +669,16 @@ function operatorClock(ms: number): string {
 function clockOf(iso: string | null | undefined): string | null {
   const ms = iso != null ? Date.parse(iso) : Number.NaN;
   return Number.isFinite(ms) ? operatorClock(ms) : null;
+}
+
+// An ISO time from the bridge on the operator's clock: "15:06:30", or "15:06" with
+// `seconds` false (the automation's hour). Null when there is none to read.
+export function bridgeClock(iso: string | null | undefined, seconds = true): string | null {
+  if (seconds) return clockOf(iso);
+  const ms = iso != null ? Date.parse(iso) : Number.NaN;
+  return Number.isFinite(ms)
+    ? new Date(ms).toLocaleTimeString('en-GB', { timeZone: OPERATOR_TZ, hour: '2-digit', minute: '2-digit', hour12: false })
+    : null;
 }
 
 // Dollars as the bridge writes them, without needless cents: "$400", "$412.50".
@@ -612,6 +795,12 @@ export interface BridgeOrderView {
   // Shares held: "Sell", "Sell 40" (not all of the order: a part fill, or part already sold), and
   // "Sell lower" while a sell is working. `lower` tells the two kinds of click apart.
   sell: { label: string; lower: boolean } | null;
+  // The bridge's automation placed it (2026-11-28): the line gets a small "auto" tag. Its
+  // buttons are a clicked order's.
+  auto: boolean;
+  // The automation's exit watch while the order still holds shares: "take-profit crossed, selling
+  // at the bid" / "stop due, selling at the bid", and its last error if it has one.
+  watch: { text: string; error: string | null } | null;
 }
 
 // The line of one order:
@@ -729,6 +918,11 @@ export function bridgeOrderView(o: BridgeOrderRecord, settings: Pick<BridgeOrder
   }
 
   const maxChases = settings?.maxChases ?? 0;
+  // The exit watch says what it is doing only while there is something left to sell.
+  const w = o.watch ?? null;
+  const watch = w != null && (!knowsHeld || held > 0)
+    ? { text: w.state === 'tp_crossed' ? 'take-profit crossed, selling at the bid' : 'stop due, selling at the bid', error: w.last_error }
+    : null;
   return {
     text,
     tone,
@@ -738,6 +932,8 @@ export function bridgeOrderView(o: BridgeOrderRecord, settings: Pick<BridgeOrder
     cancel: bridgeOrderCancellable(o) ? (filled > 0 ? 'Cancel the rest' : 'Cancel') : null,
     chase: !stopEntry && !done && !cancelling && filled < qty && maxChases > 0 && chases < maxChases,
     sell: held > 0 ? { lower: exitWorking, label: exitWorking ? 'Sell lower' : held === qty ? 'Sell' : `Sell ${held}` } : null,
+    auto: o.source === 'auto',
+    watch,
   };
 }
 
@@ -747,9 +943,10 @@ export function bridgeOrderText(o: BridgeOrderRecord): string {
 }
 
 // Does the page have a reason to ask /orders often about this order? While the buy is working,
-// and while it holds shares with a sell working.
+// and while it holds shares with a sell working (a Sell click's, or the automation's exit watch).
 export function bridgeOrderBusy(o: BridgeOrderRecord): boolean {
-  return !bridgeOrderDone(o.status) || ((o.held_qty ?? 0) > 0 && o.exit != null && !bridgeOrderDone(o.exit.status));
+  const held = (o.held_qty ?? 0) > 0;
+  return !bridgeOrderDone(o.status) || (held && o.exit != null && !bridgeOrderDone(o.exit.status)) || (held && o.watch != null);
 }
 
 // …and a reason to ask now and then: it is busy, it holds shares (its exits in TWS can fill at

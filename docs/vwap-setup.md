@@ -637,6 +637,8 @@ TradingView servers                                   pnldash droplet
     (TradingView cancels requests that take over ~3 s).
   - The body is text/plain for the script's `alert()` text, or JSON, which the
     global parser has already turned into an object.
+- **`GET /api/tv/feed`** and **`POST /api/tv/feed-token`** (2026-11-28): the read-only
+  stream of every delivered setup for the operator's local TWS bridge, and its token. §22.11.
 - **`GET /api/tv/watchlist[?days=90&min_chg=30&recent_days=5&recent_min_chg=20]`** (JWT): today's Momentum
   names first, then every name that hit ≥ `min_chg`% on our screen in the last `days` days (repeat runners),
   and every name ≥ `recent_min_chg`% in the last `recent_days` calendar days (≈ 3 sessions, the script's own
@@ -3560,3 +3562,44 @@ each of the 6 POPs to the percent (for example 11-27 10:21: 73,209% and 24,982%)
 the two implementations field for field, 22 of 22 one-line changes caught (43 self-test lines).
 `verify-tv-setups.ts` 1,001 checks. Not exercised: the readings in the pre-market (the MCP runs
 regular hours only) and how deep the alert's own history is.
+
+### 22.11 The setup feed, and the POP automation that listens to it (server + bridge, 2026-11-28)
+
+The operator asked for the POP trade to be automated: every yellow POP between 14:00 and 15:00
+their time (04:00–05:00 New York), the waiting buy 5% above the alert (§ "Buy if ≥" of the
+bridge), $400 each, 5 a day, take-profit +20%, stop −10%, and "some background jobs" that sell
+when the price passes the take-profit or the stop without filling it. The automation itself lives
+in the local TWS bridge (`tools/tws-bridge`, its README section "Automation"; `CLAUDE.md` has the
+summary). Orders still never touch this server. What the server gained is the one thing the
+bridge needs to work with no browser open: a way to hear the setups.
+
+**`GET /api/tv/feed[?since=<ISO>]`** (`services/tv-feed.ts`): a Server-Sent-Events stream of
+every setup `deliverTvSetup` handles, whatever its mode (announced, quiet or logged), each as
+
+    event: setup
+    data: {"id": "<the alert's id>", "ticker", "at", "stage", "price", "mode", "why", "setup": {…}}
+
+`id` is the id the dashboard's alert carries (the bridge's one-order-per-alert rule goes by it, so
+a card and the automation mean the same alert), `setup` the alert's own `setup` object (`weak`,
+`vol_x`, `tv_rv1`, …), `mode` / `why` the gate's verdict. On connect it sends `hello`, then
+replays the kept setups newer than `since` (none given: the last 2 minutes; at most the last 10,
+which is all that is kept, in memory), then the live ones, with a comment line every 15 s.
+A message the gate drops as a duplicate or a flood never reaches `deliverTvSetup` and so never
+reaches the feed. `deploy/nginx.conf` gives the path the dashboard stream's unbuffered settings.
+
+**Its token.** `POST /api/tv/feed-token` (a logged-in user) answers `{ token, expires_at }`: a
+JWT on the same secret whose payload is a scope alone (`tv_feed`), no user, good for 30 days.
+`authService.verifyFeedToken` takes only that; `verifyToken`, the login check, now refuses any
+token that carries a scope, so the feed's token opens the feed and nothing else. The dashboard
+asks for one when the operator switches the automation to Watch only or On and hands it to the
+bridge on `127.0.0.1`; the bridge sends it as `Authorization: Bearer`. There is no list to
+revoke one from (changing `JWT_SECRET` ends them, and every login).
+
+`npx tsx scripts/verify-tv-feed.ts` (39 checks, no database, no network) covers the token's
+separation from a login, the buffer, the replay and the stream's exact text.
+
+**What the rule is not.** It was measured before it was built (`pop_entry_study.py`, the
+README): over the whole day it is about break-even before costs, and its own hour has too few
+cases in our bars to judge. The paper run is its measurement. The rows to grade it with are the
+POPs' own (`weak`, `vol_x`, `tv_rv1`, `on_screen`) against the bridge's log (`auto_decision`,
+`fill`, `auto_sell`).

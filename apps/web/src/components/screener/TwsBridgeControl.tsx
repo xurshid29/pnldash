@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import { Button, Checkbox, Divider, Input, Popover, Switch, Typography } from 'antd';
-import { BRIDGE_TONE, bridgeOrigin, bridgeUsd, tokenLooksRight, type BridgeStatus } from '../../api/twsBridge';
+import { Button, Checkbox, Divider, Input, Popconfirm, Popover, Segmented, Switch, Typography } from 'antd';
+import {
+  BRIDGE_TONE, bridgeClock, bridgeOrigin, bridgeUsd, tokenLooksRight,
+  type AutoAction, type AutoMode, type AutoStatus, type BridgeStatus, type BridgeTone,
+} from '../../api/twsBridge';
 import type { TwsBridge } from '../../hooks/useTwsBridge';
 
 const { Text } = Typography;
@@ -61,8 +64,169 @@ function orderRows(s: BridgeStatus): Array<[string, string]> {
   ];
 }
 
+// ---------------------------------------------------------------- the automation (2026-11-28)
+// The bridge buys every yellow (not weak) POP of its hour by itself, with a waiting buy, and
+// sells by itself. The panel switches it (Off / Watch only / On), says what it would do now, its
+// rule, today's counts, whether it hears the server's alerts, and what it decided today.
+
+const MODE_WORD: Record<AutoMode, string> = { off: 'Off', watch: 'Watch only', on: 'On' };
+const MODE_OPTIONS = (['off', 'watch', 'on'] as const).map((m) => ({ value: m, label: MODE_WORD[m] }));
+const ACTION_WORD: Record<AutoAction, string> = { placed: 'placed', would_place: 'would place', skipped: 'skipped', failed: 'failed' };
+// placed green, would place blue, skipped the default gray, failed red
+const ACTION_COLOR: Record<AutoAction, string> = { placed: '#95de64', would_place: '#69b1ff', skipped: '#8c8c8c', failed: '#ff4d4f' };
+// Reasons for placing nothing that are part of a normal day, not something to fix.
+const CALM_BLOCKS = new Set<string>(['outside_hours', 'day_full', 'no_slot']);
+
+// "$400", "$2,000"
+function usd(n: number): string {
+  return `$${n.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+}
+
+// Its hour on the operator's clock, from today's instants ("14:00", "15:00"); New York's own
+// times, so marked, if an instant cannot be read.
+function autoHours(a: AutoStatus): { start: string; end: string } {
+  return {
+    start: bridgeClock(a.window.start_at, false) ?? `${a.window.start} New York`,
+    end: bridgeClock(a.window.end_at, false) ?? `${a.window.end} New York`,
+  };
+}
+
+// The confirm before On, from the rule: what it will do, with what, and that it goes on with
+// this page closed.
+function autoConfirmText(a: AutoStatus, s: BridgeStatus): string {
+  const r = a.rule;
+  const h = autoHours(a);
+  const account = r.paper_only || s.paper_only || s.tws.paper ? 'the paper account' : 'your LIVE account';
+  return `The helper will place orders by itself on ${account}: every ${r.strong_only ? 'yellow ' : ''}POP between ${h.start} and ${h.end}, `
+    + `a waiting buy ${r.entry_stop_pct}% above the alert's price (cancelled after ${waitText(r.entry_valid_sec)} if the price does not get there), `
+    + `${usd(r.amount_usd)} each, at most ${r.slots} at a time and ${r.max_trades} trades a day; `
+    + `take-profit +${r.take_profit_pct}%, stop −${r.stop_pct}%. It runs while the helper runs, also with this page closed.`;
+}
+
+// What it would do right now, in one line: the bridge's own reason when it would place nothing.
+function autoNowLine(a: AutoStatus, s: BridgeStatus, busy: AutoMode | null): { text: string; tone: BridgeTone } {
+  if (busy != null) return { text: `Switching to ${MODE_WORD[busy]}…`, tone: 'muted' };
+  if (a.mode === 'off') return { text: a.blocked_text ?? 'Off: the helper places nothing by itself', tone: 'muted' };
+  // Why it would place nothing now, beyond the mode itself.
+  const why = a.blocked != null && a.blocked !== 'off' && a.blocked !== 'watch' ? a.blocked_text ?? a.blocked : null;
+  if (a.mode === 'watch') {
+    return { text: `Watch only: it logs what it would do and places nothing${why != null ? ` · ${why}` : ''}`, tone: 'muted' };
+  }
+  if (why == null) return { text: `On: buying the next ${a.rule.strong_only ? 'yellow ' : ''}POP`, tone: s.tws.paper ? 'ok' : 'danger' };
+  return { text: why, tone: CALM_BLOCKS.has(a.blocked ?? '') ? 'muted' : 'warn' };
+}
+
+// "$400 × 5 = $2,000 · buy if ≥ +5% (5 min) · take-profit +20% · stop −10% · 14:00–15:00"
+function autoRuleLine(a: AutoStatus): string {
+  const r = a.rule;
+  const h = autoHours(a);
+  return `${usd(r.amount_usd)} × ${r.slots} = ${usd(r.budget_usd)} · buy if ≥ +${r.entry_stop_pct}% (${waitText(r.entry_valid_sec)}) · `
+    + `take-profit +${r.take_profit_pct}% · stop −${r.stop_pct}% · ${h.start}–${h.end}`;
+}
+
+// "Today: 2 of 5 trades · 1 waiting · 1 held · 12 yellow and 30 gray POPs seen"
+function autoTodayLine(a: AutoStatus): string {
+  const t = a.today;
+  const n = t.strong_pops + t.weak_pops;
+  const pops = `${t.strong_pops} yellow${t.weak_pops > 0 ? ` and ${t.weak_pops} gray` : ''} POP${n === 1 ? '' : 's'} seen`;
+  return `Today: ${t.trades} of ${a.rule.max_trades} trades · ${t.waiting} waiting · ${t.held} held · ${pops}`;
+}
+
+// Whether the helper hears the server's alerts.
+function autoFeedLine(a: AutoStatus): { text: string; tone: BridgeTone } {
+  const f = a.feed;
+  if (!f.paired) {
+    return a.mode === 'off'
+      ? { text: 'Alerts: not connected to the server (it connects when you pick Watch only or On)', tone: 'muted' }
+      : { text: 'Alerts: not connected to the server yet', tone: 'warn' };
+  }
+  switch (f.state) {
+    case 'connected': {
+      const last = bridgeClock(f.last_event_at) ?? bridgeClock(f.connected_at);
+      return { text: `Alerts: connected${last != null ? ` · last heard ${last}` : ''}`, tone: 'ok' };
+    }
+    case 'connecting':
+      return { text: 'Alerts: connecting…', tone: 'muted' };
+    case 'retrying':
+      return { text: `Alerts: not connected: ${f.error ?? 'no answer from the server'} · trying again`, tone: 'warn' };
+    case 'unauthorized':
+      return { text: `Alerts: not connected: ${f.error ?? 'the server refused the helper'}${a.mode !== 'off' ? ' · asking the server again' : ''}`, tone: 'warn' };
+    case 'off':
+      return { text: a.mode === 'off' ? 'Alerts: not listening while it is off' : 'Alerts: not connected', tone: a.mode === 'off' ? 'muted' : 'warn' };
+    default:
+      return { text: `Alerts: ${String(f.state)}`, tone: 'muted' };
+  }
+}
+
+function AutomationBlock({ bridge, status }: { bridge: TwsBridge; status: BridgeStatus }) {
+  const { auto, autoMissing, autoFailure, autoBusy, autoError, linkError } = bridge;
+  // The confirm before On: opened by picking On, closed by its buttons or a click elsewhere.
+  const [confirmOn, setConfirmOn] = useState(false);
+  const head = <span style={{ fontWeight: 600 }}>Automation</span>;
+  const line = (text: string, tone: BridgeTone) => <div style={{ fontSize: 11, color: BRIDGE_TONE[tone] }}>{text}</div>;
+
+  // An older bridge: one line, nothing else.
+  if (autoMissing) return <div>{head}{line('This helper version has no automation: restart it from the updated folder', 'warn')}</div>;
+  if (auto == null) {
+    return <div>{head}{autoFailure != null ? line(`No answer from the helper about it: ${autoFailure}`, 'warn') : line('checking…', 'muted')}</div>;
+  }
+
+  const choose = (m: AutoMode) => {
+    if (m === auto.mode) return;
+    if (m === 'on') { setConfirmOn(true); return; }
+    setConfirmOn(false);
+    bridge.setAutoMode(m);
+  };
+  const now = autoNowLine(auto, status, autoBusy);
+  const feed = autoFeedLine(auto);
+  const live = !(auto.rule.paper_only || status.paper_only || status.tws.paper);
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {head}
+        <Popconfirm
+          open={confirmOn}
+          onOpenChange={(o) => { if (!o) setConfirmOn(false); }}
+          placement="bottomRight"
+          title="Turn the automation on?"
+          description={<div style={{ maxWidth: 290, fontSize: 12 }}>{autoConfirmText(auto, status)}</div>}
+          okText="Turn on"
+          okButtonProps={{ danger: live }}
+          cancelText="Cancel"
+          onConfirm={() => { setConfirmOn(false); bridge.setAutoMode('on'); }}
+          onCancel={() => setConfirmOn(false)}
+        >
+          <span style={{ display: 'inline-block', marginLeft: 'auto' }}>
+            <Segmented<AutoMode> size="small" options={MODE_OPTIONS} value={auto.mode} disabled={autoBusy != null} onChange={choose} />
+          </span>
+        </Popconfirm>
+      </div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: BRIDGE_TONE[now.tone] }}>{now.text}</div>
+      <div style={{ fontSize: 11 }}>{autoRuleLine(auto)}</div>
+      <div style={{ fontSize: 11 }}>{autoTodayLine(auto)}</div>
+      {line(feed.text, feed.tone)}
+      {linkError != null && auto.feed.state !== 'connected' && line(linkError, 'warn')}
+      {autoError != null && line(`The switch did not take: ${autoError}`, 'danger')}
+      {autoFailure != null && line(`No fresh answer from the helper: ${autoFailure}`, 'warn')}
+      {/* Today's decisions, newest first: about 8 rows, then it scrolls. */}
+      <div style={{ maxHeight: 150, overflowY: 'auto', border: '1px solid #303030', borderRadius: 4, padding: '3px 6px', marginTop: 2 }}>
+        {auto.decisions.length === 0
+          ? <div style={{ fontSize: 11, color: '#8c8c8c' }}>Nothing decided yet today</div>
+          : auto.decisions.map((d, i) => (
+            <div key={`${d.at}|${d.alert_id}|${i}`} style={{ fontSize: 11, lineHeight: '16px', padding: '1px 0' }}>
+              <span style={{ color: '#8c8c8c' }}>{bridgeClock(d.at) ?? '—'}</span>{' '}
+              <span style={{ fontWeight: 600 }}>{d.ticker}</span>{' '}
+              <span style={{ color: ACTION_COLOR[d.action], fontWeight: 600 }}>{ACTION_WORD[d.action]}</span>{' '}
+              <span style={{ color: '#bfbfbf' }}>{d.text}</span>
+            </div>
+          ))}
+      </div>
+    </div>
+  );
+}
+
 // The panel behind the "TWS" button: the status, this browser's settings, the bridge's own order
-// settings (read-only), the halt switch and where the token is.
+// settings (read-only), the halt switch, the automation (2026-11-28) and where the token is.
 export function TwsBridgePanel({ bridge }: { bridge: TwsBridge }) {
   const { settings, status, view } = bridge;
   // Drafts: the address and the token are saved when the field is left (or Enter), so a half-typed
@@ -88,8 +252,9 @@ export function TwsBridgePanel({ bridge }: { bridge: TwsBridge }) {
 
   const tokenText = token.trim();
   const label = { fontSize: 11, color: '#8c8c8c', display: 'block', marginBottom: 2 } as const;
+  // With the automation's block the panel can be taller than the screen: it scrolls then.
   return (
-    <div style={{ width: 330, fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div style={{ width: 330, fontSize: 12, display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 'calc(100vh - 120px)', overflowY: 'auto' }}>
       <div style={{ color: settings.enabled ? BRIDGE_TONE[view.tone] : '#8c8c8c', fontWeight: 600 }}>
         {settings.enabled ? view.text : 'Off in this browser.'}
       </div>
@@ -152,6 +317,8 @@ export function TwsBridgePanel({ bridge }: { bridge: TwsBridge }) {
             </Text>
           </div>
           {haltError && <span style={{ fontSize: 11, color: BRIDGE_TONE.danger }}>{haltError}</span>}
+          <Divider style={{ margin: '2px 0' }} />
+          <AutomationBlock bridge={bridge} status={status} />
         </>
       )}
       <Divider style={{ margin: '2px 0' }} />

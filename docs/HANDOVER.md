@@ -15,14 +15,26 @@ v31; the session log has each step since. **The operator's focus since 11-26 is 
 on the paper account through the TWS bridge. What matters now, newest first:
 - **Where things stand (11-28):** the operator runs v49 in both alerts until they paste v50 and
   recreate them; both alerts have the VWAP + BB cross and the EMA / band cross switched off (POP /
-  BACK, TURN and PULLBACK on). They trade POPs on paper with the bridge's buttons. **An automation
-  of the POP trade is specified and on hold** until they say start (next bullet).
-- **The POP automation: specified 11-28, NOT started** ("do not start the implementation for now,
-  I'll tell when to start"). Buy orders 04:00–05:00 New York only, exits left working after; only
-  the yellow POPs; the bridge's stop entry 5% above the alert; take-profit +20%, stop −10%; a job
-  that sells at the bid when the take-profit is crossed unfilled and sells as soon as possible when
-  the stop triggers unfilled; 5 positions of $400 a day; paper first. Spec, what I said about it and
-  the defaults still to confirm: memory `pop_automation_plan.md`; session log 11-28.
+  BACK, TURN and PULLBACK on). They trade POPs on paper with the bridge's buttons, and **the
+  automation of the POP trade is built** (next bullet), off until they switch it on.
+- **The POP automation: built 11-28 at the operator's "yes, lets start", never yet run against a
+  real TWS.** In the bridge (`tools/tws-bridge/src/auto.ts` decides, `src/watch.ts` sells; README
+  "Automation"), switched in the dashboard's TWS panel: Off / Watch only / On (kept in the
+  bridge's `state.json`). Every yellow POP whose alert falls in 04:00–05:00 New York gets the
+  stop entry 5% above the alert, $400, take-profit +20%, stop −10%; at most 5 waiting or held at
+  once ($2,000), 5 filled trades a day, one trade per ticker a day, first come first served, no
+  buy waiting past 05:00, paper accounts only (`auto.paperOnly`, its own lock). The exit watch
+  sells at the bid when the take-profit's price traded without filling it (after 1.5 s, only
+  while the bid is above cost) or the stop is due and has not sold everything (after 1 s, if the
+  bid is still at or under the stop), moving the sell down every 2 s; Off, Watch only and Halt
+  cancel its waiting buys. Known limits (README): a position kept overnight is not on the book
+  after a restart; decisions go one at a time (about half a second each).
+  The bridge hears the alerts through the server's new read-only stream `GET /api/tv/feed`
+  (`docs/vwap-setup.md` §22.11), set up by the dashboard. The four defaults were mine, proposed
+  and accepted with "yes, lets start": first come first served; a slot back when a waiting buy
+  expires; five filled trades a day with no separate loss limit; one trade per ticker. **Agreed
+  plan: one morning on Watch only, then On, on paper for two to three weeks.** The README's
+  points 22–30 are what to look for on those mornings. Memory `pop_automation_plan.md`.
 - **What the measurements say about buying a POP** (`research/ema-vwap/pop_entry_study.py`,
   README; 76 days): bought at the alert it loses; a buy stop 3–5% above the alert is about
   break-even before costs and a loss after a 1%-a-side commission; **the stock's RVol sorts the
@@ -58,10 +70,14 @@ on the paper account through the TWS bridge. What matters now, newest first:
   against a real TWS:** Chase, a stop entry expiring unfilled (what TWS reports at the GTD
   time), a part-filled buy, the clean-up of an exit left on a flat position. The focus step
   (TWS's windows following a row) was removed from the dashboard at their request.
-- **Open, in order:** (1) the operator pastes v50 and recreates both alerts; (2) their paper test
-  of Chase and of a "Buy if ≥" left to expire (README's checklist); (3) `tv_rv1` against `rv1` on the first v50 rows;
-  (4) grade the live POP / BACK rows by `vol_x`, RVol, `on_screen` and hour, and the bridge's log
-  for fills against alerts; (5) the automation, when they say start; (6) older items in the
+- **Open, in order:** (1) the operator restarts the bridge from the updated folder, reloads the
+  dashboard, and runs the automation on Watch only for one pre-market, then On (read the bridge's
+  log with them after each: `auto_decision`, `auto_watch`, `auto_sell`, and the seconds from an
+  alert's time to `placed_at`); (2) they paste v50 and recreate both alerts (not needed by the
+  automation, but each trade then carries its RVol); (3) their paper test of Chase and of a "Buy
+  if ≥" left to expire (README's checklist); (4) `tv_rv1` against `rv1` on the first v50 rows;
+  (5) grade the live POP / BACK rows by `vol_x`, RVol, `on_screen` and hour against the bridge's
+  log, the automation's trades first; (6) older items in the
   session log (the 30s-vs-1m year-line check, 11 watchlist symbols on non-US listings, the
   Postgres image pin, TURN's grading, Finviz's 12-07 layout change).
 - **v48 (11-26) adds a fifth setup in two steps, POP and BACK** (stages `pop` and `back`,

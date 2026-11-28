@@ -6,6 +6,8 @@ import { authMiddleware } from '../middleware/auth.js';
 import { getDb } from '../db/index.js';
 import { poller } from '../services/poller.js';
 import { nasdaqTickerSet } from '../services/edgar.js';
+import { authService } from '../services/auth.js';
+import { addFeedClient, FEED, feedClientCount } from '../services/tv-feed.js';
 import {
   DEFAULT_ANNOUNCED, isWeak, momentumRuleText, parseStageList, parseTvMessage, pastCap, readStoredRules, readStoredStages, storedStages, TV_STAGE_ORDER,
   TvSetupGate, type TvAlertRules,
@@ -117,6 +119,39 @@ router.post('/webhook', express.text({ type: () => true, limit: '16kb' }), async
     console.error(`[tv-setup] delivery failed for ${sig.stage} ${sig.ticker}:`, err instanceof Error ? err.message : err);
     res.status(500).json({ error: 'Delivery failed' });
   }
+});
+
+// POST /api/tv/feed-token — a token for the read-only setup feed below, asked for by a logged-in
+// dashboard user (auth.ts generateFeedToken): 30 days, no user in it, good for GET /api/tv/feed
+// alone. There is no list to revoke one from: changing JWT_SECRET ends them, and every login too.
+router.post('/feed-token', authMiddleware, (_req, res) => {
+  res.json({ data: authService.generateFeedToken() });
+});
+
+// GET /api/tv/feed[?since=<ISO>] — the read-only 📐 setup feed (services/tv-feed.ts): an SSE
+// stream of every setup the webhook delivers, announced, quiet or logged, after a replay of the
+// ones after `since` (none given = the last 2 minutes; at most the last 10). The feed token rides
+// in `Authorization: Bearer …`, or in ?token= for curl. Like the webhook, the route checks its own
+// credential and is not behind authMiddleware: a login token is refused here (verifyFeedToken),
+// and a feed token everywhere else (verifyToken).
+const feedQuerySchema = z.object({
+  since: z.string().datetime({ offset: true }).refine((s) => Number.isFinite(Date.parse(s))).optional(),
+});
+router.get('/feed', (req, res) => {
+  const header = req.headers.authorization;
+  const token = header?.startsWith('Bearer ') ? header.slice(7)
+    : typeof req.query.token === 'string' ? req.query.token : '';
+  if (!token) return res.status(401).json({ error: 'Missing feed token' });
+  try {
+    authService.verifyFeedToken(token);
+  } catch {
+    return res.status(401).json({ error: 'Invalid or expired feed token' });
+  }
+  const parsed = feedQuerySchema.safeParse(req.query);
+  if (!parsed.success) return res.status(400).json({ error: 'since must be an ISO time, e.g. 2026-11-28T14:30:00Z' });
+  if (feedClientCount() >= FEED.max_clients) return res.status(503).json({ error: 'Too many feed clients' });
+  const remove = addFeedClient(res, parsed.data.since ? Date.parse(parsed.data.since) : null);
+  req.on('close', remove);
 });
 
 // GET /api/tv/settings — the 📐 stage switches: which stages are announced
