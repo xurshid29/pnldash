@@ -2,6 +2,10 @@
 config.json
 config.json.tmp
 
+# The run-time state holds the alert feed's token: never commit it either.
+state.json
+state.json.tmp
+
 # One JSONL file per New York trading day.
 logs/
 

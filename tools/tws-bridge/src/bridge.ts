@@ -1,8 +1,8 @@
 import { SecType } from "@stoqey/ib";
 import type { Contract, ContractDetails, Order } from "@stoqey/ib";
 import { isDone, OrderBook } from "./book.js";
-import type { BookLeg, ExitState, OrderRecord, PriceChange } from "./book.js";
-import type { Config, LimitsConfig, OrderConfig } from "./config.js";
+import type { BookLeg, ExitState, OrderRecord, OrderSource, PriceChange } from "./book.js";
+import type { AutoConfig, Config, LimitsConfig, OrderConfig } from "./config.js";
 import { badRequest, BridgeError, errorMessage } from "./errors.js";
 import { describeDisplayGroups, parseContractInfo } from "./groups.js";
 import type { GroupContent, GroupReading } from "./groups.js";
@@ -240,6 +240,72 @@ interface OrderRequest {
   alertAt: string | null;
   alertId: string | null;
   entry: Entry;
+}
+
+/**
+ * Whose order it is, with the settings that go with that. A click is priced from `order` in
+ * config.json and counted against `limits.maxOrdersPerDay`; a buy of the automation is priced
+ * from `auto` and counted against `auto.maxOrdersPerDay`. Everything else (every other rail, the
+ * bracket, the log, the book) is the same for both.
+ */
+interface Profile {
+  source: OrderSource;
+  order: OrderConfig;
+  maxOrdersPerDay: number;
+  /** The automation's own lock: no order on an account that is not a paper one, whatever `paperOnly` says. */
+  paperOnly: boolean;
+  /**
+   * A stop entry of this profile stops waiting no later than this instant, however long
+   * `entryValidSec` is: the end of the automation's hour. Null for a click.
+   */
+  notAfterMs: number | null;
+}
+
+/** One buy of the automation: a waiting buy above the price of the alert it answers. */
+export interface AutoBuy {
+  ticker: string;
+  alertPrice: number;
+  /** The alert's time and id as the server gave them: the id is what one-order-per-alert goes by. */
+  alertAt: string;
+  alertId: string;
+  /** How many seconds the buy waits at most: `auto.entryValidSec`. */
+  validSec: number;
+  /**
+   * The end of the automation's hour: the buy never waits past it. It is an instant, not a
+   * number of seconds, because the order's own time is worked out when it is sent, which is a
+   * moment (a contract lookup, a turn in the line) after it was decided.
+   */
+  notAfterMs: number;
+}
+
+/** A stop entry that could wait less than this is not sent: it would be gone before it could trigger. */
+export const MIN_ENTRY_WAIT_MS = 5000;
+/** After a connection, how long TWS is given to report its open orders and today's fills before a missed expiry is assumed. */
+const SYNC_SETTLE_MS = 5000;
+
+/** Why the automation can place nothing right now: a switch, the connection or the account. */
+export interface AutoBlocker {
+  code: "disabled" | "halted" | "tws_down" | "tws_offline" | "not_paper";
+  text: string;
+}
+
+/** The settings a buy of the automation is planned with: `auto` over the ones a click uses. */
+export function autoOrderConfig(order: OrderConfig, auto: AutoConfig, validSec: number): OrderConfig {
+  return {
+    ...order,
+    amountUsd: auto.amountUsd,
+    entryStopPct: auto.entryStopPct,
+    entryStopLimitPct: auto.entryStopLimitPct,
+    entryValidSec: validSec,
+    takeProfitPct: auto.takeProfitPct,
+    stopPct: auto.stopPct,
+    stopLimitOffsetPct: auto.stopLimitOffsetPct,
+    // A POP carries no stop of its own; were one ever sent along, the automation's stop still rules.
+    useAlertStop: false,
+    // Its hour is before the open: an order that works in regular hours only could never trigger
+    // in it, whatever a click's orders are set to.
+    outsideRth: true,
+  };
 }
 
 export interface BridgeOptions {
@@ -480,6 +546,17 @@ export class Bridge {
   /** Per bracket (its buy's id): it holds nothing and a sell order of its own still works. */
   private readonly flatWatches = new Map<number, FlatWatch>();
   private closed = false;
+  /** When the current connection to TWS came up; null while there is none. */
+  private upSinceMs: number | null = null;
+
+  /**
+   * For the automation's exit watch (`src/watch.ts`): told after anything changed on an order (a
+   * status, a fill, a price), and when the connection to TWS comes or goes. A listener that
+   * throws is logged and goes no further.
+   */
+  onOrderChanged: ((record: OrderRecord) => void) | null = null;
+  onLinkUp: (() => void) | null = null;
+  onLinkDown: (() => void) | null = null;
 
   /** Contract id → ticker, for what the display groups show. A contract id never changes hands. */
   private readonly conidTickers = new Map<number, string>();
@@ -650,7 +727,225 @@ export class Bridge {
 
   /** Today's (New York date) orders, newest first. */
   orders(): OrderRecord[] {
+    this.sweepMissedExpiries();
     return this.book.ordersOn(nyDate(this.clock()));
+  }
+
+  /**
+   * IB cancels a stop entry at its time. When that happens while the bridge is not connected,
+   * TWS never says so: it reports no status for an order that ended in the meantime, and the
+   * buy would read as waiting for the rest of the day (its alert taken, its ticker blocked, one
+   * of the automation's places used). So a stop entry with nothing filled whose time passed
+   * before this connection began, once TWS has had a few seconds to report its open orders and
+   * today's fills, is taken for what it must be: expired. Nothing is sent. It is looked at
+   * whenever the orders are read (the dashboard's poll, a decision of the automation).
+   */
+  private sweepMissedExpiries(): void {
+    const upSince = this.upSinceMs;
+    if (upSince === null || !this.link.isReady()) return;
+    const now = this.clock();
+    if (now - upSince < SYNC_SETTLE_MS) return;
+    for (const record of this.book.all()) {
+      if (record.entry !== "stop" || record.sent.good_until === null || record.filled_qty > 0) continue;
+      if (isDone(record.status) || record.status === "PendingCancel") continue;
+      const untilMs = Date.parse(record.sent.good_until);
+      if (!Number.isFinite(untilMs) || untilMs >= upSince) continue;
+      this.journal.write("entry_expiry_assumed", {
+        order_id: record.order_id,
+        ticker: record.ticker,
+        good_until: record.sent.good_until,
+        connected_at: new Date(upSince).toISOString(),
+      });
+      // The exits first: they went with the buy, and must not read as working beside an ended one.
+      for (const legId of [record.sent.order_ids.take_profit, record.sent.order_ids.stop]) {
+        if (legId !== null) this.onOrderStatus({ orderId: legId, status: "Cancelled", filled: 0, remaining: 0, avgFillPrice: 0 });
+      }
+      this.onOrderStatus({ orderId: record.order_id, status: "Cancelled", filled: 0, remaining: 0, avgFillPrice: 0 });
+    }
+  }
+
+  // ------------------------------------------------------ the automation
+  //
+  // What `src/auto.ts` (which alerts to buy) and `src/watch.ts` (when to sell) ask of the bridge.
+  // A buy of the automation goes down the same road as a click on "Buy if ≥": every rail, the
+  // same bracket, the same log and book. Only its settings (`auto` in config.json), its own
+  // count of the day's orders and its own paper-only lock differ. Its sell is a click's sell.
+
+  /** Every order on the book, whatever day it was placed. */
+  allOrders(): OrderRecord[] {
+    this.sweepMissedExpiries();
+    return this.book.all();
+  }
+
+  /** The orders on the book for a ticker that are still working or still hold shares, clicked or not. */
+  openOrdersFor(ticker: string): OrderRecord[] {
+    this.sweepMissedExpiries();
+    return this.book.openFor(ticker);
+  }
+
+  /** The contract an order was sent with: what a quote stream for it asks TWS about. */
+  contractFor(record: OrderRecord): Contract {
+    return this.contractOf(record);
+  }
+
+  /** Why the automation could place nothing right now, or null: the switches, the connection, the account. */
+  autoBlocker(): AutoBlocker | null {
+    if (!this.config.enabled) return { code: "disabled", text: 'orders are switched off ("enabled" is false in config.json)' };
+    if (this.config.halted) return { code: "halted", text: "orders are halted" };
+    if (!this.link.isReady()) return { code: "tws_down", text: "TWS is not connected" };
+    if (this.link.isServerLinkLost()) return { code: "tws_offline", text: "TWS has lost its connection to IB's servers" };
+    if ((this.config.paperOnly || this.config.auto.paperOnly) && !isPaper(this.link.getAccounts())) {
+      return { code: "not_paper", text: "the account in TWS is not a paper account" };
+    }
+    return null;
+  }
+
+  /**
+   * The bracket the automation would send for an alert, from the settings alone: what "watch
+   * only" shows. TWS is asked nothing, and the switches, the connection and the account play no
+   * part (watch only is for a morning with any of them off). The two limits on an order's size
+   * do: a buy that "on" would refuse for its shares or its dollars must not read as one it would
+   * place.
+   */
+  autoPlan(buy: AutoBuy): { plan: OrderPlan; goodUntilMs: number } {
+    const request = this.autoRequest(buy);
+    const profile = this.autoProfile(buy);
+    const { limits } = this.config;
+    const plan = planOrder(profile.order, {
+      qty: null,
+      alertPrice: request.alertPrice,
+      alertStop: null,
+      ask: null,
+      entry: "stop",
+    });
+    const amount = `${formatUsd(profile.order.amountUsd)} at ${formatPrice(plan.limit)}`;
+    if (plan.qty > limits.maxShares) {
+      throw new BridgeError(
+        422,
+        "too_many_shares",
+        `${amount} is ${plan.qty.toLocaleString("en-US")} shares, above maxShares (${limits.maxShares})`,
+      );
+    }
+    if (plan.notional > limits.maxNotionalUsd + 1e-9) {
+      throw new BridgeError(
+        422,
+        "too_large",
+        `the order is $${plan.notional.toFixed(2)} (${plan.qty} × ${formatPrice(plan.limit)}, sized from ` +
+          `${formatUsd(profile.order.amountUsd)}), above maxNotionalUsd ($${limits.maxNotionalUsd})`,
+      );
+    }
+    return { plan, goodUntilMs: this.goodUntil(this.clock(), profile) };
+  }
+
+  /** Places the automation's buy for an alert: a stop entry with its exits, or a refusal that says why. */
+  async autoOrder(buy: AutoBuy): Promise<OrderRecord> {
+    const request = this.autoRequest(buy);
+    const profile = this.autoProfile(buy);
+    const record = await this.serial(async () => {
+      const { plan, contract, priceNote } = await this.prepare(request, profile);
+      return this.send(request, plan, contract, priceNote, profile);
+    });
+    await this.waitForAck(record);
+    if (record.error !== null) {
+      throw new BridgeError(502, "tws_refused", `TWS refused order ${record.order_id}: ${record.error}`);
+    }
+    return record;
+  }
+
+  /**
+   * The exit watch's sell of an order the automation placed: what a click on Sell does, without
+   * the click. Two things differ. The sell may be moved down as often as it takes (a click's
+   * `order.maxChases` does not apply: the watch is told to get out), and the bid may be the one
+   * the watch's quote stream has just shown (`bid`), so no snapshot has to be waited for; with
+   * `bid` null it is read from TWS as for a click. It still sells no more than the order holds
+   * and no more than the account's position, and only an order of the automation.
+   */
+  async autoSell(orderId: number, bid: number | null): Promise<SellData> {
+    return this.runSell(orderId, { bid: bid !== null && Number.isFinite(bid) && bid > 0 ? bid : null });
+  }
+
+  /**
+   * Cancels every buy of the automation that is still waiting with nothing filled: when the
+   * automation is switched off or to watch only, and when orders are halted. A waiting buy that
+   * fills after the switch would be a buy after the switch. A cancel is not an order, so it goes
+   * out whatever the switches say; a buy that has filled anything is left as it is (it is a
+   * position by then, and the exit watch's). Returns the buys it asked TWS to cancel; none while
+   * TWS is not connected (the buys then end at their own time, a few minutes at most).
+   */
+  cancelAutoWaiting(why: string): number[] {
+    const asked: number[] = [];
+    if (!this.link.isReady()) return asked;
+    for (const record of this.book.all()) {
+      if (record.source !== "auto" || record.filled_qty > 0) continue;
+      if (isDone(record.status) || record.status === "PendingCancel") continue;
+      try {
+        this.cancelBuy(record, false, why);
+        asked.push(record.order_id);
+      } catch {
+        // TWS went away just now: nothing went out for this one.
+      }
+    }
+    if (asked.length > 0) {
+      this.say(`${why}: ${asked.length} waiting ${asked.length === 1 ? "buy" : "buys"} of the automation cancelled`);
+    }
+    return asked;
+  }
+
+  private autoRequest(buy: AutoBuy): OrderRequest {
+    if (!Number.isInteger(buy.validSec) || buy.validSec < 10 || buy.validSec > 3600) {
+      throw badRequest("the buy must wait a whole number of seconds, from 10 to 3600");
+    }
+    if (!Number.isFinite(buy.notAfterMs)) throw badRequest("the buy needs the time it may not wait past");
+    if (buy.alertId.length === 0 || buy.alertId.length > 80) throw badRequest("the alert's id must be 1 to 80 characters");
+    const at = parseAlertAt(buy.alertAt);
+    return {
+      ticker: parseTicker(buy.ticker),
+      alertPrice: parsePrice(buy.alertPrice, "the alert's price"),
+      alertStop: null,
+      qty: null,
+      stage: "pop",
+      alertAtMs: at.ms,
+      alertAt: at.text,
+      alertId: buy.alertId,
+      entry: "stop",
+    };
+  }
+
+  private clickProfile(): Profile {
+    return {
+      source: "click",
+      order: this.config.order,
+      maxOrdersPerDay: this.config.limits.maxOrdersPerDay,
+      paperOnly: false,
+      notAfterMs: null,
+    };
+  }
+
+  private autoProfile(buy: AutoBuy): Profile {
+    const { auto, order } = this.config;
+    return {
+      source: "auto",
+      order: autoOrderConfig(order, auto, buy.validSec),
+      maxOrdersPerDay: auto.maxOrdersPerDay,
+      paperOnly: auto.paperOnly,
+      notAfterMs: buy.notAfterMs,
+    };
+  }
+
+  /** When a stop entry sent at `now` stops waiting: its `entryValidSec` later, and never past the profile's own end. */
+  private goodUntil(now: number, profile: Profile): number {
+    const until = stopEntryGoodUntil(now, profile.order.entryValidSec);
+    return profile.notAfterMs === null ? until : Math.min(until, Math.floor(profile.notAfterMs / 1000) * 1000);
+  }
+
+  /** A stop entry whose time is all but up is not sent. Only the automation's can be: a click's always has its `entryValidSec`. */
+  private assertTimeToWait(now: number, goodUntilMs: number): void {
+    if (goodUntilMs - now >= MIN_ENTRY_WAIT_MS) return;
+    throw new BridgeError(
+      409,
+      "window_closing",
+      `the automation's hour ends in ${Math.max(0, Math.round((goodUntilMs - now) / 1000))} s: too late for a waiting buy`,
+    );
   }
 
   /** Cancels a buy that has not filled; TWS cancels its exits with it. */
@@ -726,8 +1021,12 @@ export class Bridge {
    * click: it cannot open a short.
    */
   async sell(body: unknown): Promise<SellData> {
-    const orderId = parseOrderId(body);
-    const { record, exit, change, filledBefore } = await this.managed(() => this.sellNow(orderId));
+    return this.runSell(parseOrderId(body), null);
+  }
+
+  /** One sell, a click's (`auto` null) or the exit watch's. */
+  private async runSell(orderId: number, auto: { bid: number | null } | null): Promise<SellData> {
+    const { record, exit, change, filledBefore } = await this.managed(() => this.sellNow(orderId, auto));
     await this.waitForWord(exit.order_id, change);
     if (change.refused !== null) {
       throw new BridgeError(
@@ -754,6 +1053,10 @@ export class Bridge {
     this.config.halted = halted;
     this.journal.write("halt", { halted });
     this.say(halted ? "orders HALTED" : "orders on again (halt switched off)");
+    // A halt stops buying, and a buy of the automation that is still waiting would be a buy to
+    // come: those are cancelled. Clicked orders stay as they are (theirs is the Cancel button),
+    // and so does everything that holds shares.
+    if (halted) this.cancelAutoWaiting("halt");
     try {
       this.saveHalted(halted);
     } catch (err) {
@@ -799,10 +1102,21 @@ export class Bridge {
     }
   }
 
-  /** The `paperOnly` rail. Returns whether the account is a paper one. */
-  private assertAccount(): boolean {
+  /**
+   * The `paperOnly` rail, and with `autoLock` the automation's own (`auto.paperOnly`), which holds
+   * also once `paperOnly` has been switched off for clicks. Returns whether the account is a paper one.
+   */
+  private assertAccount(autoLock = false): boolean {
     const accounts = this.link.getAccounts();
     const paper = isPaper(accounts);
+    if (autoLock && !paper) {
+      throw new BridgeError(
+        409,
+        "not_paper",
+        "the automation places orders on a paper account only, and the account TWS is logged in to is not one " +
+          '(or TWS has not reported it yet). That lock is "auto.paperOnly" in config.json: by hand only.',
+      );
+    }
     if (this.config.paperOnly && !paper) {
       throw new BridgeError(
         409,
@@ -825,22 +1139,27 @@ export class Bridge {
    * was worked out from the alert), or is null. `goodUntilMs` is when a stop entry sent now would
    * stop waiting; null for a buy now.
    */
-  private async prepare(request: OrderRequest): Promise<{
+  private async prepare(
+    request: OrderRequest,
+    profile: Profile = this.clickProfile(),
+  ): Promise<{
     plan: OrderPlan;
     contract: ResolvedContract;
     checks: Check[];
     priceNote: string | null;
     goodUntilMs: number | null;
   }> {
-    const { order: orderCfg, limits } = this.config;
+    const { limits } = this.config;
+    const orderCfg = profile.order;
     const checks: Check[] = [];
     const now = this.clock();
     const { ticker } = request;
     const stopEntry = request.entry === "stop";
-    const goodUntilMs = stopEntry ? stopEntryGoodUntil(now, orderCfg.entryValidSec) : null;
+    const goodUntilMs = stopEntry ? this.goodUntil(now, profile) : null;
 
     this.assertTradingOn();
     checks.push({ name: "switches", detail: "orders are enabled and not halted" });
+    if (goodUntilMs !== null) this.assertTimeToWait(now, goodUntilMs);
 
     if (stopEntry) {
       if (!(orderCfg.entryStopPct > 0)) throw stopEntryOff();
@@ -853,7 +1172,7 @@ export class Bridge {
     }
 
     this.assertOnline();
-    const paper = this.assertAccount();
+    const paper = this.assertAccount(profile.paperOnly);
     checks.push({ name: "account", detail: paper ? "paper account" : "LIVE account (paperOnly is off)" });
 
     // One order per alert, whichever tab or reload the click comes from. The ids are strings on
@@ -898,15 +1217,18 @@ export class Bridge {
       checks.push({ name: "shares", detail: `${shares} of ${limits.maxShares} allowed` });
     }
 
-    const placedToday = this.book.countOn(today);
-    if (placedToday >= limits.maxOrdersPerDay) {
+    // Clicks and the automation are counted apart, each against its own limit: a busy morning of
+    // the one does not use up the other's day.
+    const placedToday = this.book.countOn(today, profile.source);
+    const whose = profile.source === "auto" ? "the automation's daily order limit" : "the daily order limit";
+    if (placedToday >= profile.maxOrdersPerDay) {
       throw new BridgeError(
         409,
         "daily_limit",
-        `the daily order limit is reached: ${placedToday} of ${limits.maxOrdersPerDay} today (New York date ${today})`,
+        `${whose} is reached: ${placedToday} of ${profile.maxOrdersPerDay} today (New York date ${today})`,
       );
     }
-    checks.push({ name: "daily", detail: `order ${placedToday + 1} of ${limits.maxOrdersPerDay} today` });
+    checks.push({ name: "daily", detail: `order ${placedToday + 1} of ${profile.maxOrdersPerDay} today` });
 
     const lastMs = this.book.lastPlacedMs(ticker);
     if (lastMs !== undefined && now - lastMs < limits.duplicateWindowSec * 1000) {
@@ -994,7 +1316,7 @@ export class Bridge {
           ? "none (takeProfitPct is 0)"
           : `${formatPrice(plan.takeProfit)}, ${orderCfg.takeProfitPct}% above the ${plan.trigger === null ? "limit" : "trigger"}`,
     });
-    checks.push({ name: "stop", detail: this.describeStop(plan) });
+    checks.push({ name: "stop", detail: this.describeStop(plan, orderCfg) });
 
     if (plan.notional > limits.maxNotionalUsd + 1e-9) {
       throw new BridgeError(
@@ -1034,12 +1356,12 @@ export class Bridge {
     return price;
   }
 
-  private describeStop(plan: OrderPlan): string {
+  private describeStop(plan: OrderPlan, orderCfg: OrderConfig): string {
     const ignored = plan.alertStopIgnored === null ? "" : `; the alert's stop was not used: ${plan.alertStopIgnored}`;
     if (plan.stop === null || plan.stopLimit === null) return `none (stopPct is 0)${ignored}`;
     const prices = `${formatPrice(plan.stop)}, limit ${formatPrice(plan.stopLimit)}`;
     if (plan.stopFrom === "alert") return `${prices}: the alert's stop`;
-    return `${prices}: ${this.config.order.stopPct}% under the ${plan.trigger === null ? "limit" : "trigger"}${ignored}`;
+    return `${prices}: ${orderCfg.stopPct}% under the ${plan.trigger === null ? "limit" : "trigger"}${ignored}`;
   }
 
   // ------------------------------------------------------------- sending
@@ -1048,20 +1370,30 @@ export class Bridge {
    * Sends the bracket. There is no `await` in here: between the last checks and the last leg
    * nothing else runs, so the connection, the switches and the order ids cannot change under it.
    */
-  private send(request: OrderRequest, plan: OrderPlan, contract: ResolvedContract, priceNote: string | null): OrderRecord {
+  private send(
+    request: OrderRequest,
+    plan: OrderPlan,
+    contract: ResolvedContract,
+    priceNote: string | null,
+    profile: Profile = this.clickProfile(),
+  ): OrderRecord {
     this.assertTradingOn();
     this.requireConnected();
+    const orderCfg = profile.order;
     const now = this.clock();
+    // A stop entry waits until this moment; IB cancels it then, and the bridge does nothing about it.
+    // Worked out now, at the send: the checks before it took a moment (a contract lookup, a turn
+    // in the line), and the automation's buy must not outlive its hour by that moment.
+    const goodUntilMs = plan.entry === "stop" ? this.goodUntil(now, profile) : null;
+    if (goodUntilMs !== null) this.assertTimeToWait(now, goodUntilMs);
     let firstId: number;
     try {
       firstId = this.link.allocateOrderIds(3);
     } catch (err) {
       throw this.linkError(err, request.ticker);
     }
-    // A stop entry waits until this moment; IB cancels it then, and the bridge does nothing about it.
-    const goodUntilMs = plan.entry === "stop" ? stopEntryGoodUntil(now, this.config.order.entryValidSec) : null;
     const goodTillDate = goodUntilMs === null ? null : ibUtcDateTime(goodUntilMs);
-    const legs = buildBracket(plan, firstId, this.config.order.outsideRth, goodTillDate);
+    const legs = buildBracket(plan, firstId, orderCfg.outsideRth, goodTillDate);
     const takeProfitId = plan.takeProfit === null ? null : firstId + 1;
     const stopId = plan.stop === null ? null : firstId + 2;
 
@@ -1070,6 +1402,7 @@ export class Bridge {
       ticker: request.ticker,
       conid: contract.conid,
       placed_at: new Date(now).toISOString(),
+      source: profile.source,
       asked: {
         alert_price: request.alertPrice,
         alert_stop: request.alertStop,
@@ -1094,7 +1427,7 @@ export class Bridge {
         first_stop_limit: plan.stopLimit,
         price_from: plan.priceFrom,
         stop_from: plan.stopFrom,
-        outside_rth: this.config.order.outsideRth,
+        outside_rth: orderCfg.outsideRth,
         order_ids: { parent: firstId, take_profit: takeProfitId, stop: stopId },
       },
       chases: 0,
@@ -1112,6 +1445,7 @@ export class Bridge {
       },
       exit: null,
       loose_exit: false,
+      watch: null,
       error: null,
       // Set when the price did not come from where the config says (no live ask: from the alert).
       note: priceNote,
@@ -1154,7 +1488,7 @@ export class Bridge {
         : `stop buy ${plan.qty}, trigger ${formatPrice(plan.trigger)}, limit ${formatPrice(plan.limit)}, ` +
           `until ${nyTime(goodUntilMs)} New York`;
     this.say(
-      `order ${firstId} ${record.ticker}: ${buying}` +
+      `${profile.source === "auto" ? "auto " : ""}order ${firstId} ${record.ticker}: ${buying}` +
         (plan.sizing.amount_usd === undefined ? "" : ` (${formatUsd(plan.sizing.amount_usd)})`) +
         (plan.takeProfit === null ? "" : `, take-profit ${formatPrice(plan.takeProfit)}`) +
         (plan.stop === null || plan.stopLimit === null
@@ -1486,7 +1820,7 @@ export class Bridge {
   }
 
   /** Sends the cancel of a buy and marks it as asked for; TWS's own word on it comes later. */
-  private cancelBuy(record: OrderRecord, forSell: boolean): void {
+  private cancelBuy(record: OrderRecord, forSell: boolean, why: string | null = null): void {
     const orderId = record.order_id;
     try {
       this.link.cancelOrder(orderId);
@@ -1494,7 +1828,13 @@ export class Bridge {
       throw this.linkError(err, record.ticker);
     }
     this.book.markCancelAsked(orderId);
-    this.journal.write("cancel", { order_id: orderId, ticker: record.ticker, ...(forSell ? { for: "sell" } : {}) });
+    this.journal.write("cancel", {
+      order_id: orderId,
+      ticker: record.ticker,
+      ...(forSell ? { for: "sell" } : {}),
+      // A cancel nobody clicked (the automation's waiting buys, at a halt or its switch): why.
+      ...(why === null ? {} : { why }),
+    });
     this.onOrderStatus({
       orderId,
       status: "PendingCancel",
@@ -1525,8 +1865,11 @@ export class Bridge {
   private sellStep(record: OrderRecord): SellStep {
     // A sell is already working: a click moves it, and never adds an order next to it.
     if (record.exit !== null && !isDone(record.exit.status)) return "reprice";
-    // The buy can still add shares: its unfilled part is cancelled first.
-    if (!isDone(record.status)) return "finish_buy";
+    // The buy can still add shares: its unfilled part is cancelled first. A buy that has filled in
+    // full can add none, whatever its status reads: TWS sends no status for an order that ended
+    // while the bridge was not connected, only its fills, so such a buy still reads as working.
+    const buyOver = isDone(record.status) || record.filled_qty >= record.sent.qty;
+    if (!buyOver) return "finish_buy";
     const { take_profit: takeProfit, stop } = record.legs;
     if (takeProfit !== null && !isDone(takeProfit.status)) return "take_profit";
     // No take-profit to move, and a stop still working: it must be out before a new sell goes in,
@@ -1542,8 +1885,17 @@ export class Bridge {
    */
   private async sellNow(
     orderId: number,
+    auto: { bid: number | null } | null = null,
   ): Promise<{ record: OrderRecord; exit: ExitState; change: SentChange; filledBefore: number }> {
-    const record = this.todaysOrder(orderId);
+    // A click sells an order of today. The exit watch follows an order for as long as it holds
+    // shares, so its sell goes by the book alone; and it sells only what the automation bought.
+    const record = auto === null ? this.todaysOrder(orderId) : this.book.get(orderId);
+    if (record === undefined) {
+      throw new BridgeError(404, "unknown_order", `order ${orderId} is not a buy order on this bridge's book`);
+    }
+    if (auto !== null && record.source !== "auto") {
+      throw new BridgeError(409, "not_auto", `order ${orderId} was not placed by the automation: its exit watch does not sell it`);
+    }
     for (let pass = 0; pass < SELL_PASSES; pass += 1) {
       this.assertSellable(record);
       const step = this.sellStep(record);
@@ -1555,13 +1907,13 @@ export class Bridge {
         await this.cancelStop(record);
         continue;
       }
-      this.assertSellMayMove(record, step);
+      this.assertSellMayMove(record, step, auto !== null);
       const contract = this.contractOf(record);
-      const { bid, position } = await this.readBidAndPosition(record, contract);
+      const { bid, position } = await this.readBidAndPosition(record, contract, auto?.bid ?? null);
       // The bid and the position took a moment: a fill or a cancel may have come in it.
       this.assertSellable(record);
       if (this.sellStep(record) !== step) continue;
-      return this.sendSell(record, step, contract, bid, position);
+      return this.sendSell(record, step, contract, bid, position, auto !== null);
     }
     throw new BridgeError(
       409,
@@ -1633,11 +1985,14 @@ export class Bridge {
     }
   }
 
-  /** The counters of a sell that moves an order TWS already has. */
-  private assertSellMayMove(record: OrderRecord, step: SellStep): void {
+  /**
+   * The counters of a sell that moves an order TWS already has. `uncapped` is the exit watch's
+   * sell: it may move as often as it takes, and only the spacing between two changes holds.
+   */
+  private assertSellMayMove(record: OrderRecord, step: SellStep, uncapped = false): void {
     if (step === "reprice" && record.exit !== null) {
       const max = this.config.order.maxChases;
-      if (record.exit.reprices >= max) {
+      if (!uncapped && record.exit.reprices >= max) {
         throw new BridgeError(
           409,
           "chase_limit",
@@ -1651,11 +2006,16 @@ export class Bridge {
     }
   }
 
-  private async readBidAndPosition(record: OrderRecord, contract: Contract): Promise<{ bid: number; position: number }> {
+  /** `knownBid`: the bid the exit watch's quote stream has just shown; without one it is read from TWS now. */
+  private async readBidAndPosition(
+    record: OrderRecord,
+    contract: Contract,
+    knownBid: number | null = null,
+  ): Promise<{ bid: number; position: number }> {
     // Both are asked at once; the position's answer is waited for also when the bid fails first.
     const positionRead = this.readPosition(record);
     positionRead.catch(() => undefined);
-    const bid = await this.readQuote("bid", record.ticker, contract);
+    const bid = knownBid ?? (await this.readQuote("bid", record.ticker, contract));
     const position = await positionRead;
     return { bid, position };
   }
@@ -1707,6 +2067,7 @@ export class Bridge {
     contract: Contract,
     bid: number,
     position: number,
+    byWatch = false,
   ): { record: OrderRecord; exit: ExitState; change: SentChange; filledBefore: number } {
     const cfg = this.config.order;
     const id = record.order_id;
@@ -1804,7 +2165,15 @@ export class Bridge {
 
     const exit: ExitState =
       step === "reprice" && previousExit !== null
-        ? { ...previousExit, limit, bid, reprices: previousExit.reprices + 1, qty: viaTakeProfit ? previousExit.qty : total }
+        ? {
+            ...previousExit,
+            limit,
+            bid,
+            // `reprices` counts the clicks that moved the sell, against `order.maxChases`. A move
+            // by the exit watch is not one: it must not use up the clicks left to the operator.
+            reprices: previousExit.reprices + (byWatch ? 0 : 1),
+            qty: viaTakeProfit ? previousExit.qty : total,
+          }
         : {
             via: "take_profit",
             order_id: legId,
@@ -1906,13 +2275,17 @@ export class Bridge {
     if (ref === undefined || isDone(ref.state.status)) return;
     // A buy that has filled anything keeps the status TWS gave it. A sell-side order TWS says it
     // does not have is not working, whatever it sold before.
-    if (ref.leg === "parent" && ref.state.filled_qty > 0) return;
+    const partFilledBuy = ref.leg === "parent" && ref.state.filled_qty > 0;
+    // "Cancel asked for" is not a status TWS gave: it is the bridge's own, until TWS answers. TWS
+    // answering that it has no such order is that answer: the rest of the buy is gone, what it
+    // bought stays bought.
+    if (partFilledBuy && ref.state.status !== "PendingCancel") return;
     this.onOrderStatus({
       orderId,
-      status: STATUS_NOT_WORKING,
+      status: partFilledBuy ? "Cancelled" : STATUS_NOT_WORKING,
       filled: ref.state.filled_qty,
       remaining: 0,
-      avgFillPrice: 0,
+      avgFillPrice: partFilledBuy ? (ref.state.avg_fill_price ?? 0) : 0,
     });
   }
 
@@ -2109,6 +2482,7 @@ export class Bridge {
   // ---------------------------------------------------- events from TWS
 
   private onUp(accounts: string[], nextValidId: number): void {
+    this.upSinceMs = this.clock();
     this.journal.write("tws_up", { accounts: accounts.map(maskAccount), paper: isPaper(accounts), next_order_id: nextValidId });
     this.say(`TWS connected on port ${this.config.tws.port}${this.describeAccounts(accounts)}`);
     // Catch up on orders placed earlier today: reads only, nothing is ever sent again.
@@ -2123,6 +2497,22 @@ export class Bridge {
     // was rebuilt from the log or left by the last connection: TWS gets the grace period to say
     // otherwise (its open orders and today's fills are on their way), then that order is cancelled.
     this.watchAllFlat();
+    this.tell("the connection listener", () => this.onLinkUp?.());
+  }
+
+  /** Calls a listener of the automation's; what it throws is logged and goes no further. */
+  private tell(where: string, call: () => void): void {
+    try {
+      call();
+    } catch (err) {
+      this.journal.write("internal_error", { where, message: errorMessage(err) });
+      console.error(`tws-bridge: error in ${where}:`, err);
+    }
+  }
+
+  private changed(record: OrderRecord): void {
+    if (this.onOrderChanged === null) return;
+    this.tell("the order listener", () => this.onOrderChanged?.(record));
   }
 
   private onAccounts(accounts: string[]): void {
@@ -2138,6 +2528,7 @@ export class Bridge {
   }
 
   private onDown(reason: string): void {
+    this.upSinceMs = null;
     this.endGroupReport();
     this.conidLookups.clear();
     this.conidUnknown.clear();
@@ -2153,6 +2544,7 @@ export class Bridge {
     this.endFlatWatches();
     this.journal.write("tws_down", { reason });
     this.say(`TWS not connected: ${reason} (retrying)`);
+    this.tell("the connection listener", () => this.onLinkDown?.());
   }
 
   private onNote(kind: string, noteFields: Record<string, unknown>): void {
@@ -2364,6 +2756,7 @@ export class Bridge {
     // TWS's word on the order, also when it only repeats itself: whoever waits on this order looks again.
     this.heard(event.orderId);
     this.stateChanged();
+    if (ref !== null) this.changed(ref.record);
   }
 
   /**
@@ -2463,6 +2856,7 @@ export class Bridge {
     }
     this.heard(event.orderId);
     this.stateChanged();
+    this.changed(record);
   }
 
   private onExecution(event: ExecutionEvent): void {
@@ -2488,6 +2882,7 @@ export class Bridge {
       `fill ${record.ticker} (${leg}): ${event.shares} @ ${formatPrice(event.price)}` +
         (leg === "parent" && record.slip_pct !== null ? `, slip ${record.slip_pct}% against the alert` : ""),
     );
+    this.changed(record);
   }
 
   private onOrderMessage(event: OrderMessageEvent): void {
@@ -2553,13 +2948,15 @@ export class Bridge {
   }
 
   /**
-   * TWS's answer to a cancel the bridge asked for on a sell-side order: "cannot be cancelled,
-   * state: Cancelled" (or Filled). The order was over already, and TWS has just said in which
-   * way: that is its status. (A status of its own does not follow for an order that ended while
-   * the bridge was not connected.) Any other state named leaves the order as it is.
+   * TWS's answer to a cancel the bridge asked for: "cannot be cancelled, state: Cancelled" (or
+   * Filled). The order was over already, and TWS has just said in which way: that is its status.
+   * (A status of its own does not follow for an order that ended while the bridge was not
+   * connected.) Any other state named leaves the order as it is. It holds for a buy as for a
+   * sell-side order: a buy left reading "cancel asked for" would keep every later sell waiting
+   * for a confirmation that never comes.
    */
-  private cancelFoundItOver(event: OrderMessageEvent, leg: BookLeg, status: string): void {
-    if (leg === "parent" || status !== "PendingCancel" || event.code !== CODE_NOT_CANCELLABLE) return;
+  private cancelFoundItOver(event: OrderMessageEvent, _leg: BookLeg, status: string): void {
+    if (status !== "PendingCancel" || event.code !== CODE_NOT_CANCELLABLE) return;
     const state = /\bstate:\s*([A-Za-z]+)/.exec(event.message)?.[1];
     if (state === undefined || !isDone(state)) return;
     const ref = this.book.findLeg(event.orderId);

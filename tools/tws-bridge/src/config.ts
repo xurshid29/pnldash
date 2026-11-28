@@ -68,6 +68,80 @@ export interface LimitsConfig {
   duplicateWindowSec: number;
 }
 
+/**
+ * The automation (`src/auto.ts`): which alerts it buys, with what, and how its exits are watched.
+ * The whole section is optional in config.json, and so is every key in it: what is not in the
+ * file takes its value from {@link AUTO_DEFAULTS}. Whether the automation runs at all is not a
+ * setting here: it is switched from the dashboard (off / watch only / on) and kept in state.json.
+ */
+export interface AutoConfig {
+  /**
+   * The hour it buys in, New York time, "HH:MM": an alert from `windowStart` up to (not
+   * including) `windowEnd`. No buy waits past `windowEnd`; exits keep working after it.
+   */
+  windowStart: string;
+  windowEnd: string;
+  /** Dollars per buy. */
+  amountUsd: number;
+  /** The most that may be out at once: `budgetUsd / amountUsd` buys waiting or held (the slots). */
+  budgetUsd: number;
+  /** The most buys that may fill in one New York day. */
+  maxTrades: number;
+  /** The most buys it may place in one New York day, filled or not. */
+  maxOrdersPerDay: number;
+  /** The waiting buy triggers this many percent above the alert's price. */
+  entryStopPct: number;
+  /** Its limit sits this many percent above the trigger. */
+  entryStopLimitPct: number;
+  /** It waits this many seconds, and never past `windowEnd`; then IB cancels it. */
+  entryValidSec: number;
+  /** The exits, measured from the trigger. */
+  takeProfitPct: number;
+  stopPct: number;
+  stopLimitOffsetPct: number;
+  /** An alert older than this when it reaches the bridge is not bought. */
+  maxAlertAgeSec: number;
+  /** The automation's own lock: it places nothing on an account that is not a paper one. By hand only. */
+  paperOnly: boolean;
+  /** The take-profit's price has traded and the take-profit has not filled this long after: sell at the bid. */
+  tpGraceMs: number;
+  /** The stop is due and has not sold everything this long after: sell at the bid. */
+  stopGraceMs: number;
+  /** While such a sell has not sold everything, it is moved down to the bid again this often. */
+  resellMs: number;
+}
+
+export const AUTO_DEFAULTS: AutoConfig = {
+  windowStart: "04:00",
+  windowEnd: "05:00",
+  amountUsd: 400,
+  budgetUsd: 2000,
+  maxTrades: 5,
+  maxOrdersPerDay: 30,
+  entryStopPct: 5.0,
+  entryStopLimitPct: 1.0,
+  entryValidSec: 300,
+  takeProfitPct: 20.0,
+  stopPct: 10.0,
+  stopLimitOffsetPct: 3.0,
+  maxAlertAgeSec: 60,
+  paperOnly: true,
+  tpGraceMs: 1500,
+  stopGraceMs: 1000,
+  resellMs: 2000,
+};
+
+/** How many buys may be waiting or held at once: what the budget pays for. */
+export function autoSlots(auto: AutoConfig): number {
+  return Math.floor(auto.budgetUsd / auto.amountUsd + 1e-9);
+}
+
+/** "HH:MM" as minutes after midnight, or null when it is not a time of day. */
+export function minutesOfDay(text: string): number | null {
+  const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(text);
+  return match === null ? null : Number(match[1]) * 60 + Number(match[2]);
+}
+
 export interface Config {
   tws: TwsConfig;
   http: { port: number };
@@ -79,6 +153,7 @@ export interface Config {
   halted: boolean;
   order: OrderConfig;
   limits: LimitsConfig;
+  auto: AutoConfig;
 }
 
 /** The socket ports TWS and IB Gateway listen on by default; the HTTP side must stay off them. */
@@ -129,6 +204,7 @@ export function defaultConfig(token: string): Config {
       entryValidSec: OPTIONAL_ORDER_DEFAULTS.entryValidSec,
     },
     limits: { maxShares: 500, maxNotionalUsd: 1000, maxOrdersPerDay: 20, duplicateWindowSec: 10 },
+    auto: { ...AUTO_DEFAULTS },
   };
 }
 
@@ -212,18 +288,13 @@ function checkOrigin(value: unknown): string | null {
 /** Checks a parsed config.json. Throws a {@link ConfigError} that lists every problem found. */
 export function validateConfig(raw: unknown): Config {
   const c = new Checker();
-  const root = c.section(raw, "", [
-    "tws",
-    "http",
-    "token",
-    "allowedOrigins",
-    "displayGroup",
-    "paperOnly",
-    "enabled",
-    "halted",
-    "order",
-    "limits",
-  ]);
+  const root = c.section(
+    raw,
+    "",
+    ["tws", "http", "token", "allowedOrigins", "displayGroup", "paperOnly", "enabled", "halted", "order", "limits"],
+    // Newer than the config files already in use: a file without it runs on AUTO_DEFAULTS.
+    ["auto"],
+  );
 
   const tws = "tws" in root ? c.section(root["tws"], "tws", ["host", "port", "clientId"]) : {};
   const host = tws["host"];
@@ -355,9 +426,70 @@ export function validateConfig(raw: unknown): Config {
     );
   }
 
+  // The automation. Every key is optional; an unknown one is still a typo.
+  const autoKeys = Object.keys(AUTO_DEFAULTS);
+  const auto = "auto" in root ? c.section(root["auto"], "auto", [], autoKeys) : {};
+  const D = AUTO_DEFAULTS;
+  const time = (key: "windowStart" | "windowEnd"): string => {
+    const value = key in auto ? auto[key] : D[key];
+    if (typeof value !== "string" || minutesOfDay(value) === null) {
+      c.problems.push(`auto.${key} must be a New York time of day as "HH:MM"`);
+      return D[key];
+    }
+    return value;
+  };
+  const windowStart = time("windowStart");
+  const windowEnd = time("windowEnd");
+  if ((minutesOfDay(windowStart) ?? 0) >= (minutesOfDay(windowEnd) ?? 0)) {
+    c.problems.push(`auto.windowStart (${windowStart}) must be before auto.windowEnd (${windowEnd}), both on the same New York day`);
+  }
+  const autoAmountUsd = c.number(auto, "auto", "amountUsd", { above: 0 }, D.amountUsd);
+  const autoBudgetUsd = c.number(auto, "auto", "budgetUsd", { above: 0 }, D.budgetUsd);
+  const autoMaxTrades = c.number(auto, "auto", "maxTrades", { integer: true, min: 1, max: 50 }, D.maxTrades);
+  const autoMaxOrders = c.number(auto, "auto", "maxOrdersPerDay", { integer: true, min: 1, max: 200 }, D.maxOrdersPerDay);
+  // A waiting buy needs a trigger above the alert: 0 is not "off" here, the dashboard's switch is.
+  const autoEntryStopPct = c.number(auto, "auto", "entryStopPct", { above: 0, max: 50 }, D.entryStopPct);
+  const autoEntryStopLimitPct = c.number(auto, "auto", "entryStopLimitPct", { min: 0.1, max: 20 }, D.entryStopLimitPct);
+  const autoEntryValidSec = c.number(auto, "auto", "entryValidSec", { integer: true, min: 10, max: 3600 }, D.entryValidSec);
+  // The automation never places a buy without both exits.
+  const autoTakeProfitPct = c.number(auto, "auto", "takeProfitPct", { above: 0 }, D.takeProfitPct);
+  const autoStopPct = c.number(auto, "auto", "stopPct", { above: 0, below: 100 }, D.stopPct);
+  const autoStopLimitOffsetPct = c.number(auto, "auto", "stopLimitOffsetPct", { min: 0, below: 100 }, D.stopLimitOffsetPct);
+  const autoMaxAlertAgeSec = c.number(auto, "auto", "maxAlertAgeSec", { integer: true, min: 5, max: 600 }, D.maxAlertAgeSec);
+  const autoPaperOnly = "paperOnly" in auto ? c.boolean(auto, "auto", "paperOnly") : D.paperOnly;
+  const tpGraceMs = c.number(auto, "auto", "tpGraceMs", { integer: true, min: 0, max: 60000 }, D.tpGraceMs);
+  const stopGraceMs = c.number(auto, "auto", "stopGraceMs", { integer: true, min: 0, max: 60000 }, D.stopGraceMs);
+  // Not under a second: every move of a sell is a message to TWS.
+  const resellMs = c.number(auto, "auto", "resellMs", { integer: true, min: 1000, max: 60000 }, D.resellMs);
+  // auto.amountUsd above limits.maxNotionalUsd is not refused here, unlike order.amountUsd: an
+  // owner who lowers the limit for their clicks must not find the bridge unable to start over an
+  // automation that is switched off. Such a buy is refused when it is tried, and says why.
+  if (autoBudgetUsd < autoAmountUsd) {
+    c.problems.push(`auto.budgetUsd (${autoBudgetUsd}) is under auto.amountUsd (${autoAmountUsd}): it pays for no buy at all`);
+  }
+
   if (c.problems.length > 0) throw new ConfigError(c.problems);
 
   return {
+    auto: {
+      windowStart,
+      windowEnd,
+      amountUsd: autoAmountUsd,
+      budgetUsd: autoBudgetUsd,
+      maxTrades: autoMaxTrades,
+      maxOrdersPerDay: autoMaxOrders,
+      entryStopPct: autoEntryStopPct,
+      entryStopLimitPct: autoEntryStopLimitPct,
+      entryValidSec: autoEntryValidSec,
+      takeProfitPct: autoTakeProfitPct,
+      stopPct: autoStopPct,
+      stopLimitOffsetPct: autoStopLimitOffsetPct,
+      maxAlertAgeSec: autoMaxAlertAgeSec,
+      paperOnly: autoPaperOnly,
+      tpGraceMs,
+      stopGraceMs,
+      resellMs,
+    },
     tws: { host: host as string, port: twsPort, clientId },
     http: { port: httpPort },
     token: token as string,

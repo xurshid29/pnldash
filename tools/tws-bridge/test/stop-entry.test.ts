@@ -284,6 +284,7 @@ test("stop entry: /order sends the bracket with a BUY STP LMT parent, and the bo
     ticker: "ABCD",
     conid: 111,
     placed_at: new Date(T0 + 700).toISOString(),
+    source: "click",
     asked: { alert_price: 2.5, alert_stop: null, qty: null, stage: "pop", alert_at: alertAt, alert_id: "ev-1" },
     sizing: { mode: "shares" },
     entry: "stop",
@@ -316,6 +317,7 @@ test("stop entry: /order sends the bracket with a BUY STP LMT parent, and the bo
     },
     exit: null,
     loose_exit: false,
+    watch: null,
     error: null,
     note: null,
   });

@@ -7,14 +7,16 @@ A small program that runs on this Mac, next to TWS. It lets the dashboard in the
 3. **Chase**: move a buy that has not filled up to the ask, with one click (see "Chase").
 4. **Sell**: get out of what an order bought, at the bid, with one click (see "Sell").
 
+And, since 2026-11-28, a fifth that needs no click once you have switched it on: the **automation** buys every yellow POP alert of one hour of the day by itself and sells by itself (see "Automation"). It is off until you switch it on in the dashboard, and it trades a paper account only.
+
 The browser page talks to the bridge at `http://127.0.0.1:8765`; the bridge talks to TWS over TWS's own socket API. Nothing about orders goes to the pnldash server.
 
 What it does not do:
 
-- It never places or changes an order by itself. Every order, chase and sell is one click of yours; nothing is retried, queued or re-sent, also not after TWS reconnects. There is no loop or timer that follows a price. The one thing it sends on its own is a cancel, in three cases (see "What the bridge does on its own").
+- With the automation off, it never places or changes an order by itself. Every order, chase and sell is one click of yours; nothing is retried, queued or re-sent, also not after TWS reconnects. There is no loop or timer that follows a price. The one thing it sends on its own is a cancel, in three cases (see "What the bridge does on its own"). With the automation on, what it sends by itself is what "Automation" lists, and nothing else; a clicked order is still never touched without a click.
 - It does not take prices from the web page. The page sends the ticker, the alert's price, the alert's stop and a quantity (a chase and a sell send only the order's id); the limit, take-profit and stop are worked out here from `config.json` and TWS's own quotes.
 - It does not listen on the network: `127.0.0.1` only, and every call needs the token from `config.json`.
-- It does not watch a position. After the buy fills, the take-profit and the stop live in TWS; the bridge touches them again only when you click Sell, or to cancel one that is left working after the order has sold everything.
+- It does not watch the position of an order you clicked. After the buy fills, the take-profit and the stop live in TWS; the bridge touches them again only when you click Sell, or to cancel one that is left working after the order has sold everything. (The positions the automation bought are watched: see "Automation".)
 - It never sells more than an order bought, and never more than the account holds: it cannot open a short.
 - It trades US stocks only (`STK` / `SMART` / `USD`), long only.
 
@@ -99,6 +101,17 @@ Read once, at the start: after an edit, restart the bridge. A missing or unknown
 | `limits.maxNotionalUsd` | `1000` | Most dollars in one order (shares × limit). |
 | `limits.maxOrdersPerDay` | `20` | Orders per New York date. Counted from the log, so a restart does not reset it. |
 | `limits.duplicateWindowSec` | `10` | The same ticker again within this many seconds is refused as a duplicate. |
+| `auto` | | *Optional*, the whole section and every key in it: the automation's settings (see "Automation"). A file without it runs on the defaults below. Whether the automation is on is not here: that is the dashboard's switch, kept in `state.json`. |
+| `auto.windowStart`, `auto.windowEnd` | `"04:00"`, `"05:00"` | The hour it buys in, New York time, `"HH:MM"`: alerts from the first up to (not including) the second. No buy waits past the second. |
+| `auto.amountUsd`, `auto.budgetUsd` | `400`, `2000` | Dollars per buy, and the most out at once: `budgetUsd ÷ amountUsd` buys waiting or held. |
+| `auto.maxTrades`, `auto.maxOrdersPerDay` | `5`, `30` | The most buys that fill, and the most buys placed, in one New York day. |
+| `auto.entryStopPct`, `auto.entryStopLimitPct`, `auto.entryValidSec` | `5.0`, `1.0`, `300` | The waiting buy: its trigger above the alert's price, its limit above the trigger, and how long it waits. |
+| `auto.takeProfitPct`, `auto.stopPct`, `auto.stopLimitOffsetPct` | `20.0`, `10.0`, `3.0` | Its exits, measured from the trigger; the stop's own limit under the stop. Both exits are always sent. |
+| `auto.maxAlertAgeSec` | `60` | An alert older than this when it reaches the bridge is not bought. |
+| `auto.paperOnly` | `true` | The automation's own lock: no order on an account that is not a paper one, whatever `paperOnly` says. By hand only. |
+| `auto.tpGraceMs`, `auto.stopGraceMs`, `auto.resellMs` | `1500`, `1000`, `2000` | The exit watch: how long after the take-profit's price traded, or the stop came due, it sells at the bid; and how often an unfinished sell is moved down. |
+
+Besides `config.json` the bridge keeps `state.json` in the same folder: the automation's switch and where its alerts come from (the server's address and a token for its alert stream). The bridge writes it; you never need to edit it. Deleting it switches the automation off and forgets the stream (the dashboard sets it up again). Like `config.json` it is owner-only and git-ignored.
 
 Prices are rounded to the US tick: $0.01 from $1 up, $0.0001 below $1. The buy limit and the take-profit go to the nearest tick, the stop, its limit and a sell's limit down. A stop entry's trigger goes to the nearest tick and its limit up, so the limit is never under the trigger.
 
@@ -170,9 +183,55 @@ Each item of `/orders` has `held_qty` (what a sell would sell) and, once Sell wa
 
 What the bridge cannot know: shares you sold by hand in TWS. Its book still counts them as held, and the position check is what stops a second sale. If you close a position by hand, cancel that bracket's take-profit and stop in TWS too: an exit left working on a position that is gone is the one way this setup can go short, and the bridge cannot see that one (see the next section for the ones it can).
 
+## Automation
+
+The operator's rule (2026-11-28), run by the bridge itself. It is switched in the dashboard's TWS panel: **Off**, **Watch only** or **On**. The switch is kept in `state.json` next to `config.json`, so a restart comes back in the mode it was in (the start-up lines say which).
+
+**What it buys.** Every POP alert that passed the script's volume test (a yellow POP: stage `pop`, not `weak`) whose alert time is inside one hour of the day, `auto.windowStart` to `auto.windowEnd` in New York time (04:00 to 05:00: 14:00 to 15:00 in Tashkent in winter, 13:00 to 14:00 in summer). For each, the same order a click on **Buy if ≥** sends, with the automation's own numbers: a `BUY STP LMT` that triggers `auto.entryStopPct` (5%) above the alert's price, limit `auto.entryStopLimitPct` (1%) above the trigger, `auto.amountUsd` ($400) worth of shares, with a take-profit `auto.takeProfitPct` (20%) above the trigger and a stop `auto.stopPct` (10%) under it (the stop's own limit `auto.stopLimitOffsetPct`, 3%, lower). The buy waits `auto.entryValidSec` (5 minutes) and never past the end of the hour; then IB cancels it. The exits stay.
+
+**How many.**
+
+- At most `auto.budgetUsd ÷ auto.amountUsd` (5) buys waiting or positions held at once: never more than the budget is out.
+- At most `auto.maxTrades` (5) buys that fill in one New York day. A buy still waiting counts against the trades that are left; one that ends with nothing filled gives its place back; a trade that has closed does not.
+- One trade per ticker a day, and never a second order on a ticker that has any order working or held, clicked ones included. A ticker whose waiting buy ended unfilled can be bought on its next POP.
+- First come, first served: alerts are decided one at a time in the order they arrive.
+- At most `auto.maxOrdersPerDay` (30) buys placed in a day, filled or not. Clicked orders and the automation's are counted apart, each against its own limit.
+
+**What it leaves alone.** A gray (weak) POP; every other stage; an alert outside the hour; an alert that reaches the bridge more than `auto.maxAlertAgeSec` (60 s) after it fired (after a lost connection, say); an alert it has already decided (the server replays the last minutes after a reconnect).
+
+**When it sells.** Most of the time the take-profit or the stop simply fills in TWS. For each position it bought, the bridge also keeps a live quote open and acts in two cases:
+
+1. **The take-profit was passed over.** A trade prints at the take-profit's price or above it while the take-profit has not filled. After `auto.tpGraceMs` (1.5 s), if shares are still held, they are sold at the bid, **as long as the bid is above what the shares cost**. A take-profit does not sell at a loss: if the bid is back at or under the buy's average price by then, nothing is sent and the order is left to its own exits.
+2. **The stop is due and has not sold everything.** A trade prints at the stop's price or under it, or the stop has sold part. After `auto.stopGraceMs` (1 s), if shares are still held **and the bid is still at or under the stop** (or the stop has sold part), they are sold at the bid. From that first sell on there is no price it will not sell at. If the bid is back above the stop by then, nothing is sent: the print did not hold.
+
+One print starts the wait, and one print can be a stray one, which is why the bid is asked again at its end. When nothing is sent, the log says `cleared`, and only a new trade can start the wait again. The stop outranks the take-profit: a position whose take-profit was passed and whose price then falls to the stop is sold by the stop's rule, under cost too.
+
+A sell here is exactly what a click on **Sell** sends (the take-profit order moved down to the bid less `order.sellOffsetPct`, or one plain sell order when the exits are gone): never more than the order holds, never more than the account holds. While shares are left it is moved down to the new bid every `auto.resellMs` (2 s), as often as it takes (the take-profit's only while the bid is above cost); `order.maxChases` does not cap it, and its moves do not use up your own clicks on Sell. It only chases exits that exist: a take-profit or a stop you cancelled by hand in TWS is yours to have cancelled. A position kept past the hour, or over a halt, is still watched: getting out is never switched off.
+
+**Switching it off.** Off, Watch only (from On) and **Halt** each cancel the automation's buys that are still waiting with nothing filled: a buy that filled after the switch would be a buy after the switch. Orders you clicked are not touched, and neither is anything that holds shares: positions keep their exits and the watch.
+
+**Watch only** runs the whole rule and places nothing: every decision is logged and shown as "would place" with the prices. Since nothing fills, each such buy is held as if it were waiting until the time it would have stopped waiting, and takes a place and its ticker for that long; so a watch-only morning shows the most buys the rule could have had out, not a guess at fills. It asks nothing of TWS, so it works with TWS closed and says nothing about the switches, the connection or the account; the two limits on an order's size (`limits.maxShares`, `limits.maxNotionalUsd`) it does apply, so a buy On would refuse for its size is not shown as one it would place.
+
+**The rails.** Each buy goes down the road a click's does, so every rail of the bridge holds: `enabled`, the halt switch (it stops the automation's buys too; its sells go on), TWS connected and online, `limits.maxShares`, `limits.maxNotionalUsd`, the ticker's duplicate window, one order per alert. Three settings of your clicks are the automation's too, because there is one of each: `order.sellOffsetPct` (how far under the bid a sell sits), `limits.maxShares` and `limits.maxNotionalUsd`. With the default `maxShares` of 500, $400 buys nothing under about $0.80 a share: such a POP is refused (`too_many_shares`) and shows as "failed", in Watch only too. Its orders always work outside regular hours, whatever `order.outsideRth` says: its hour is before the open. On top of them the automation has its own lock, `auto.paperOnly` (default `true`): it places nothing on an account that is not a paper one, also once `paperOnly` has been switched off for your clicks. Like `paperOnly`, it can only be changed by hand in `config.json`.
+
+**Where the alerts come from.** The bridge listens to the pnldash server's alert stream itself (`GET /api/tv/feed`, a read-only stream of the 📐 setups), so it works with the dashboard closed. The dashboard sets that up the first time you pick Watch only or On: it asks the server for a token that opens that stream and nothing else, and hands it to the bridge, which keeps it in `state.json` (owner-only, git-ignored, never logged). The token lasts 30 days; an open dashboard renews it by itself. Orders still go from this Mac to TWS and nowhere else.
+
+**What it needs.** This Mac awake, TWS logged in, the bridge running and the 1-minute TradingView alert active before the hour starts. If the alert stream is down, the panel says "Alerts: not connected" and nothing is bought; the bridge keeps trying.
+
+**What it does not do.** It does not close a position at the end of the hour or of the day (the exits are `GTC` and stay in TWS). It does not re-enter a ticker, average, or move a stop up. It does not judge the alert beyond yellow or gray. It does not know about shares sold by hand in TWS: its book still counts them as held; when its own sell keeps finding that the account holds none (three times over 20 s), it stops watching that order and says so on the order.
+
+**Known limits.**
+
+- **A position kept overnight is on its own after a restart.** The bridge rebuilds its book from today's log only. Start it on a later day and a position the automation bought earlier is no longer on the book: not watched, not counted against the budget, not shown. Its take-profit and stop are still working in TWS; it is yours to manage there.
+- **Decisions are made one at a time.** Each buy waits up to a second for TWS's first word before the next alert is decided, so the fifth of five alerts of the same second goes out a few seconds after the first. The log has the alert's time and `placed_at` for every order.
+- **The exit watch needs live quotes.** One real-time quote stream per position, from the market data this TWS login has. Without it (a `no_quotes` or `quotes_silent` line) a passed-over take-profit is not seen; a stop that sold part still is.
+- **The moved take-profit and a triggered stop can both be working for a moment.** They are one bracket, and TWS cancels the one when the other fills; the bridge's own net cancels a sell order left working on an order that holds nothing (see the next section).
+
+Everything it decides is in the log (`auto_decision`, one line per yellow POP while it is not off) and in `GET /auto`, which the dashboard's panel shows.
+
 ## What the bridge does on its own
 
-Reading aside (what the display groups show, an order's status and fills, the open orders when it connects), the bridge sends TWS nothing without a click, with three exceptions. Each is a cancel of an order the bridge itself placed, sent once per order id, and logged:
+Reading aside (what the display groups show, an order's status and fills, the open orders when it connects), the bridge sends TWS nothing without a click, with three exceptions, plus what the automation sends while it is switched on (the buys and sells listed under "Automation", for its own orders only). Each of the three is a cancel of an order the bridge itself placed, sent once per order id, and logged:
 
 1. **A bracket whose leg TWS refused, or that could not be sent whole, before the buy filled** is cancelled (`order_cleanup`), so a buy is never left working without the exits you clicked for.
 2. **A sell order of the bridge's own that TWS refused** is cancelled by its id (`sell_cleanup`), so the book ends with TWS's word on it and the next Sell can place another without risking two.
@@ -214,9 +273,23 @@ The stop entry, all of it built against a fake TWS. For a stop that does not tri
 20. **The bridge not running at expiry.** Place one, stop the bridge, start it again after `good_until`: does `/orders` show it `Cancelled`, or still `PreSubmitted` (TWS did not report on it at the connection)? In the second case its alert stays taken until TWS says something.
 21. **A trigger moved by hand.** Drag the buy's trigger in TWS: `/orders` should show the new `sent.trigger` (an `order_open` line with `prices.trigger`).
 
+The automation has never run against a real TWS (2026-11-28). Its buy is the stop entry of points 13 to 21; what is new is everything around it. On the first mornings, with the switch on **Watch only** first and then **On**:
+
+22. **Watch only hears the alerts.** Before 04:00 New York the panel should say "Alerts: connected". Each yellow POP of the hour should appear in the panel's list within a few seconds of the alert, as "would place" with its prices; gray POPs only raise the count. `auto_decision` lines in the log, no `order_placed`.
+23. **On places the buy.** The list says "placed", TWS shows the `STP LMT` bracket, the card shows the order with an "auto" tag. Note the seconds between the alert's time and `placed_at` in the `order_placed` line: that is the whole delay (TradingView, the server, the bridge).
+24. **The slots.** With five waiting or held, the next yellow POP should read "skipped: no free slot"; after one expires, the next is bought.
+25. **A quote stream per position.** After a buy fills, an `auto_watch` line with `what: "watching"`; no `no_quotes` or `quotes_silent` line after it. If there is one, TWS is not giving this login live data for that stock and the take-profit cannot be watched (the stop's own fills still are).
+26. **The take-profit passed over.** When a price runs through a take-profit without filling it: an `auto_watch` line `tp_crossed`, then, with the bid still above what the shares cost, an `auto_sell` about 1.5 s later, the take-profit order in TWS moved down and filled, the stop cancelled by TWS. With the bid back under cost: a `cleared` line and nothing sent. Note how often `tp_crossed` appears at all on a paper account, and whether the take-profit had in fact filled by itself in that second and a half.
+27. **The stop jumped.** When a stop triggers and its limit is passed: `auto_watch` `stop_due`, an `auto_sell` about 1 s later (the bid still at or under the stop), then one every 2 s moving lower until `what: "flat"`. A `cleared` line here means a print at the stop that the bid did not follow: check in TWS whether TWS's own stop triggered on it. In TWS the moved take-profit and the triggered stop may both show as working for a moment (they are one bracket: when one fills TWS cancels the other); check that the shares sold never exceed the shares bought and that no order is left working afterwards.
+28. **Halt.** Press Halt while a position is held: no new buy, and the watch still sells.
+29. **A restart in the hour.** Stop the bridge and start it again: it should come back in the same mode, list the day's decisions, buy none of them twice, and take up the positions it holds (`auto_watch` `watching` again).
+30. **The end of the hour.** A buy placed in the last minutes should show a `good_until` at 05:00:00 New York, not later.
+
 ## Live accounts
 
 The bridge refuses to place orders on a live account until you set `"paperOnly": false` in `config.json` by hand and restart it. There is no way to change that from the dashboard or over HTTP. For a live login also set `tws.port` to TWS's live port (`7496`).
+
+The automation has a second lock of its own, `"auto": { "paperOnly": true }`, which is the default also when the file has no `auto` section. With `paperOnly` off and `auto.paperOnly` on, your clicks trade the live account and the automation places nothing on it.
 
 Try it on the paper login first: one focus, one preview, one small order, one cancel.
 
@@ -237,7 +310,18 @@ A chase and a sell are logged like an order, before anything is sent (one that c
 
 The sell order's own status changes and fills are `order_status` and `fill` lines with `leg: "exit"`.
 
-Not every request is a line. The dashboard's polls (`GET /status`, `GET /orders`) are left out when they are answered; one that fails is logged. Refused calls (wrong token, wrong origin) are logged up to 30 a minute and counted beyond that.
+The automation's lines:
+
+- `auto_mode`: the switch was changed; `mode` and `was`. `auto_feed`: the dashboard told the bridge where the alerts are; `server` (never the token).
+- `auto_alert`: a gray POP was seen and left alone; `alert_id`, `ticker`.
+- `auto_decision`: one per yellow POP while the automation is not off: `alert_id`, `alert_at`, `ticker`, `price`, `vol_x`, `rvol1` (the stock's RVol 1m as the script read it, when the alert carries it), `mode`, `action` (`placed`, `would_place`, `skipped`, `failed`), `reason` (a code), `text` (the same in words), `order_id` and `plan` (trigger, limit, quantity, exits, `good_until`).
+- `order_placed` of an automation order has `source: "auto"` (a click's has `"click"`).
+- `auto_watch`: the exit watch on one order: `what` is `watching` (it holds shares; a quote stream was asked for), `tp_crossed` or `stop_due` (with the `level`, the `last` price and the `bid`), `cleared` (the wait ended and nothing was sent: the bid was back above the stop, or back under cost for a take-profit, or the exit was gone), `flat` (it holds nothing any more, after one of those), `no_quotes` / `quotes_silent` (no live prices for it from TWS), `gave_up` (a sell that cannot go through: the account does not hold the shares).
+- `cancel` with `why`: a waiting buy of the automation cancelled at a halt or when it was switched off or to watch only.
+- `entry_expiry_assumed`: a stop entry (clicked or automatic) with nothing filled whose time had passed before the bridge connected: TWS reports nothing for an order that ended while the bridge was away, so the bridge takes it as expired, a few seconds after connecting. `entry_expired` follows.
+- `auto_sell`: a sell the watch sent: `why`, `qty`, `limit`, `via`, `bid`, `bid_from` (`stream` or `tws`) and `sells` (the count). The usual `sell` line is written with it. `auto_sell_failed`: one that did not go out, with the `code`; the same refusal repeating is written once.
+
+Not every request is a line. The dashboard's polls (`GET /status`, `GET /orders`, `GET /auto`) are left out when they are answered; one that fails is logged. Refused calls (wrong token, wrong origin) are logged up to 30 a minute and counted beyond that.
 
 To check a focus against what TWS did with it:
 
@@ -272,8 +356,14 @@ JSON in and out. Every request except `OPTIONS` needs the `X-Bridge-Token` heade
 | `POST /chase` | `{ order_id }` | `{ order_id, limit, take_profit, stop, stop_limit, chases, status }` |
 | `POST /sell` | `{ order_id }` | `{ order_id, qty, limit, status, via }` |
 | `POST /halt` | `{ halted }` | `{ halted }` |
+| `GET /auto` | – | the automation: `{ mode, blocked, blocked_text, window, rule, feed, today, decisions }` |
+| `POST /auto` | `{ mode }` | the same, after the switch |
+| `POST /auto/feed` | `{ server, token }` | `{ paired: true, server }` |
 
 Notes on the calls:
+
+- **`/auto`**: `mode` is `"off"`, `"watch"` or `"on"`. `blocked` says why it would place nothing right now (`off`, `watch`, `disabled`, `halted`, `tws_down`, `tws_offline`, `not_paper`, `no_feed`, `outside_hours`, `day_full`, `no_slot`), `null` when the next yellow POP is bought; `blocked_text` is the same in words. `window` is its hour: `start` / `end` as set (New York), `start_at` / `end_at` as today's instants, and `open`. `rule` is the `auto` settings in use, with `slots` worked out. `feed` is the alert stream: `paired` (the bridge has been told where it is), `server`, `state` (`off`, `connecting`, `connected`, `retrying`, `unauthorized`), `connected_at`, `last_event_at`, `error`. `today` counts the yellow and gray POPs seen, the buys `placed`, the `trades` (filled), those `waiting` and `held`, and `slots_free`. `decisions` are today's, newest first, at most 100, each as its `auto_decision` log line. `POST /auto` takes `{ mode }` and nothing else; it takes effect at once and is saved to `state.json` (500 `not_saved` if that fails, with the mode changed all the same).
+- **`/auto/feed`** is the dashboard telling the bridge where the alerts are: `server` must be one of `allowedOrigins`, `token` is the one the server gave for its alert stream. It is kept in `state.json` and never logged.
 
 - **`/status`**: `tws.connected` means the socket to TWS is up and TWS has finished its handshake. `tws.accounts` are masked (`DU…67`); `tws.paper` is true when every one of them starts with `D`. `tws.offline` is true while TWS is connected to the bridge but says it has lost IB's servers: orders are refused (`tws_offline`) until it is back, because TWS would hold them and send them later. `display_group` is the configured group; `display_groups` is what each of TWS's groups shows now, by group number: `shows` is a ticker, the raw `"<conid>@<exchange>"` while the ticker is not known, `"combo"`, or `null` for nothing (the list is empty while TWS is not connected or has not listed its groups). `order` and `limits` are the settings from `config.json`. `today.filled` counts the orders with any fill.
 - **`/focus`** works when orders are disabled, halted or the account is live: it places nothing.
@@ -282,7 +372,7 @@ Notes on the calls:
   The answer waits up to 1 s for TWS's first word: `status` is TWS's own (`PreSubmitted`, `Submitted`, …) or `PendingSubmit` when none came in time. If TWS refuses within that second the answer is 502 `tws_refused` with TWS's text.
   `sizing` says how `qty` was arrived at (`{ mode: "usd", amount_usd }` or `{ mode: "shares" }`). `price_from` is what the limit was worked out from: with `priceFrom: "ask"` it is `"ask"`, or `"alert"` when there was no live ask and `askFallback` is `"alert"`; `note` then says why ("no live ask from TWS in 800 ms: priced from the alert") and is `null` otherwise.
 - **`/preview`** runs every check `/order` would, with the same body, and sends nothing: the order that would go out, or the error `/order` would give. `checks` is a list of `{ name, detail }`, one per check passed (`switches`, `account`, `alert`, `alert_age`, `shares`, `daily`, `duplicate`, `contract`, `limit`, `take_profit`, `stop`, `notional`; `alert` and `alert_age` only when the body carries `alert_id` / `alert_at`). A stop entry adds `entry` after `switches` and `trigger` before `limit`, and its `limit` check says that `maxChasePct` does not apply. `take_profit`, `stop` and `stop_limit` are `null` when that leg is switched off. `good_until` of a preview is the time a stop entry placed at that moment would have.
-- **`/orders`**: each item is `{ order_id, ticker, conid, placed_at, asked, sizing, entry, sent, chases, status, filled_qty, avg_fill_price, slip_pct, held_qty, legs, exit, loose_exit, error, note }`. `asked` is what the page sent (`alert_price`, `alert_stop`, `qty`, `stage`, `alert_at`, `alert_id`); `entry` is `"now"` or `"stop"`; `sent` is what went to TWS (`qty`, `limit`, `trigger`, `good_until`, `take_profit`, `stop`, `stop_limit`, the four `first_…` prices the bracket was placed with, `price_from`, `stop_from`, `outside_rth`, `order_ids`), its prices being the current ones (`trigger` and `good_until` are a stop entry's, `null` for a buy now; a trigger moved in TWS is followed). A stop entry that IB cancelled at its time with nothing filled has `note` "expired unfilled at HH:MM:SS New York". `chases` counts the chases. `status`, `filled_qty` and `avg_fill_price` are the buy's; `legs.take_profit` and `legs.stop` carry the exits' own. `held_qty` is what the order bought and has not sold; `exit` is the last sell (see "Sell"), `null` until Sell is clicked. `loose_exit` is `true` while the order holds nothing and a sell order of its own is still working in TWS after the bridge asked to cancel it (see "What the bridge does on its own"): worth a plain warning on the page. `error` is the last message from TWS that stopped the order or a leg, or refused a change to one; `note` the last warning or notice (at first, why the price came from the alert when the ask was asked for; later, a sell order the bridge cancelled on its own). A buy that never reached TWS, or that TWS says it does not have, reads `Inactive`.
+- **`/orders`**: each item is `{ order_id, ticker, conid, placed_at, source, asked, sizing, entry, sent, chases, status, filled_qty, avg_fill_price, slip_pct, held_qty, legs, exit, loose_exit, watch, error, note }`. `source` is `"click"` or `"auto"` (placed by the automation). `watch` is `null`, or for an automation order whose exit watch has begun to act `{ state, since, sells, last_error }`: `state` is `"tp_crossed"` or `"stop_due"`, `sells` how many sells it has sent, `last_error` why the last one did not go out (see "Automation"). `asked` is what the page sent (`alert_price`, `alert_stop`, `qty`, `stage`, `alert_at`, `alert_id`); `entry` is `"now"` or `"stop"`; `sent` is what went to TWS (`qty`, `limit`, `trigger`, `good_until`, `take_profit`, `stop`, `stop_limit`, the four `first_…` prices the bracket was placed with, `price_from`, `stop_from`, `outside_rth`, `order_ids`), its prices being the current ones (`trigger` and `good_until` are a stop entry's, `null` for a buy now; a trigger moved in TWS is followed). A stop entry that IB cancelled at its time with nothing filled has `note` "expired unfilled at HH:MM:SS New York". `chases` counts the chases. `status`, `filled_qty` and `avg_fill_price` are the buy's; `legs.take_profit` and `legs.stop` carry the exits' own. `held_qty` is what the order bought and has not sold; `exit` is the last sell (see "Sell"), `null` until Sell is clicked. `loose_exit` is `true` while the order holds nothing and a sell order of its own is still working in TWS after the bridge asked to cancel it (see "What the bridge does on its own"): worth a plain warning on the page. `error` is the last message from TWS that stopped the order or a leg, or refused a change to one; `note` the last warning or notice (at first, why the price came from the alert when the ask was asked for; later, a sell order the bridge cancelled on its own). A buy that never reached TWS, or that TWS says it does not have, reads `Inactive`.
 - **`/cancel`** takes the `order_id` of a buy from `/orders` that has not filled; TWS cancels its exits with it. A filled buy is refused (`already_filled`): its take-profit and stop stay in TWS. A halt does not block it.
 - **`/chase`** and **`/sell`** take the `order_id` of a buy placed today and nothing else: no price and no quantity can be sent in. Both wait up to 1 s for TWS's answer to what they sent, so `status` is TWS's own and a refusal within that second is the answer (502 `tws_refused`). See "Chase" and "Sell". A stop entry that still works is not chased (409 `not_chaseable`).
 - **`/halt`** is the off switch, saved to `config.json`. `paperOnly` and `enabled` cannot be changed over HTTP.
@@ -296,11 +386,11 @@ One order per alert: when `/order` (or `/preview`) carries an `alert_id` that an
 | 403 | `origin_not_allowed`, `bad_host` (the call was not addressed to `127.0.0.1` / `localhost`) |
 | 404 | `not_found` (no such path), `unknown_ticker`, `unknown_order` |
 | 405 | `method_not_allowed` |
-| 409 | `disabled`, `halted`, `paper_only`, `duplicate_alert`, `daily_limit`, `duplicate`, `ambiguous_ticker`, `already_filled`, `already_done`, `no_change` (a chase that would not move the buy up; a sell already at or under the new limit), `chase_limit` (`maxChases` reached, or `0`), `too_soon` (within 300 ms of the last change to that order), `nothing_to_sell` (nothing bought, nothing left, or no position in the account), `busy` (the order kept changing under a sell: click again), `stop_entry_off` ("stop entries are switched off: order.entryStopPct is 0 in config.json"), `not_chaseable` (a stop entry that still works: "this buy waits for 0.3673: cancel it and buy now instead"; once part-filled, "order N is a stop entry (trigger 0.3673) and has part-filled: it cannot be chased") |
+| 409 | `disabled`, `halted`, `paper_only`, `not_paper` (the automation's own lock: seen in its decisions, not on a click), `duplicate_alert`, `daily_limit`, `duplicate`, `ambiguous_ticker`, `already_filled`, `already_done`, `no_change` (a chase that would not move the buy up; a sell already at or under the new limit), `chase_limit` (`maxChases` reached, or `0`), `too_soon` (within 300 ms of the last change to that order), `nothing_to_sell` (nothing bought, nothing left, or no position in the account), `busy` (the order kept changing under a sell: click again), `stop_entry_off` ("stop entries are switched off: order.entryStopPct is 0 in config.json"), `not_chaseable` (a stop entry that still works: "this buy waits for 0.3673: cancel it and buy now instead"; once part-filled, "order N is a stop entry (trigger 0.3673) and has part-filled: it cannot be chased") |
 | 413 | `body_too_large` (over 4 KB) |
 | 415 | `not_json` |
 | 422 | `stale_alert` (older than 10 min), `too_many_shares`, `too_large`, `too_expensive` (one share costs more than `amountUsd`), `chase` (an order or a chase too far above the alert), `bad_prices` (among them a stop entry whose trigger rounds onto the alert's price, or whose take-profit is not above its limit) |
-| 500 | `not_saved` (halt applied but not written to `config.json`), `log_failed` (nothing was sent), `internal` |
+| 500 | `not_saved` (halt applied but not written to `config.json`; the automation's switch or alert stream applied but not written to `state.json`), `log_failed` (nothing was sent), `internal` |
 | 502 | `tws_refused` (TWS said no to the order, the chase or the sell), `send_failed`, `tws_error`, `no_ask` / `no_bid` (TWS answered the quote request with an error), `no_position` (TWS's position line could not be read) |
 | 503 | `tws_down` (TWS not connected), `tws_offline` (TWS has lost IB's servers) |
 | 504 | `tws_timeout`, `no_ask` / `no_bid` (no live quote in time), `no_position` (no position report in time), `cancel_pending` (a sell is waiting for TWS to confirm a cancel: click again) |

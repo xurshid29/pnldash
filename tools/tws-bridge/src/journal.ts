@@ -12,6 +12,30 @@ export interface Journal {
   writeOrThrow(type: string, fields?: JournalFields): void;
   /** The parsed lines of one New York day, oldest first; lines that do not parse are skipped. */
   readDay(date: string): JournalFields[];
+  /**
+   * One more secret to replace in every line written from now on: the alert feed's token
+   * arrives over HTTP after the start, long after the journal was made.
+   */
+  addSecret(secret: string): void;
+}
+
+/** Shorter strings are not treated as secrets: they would blank out ordinary words. */
+const MIN_SECRET_LENGTH = 8;
+
+/**
+ * Adds a secret to a list kept longest first, so a secret that contains a shorter one is replaced
+ * whole instead of leaving its other half in the line.
+ */
+function addTo(secrets: string[], secret: string): void {
+  if (typeof secret !== "string" || secret.length < MIN_SECRET_LENGTH || secrets.includes(secret)) return;
+  secrets.push(secret);
+  secrets.sort((a, b) => b.length - a.length);
+}
+
+function redact(text: string, secrets: readonly string[]): string {
+  let out = text;
+  for (const secret of secrets) out = out.split(secret).join("[redacted]");
+  return out;
 }
 
 /**
@@ -24,13 +48,17 @@ export interface Journal {
 export class FileJournal implements Journal {
   private readonly dir: string;
   private readonly clock: Clock;
-  private readonly secrets: string[];
+  private readonly secrets: string[] = [];
   private complained = false;
 
   constructor(dir: string, clock: Clock, secrets: string[]) {
     this.dir = dir;
     this.clock = clock;
-    this.secrets = secrets.filter((secret) => secret.length >= 8);
+    for (const secret of secrets) addTo(this.secrets, secret);
+  }
+
+  addSecret(secret: string): void {
+    addTo(this.secrets, secret);
   }
 
   fileFor(date: string): string {
@@ -50,8 +78,7 @@ export class FileJournal implements Journal {
 
   writeOrThrow(type: string, fields: JournalFields = {}): void {
     const now = this.clock();
-    let line = JSON.stringify({ t: new Date(now).toISOString(), type, ...fields });
-    for (const secret of this.secrets) line = line.split(secret).join("[redacted]");
+    const line = redact(JSON.stringify({ t: new Date(now).toISOString(), type, ...fields }), this.secrets);
     fs.mkdirSync(this.dir, { recursive: true });
     fs.appendFileSync(this.fileFor(nyDate(now)), `${line}\n`);
     this.complained = false;
@@ -80,19 +107,49 @@ export class FileJournal implements Journal {
   }
 }
 
-/** Keeps the lines in memory: for tests. */
+/**
+ * The replacement FileJournal makes in its line, made in the strings of a value: in nested
+ * objects and lists too, and in keys, as the line holds those as well. Other values are kept.
+ */
+function redactValue(value: unknown, secrets: readonly string[]): unknown {
+  if (typeof value === "string") return redact(value, secrets);
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, secrets));
+  if (typeof value === "object" && value !== null && Object.getPrototypeOf(value) === Object.prototype) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [redact(key, secrets), redactValue(item, secrets)]));
+  }
+  return value;
+}
+
+/**
+ * Keeps the lines in memory: for tests. Secrets are replaced as FileJournal replaces them, so a
+ * test can show that a token never reaches the log; with no secret the lines are kept as given.
+ */
 export class MemoryJournal implements Journal {
   readonly events: JournalFields[] = [];
   /** Set to make `writeOrThrow` fail, as a full disk would. */
   failWrites = false;
+  private readonly secrets: string[] = [];
+
+  constructor(secrets: string[] = []) {
+    for (const secret of secrets) addTo(this.secrets, secret);
+  }
+
+  addSecret(secret: string): void {
+    addTo(this.secrets, secret);
+  }
 
   write(type: string, fields: JournalFields = {}): void {
-    this.events.push({ type, ...fields });
+    this.events.push(this.line(type, fields));
   }
 
   writeOrThrow(type: string, fields: JournalFields = {}): void {
     if (this.failWrites) throw new Error("disk full");
-    this.events.push({ type, ...fields });
+    this.events.push(this.line(type, fields));
+  }
+
+  private line(type: string, fields: JournalFields): JournalFields {
+    const line = { type, ...fields };
+    return this.secrets.length === 0 ? line : (redactValue(line, this.secrets) as JournalFields);
   }
 
   readDay(): JournalFields[] {

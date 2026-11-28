@@ -181,6 +181,8 @@ test("order: the bracket goes out as three orders, in order, on the resolved con
     ticker: "ABCD",
     conid: 111,
     placed_at: new Date(T0).toISOString(),
+    // A click's order says so: the automation's exit watch leaves it alone.
+    source: "click",
     asked: { alert_price: 2.5, alert_stop: 2.42, qty: null, stage: "band", alert_at: alertAt, alert_id: "987" },
     sizing: { mode: "shares" },
     entry: "now",
@@ -214,6 +216,7 @@ test("order: the bracket goes out as three orders, in order, on the resolved con
     },
     exit: null,
     loose_exit: false,
+    watch: null,
     error: null,
     note: null,
   });

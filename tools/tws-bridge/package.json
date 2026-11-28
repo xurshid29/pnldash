@@ -2,7 +2,7 @@
   "name": "tws-bridge",
   "version": "0.1.0",
   "private": true,
-  "description": "Local bridge between the pnldash dashboard (browser) and the TWS running on this Mac: focus a ticker, place the usual bracket order. Human-clicked orders only.",
+  "description": "Local bridge between the pnldash dashboard (browser) and the TWS running on this Mac: focus a ticker, place the usual bracket order on a click, and (when switched on) the operator's POP automation.",
   "type": "module",
   "scripts": {
     "start": "tsx src/main.ts",

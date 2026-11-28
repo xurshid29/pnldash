@@ -43,3 +43,22 @@ export function nyTime(ms: number): string {
   }
   return `${hour}:${minute}:${second}`;
 }
+
+/** New York's wall clock at an instant, read as if it were UTC: the instant plus New York's offset. */
+function nyWallAsUtc(ms: number): number {
+  return Date.parse(`${nyDate(ms)}T${nyTime(ms)}Z`);
+}
+
+/**
+ * The instant at which New York's clock reads `minutes` after midnight on `date` (`YYYY-MM-DD`).
+ * A time the clocks skip in spring or show twice in autumn (between 01:00 and 03:00 on those two
+ * Sundays) has no single answer; nothing here asks for one.
+ */
+export function nyInstant(date: string, minutes: number): number {
+  const [year = 0, month = 1, day = 1] = date.split("-").map(Number);
+  // The wall time as if New York were on UTC, then moved by New York's offset at that moment.
+  const wall = Date.UTC(year, month - 1, day, 0, minutes);
+  const first = wall - (nyWallAsUtc(wall) - wall);
+  // The offset was read a few hours off the answer: read it again there, for a day the clocks change.
+  return wall - (nyWallAsUtc(first) - first);
+}

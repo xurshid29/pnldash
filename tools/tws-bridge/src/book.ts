@@ -39,12 +39,32 @@ export interface ExitState {
   exit_pct: number | null;
 }
 
+/** Who placed a bracket: a click on the dashboard, or the automation (`src/auto.ts`). */
+export type OrderSource = "click" | "auto";
+
+/**
+ * What the automation's exit watch has seen on an order it placed and is acting on: the
+ * take-profit's price was traded without the take-profit filling, or the stop is due and has not
+ * sold everything. From then on the watch sells at the bid until the order holds nothing.
+ */
+export interface ExitWatchState {
+  state: "tp_crossed" | "stop_due";
+  /** When it was first seen (ISO). */
+  since: string;
+  /** How many sells (the first and every move lower) the watch has sent. */
+  sells: number;
+  /** Why its last sell did not go out, when it did not; null otherwise. */
+  last_error: string | null;
+}
+
 /** One bracket as `GET /orders` shows it. `order_id` is the parent's (the buy's) id. */
 export interface OrderRecord {
   order_id: number;
   ticker: string;
   conid: number;
   placed_at: string;
+  /** "click": placed from the dashboard. "auto": placed by the automation, which also watches its exits. */
+  source: OrderSource;
   /** What the dashboard asked for. */
   asked: {
     alert_price: number;
@@ -106,6 +126,8 @@ export interface OrderRecord {
    * asked TWS to cancel it, and TWS has not confirmed yet. Such an order could open a short.
    */
   loose_exit: boolean;
+  /** The automation's exit watch on this order, once it has something to act on; null before that and for a clicked order. */
+  watch: ExitWatchState | null;
   /** The last message from TWS that stopped the order or a leg, or refused a change to one. */
   error: string | null;
   /** The last warning or notice from TWS about the order. */
@@ -287,8 +309,15 @@ export class OrderBook {
       .map((tracked) => tracked.record);
   }
 
-  countOn(date: string): number {
-    return this.ordersOn(date).length;
+  /** How many brackets were placed on that New York date: all of them, or those of one source. */
+  countOn(date: string, source?: OrderSource): number {
+    const orders = this.ordersOn(date);
+    return source === undefined ? orders.length : orders.filter((record) => record.source === source).length;
+  }
+
+  /** Every bracket on the book for this ticker that is still working or still holds shares, whatever day it is from. */
+  openFor(ticker: string): OrderRecord[] {
+    return this.all().filter((record) => record.ticker === ticker && (!isDone(record.status) || record.held_qty > 0));
   }
 
   filledOn(date: string): number {
@@ -621,6 +650,8 @@ export function recordFromJournal(event: JournalFields): OrderRecord | null {
     ticker,
     conid: num(event["conid"]) ?? 0,
     placed_at: placedAt,
+    // A line written before the automation existed was a click.
+    source: event["source"] === "auto" ? "auto" : "click",
     asked: {
       alert_price: alertPrice,
       alert_stop: num(asked["alert_stop"]),
@@ -662,6 +693,8 @@ export function recordFromJournal(event: JournalFields): OrderRecord | null {
     exit: null,
     // Not read back: it is about TWS now, and is found out again once TWS is connected.
     loose_exit: false,
+    // Not read back either: the watch looks at the order afresh once TWS is connected.
+    watch: null,
     error: str(event["error"]),
     note: str(event["note"]),
   };

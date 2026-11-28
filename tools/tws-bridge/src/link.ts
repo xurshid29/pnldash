@@ -10,11 +10,19 @@ import type { IbApi, IbApiFactory } from "./ib.js";
 export const REQUEST_ID_BASE = 900_000_000;
 
 /**
- * TWS tick types of the real-time bid and ask. The delayed ones (types 66 and 67) are never used
- * as a price.
+ * TWS tick types of the real-time bid, ask and last trade. The delayed ones (types 66, 67 and 68)
+ * are never used as a price.
  */
 const TICK_BID = 1;
 const TICK_ASK = 2;
+const TICK_LAST = 4;
+
+/** What a quote stream passes on, by tick type: only these three, so a delayed tick is never one. */
+const STREAM_FIELDS = new Map<number, QuoteField>([
+  [TICK_BID, "bid"],
+  [TICK_ASK, "ask"],
+  [TICK_LAST, "last"],
+]);
 
 /**
  * TWS lost / got back its own connection to IB's servers (the socket to TWS stays up): 1100 when
@@ -152,6 +160,20 @@ export interface FocusSent {
   contractInfo: string;
 }
 
+export type QuoteField = "bid" | "ask" | "last";
+
+export interface QuoteListener {
+  onPrice(field: QuoteField, price: number): void;
+  /** TWS refused the stream or ended it: the stream is over and its id is dead. */
+  onError?(code: number, message: string): void;
+}
+
+/** One quote stream: who hears it, and the connection it was asked for on. */
+interface QuoteStream {
+  listener: QuoteListener;
+  api: IbApi;
+}
+
 type Pending =
   | {
       kind: "contract";
@@ -212,6 +234,8 @@ export class TwsLink {
   /** Display group → what TWS last said it shows. */
   private readonly groupShows = new Map<number, string>();
   private readonly pending = new Map<number, Pending>();
+  /** Request id → an open quote stream. Only streams of the current connection are ever in here. */
+  private readonly streams = new Map<number, QuoteStream>();
   private positionsRead: PositionsRead | null = null;
   /** What the bridge sends for itself, waiting its turn: see {@link inBackground}. */
   private backgroundQueue: Array<() => void> = [];
@@ -407,6 +431,47 @@ export class TwsLink {
   }
 
   /**
+   * Starts a real-time quote stream for a contract and returns its request id. The listener hears
+   * the real-time bid, ask and last trade, each time TWS sends one; never a delayed price, and
+   * never "no quote" (TWS sends -1 or 0 for that). It is a plain stream: no snapshot, and never the
+   * regulatory snapshot, which costs money per request. Throws when TWS is not connected.
+   *
+   * The stream lives as long as this connection. When the connection drops, every stream is
+   * forgotten without a word to its listener (TWS ends them with the socket): the caller asks
+   * again once the link is up, as nothing is ever re-sent on its own after a reconnect.
+   */
+  watchQuotes(contract: Contract, listener: QuoteListener): number {
+    const api = this.requireApi();
+    const reqId = this.takeRequestId();
+    // Known before it is asked for, so an answer that comes at once still finds its listener.
+    this.streams.set(reqId, { listener, api });
+    try {
+      api.reqMktData(reqId, contract, "", false, false);
+    } catch (err) {
+      this.streams.delete(reqId);
+      throw err;
+    }
+    return reqId;
+  }
+
+  /**
+   * Ends a quote stream. The cancel goes to TWS only for a stream of the current connection: one
+   * of an earlier connection ended with it. An unknown id, or no connection, does nothing; it
+   * never throws.
+   */
+  unwatchQuotes(requestId: number): void {
+    const stream = this.streams.get(requestId);
+    if (stream === undefined) return;
+    this.streams.delete(requestId);
+    if (this.api !== stream.api || !this.ready) return;
+    try {
+      stream.api.cancelMktData(requestId);
+    } catch (err) {
+      this.reportFailure("the cancel of a quote stream", err);
+    }
+  }
+
+  /**
    * Makes the TWS windows linked to `group` show a contract. The group is subscribed to once per
    * connection; every later call only sends the update.
    */
@@ -559,6 +624,15 @@ export class TwsLink {
     });
 
     on(EventName.tickPrice, (reqId: number, field: number, value: number) => {
+      // A stream's listener is called from inside this wrapper: one that throws is reported and
+      // its stream stays open for the next tick.
+      const stream = this.streams.get(reqId);
+      if (stream !== undefined) {
+        const name = STREAM_FIELDS.get(field);
+        if (name === undefined || !Number.isFinite(value) || value <= 0) return;
+        stream.listener.onPrice(name, value);
+        return;
+      }
       const pending = this.pending.get(reqId);
       if (pending?.kind !== "snapshot" || field !== pending.field) return;
       if (!Number.isFinite(value) || value <= 0) return;
@@ -679,6 +753,19 @@ export class TwsLink {
         pending.reject(new TwsRequestError(code, message));
         return;
       }
+      const stream = this.streams.get(reqId);
+      if (stream !== undefined) {
+        // A warning ("part of the data is not subscribed" and the like) leaves the stream as it is.
+        if (nonFatal) return;
+        this.streams.delete(reqId);
+        try {
+          stream.listener.onError?.(code, message);
+        } finally {
+          // Said even when the listener throws: the log keeps that the stream is over.
+          this.handlers.onNote?.("quote_stream_error", { request_id: reqId, code, message });
+        }
+        return;
+      }
       for (const [group, subscriptionId] of this.groupSubscriptions) {
         if (subscriptionId === reqId) {
           this.handlers.onNote?.("display_group_error", { group, code, message });
@@ -734,6 +821,9 @@ export class TwsLink {
       pending.reject(new NotConnectedError("the TWS connection dropped"));
     }
     this.pending.clear();
+    // TWS ends a connection's streams with it. Their listeners are not told: whoever wants the
+    // quotes again asks once the link is up (see watchQuotes).
+    this.streams.clear();
     const read = this.positionsRead;
     if (read !== null) {
       this.positionsRead = null;

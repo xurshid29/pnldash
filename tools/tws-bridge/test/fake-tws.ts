@@ -1,4 +1,4 @@
-import { SecType } from "@stoqey/ib";
+import { SecType, isNonFatalError } from "@stoqey/ib";
 import type { Contract, ContractDetails, ExecutionFilter, Order } from "@stoqey/ib";
 import type { IbApi, IbApiFactory, IbApiOptions } from "../src/ib.js";
 
@@ -13,6 +13,19 @@ export interface PlacedOrder {
   order: Order;
 }
 
+/** A quote stream open on a connection: a `reqMktData` that is not a snapshot, not yet cancelled. */
+export interface OpenStream {
+  reqId: number;
+  /** The contract's id as the bridge sent it (null when it sent none). */
+  conId: number | null;
+  symbol: string | null;
+}
+
+export type StreamField = "bid" | "ask" | "last";
+
+/** The tick types TWS sends a stream's real-time bid, ask and last trade under. */
+const STREAM_TICK_TYPES: Record<StreamField, number> = { bid: 1, ask: 2, last: 4 };
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Listener = (...args: any[]) => void;
 
@@ -24,6 +37,8 @@ export class FakeIb implements IbApi {
   private readonly listeners = new Map<string, Listener[]>();
   /** Display group → the request id it was subscribed with on this connection. */
   private readonly groupSubscriptions = new Map<number, number>();
+  /** Request id → the quote stream open under it on this connection. */
+  private readonly openStreams = new Map<number, OpenStream>();
 
   constructor(options: IbApiOptions, world: FakeTws) {
     this.options = options;
@@ -106,13 +121,15 @@ export class FakeIb implements IbApi {
 
   disconnect(): this {
     this.calls.push({ name: "disconnect", args: [] });
+    // TWS ends a connection's quote streams with its socket.
+    this.openStreams.clear();
     return this;
   }
 
   reqContractDetails(reqId: number, contract: Contract): this {
     this.calls.push({ name: "reqContractDetails", args: [reqId, contract] });
     if (this.world.silentLookups) return this;
-    queueMicrotask(() => {
+    const answer = (): void => {
       // By symbol, or (with no symbol given) by contract id alone.
       const found =
         contract.symbol !== undefined
@@ -126,7 +143,10 @@ export class FakeIb implements IbApi {
       }
       for (const details of found) this.emit("contractDetails", reqId, details);
       this.emit("contractDetailsEnd", reqId);
-    });
+    };
+    // A slow TWS: the answer waits until the test lets it go (FakeTws.answerLookups).
+    if (this.world.holdLookups) this.world.heldLookups.push(answer);
+    else queueMicrotask(answer);
     return this;
   }
 
@@ -138,6 +158,10 @@ export class FakeIb implements IbApi {
     regulatorySnapshot: boolean,
   ): this {
     this.calls.push({ name: "reqMktData", args: [reqId, contract, genericTickList, snapshot, regulatorySnapshot] });
+    if (!snapshot) {
+      this.openStream(reqId, contract);
+      return this;
+    }
     // What happens in TWS between the bridge asking for a quote and getting it (a fill, say).
     this.world.onMktData?.(this, reqId);
     const symbol = contract.symbol ?? "";
@@ -155,7 +179,56 @@ export class FakeIb implements IbApi {
 
   cancelMktData(reqId: number): this {
     this.calls.push({ name: "cancelMktData", args: [reqId] });
+    this.openStreams.delete(reqId);
     return this;
+  }
+
+  /**
+   * A stream opens silent: a real TWS sends the current quote at once, here a test sends it with
+   * {@link tick}. A contract in `world.refusedStreams` is answered with that error instead (a
+   * warning code still opens the stream, as in TWS).
+   */
+  private openStream(reqId: number, contract: Contract): void {
+    const conId = contract.conId ?? null;
+    const stream: OpenStream = { reqId, conId, symbol: contract.symbol ?? null };
+    const refusal = conId === null ? undefined : this.world.refusedStreams.get(conId);
+    if (refusal === undefined) {
+      this.openStreams.set(reqId, stream);
+      return;
+    }
+    const err = new Error(refusal.message);
+    if (isNonFatalError(refusal.code, err)) this.openStreams.set(reqId, stream);
+    queueMicrotask(() => this.emit("error", err, refusal.code, reqId));
+  }
+
+  /** The quote streams open on this connection, oldest first. */
+  streams(): OpenStream[] {
+    return [...this.openStreams.values()];
+  }
+
+  /**
+   * The quote moves: the real-time tick (bid 1, ask 2, last 4) is sent on every open stream of
+   * this contract on this connection. Returns how many streams it reached.
+   */
+  tick(conid: number, field: StreamField, price: number): number {
+    const reached = this.streams().filter((stream) => stream.conId === conid);
+    for (const stream of reached) this.emit("tickPrice", stream.reqId, STREAM_TICK_TYPES[field], price);
+    return reached.length;
+  }
+
+  /** Any `tickPrice` under any request id: a delayed tick (66 / 67 / 68), -1, NaN, a dead id. */
+  rawTick(reqId: number, tickType: number, value: number): void {
+    this.emit("tickPrice", reqId, tickType, value);
+  }
+
+  /**
+   * TWS reports an error against a stream's request id, at once. An error ends the stream (in TWS
+   * too); a warning (a code the library counts as non-fatal) leaves it open.
+   */
+  streamError(reqId: number, code: number, message = `TWS error ${code}`): void {
+    const err = new Error(message);
+    if (!isNonFatalError(code, err)) this.openStreams.delete(reqId);
+    this.emit("error", err, code, reqId);
   }
 
   /**
@@ -285,7 +358,10 @@ export class FakeTws {
    */
   onOrder: ((ib: FakeIb, id: number, order: Order, change: boolean) => void) | null = null;
   onCancel: ((ib: FakeIb, id: number) => void) | null = null;
+  /** Called for a snapshot only: a quote stream's start is not "asking for a price" here. */
   onMktData: ((ib: FakeIb, reqId: number) => void) | null = null;
+  /** Contract id → the error TWS answers a quote stream for it with (354 "not subscribed", say). */
+  readonly refusedStreams = new Map<number, { code: number; message: string }>();
   /** The display groups TWS lists, most used first ("4|1|2|5"); null = it never answers the question. */
   groups: string | null = null;
   /** What a display group shows: "<conid>@<exchange>", "none" or "combo". A group not in here shows "none". */
@@ -296,6 +372,10 @@ export class FakeTws {
   ignoreGroupUpdates = false;
   /** TWS never answers a contract lookup. */
   silentLookups = false;
+  /** TWS answers a contract lookup only when the test says so ({@link answerLookups}): a slow lookup. */
+  holdLookups = false;
+  /** The answers to lookups held back, oldest first. */
+  readonly heldLookups: Array<() => void> = [];
   /** Make the Nth placeOrder call on a connection throw (1 = the first). */
   failPlaceOrderAt = 0;
 
@@ -312,9 +392,24 @@ export class FakeTws {
     return ib;
   }
 
+  /** TWS answers every contract lookup it held back, in the order they were asked. */
+  answerLookups(): void {
+    for (const answer of this.heldLookups.splice(0)) answer();
+  }
+
   /** The socket drops. */
   drop(): void {
     this.current.emit("disconnected");
+  }
+
+  /** The quote streams open on the connection in use. */
+  streams(): OpenStream[] {
+    return this.current.streams();
+  }
+
+  /** The quote moves, on the connection in use: see {@link FakeIb.tick}. */
+  tick(conid: number, field: StreamField, price: number): number {
+    return this.current.tick(conid, field, price);
   }
 
   /** Every new order sent on any connection, in order. */

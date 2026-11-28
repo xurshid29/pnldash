@@ -1,18 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { AutoTrader } from "./auto.js";
 import { Bridge } from "./bridge.js";
-import { ConfigError, loadOrCreateConfig, persistHalted } from "./config.js";
+import { autoSlots, ConfigError, loadOrCreateConfig, persistHalted } from "./config.js";
 import type { Config } from "./config.js";
 import { errorMessage } from "./errors.js";
+import { AlertFeed } from "./feed.js";
 import { createIbApi } from "./ib.js";
 import { FileJournal } from "./journal.js";
 import { TwsLink } from "./link.js";
+import { formatUsd } from "./order.js";
 import { createBridgeServer, listenOnLoopback } from "./server.js";
+import { loadState, saveState } from "./state.js";
 import { systemClock } from "./time.js";
+import { ExitWatch } from "./watch.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const configFile = path.join(root, "config.json");
+/** What the bridge was told at run time: the automation's switch, and where its alerts come from. Written by the bridge alone. */
+const stateFile = path.join(root, "state.json");
 const logsDir = path.join(root, "logs");
 
 function say(message: string): void {
@@ -54,7 +61,14 @@ async function main(): Promise<void> {
     return;
   }
 
+  const { state, problem: stateProblem } = loadState(stateFile);
+  if (stateProblem !== null) {
+    console.log(`Note: ${stateProblem}. What could not be read starts from its default (the automation off, no alert stream).`);
+  }
+
   const journal = new FileJournal(logsDir, systemClock, [config.token]);
+  // The alert stream's token is a secret too: the log replaces it wherever it would turn up.
+  if (state.feed !== null) journal.addSecret(state.feed.token);
   const link = new TwsLink({
     factory: createIbApi,
     host: config.tws.host,
@@ -69,8 +83,20 @@ async function main(): Promise<void> {
     saveHalted: (halted) => persistHalted(configFile, halted),
     say,
   });
+  // The automation's two halves: the watch sells what it bought, the trader decides what it buys.
+  const watch = new ExitWatch({ auto: config.auto, bridge, link, journal, say });
+  const auto = new AutoTrader({
+    config,
+    bridge,
+    journal,
+    state,
+    saveState: (next) => saveState(stateFile, next),
+    feed: (onSetup) => new AlertFeed({ onSetup }),
+    say,
+  });
   const server = createBridgeServer({
     bridge,
+    auto,
     token: config.token,
     allowedOrigins: config.allowedOrigins,
     journal,
@@ -99,6 +125,16 @@ async function main(): Promise<void> {
     `  orders   ${config.paperOnly ? "paper accounts only" : "LIVE ACCOUNTS ALLOWED (paperOnly is off)"}` +
       `${config.enabled ? "" : ", DISABLED"}${config.halted ? ", HALTED" : ""}`,
   );
+  const a = config.auto;
+  const autoMode =
+    auto.mode === "on" ? "ON: it places orders by itself" : auto.mode === "watch" ? "WATCH ONLY: it places nothing" : "off";
+  console.log(
+    `  auto     ${autoMode}. Yellow POPs ${a.windowStart}-${a.windowEnd} New York, buy if >= +${a.entryStopPct}%, ` +
+      `${formatUsd(a.amountUsd)} x ${autoSlots(a)}, at most ${a.maxTrades} trades a day, ` +
+      `take-profit +${a.takeProfitPct}%, stop -${a.stopPct}%` +
+      `${a.paperOnly ? ", paper accounts only" : ", LIVE ACCOUNTS ALLOWED (auto.paperOnly is off)"}` +
+      `${state.feed === null ? "; no alert stream yet (the dashboard sets it)" : ""}`,
+  );
   journal.write("start", {
     version,
     http_port: config.http.port,
@@ -108,6 +144,9 @@ async function main(): Promise<void> {
     halted: config.halted,
     order: config.order,
     limits: config.limits,
+    auto: config.auto,
+    auto_mode: auto.mode,
+    alert_stream: state.feed?.server ?? null,
   });
 
   link.start();
@@ -118,6 +157,8 @@ async function main(): Promise<void> {
     stopping = true;
     say(`${signal}: stopping. Orders already in TWS stay in TWS.`);
     journal.write("stop", { signal });
+    auto.close();
+    watch.close();
     bridge.close();
     link.stop();
     server.close(() => process.exit(0));

@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import http from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AutoTrader } from "./auto.js";
 import type { Bridge } from "./bridge.js";
 import { badRequest, BridgeError, errorMessage } from "./errors.js";
 import type { Journal, JournalFields } from "./journal.js";
@@ -17,7 +18,7 @@ const MAX_REFUSALS_LOGGED_PER_MINUTE = 30;
  * Answered fine, they are not written to the log: they would be some 17,000 lines a day per open
  * tab, in the file the day's orders are read back from at a start. A failed one is logged.
  */
-const POLL_PATHS: ReadonlySet<string> = new Set(["/status", "/orders"]);
+const POLL_PATHS: ReadonlySet<string> = new Set(["/status", "/orders", "/auto"]);
 
 const PREFLIGHT_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -28,16 +29,17 @@ const PREFLIGHT_HEADERS: Record<string, string> = {
 
 export interface ServerOptions {
   bridge: Bridge;
+  /** The automation (`src/auto.ts`). Without it there is no `/auto`: the bridge only answers clicks. */
+  auto?: AutoTrader;
   token: string;
   allowedOrigins: string[];
   journal: Journal;
   clock?: Clock;
 }
 
-interface Route {
-  method: "GET" | "POST";
-  run: (body: unknown) => unknown;
-}
+type Method = "GET" | "POST";
+/** What a path does, per method it takes. */
+type Route = Partial<Record<Method, (body: unknown) => unknown>>;
 
 function tokenMatches(given: string | string[] | undefined, expected: string): boolean {
   if (typeof given !== "string") return false;
@@ -126,6 +128,11 @@ function logFields(body: unknown): JournalFields {
     if (typeof value === "number" && Number.isFinite(value)) out[key] = value;
   }
   if (typeof source["halted"] === "boolean") out["halted"] = source["halted"];
+  // `/auto`'s switch and `/auto/feed`'s server. The feed's token is a body field too, and is never taken.
+  for (const key of ["mode", "server"]) {
+    const value = source[key];
+    if (typeof value === "string") out[key] = value.slice(0, 80);
+  }
   return out;
 }
 
@@ -134,21 +141,26 @@ function logFields(body: unknown): JournalFields {
  * and which bridge function a path means. It decides nothing about orders.
  */
 export function createBridgeServer(options: ServerOptions): http.Server {
-  const { bridge, token, journal } = options;
+  const { bridge, auto, token, journal } = options;
   const allowedOrigins = new Set(options.allowedOrigins);
   const clock = options.clock ?? systemClock;
 
   const routes: Record<string, Route> = {
-    "/status": { method: "GET", run: () => bridge.status() },
-    "/orders": { method: "GET", run: () => bridge.orders() },
-    "/focus": { method: "POST", run: (body) => bridge.focus(body) },
-    "/preview": { method: "POST", run: (body) => bridge.preview(body) },
-    "/order": { method: "POST", run: (body) => bridge.order(body) },
-    "/cancel": { method: "POST", run: (body) => bridge.cancel(body) },
-    "/chase": { method: "POST", run: (body) => bridge.chase(body) },
-    "/sell": { method: "POST", run: (body) => bridge.sell(body) },
-    "/halt": { method: "POST", run: (body) => bridge.halt(body) },
+    "/status": { GET: () => bridge.status() },
+    "/orders": { GET: () => bridge.orders() },
+    "/focus": { POST: (body) => bridge.focus(body) },
+    "/preview": { POST: (body) => bridge.preview(body) },
+    "/order": { POST: (body) => bridge.order(body) },
+    "/cancel": { POST: (body) => bridge.cancel(body) },
+    "/chase": { POST: (body) => bridge.chase(body) },
+    "/sell": { POST: (body) => bridge.sell(body) },
+    "/halt": { POST: (body) => bridge.halt(body) },
   };
+  if (auto !== undefined) {
+    // The automation: its state and the day's decisions, its switch, and where its alerts come from.
+    routes["/auto"] = { GET: () => auto.status(), POST: (body) => auto.setMode(body) };
+    routes["/auto/feed"] = { POST: (body) => auto.pairFeed(body) };
+  }
 
   let refusalMinute = -1;
   let refusalsThisMinute = 0;
@@ -230,12 +242,14 @@ export function createBridgeServer(options: ServerOptions): http.Server {
 
       const route = routes[path];
       if (route === undefined) throw new BridgeError(404, "not_found", `there is no ${path.slice(0, 64)}`);
-      if (route.method !== method) {
-        send(405, { error: `${path} takes ${route.method}`, code: "method_not_allowed" }, { Allow: `${route.method}, OPTIONS` });
+      const run = method === "GET" || method === "POST" ? route[method] : undefined;
+      if (run === undefined) {
+        const takes = Object.keys(route);
+        send(405, { error: `${path} takes ${takes.join(" or ")}`, code: "method_not_allowed" }, { Allow: `${takes.join(", ")}, OPTIONS` });
         return;
       }
-      if (route.method === "POST") body = await readJsonBody(req);
-      const data = await route.run(body);
+      if (method === "POST") body = await readJsonBody(req);
+      const data = await run(body);
       send(200, { data });
     } catch (err) {
       if (res.headersSent) {

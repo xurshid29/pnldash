@@ -479,6 +479,7 @@ test("flow: chase and sell over HTTP: a click each, by order id, and nothing but
     "ticker",
     "conid",
     "placed_at",
+    "source",
     "asked",
     "sizing",
     "entry",
@@ -492,6 +493,7 @@ test("flow: chase and sell over HTTP: a click each, by order id, and nothing but
     "legs",
     "exit",
     "loose_exit",
+    "watch",
     "error",
     "note",
   ]);
