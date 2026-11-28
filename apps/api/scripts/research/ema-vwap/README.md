@@ -573,9 +573,43 @@ of $400, one per ticker), in dollars:
   benchmark from the whole day is 28–32% take-profits first, where +20 / −10 needs 37–40% after
   costs.
 
+**The breakout indicator's signal as the entry (tables 12–13, 11-28).** The operator's next
+idea, with the public "Significant Breakout Levels (FVG)" indicator on the chart: "entering not
+when 5% from our POP candle, but when we get a buy signal (green box) from this indicator right
+next to our yellow POP", and then, having watched it in replay ("the BUY signal is moving down
+while price is dropping"): "maybe our 5% from POP is better, or wait for the candle with the BUY
+signal and enter on its close (if it's a red candle), or … enter with 5% from its close". The
+indicator's bullish rule is replicated in the script from its code: a pivot high (10 candles
+each side, no older than 50), a green candle that opens under it and closes above it with a body
+over half the ATR(14), and the next candle's low above the high of the candle before the break.
+The signal is final at that next candle's close; until then the box follows the forming candle's
+low, which is what moves in replay. +20% / −10%, every POP, in sample / out of sample:
+
+| | trades | take-profit first | average per trade |
+|---|---:|---:|---:|
+| POPs with the signal within two candles | 190 / 156 (14% / 12% of POPs) | | |
+| …bought at the alert's price | 190 / 156 | 21.6% / 25.6% | −1.83% / −0.29% |
+| …bought at the signal candle's close | 190 / 156 | 19.5% / 22.4% | −2.26% / −0.87% |
+| …that candle red, bought at its close | 52 / 53 | 21.2% / 18.9% | −1.43% / −1.68% |
+| …that candle red, buy stop +5% above its close | 13 / 13 | 4 / 3 of them | −0.21% / +0.62% |
+| …buy stop +5% above the alert, placed once the signal is known | 46 / 38 | 37.0% / 26.3% | +1.15% / −0.16% |
+| POPs without the signal: buy stop +5% above the alert | 345 / 285 | 26.7% / 24.9% | −0.50% / −1.69% |
+
+- **Buying the signal candle's close loses, red or green**, about as much as buying the alert.
+- **The signal does not reliably improve the waiting buy.** Placed after the signal it is +1.15%
+  in one half and −0.16% in the other on 46 and 38 trades; a row that looks better (+1.6% / +2.0%)
+  uses the signal before it is known and is not a rule that can be traded.
+- **It is rare**: one POP in seven or eight has it, about one trade a day over all POPs and one
+  every two or three days on the POPs that alert (18 / 12 trades in 76 days).
+- A red signal candle with a buy stop above it has 13 trades in each half: no answer.
+
+So the entry stays the buy stop above the alert's price. Not measured: the indicator's levels as
+a place for the stop.
+
 **Limits:** as above (1m bars from ~20-second snapshots, names already on the screen); a stop
 fills at its level here, which a fast drop in thin pre-market trading will not give; the order
-of events inside a candle is unknown (taken against the trade).
+of events inside a candle is unknown (taken against the trade); the indicator is replicated
+from its source, and its pivot rule on equal highs may differ a little from TradingView's.
 
 **Built as script v49** (`docs/vwap-setup.md` §22.8): a POP under 10× is weak (gray, stored, not
 announced) and so is its BACK; every POP and BACK carries the reading. TradingView sees every

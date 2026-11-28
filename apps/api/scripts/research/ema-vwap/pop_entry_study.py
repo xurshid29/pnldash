@@ -103,6 +103,41 @@ def do_run(ticker, day, run):
             s -= closes[i - args.len]
         if i >= args.len - 1:
             basis[i] = s / args.len
+    # The "Significant Breakout Levels (FVG)" indicator's bullish signal, as its code computes it at
+    # each candle's close (the operator, 11-28: "entering … when we get a buy signal (green box)
+    # from this indicator right next to our yellow POP"): a pivot high (10 candles each side) no
+    # older than 50 candles; the candle before this one opened under it and closed above it with a
+    # body over half the ATR(14); and this candle's low is above the high of the candle two back.
+    opens, highs, lows = [r[1] for r in run], [r[2] for r in run], [r[3] for r in run]
+    tr = [highs[0] - lows[0]] + [max(highs[k] - lows[k], abs(highs[k] - closes[k - 1]), abs(lows[k] - closes[k - 1])) for k in range(1, n)]
+    atr = [None] * n
+    if n >= 14:
+        a = sum(tr[:14]) / 14
+        atr[13] = a
+        for k in range(14, n):
+            a = (a * 13 + tr[k]) / 14
+            atr[k] = a
+    sig = [False] * n
+    levels = []   # [price, the pivot's candle], the newest five
+    for k in range(n):
+        p = k - 10
+        if p >= 10:
+            hp = highs[p]
+            if all(highs[j] <= hp for j in range(p - 10, p)) and all(highs[j] < hp for j in range(p + 1, k + 1)):
+                levels.append([hp, p])
+                if len(levels) > 5:
+                    levels.pop(0)
+        if k >= 2 and levels:
+            keep = []
+            for price, pbar in levels:
+                if closes[k - 1] > price:   # any close above uses the level up
+                    strong = atr[k - 1] is not None and abs(closes[k - 1] - opens[k - 1]) > atr[k - 1] * 0.5
+                    gap = lows[k] > highs[k - 2] and closes[k - 1] > opens[k - 1]
+                    if opens[k - 1] < price and strong and gap and k - pbar <= 50:
+                        sig[k] = True
+                else:
+                    keep.append([price, pbar])
+            levels = keep
     inrun = popped = False
     ran = 0.0
     for i in range(args.len, n):
@@ -142,6 +177,39 @@ def do_run(ticker, day, run):
             j, px, same = fill
             e['res'][off] = dict(wait=j - i, entry=px, vs_alert=(px / c - 1) * 100,
                                  out={p: bracket(run, j, px, p[0], p[1], same) for p in PAIRS})
+        # the indicator's signal "right next to" the POP: at the close of the POP candle or of one
+        # of the two candles after it. Its candle red or green; bought at that candle's close, or
+        # with a buy stop 5% above that close.
+        s = next((x for x in (i, i + 1, i + 2) if x + 1 < n and sig[x]), None)
+        e['sig'] = None
+        if s is not None:
+            d = dict(wait=s - i, red=closes[s] < opens[s], vs_alert=(closes[s] / c - 1) * 100,
+                     close={p: bracket(run, s, closes[s], p[0], p[1]) for p in PAIRS}, stop5=None)
+            level, fill = closes[s] * 1.05, None
+            for k in range(s + 1, min(n, s + args.valid + 1)):
+                ko, kh, kc = run[k][1], run[k][2], run[k][4]
+                if kh >= level:
+                    px = max(level, ko)
+                    if px <= level * (1 + args.gap / 100):
+                        fill = (k, px, kc)
+                    break
+            if fill:
+                d['stop5'] = {p: bracket(run, fill[0], fill[1], p[0], p[1], fill[2]) for p in PAIRS}
+            # what can be done live: the buy stop 5% above the ALERT's price, placed only once the
+            # signal candle has closed (before that the signal is not known)
+            level, fill = c * 1.05, None
+            for k in range(s + 1, min(n, s + args.valid + 1)):
+                ko, kh, kc = run[k][1], run[k][2], run[k][4]
+                if kh >= level:
+                    px = max(level, ko)
+                    if px <= level * (1 + args.gap / 100):
+                        fill = (k, px, kc)
+                    break
+            d['after5'] = {p: bracket(run, fill[0], fill[1], p[0], p[1], fill[2]) for p in PAIRS} if fill else None
+            e['sig'] = d
+        # the plain three-candle gap one candle after the POP candle, without the pivot level
+        e['gap1'] = i + 1 < n and i >= 1 and lows[i + 1] > highs[i - 1] and c > o
+        e['next_red'] = i + 1 < n and closes[i + 1] < opens[i + 1]
         POPS.append(e)
 
 
@@ -251,6 +319,50 @@ automation("7) …the same rule on every POP of that hour (strong or not)", [e f
 automation("8) …the same rule, POPs that alert, the whole day (a bigger sample of the same trade)", POPS, 5.0, AUTO, True)
 automation("9) …the whole day, bought at the alert's price instead", POPS, 0.0, AUTO, True)
 automation("10) …the whole day, buy stop +5%, take-profit +10%, stop −5%", POPS, 5.0, (10.0, 5.0), True)
+
+def srow(label, outs, base):
+    if not outs:
+        print(f"    {label:<58}{0:>5}")
+        return
+    pnl = [o[0] for o in outs]
+    print(f"    {label:<58}{len(outs):>5} {100 * len(outs) / base:>4.0f}% | {100 * sum(o[1] == 'tp' for o in outs) / len(outs):>5.1f}% "
+          f"{100 * sum(o[1] == 'stop' for o in outs) / len(outs):>5.1f}% {statistics.fmean(pnl):>+6.2f}% | {statistics.fmean(pnl) * len(outs) / base:>+6.2f}%")
+
+
+def signal_table(title, evs_all, pair):
+    print(f"\n{title} — take-profit +{pair[0]:g}%, stop −{pair[1]:g}%")
+    print(f"    {'':<58}{'n':>5} {'of':>5} | {'TP':>6} {'stop':>6} {'avg':>7} | {'/POP':>7}   (of = the share of that group's POPs the entry fills on)")
+    for name, pick in (('in sample', lambda e: e['day'] < CUT), ('out of sample', lambda e: e['day'] >= CUT)):
+        evs = [e for e in evs_all if pick(e)]
+        w = [e for e in evs if e['sig']]
+        wo = [e for e in evs if not e['sig']]
+        if not evs or not w:
+            print(f"  {name}: too few")
+            continue
+        print(f"  {name}: {len(evs)} POPs, {len(w)} ({100 * len(w) / len(evs):.0f}%) with the indicator's buy signal within two candles "
+              f"({100 * sum(e['sig']['red'] for e in w) / len(w):.0f}% of those on a red candle; the signal candle closes a median "
+              f"{statistics.median(e['sig']['vs_alert'] for e in w):+.1f}% against the alert)")
+        stop5 = lambda es: [e['res'][5.0]['out'][pair] for e in es if isinstance(e['res'][5.0], dict)]
+        srow('no signal:   bought at the alert', [e['res'][0.0]['out'][pair] for e in wo], len(wo))
+        srow('no signal:   buy stop +5% above the alert', stop5(wo), len(wo))
+        srow('with signal: bought at the alert', [e['res'][0.0]['out'][pair] for e in w], len(w))
+        srow('with signal: buy stop +5% above the alert (hindsight*)', stop5(w), len(w))
+        srow('with signal: the same buy stop, placed after the signal', [e['sig']['after5'][pair] for e in w if e['sig']['after5']], len(w))
+        srow("with signal: bought at the signal candle's close", [e['sig']['close'][pair] for e in w], len(w))
+        red = [e for e in w if e['sig']['red']]
+        grn = [e for e in w if not e['sig']['red']]
+        srow("   …that candle red:   at its close", [e['sig']['close'][pair] for e in red], len(red))
+        srow("   …that candle red:   buy stop +5% above its close", [e['sig']['stop5'][pair] for e in red if e['sig']['stop5']], len(red))
+        srow("   …that candle green: at its close", [e['sig']['close'][pair] for e in grn], len(grn))
+        srow("   …that candle green: buy stop +5% above its close", [e['sig']['stop5'][pair] for e in grn if e['sig']['stop5']], len(grn))
+        g = [e for e in evs if e['gap1']]
+        srow('(the plain gap one candle after the POP: buy stop +5%)', stop5(g), len(g))
+        srow('(no such gap: buy stop +5%)', stop5([e for e in evs if not e['gap1']]), len(evs) - len(g))
+
+
+for pair in ((20.0, 10.0), (10.0, 5.0)):
+    signal_table("12) The breakout indicator's buy signal next to a POP: every POP", POPS, pair)
+signal_table("13) …the POPs that alert (volume 10×+)", STRONG, (20.0, 10.0))
 
 print("\n11) After the POP candle: how far the price got above the alert's price within the valid candles, and how fast")
 for name, pick in (('in sample', lambda e: e['day'] < CUT), ('out of sample', lambda e: e['day'] >= CUT)):
