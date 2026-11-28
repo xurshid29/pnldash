@@ -1,4 +1,4 @@
-# Session Handover — updated 2026-11-15
+# Session Handover — updated 2026-11-28
 
 A running handover so a fresh session can continue without re-deriving context.
 **Read START HERE below first** — it is the current state in one place.
@@ -10,29 +10,63 @@ Memory files under `…/memory/` also carry the durable facts.
 
 ## START HERE — state at 2026-11-01 (Sun, 02:20 ET), last code commit `a9c46f3` (script v31, deployed 10-30 07:14 ET)
 
-**⚠ Newer than this snapshot — the script is at v49 (2026-11-26).** The snapshot below describes
-v31; the session log has each step since. What the script carries now:
+**⚠ Newer than this snapshot — the script is at v50 (2026-11-28).** The snapshot below describes
+v31; the session log has each step since. **The operator's focus since 11-26 is the POP**, traded
+on the paper account through the TWS bridge. What matters now, newest first:
+- **Where things stand (11-28):** the operator runs v49 in both alerts until they paste v50 and
+  recreate them; both alerts have the VWAP + BB cross and the EMA / band cross switched off (POP /
+  BACK, TURN and PULLBACK on). They trade POPs on paper with the bridge's buttons. **An automation
+  of the POP trade is specified and on hold** until they say start (next bullet).
+- **The POP automation: specified 11-28, NOT started** ("do not start the implementation for now,
+  I'll tell when to start"). Buy orders 04:00–05:00 New York only, exits left working after; only
+  the yellow POPs; the bridge's stop entry 5% above the alert; take-profit +20%, stop −10%; a job
+  that sells at the bid when the take-profit is crossed unfilled and sells as soon as possible when
+  the stop triggers unfilled; 5 positions of $400 a day; paper first. Spec, what I said about it and
+  the defaults still to confirm: memory `pop_automation_plan.md`; session log 11-28.
+- **What the measurements say about buying a POP** (`research/ema-vwap/pop_entry_study.py`,
+  README; 76 days): bought at the alert it loses; a buy stop 3–5% above the alert is about
+  break-even before costs and a loss after a 1%-a-side commission; **the stock's RVol sorts the
+  POPs** (take-profits first about 20% on the lowest, 32–34% on the highest; yellow POPs on a
+  dashboard RVol 1m ≥ ~12,000%: 37% / 45% on 67 / 42 trades, the best lead so far); the public FVG
+  breakout indicator as the entry adds nothing reliable. Our bars cannot see 04:00–05:00 pops out
+  of stocks not yet on the screen, which is what the operator trades.
+- **v50 (11-28) puts the stock's RVol in the POP's and the BACK's message** (`| rvol1 N | rvol5 N`,
+  percent, `docs/vwap-setup.md` §22.10): a reading only, no setting, no rule; server fields
+  `tv_rv1` / `tv_rv5`. **Not the dashboard's RVol** (`rv1`): compare the two on the first rows
+  before reading the study's 12,000% onto the script's number.
+- **Since 11-27 a strong POP alerts off the Momentum list** (`docs/vwap-setup.md` §22.9): a `pop`
+  / `back` that is not weak with `vol_x` ≥ `TV_SETUP.pp_free_vol` (10) is announced on any name,
+  at full strength (phone buzz, bright sound); the dashboard's "Show only Momentum tickers" no
+  longer hides it. On the first live morning 10 of 12 strong POPs were off the list and silent.
 - **v49 (11-26) gives the POP a volume test** (`docs/vwap-setup.md` §22.8), the operator's focus
   ("stocks which are almost without volume, suddenly started popping up"): the biggest volume of
   the POP candle and the two before it against the average of the 20 candles before those; under
   10× the POP is weak (gray, stored, not announced) and so is its BACK; every POP / BACK row
-  carries `vol_x`. Our data could not confirm or refute it (it has no pops from stocks not yet on
-  the screen): grade the rows by `vol_x` and by the hour.
-- **A local TWS bridge (11-26, `tools/tws-bridge/`, its README; `CLAUDE.md` has a section):** a
-  program for the operator's Mac that lets the dashboard make TWS's linked windows jump to an
-  alert's ticker ("TWS" button, or a row click) and place their bracket order with one click
-  ("Buy"). Paper accounts only until they edit its `config.json`; orders never touch the server;
-  off in the dashboard until enabled in that browser (the "TWS" button in the 📐 sidebar's
-  header). **Built and tested against a fake TWS only: its first real run is the operator's**
-  (TWS's API was not enabled). Open: their real offsets for the bracket (the config holds
-  placeholders: limit = alert + 1%, take-profit +10%, stop −5%), and the first pass on the paper
-  login (one focus, one small order, one cancel).
+  carries `vol_x`. First live morning: 57 POPs, 45 weak.
+- **The TWS bridge (`tools/tws-bridge/`, its README; `CLAUDE.md` has a section):** a program on
+  the operator's Mac between the dashboard and their TWS; orders never touch the server; paper
+  accounts only until they edit its `config.json`. On a card: **Buy** (limit at the live ask +
+  1%, sized in dollars), **Buy if ≥** (a stop entry above the alert that IB cancels by itself),
+  **Chase**, **Cancel**, **Sell**. Their config: $400 a trade, at most 3% past the alert, stop
+  entry +5% / limit +1% / 5 minutes, take-profit +10% and stop −5% (still my placeholders), the
+  stop's limit 3% under it. **Proven on their paper TWS (11-26 / 11-27):** placing and tracking a
+  bracket, Cancel, live-ask pricing, dollar sizing, Sell (the stop is cancelled by TWS), a stop
+  fill cancelling the take-profit. **Not yet run against a real TWS:** Chase, the stop entry
+  ("Buy if ≥"), a part-filled buy, the clean-up of an exit left on a flat position. The focus
+  step (TWS's windows following a row) was removed from the dashboard at their request.
+- **Open, in order:** (1) the operator pastes v50 and recreates both alerts; (2) their paper test
+  of "Buy if ≥" and Chase (README's checklist); (3) `tv_rv1` against `rv1` on the first v50 rows;
+  (4) grade the live POP / BACK rows by `vol_x`, RVol, `on_screen` and hour, and the bridge's log
+  for fills against alerts; (5) the automation, when they say start; (6) older items in the
+  session log (the 30s-vs-1m year-line check, 11 watchlist symbols on non-US listings, the
+  Postgres image pin, TURN's grading, Finviz's 12-07 layout change).
 - **v48 (11-26) adds a fifth setup in two steps, POP and BACK** (stages `pop` and `back`,
   `docs/vwap-setup.md` §22): on its own basis (SMA 15 of 1m closes), POP is the first candle of a
   run above the basis by which a high has reached 10% above it, a heads-up with no entry; BACK is
   the first pullback after it (a low back at the basis, then a green close above it with the
   basis rising and the MACD green, within 20 candles), the entry, with a stop. Both from the 1m
-  alert; each its own ⚙ switch (on); Momentum names; 3 a day per ticker each. Measured first:
+  alert; each its own ⚙ switch (on); Momentum names (but see the 11-27 exception above); 3 a day
+  per ticker each. Measured first:
   buying the pop's candle loses, the BACK is about break-even (about 35 POPs and 10 BACKs a
   day). The operator's experiment. Grade from its rows in two or three weeks, the BACKs by
   `sma_pct` first (§22.7).
