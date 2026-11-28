@@ -51,11 +51,15 @@ on the paper account through the TWS bridge. What matters now, newest first:
   entry +5% / limit +1% / 5 minutes, take-profit +10% and stop −5% (still my placeholders), the
   stop's limit 3% under it. **Proven on their paper TWS (11-26 / 11-27):** placing and tracking a
   bracket, Cancel, live-ask pricing, dollar sizing, Sell (the stop is cancelled by TWS), a stop
-  fill cancelling the take-profit. **Not yet run against a real TWS:** Chase, the stop entry
-  ("Buy if ≥"), a part-filled buy, the clean-up of an exit left on a flat position. The focus
-  step (TWS's windows following a row) was removed from the dashboard at their request.
+  fill cancelling the take-profit, and the stop entry (found in the bridge's log on 11-28: on
+  11-27 at 08:31 ET, in the pre-market, a `STP LMT` GTD bracket was accepted `PreSubmitted`,
+  cancelled cleanly on BENF, and on FFAI triggered 9 s later and filled at its trigger, +5.04%
+  over the alert; its stop then sold it 45 s later 2.4% under the stop's level). **Not yet run
+  against a real TWS:** Chase, a stop entry expiring unfilled (what TWS reports at the GTD
+  time), a part-filled buy, the clean-up of an exit left on a flat position. The focus step
+  (TWS's windows following a row) was removed from the dashboard at their request.
 - **Open, in order:** (1) the operator pastes v50 and recreates both alerts; (2) their paper test
-  of "Buy if ≥" and Chase (README's checklist); (3) `tv_rv1` against `rv1` on the first v50 rows;
+  of Chase and of a "Buy if ≥" left to expire (README's checklist); (3) `tv_rv1` against `rv1` on the first v50 rows;
   (4) grade the live POP / BACK rows by `vol_x`, RVol, `on_screen` and hour, and the bridge's log
   for fills against alerts; (5) the automation, when they say start; (6) older items in the
   session log (the 30s-vs-1m year-line check, 11 watchlist symbols on non-US listings, the
@@ -408,8 +412,13 @@ THE MOMENTUM LIST.** The operator at the open: "Pre-market started, and everythi
   price, limit `entryStopLimitPct` above the trigger, GTD for `entryValidSec` so IB cancels it; exits from the trigger;
   no Chase. The dashboard: a second, outlined button `Buy $400 if ≥ 0.3744 (+5%)`, a waiting line with Cancel, "expired
   unfilled at …" with both buttons back. Their `config.json`: `entryStopPct` 5, `entryStopLimitPct` 1, `entryValidSec`
-  300. **Not yet run against a real TWS** (the bridge README items 13–21: the goodTillDate format, a STP LMT parent with
-  children, the waiting status, the expiry, pre-market triggering).
+  300. Not yet run against a real TWS when written (the bridge README items 13–21: the goodTillDate format, a STP LMT
+  parent with children, the waiting status, the expiry, pre-market triggering). **Read from the bridge's log on 11-28:
+  the operator ran it twice that same pre-market (11-27, 08:31 ET).** BENF (a BACK): accepted, all three legs
+  `PreSubmitted`, cancelled by click 10 s later, all three `Cancelled` (code 202). FFAI (a POP, alert 0.113): accepted,
+  triggered 8.8 s later, 3,336 shares filled at 0.1187 (the trigger, +5.04%), the take-profit went live, and 45 s later
+  the stop (0.1127) sold all of it at 0.11, 2.4% under its level (−7.3% on the trade); TWS cancelled the take-profit.
+  So items 13, 14, 15, 18 and 19 are answered yes; 16 (the expiry), 17 (a trigger already passed), 20 and 21 are not.
 - **Owed: the measurement of that idea.** `research/ema-vwap/pop_entry_study.py` is written and not yet run: the
   scratchpad's study rows and venv were cleared overnight, and the export from prod must not run 07:00–11:00 ET
   (`vwap-pullback/export-rows.sql`). Run it after the close: at the alert price against buy stops at +1/2/3/5/8%, with
