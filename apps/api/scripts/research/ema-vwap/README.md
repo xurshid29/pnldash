@@ -514,6 +514,69 @@ that close, and the share back under the basis within 5 candles.
   against the 20 before them reads that 50× and still reads a slow climb low (the same on each
   of five candles reads 8.5× again: three candles is how sudden "sudden" has to be).
 
+### How to buy a POP: at the alert's price, or with a buy stop above it? (2026-11-28, `pop_entry_study.py`)
+
+The operator after the first live morning (four paper trades bought at the alert through the TWS
+bridge, one winner): "TRUG, TGHL POPs couldn't move, dropped almost at the price where POP fired …
+Maybe, we should place them with offset, for example, 3% (or bigger percentage) from the alert
+price? Because, if price's intention is going up, we will catch it, if not, we just don't buy it";
+then "maybe, +3% is too risky? Maybe, we do 5%?"; then the automation they want: only the POPs
+that alert, 04:00–05:00 New York, a buy stop +5%, take-profit +20%, stop −10%, 5 × $400 a day.
+
+    python pop_entry_study.py rows.csv.gz [--valid 5]
+
+Rows re-exported 08-14 → 11-27 (76 days, 40 in sample / 36 out). The POP of v49; the buy stop is
+good for 5 candles; a bracket from the entry, whichever side a later candle reaches first (both
+in one candle = the stop; the stop taken to fill at its level). **No costs taken off.** Result
+per filled trade, in sample / out of sample:
+
+| POPs that alert (volume 10×+) | fills on | +10% / −5%: TP first | average | +20% / −10%: TP first | average |
+|---|---:|---:|---:|---:|---:|
+| bought at the alert's price | 100% | 27.7% / 23.2% | −0.75% / −1.21% | 19.2% / 15.8% | −2.23% / −3.24% |
+| buy stop +1% | 50% / 42% | 30.9% / 32.1% | −0.24% / +0.17% | 23.2% / 20.0% | −0.93% / −2.04% |
+| buy stop +2% | 44% / 37% | 34.7% / 32.8% | +0.34% / +0.28% | 26.5% / 23.2% | −0.48% / −1.20% |
+| buy stop +3% | 39% / 33% | 37.9% / 36.4% | +0.85% / +0.53% | 29.4% / 24.5% | +0.28% / −0.78% |
+| buy stop +5% | 29% / 26% | 33.9% / 38.4% | +0.17% / +0.79% | 29.6% / 33.7% | +0.37% / +1.36% |
+| buy stop +8% | 18% / 18% | 41.4% / 40.7% | +1.32% / +1.10% | 30.0% / 32.2% | −0.15% / +0.88% |
+
+Every POP (strong or not) reads the same way a little lower (bought at the alert −0.67% / −1.37%
+with +10 / −5; buy stop +3% +0.38% / 0.00%; +5% +0.17% / +0.21%).
+
+The automation's rule played day by day (POPs that alert, buy stop +5%, +20% / −10%, 5 positions
+of $400, one per ticker), in dollars:
+
+| | trades | a day | TP first | per trade before costs | after 1% a side | whole period after costs |
+|---|---:|---:|---:|---:|---:|---:|
+| 04:00–05:00 only (the rule as specified) | 3 / 0 | 0.1 / 0 | 2 of 3 | +$40 / — | +$32 / — | +$96 / — |
+| the whole day | 105 / 80 | 2.6 / 2.2 | 28% / 32% | −$0.63 / +$4.33 | −$8.63 / −$3.67 | −$906 / −$294 |
+| the whole day, bought at the alert's price | 187 / 160 | 4.7 / 4.4 | 19% / 16% | −$10.21 / −$14.38 | −$18.21 / −$22.38 | −$3,406 / −$3,581 |
+| the whole day, buy stop +5%, +10% / −5% | 105 / 80 | 2.6 / 2.2 | 33% / 39% | +$0.38 / +$3.39 | −$7.62 / −$4.61 | −$800 / −$369 |
+
+**Read:**
+
+- **The operator's idea does what they said it would.** A buy stop above the alert fills on a
+  quarter to a half of the POPs and leaves out most of the ones that go nowhere: the average per
+  trade moves from clearly negative (−0.7% to −3.2%) to about zero or a little above it, in both
+  halves. Half of the POPs that fill do so on the very next candle.
+- **3% or 5%: no clear winner.** With +10 / −5 they are about the same; with +20 / −10, +5% is the
+  better of the two in both halves. 5% fills less often (26–29% of POPs against 33–39%).
+- **It is about break-even before costs, and costs are larger than that.** The best rows are
+  +0.2% to +1.4% a trade; IBKR's commission on a $400 trade in a sub-$1 stock is near its cap
+  (0.5–1% of the trade value a side). After 1% a side the automation's rule loses $4–9 a trade.
+  Above about $1 a share the commission is a fraction of that, so the price of the stock matters
+  to the result as much as the entry does.
+- **More than half of the filled trades stop out in every row** (the median result is the stop).
+  +20 / −10 needs one winner in three and gets 29–34%; +10 / −5 needs the same and gets 34–41%.
+- **The automation's own hour cannot be judged here.** 04:00–05:00 has 3 qualifying trades in 76
+  days of our bars: a name needs 23 candles on our screen for a volume reading, and at that hour
+  the pops come from stocks that are not on it yet. The paper run is the measurement; the
+  benchmark from the whole day is 28–32% take-profits first, where +20 / −10 needs 37–40% after
+  costs.
+
+**Limits:** as above (1m bars from ~20-second snapshots, names already on the screen); a stop
+fills at its level here, which a fast drop in thin pre-market trading will not give; the order
+of events inside a candle is unknown (taken against the trade).
+
 **Built as script v49** (`docs/vwap-setup.md` §22.8): a POP under 10× is weak (gray, stored, not
 announced) and so is its BACK; every POP and BACK carries the reading. TradingView sees every
 candle of every watchlist name, so the stored rows will hold the pops this data lacks, and can
