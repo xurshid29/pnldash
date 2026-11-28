@@ -108,6 +108,7 @@ Read once, at the start: after an edit, restart the bridge. A missing or unknown
 | `auto.entryStopPct`, `auto.entryStopLimitPct`, `auto.entryValidSec` | `5.0`, `1.0`, `300` | The waiting buy: its trigger above the alert's price, its limit above the trigger, and how long it waits. |
 | `auto.takeProfitPct`, `auto.stopPct`, `auto.stopLimitOffsetPct` | `20.0`, `10.0`, `3.0` | Its exits, measured from the trigger; the stop's own limit under the stop. Both exits are always sent. |
 | `auto.maxAlertAgeSec` | `60` | An alert older than this when it reaches the bridge is not bought. |
+| `auto.minPrice` | `0.5` | An alert whose price is under this many dollars is not bought ("skipped: its price … is under the floor"). `0` = no floor. |
 | `auto.paperOnly` | `true` | The automation's own lock: no order on an account that is not a paper one, whatever `paperOnly` says. By hand only. |
 | `auto.tpGraceMs`, `auto.stopGraceMs`, `auto.resellMs` | `1500`, `1000`, `2000` | The exit watch: how long after the take-profit's price traded, or the stop came due, it sells at the bid; and how often an unfinished sell is moved down. |
 
@@ -197,7 +198,7 @@ The operator's rule (2026-11-28), run by the bridge itself. It is switched in th
 - First come, first served: alerts are decided one at a time in the order they arrive.
 - At most `auto.maxOrdersPerDay` (30) buys placed in a day, filled or not. Clicked orders and the automation's are counted apart, each against its own limit.
 
-**What it leaves alone.** A gray (weak) POP; every other stage; an alert outside the hour; an alert that reaches the bridge more than `auto.maxAlertAgeSec` (60 s) after it fired (after a lost connection, say); an alert it has already decided (the server replays the last minutes after a reconnect).
+**What it leaves alone.** A gray (weak) POP; every other stage; an alert outside the hour; an alert priced under `auto.minPrice` ($0.50: the operator's floor, and where the commission on $400 is at its 1% cap each way); an alert that reaches the bridge more than `auto.maxAlertAgeSec` (60 s) after it fired (after a lost connection, say); an alert it has already decided (the server replays the last minutes after a reconnect).
 
 **When it sells.** Most of the time the take-profit or the stop simply fills in TWS. For each position it bought, the bridge also keeps a live quote open and acts in two cases:
 

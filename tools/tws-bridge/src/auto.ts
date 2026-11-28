@@ -103,6 +103,8 @@ export interface AutoStatus {
     stop_pct: number;
     stop_limit_offset_pct: number;
     max_alert_age_sec: number;
+    /** An alert under this price is not bought; 0 = no floor. */
+    min_price: number;
     paper_only: boolean;
     exit_watch: { tp_grace_ms: number; stop_grace_ms: number; resell_ms: number };
   };
@@ -328,6 +330,7 @@ export class AutoTrader {
         stop_pct: auto.stopPct,
         stop_limit_offset_pct: auto.stopLimitOffsetPct,
         max_alert_age_sec: auto.maxAlertAgeSec,
+        min_price: auto.minPrice,
         paper_only: auto.paperOnly,
         exit_watch: { tp_grace_ms: auto.tpGraceMs, stop_grace_ms: auto.stopGraceMs, resell_ms: auto.resellMs },
       },
@@ -517,6 +520,11 @@ export class AutoTrader {
     }
     const price = setup.price;
     if (price === null || !(price > 0)) return skip("no_price", "the alert carries no price");
+    // The operator's floor (2026-11-28, "maybe we ignore below $0.5?"): under it the commission is
+    // at its 1% cap each way, and a tick is a large part of the price.
+    if (auto.minPrice > 0 && price < auto.minPrice - 1e-9) {
+      return skip("under_min_price", `its price ${formatPrice(price)} is under the floor of ${formatPrice(auto.minPrice)}`);
+    }
 
     // One trade per ticker a day, and never a second order beside one that is working or held.
     // Upper-cased as the bridge writes every ticker on its book, so the two are told to be the same.

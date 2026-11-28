@@ -1034,6 +1034,30 @@ test("auto: watch only shows as failed a buy that on would refuse for its size, 
   assert.deepEqual(verdict(await c.send(pop(W0))), ["failed", "too_large"]);
 });
 
+test("auto: an alert under the price floor ($0.50) is not bought; at the floor it is; a floor of 0 is no floor", async (t) => {
+  const a = await autoRig(t, { config: (config) => (config.limits.maxShares = 50_000) });
+  const under = await a.send(pop(W0, { price: 0.4999 }));
+  assert.deepEqual(verdict(under), skipped("under_min_price"));
+  assert.match(under?.text ?? "", /0\.4999 is under the floor of 0\.5000/);
+  assert.deepEqual(a.world.allPlaced(), []);
+  assert.equal(a.auto.status().rule.min_price, 0.5);
+  // At the floor itself it is bought.
+  assert.deepEqual(verdict(await a.send(pop(W0 + SEC, { price: 0.5 }))), PLACED);
+
+  // Watch only says the same, and holds no slot for it.
+  const w = await autoRig(t, { mode: "watch", config: (config) => (config.limits.maxShares = 50_000) });
+  assert.deepEqual(verdict(await w.send(pop(W0, { price: 0.3 }))), skipped("under_min_price"));
+  assert.equal(w.auto.status().today.waiting, 0);
+
+  // Outside its hour that is still the reason given: the floor is asked after the hour.
+  const late = await autoRig(t, { now: CLOSE + MIN });
+  assert.deepEqual(verdict(await late.send(pop(CLOSE + MIN, { price: 0.3 }))), skipped("outside_hours"));
+
+  // Switched off in config.json.
+  const none = await autoRig(t, { config: (config) => ((config.auto.minPrice = 0), (config.limits.maxShares = 50_000)) });
+  assert.deepEqual(verdict(await none.send(pop(W0, { price: 0.3 }))), PLACED);
+});
+
 test("auto: a ticker is the same ticker in any case: the decision names it as the book does", async (t) => {
   const a = await autoRig(t);
   const first = await a.send(pop(W0, { ticker: "abcd" }));

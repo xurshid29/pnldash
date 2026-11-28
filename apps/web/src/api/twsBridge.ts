@@ -264,6 +264,8 @@ export interface AutoRule {
   stop_pct: number;
   stop_limit_offset_pct: number;
   max_alert_age_sec: number;
+  // An alert under this price is not bought (0 = no floor). Missing on a bridge from before it.
+  min_price?: number;
   paper_only: boolean;
   exit_watch: { tp_grace_ms: number; stop_grace_ms: number; resell_ms: number };
 }

@@ -653,3 +653,96 @@ announced) and so is its BACK; every POP and BACK carries the reading. TradingVi
 candle of every watchlist name, so the stored rows will hold the pops this data lacks, and can
 be graded by `vol_x` and by the hour. A proper measurement needs 1m bars with pre-market volume
 for names before they reach the screen (IBKR's history through TWS would do).
+
+### Which exit for a POP bought with the waiting buy, and a price floor? (2026-11-28, `pop_exit_study.py`)
+
+The operator, the day the automation was built (buy stop +5%, take-profit +20%, stop −10%): "not
+20% but maybe we do some calculations? … price can move up to 10-15% but still end up with -10%
+stop-loss … and also, we can miss such great moves by taking only 20% and ignore the rest"; and
+"regarding the price range, maybe we ignore below $0.5?".
+
+```bash
+python pop_exit_study.py rows.csv.gz [--off 5] [--sl 10] [--slip 1] [--cut 2026-10-09]
+```
+
+**The trades:** the automation's own, over the whole day: 726 yellow POPs in 76 days; the buy stop
++5% (limit +1%) filled on the first of a ticker's day for **170 trades** (97 in sample, 73 out).
+Each lasts until its rule ends it or the name's bars end. A stop fills 1% under its level; "net"
+takes off IBKR's fixed commission on $400.
+
+**How far they go** (only the −10% stop standing; in / out of sample):
+
+| highest gain reached | share of trades | of those, stopped out after |
+|---|---|---|
+| under +10% | 51% / 51% | 94% / 87% |
+| +10% to +20% | 13% / 16% | 92% / 100% |
+| +20% to +50% | 22% / 16% | 76% / 75% |
+| +50% and more | 14% / 16% | 43% / 42% |
+
+Both things the operator saw are there: about one trade in seven gets to +10–20% and then comes
+back to the stop, and one in four goes past +30% (one in seven past +50%, one in thirteen past
++100%), which a +20% target cuts off.
+
+**The rules** (average per trade before commission, in / out of sample; "worst order" = the
+same with a candle's high taken before its low wherever a stop moved, the lower bound of what
+1m candles can say):
+
+| rule | avg | worst order | win | without its 5 best trades |
+|---|---|---|---|---|
+| take-profit +5 / +10 / +15% | −0.2 / −0.9, −0.5 / −0.4, +0.0 / −0.8 | same | 69–38% | |
+| **take-profit +20% (as built)** | **+0.48% / −0.62%** | same | 40% / 33% | −0.6% |
+| take-profit +30 / +50 / +100% | −0.7 / −0.0, −0.8 / +0.1, −0.6 / +0.7 | same | 30–15% | −2.0% (+50%) |
+| +20%, stop to the entry at +5% | +1.02% / +1.19% | +0.68% / +0.69% | 28% / 30% | +0.5% |
+| +20%, stop to the entry at +10% | +0.18% / +0.77% | +0.18% / +0.51% | 33% / 33% | |
+| +20%, stop to +5% at +10% | +0.38% / +0.73% | | 51% / 45% | |
+| no target, trail 10% | +5.20% / +9.64% | +1.29% / +1.16% | 36% / 34% | +1.5% |
+| no target, trail 15% | +3.16% / +8.99% | +0.05% / +6.11% | 34% / 30% | +0.1% |
+| no target, trail 20% | +2.54% / +4.90% | +0.04% / +2.15% | 31% / 23% | −1.3% |
+| no target, trail 25% | +1.37% / +3.43% | −1.17% / +2.96% | 26% / 23% | −2.4% |
+| out under the basis, once +10% | +1.40% / +6.88% | | 38% / 38% | −1.0% |
+| half at +10%, rest trails 15%, stop to entry | +1.53% / +4.45% | −0.03% / +2.99% | 53% / 48% | −0.2% |
+| half at +20%, rest trails 20%, stop to entry | +1.50% / +2.09% | +0.26% / +0.71% | 40% / 33% | −1.0% |
+
+- **Where a fixed target sits hardly matters.** +5% to +100%: all within a point of zero before
+  commission, both halves. Tuning the 20 is not the answer.
+- **Moving the stop to the entry** takes the sting out of the +10–15%-then-stopped trades and
+  costs some of the +20% ones: half a point to a point better, about break-even after commission.
+- **Letting it run is the only family clearly above zero in both halves, and it is a few trades.**
+  With a 20% trail the whole period's +$2,418 (on $400 a trade) is less than what its five best
+  trades made (+$3,241): JAGX +232%, PARA +183%, PLAG +140%, OMH +129%, SNYR +126%. Without them
+  it loses. That is what a trailing exit is: most trades lose a little more than before (the
+  median is the stop), and the rule lives on the 3% that run.
+- **The tight trail's numbers are the candles'.** A 10% trail reads +5.2% / +9.6% in the careful
+  order and +1.3% / +1.2% in the worst one: inside a one-minute candle of a stock like these, a
+  10% swing is ordinary, and our bars (three prices a minute) cannot see it. 20–25% is far enough
+  from that to mean something: between about zero and +2.5% in one half, +2% and +5% in the other.
+
+**The price floor** (the fixed +20% rule; all 170 trades):
+
+| price paid | trades | commission on $400 | avg | net |
+|---|---|---|---|---|
+| under $0.25 | 4 | 2.00% | −4.05% | −6.05% |
+| $0.25 – $0.50 | 15 | 2.00% | −9.03% | −11.03% |
+| $0.50 – $1 | 29 | 1.39% | +7.00% | +5.60% |
+| $1 – $2 | 34 | 0.76% | −2.56% | −3.32% |
+| $2 – $5 | 53 | 0.50% | −0.39% | −0.89% |
+| $5 and over | 35 | 0.50% | +1.64% | +1.14% |
+
+Under $0.50: 8 / 11 trades, −7.5% / −8.4% a trade before a 2% commission. With the alert's price
+at $0.50 and over (how the floor asks): 89 / 61 trades, +1.19% / +0.96% (net +0.5% / +0.2%). Few trades, but the same in both halves, and the
+commission alone is four times what it is above $2. With the floor on, the other rules read:
++20% with the stop to the entry at +5%: +1.2% / +1.9%; trail 20%: +2.3% / +7.9% (worst order +0.2% /
++4.6%); half at +20% and the rest trailing 20%: +1.7% / +4.4% (worst order +0.7% / +2.7%).
+
+**By the stock's RVol** (the dashboard's RVol 1m at the POP, 11,745% and over; 59 / 34 trades):
++20% as built +3.2% / +3.6%; trail 20% +7.5% / +8.9%; out under the basis +5.8% / +14.7%. Under it
+(37 / 39 trades) every rule loses or is flat. The earlier lead holds under every exit.
+
+**Limits:** 170 trades, and everything above zero rests on about ten of them; names that were
+already on the Momentum screen, all day (its own hour, 04:00–05:00 New York, has 2 of the 170);
+1m candles from ~20-second snapshots, so a moving stop's result is a range (careful to worst
+order), not a number; a stop taken to fill 1% under its level, which a halt or a gap will not
+give; no spread.
+
+**Built from it:** the floor (`auto.minPrice`, 0.5 by default, in the bridge). The exit is the
+operator's to choose; nothing about it was changed.

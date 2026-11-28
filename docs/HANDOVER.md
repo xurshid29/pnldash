@@ -382,6 +382,19 @@ Yahoo + SEC + halts).
 These are the detailed notes behind START HERE, kept verbatim.
 
 **2026-11-28 (Sat), later — THE POP AUTOMATION BUILT (`a4af920` bridge, `e691e83` server + dashboard).**
+- **The same evening: a price floor, and the exit measured.** The operator: "regarding the price range, maybe we ignore
+  below $0.5?" and "not 20% but maybe we do some calculations? … price can move up to 10-15% but still end up with -10%
+  stop-loss … and also, we can miss such great moves by taking only 20%" (XCUR, GDHG, BGLC, ZNB charts). Built: the floor,
+  `auto.minPrice` 0.5 (an alert under it is skipped `under_min_price`; the panel's rule line shows it). Measured:
+  `research/ema-vwap/pop_exit_study.py` (README), 170 trades of exactly the automation's kind in 76 days, all hours.
+  About one trade in seven reaches +10–20% and comes back to the stop; one in four goes past +30%. Where a fixed target
+  sits hardly matters (+5% to +100% all within a point of zero). The stop moved to the entry helps half a point to a
+  point. A trailing stop is the one family above zero in both halves (20% trail: +2.5% / +4.9% a trade), but its whole
+  profit is its five best trades of 170, and under the worst order inside a candle it is +0.0% / +2.2%; a 10% trail's
+  numbers are an artefact of one-minute candles. Under $0.50: 19 trades, −7.5% / −8.4% a trade before a 2% commission, so
+  the floor is supported (ZNB, their runner example, was at $0.37 and is skipped by it; told). **The exit was not
+  changed: theirs to choose** (I proposed keeping +20 / −10 for the first paper mornings and named the candidates: stop to
+  the entry at +5–10%; half at +20% and the rest trailing 20%; a full 20% trail).
 - **The go.** Asked "do we have everything to start an automation tool?", I listed what worked on their paper TWS, what
   had to be built and four defaults of mine (first come first served; five waiting or held at once with a slot back when
   a waiting buy expires; five filled trades a day, so no separate loss limit; one trade per ticker a day). They answered

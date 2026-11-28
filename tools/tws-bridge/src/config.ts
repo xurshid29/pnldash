@@ -101,6 +101,8 @@ export interface AutoConfig {
   stopLimitOffsetPct: number;
   /** An alert older than this when it reaches the bridge is not bought. */
   maxAlertAgeSec: number;
+  /** An alert whose price is under this many dollars is not bought. 0 = no floor. */
+  minPrice: number;
   /** The automation's own lock: it places nothing on an account that is not a paper one. By hand only. */
   paperOnly: boolean;
   /** The take-profit's price has traded and the take-profit has not filled this long after: sell at the bid. */
@@ -125,6 +127,7 @@ export const AUTO_DEFAULTS: AutoConfig = {
   stopPct: 10.0,
   stopLimitOffsetPct: 3.0,
   maxAlertAgeSec: 60,
+  minPrice: 0.5,
   paperOnly: true,
   tpGraceMs: 1500,
   stopGraceMs: 1000,
@@ -456,6 +459,7 @@ export function validateConfig(raw: unknown): Config {
   const autoStopPct = c.number(auto, "auto", "stopPct", { above: 0, below: 100 }, D.stopPct);
   const autoStopLimitOffsetPct = c.number(auto, "auto", "stopLimitOffsetPct", { min: 0, below: 100 }, D.stopLimitOffsetPct);
   const autoMaxAlertAgeSec = c.number(auto, "auto", "maxAlertAgeSec", { integer: true, min: 5, max: 600 }, D.maxAlertAgeSec);
+  const autoMinPrice = c.number(auto, "auto", "minPrice", { min: 0, max: 10000 }, D.minPrice);
   const autoPaperOnly = "paperOnly" in auto ? c.boolean(auto, "auto", "paperOnly") : D.paperOnly;
   const tpGraceMs = c.number(auto, "auto", "tpGraceMs", { integer: true, min: 0, max: 60000 }, D.tpGraceMs);
   const stopGraceMs = c.number(auto, "auto", "stopGraceMs", { integer: true, min: 0, max: 60000 }, D.stopGraceMs);
@@ -485,6 +489,7 @@ export function validateConfig(raw: unknown): Config {
       stopPct: autoStopPct,
       stopLimitOffsetPct: autoStopLimitOffsetPct,
       maxAlertAgeSec: autoMaxAlertAgeSec,
+      minPrice: autoMinPrice,
       paperOnly: autoPaperOnly,
       tpGraceMs,
       stopGraceMs,
