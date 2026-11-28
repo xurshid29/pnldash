@@ -261,6 +261,23 @@ def table(title, pick_evs, pair):
             print(line('at the alert price' if off == 0 else f'buy stop +{off:g}%', evs, off, pair))
 
 
+print("\n0) Which stocks: every name on the Momentum screen in the period; no price or float condition is added here")
+for name, pick in (('in sample', lambda e: e['day'] < CUT), ('out of sample', lambda e: e['day'] >= CUT)):
+    evs = [e for e in POPS if pick(e)]
+    if not evs:
+        continue
+    tick = {}
+    for e in evs:
+        tick[e['ticker']] = tick.get(e['ticker'], 0) + 1
+    td = len({(e['ticker'], e['day']) for e in evs})
+    px = sorted(e['price'] for e in evs)
+    share = lambda lo, hi: 100 * sum(1 for p in px if lo <= p < hi) / len(px)
+    top = sorted(tick.items(), key=lambda kv: -kv[1])[:12]
+    strong = sum(1 for e in evs if e['rv'] is not None and e['rv'] >= 10)
+    print(f"  {name}: {len(evs)} POPs on {len(tick)} tickers ({td} ticker-days, {len(evs) / td:.1f} a ticker-day); {strong} with a volume reading of 10×+; "
+          f"price at the POP: median ${statistics.median(px):.2f}, under $0.10 {share(0, 0.1):.0f}%, $0.10–$1 {share(0.1, 1):.0f}%, $1–$5 {share(1, 5):.0f}%, $5+ {share(5, 1e9):.0f}%; "
+          f"most POPs: {', '.join(f'{t} {c}' for t, c in top)}")
+
 print("\n(fill = the share of POPs the order fills on; gap = opened too far above the level; TP / stop = which came first, of the filled;"
       " avg / median = the result per filled trade; /alert = per POP alert; paid = the entry against the alert's price)")
 STRONG = [e for e in POPS if e['rv'] is not None and e['rv'] >= 10]
