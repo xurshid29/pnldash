@@ -606,6 +606,43 @@ low, which is what moves in replay. +20% / −10%, every POP, in sample / out of
 So the entry stays the buy stop above the alert's price. Not measured: the indicator's levels as
 a place for the stop.
 
+**By the stock's relative volume (tables 14–15, 11-28).** The operator: "we need to test
+win-rates with the stocks which have high rvol". The rows were exported again with the stock's
+own figures (`avg_volume`, `rel_volume`, `rel_vol_5min`, `rel_vol_1min`, `float_m`), and each POP
+takes the reading of its candle: day RVol (today's volume so far ÷ the average day), Finviz's
+relative volume, and the dashboard's RVol 5m and RVol 1m (in %, the highest inside the candle).
+Four groups of equal size; buy stop +5%, +20% / −10%; take-profit first and the average per
+trade, in sample / out of sample:
+
+| every POP, by RVol 5m | trades | take-profit first | average |
+|---|---:|---:|---:|
+| under 2,417% | 74 / 73 | 18.9% / 20.5% | −3.16% / −2.40% |
+| 2,417% – 7,282% | 106 / 78 | 23.6% / 21.8% | −1.34% / −2.19% |
+| 7,282% – 25,437% | 108 / 100 | 32.4% / 29.0% | +1.34% / −0.66% |
+| 25,437% and over | 110 / 78 | 33.6% / 32.1% | +0.90% / +0.08% |
+
+| the POPs that alert (volume 10×+), by RVol 1m | trades | take-profit first | average |
+|---|---:|---:|---:|
+| under 4,503% | 20 / 20 | 10.0% / 35.0% | −5.12% / +2.43% |
+| 4,503% – 11,745% | 27 / 24 | 22.2% / 12.5% | −1.67% / −4.39% |
+| 11,745% – 37,491% | 25 / 24 | 36.0% / 37.5% | +2.53% / +2.22% |
+| 37,491% and over | 42 / 18 | 38.1% / 55.6% | +2.53% / +6.67% |
+| **the upper two together (11,745% and over)** | 67 / 42 | 37% / 45% | +2.5% / +4.1% |
+| the lower two together | 47 / 44 | 17% / 23% | −3.1% / −1.3% |
+
+- **The stock's RVol does sort the POPs, where the POP candle's own volume reading did not.** By
+  RVol 5m and RVol 1m the take-profit rate climbs from about 20% in the lowest group to 32–34% in
+  the highest, in both halves; RVol 5m of the yellow POPs reads the same way (top group 39.5% /
+  50.0%). Day RVol and Finviz's figure climb in one half and not in the other. Float sorts nothing.
+- **Yellow POPs on a stock whose RVol 1m is about 12,000% or more are the first group here that
+  is positive in both halves** with the buy stop: 37% / 45% take-profits first, +2.5% / +4.1% a
+  trade before costs, on 67 and 42 trades (about 1.4 a day). The same POPs under that RVol lose.
+- **Caution:** these are small groups cut several ways, the cut points come from the same data,
+  and the out-of-sample top cell is 18 trades. It is the best lead so far, not a result.
+- The dashboard's RVol exists only for names on the Momentum screen (it is the poller's, from
+  Finviz volume). For it to be a condition on a POP out of a stock not yet on the screen, the
+  script would have to carry its own (as `rvol.pine` computes it) in the POP message.
+
 **Limits:** as above (1m bars from ~20-second snapshots, names already on the screen); a stop
 fills at its level here, which a fast drop in thin pre-market trading will not give; the order
 of events inside a candle is unknown (taken against the trade); the indicator is replicated

@@ -51,15 +51,21 @@ PAIRS = [(5.0, 5.0), (10.0, 5.0), (20.0, 10.0)]   # (take-profit %, stop %) from
 
 con = duckdb.connect()
 con.execute(f"create table raw as select * from read_csv_auto('{args.rows}', header=true)")
-con.execute("""
+# The relative-volume columns are in the export only when it was made with them (tables 14–15).
+HAVE = {r[0] for r in con.execute("describe raw").fetchall()}
+num = lambda col: f"try_cast({col} as double)" if col in HAVE else "cast(null as double)"
+con.execute(f"""
 create table bars as
 with t as (
   select ticker, ts, try_cast(price as double) as price, try_cast(change_pct as double) as chg,
-         try_cast(volume as double) as volume, timezone('America/New_York', to_timestamp(ts)) as et
+         try_cast(volume as double) as volume, timezone('America/New_York', to_timestamp(ts)) as et,
+         {num('avg_volume')} as avgv, {num('rel_volume')} as rvd, {num('rel_vol_5min')} as rv5,
+         {num('rel_vol_1min')} as rv1, {num('float_m')} as flt
   from raw)
 select ticker, cast(et as date) as day, hour(et) * 60 + minute(et) as tmin,
        arg_min(price, ts) as o, max(price) as h, min(price) as l, arg_max(price, ts) as c,
-       arg_max(chg, ts) as chg, arg_max(volume, ts) as vol
+       arg_max(chg, ts) as chg, arg_max(volume, ts) as vol,
+       arg_max(avgv, ts) as avgv, arg_max(rvd, ts) as rvd, max(rv5) as rv5, max(rv1) as rv1, arg_max(flt, ts) as flt
 from t
 where hour(et) * 60 + minute(et) between 240 and 1199 and isodow(et) < 6
 group by all""")
@@ -141,7 +147,7 @@ def do_run(ticker, day, run):
     inrun = popped = False
     ran = 0.0
     for i in range(args.len, n):
-        t, o, h, l, c, chg, _ = run[i]
+        t, o, h, l, c, chg = run[i][:6]
         b, pb = basis[i], basis[i - 1]
         if inrun and c < b:
             inrun = False
@@ -159,7 +165,12 @@ def do_run(ticker, day, run):
         m = sum(prev) / 20 if prev else None
         top3 = max(bv[i - 2:i + 1])
         rv = (top3 / m if m > 0 else (999.0 if top3 > 0 else None)) if m is not None else None
-        e = dict(ticker=ticker, day=day, t=t, price=c, rv=rv, res={})
+        vol_now, avgv = run[i][6], run[i][7]
+        e = dict(ticker=ticker, day=day, t=t, price=c, rv=rv, res={},
+                 # the stock's relative volume at the POP candle, four ways: today's volume so far ÷
+                 # its average day; Finviz's own figure; the dashboard's RVol 5m and RVol 1m (the
+                 # highest reading inside the POP candle); and its float
+                 dayrv=vol_now / avgv if vol_now and avgv else None, rvd=run[i][8], rv5=run[i][9], rv1=run[i][10], flt=run[i][11])
         for off in OFFSETS:
             if off == 0.0:
                 fill = (i, c, None)
@@ -213,7 +224,7 @@ def do_run(ticker, day, run):
         POPS.append(e)
 
 
-cur = con.execute("select ticker, day, tmin, o, h, l, c, chg, vol from bars order by ticker, day, tmin")
+cur = con.execute("select ticker, day, tmin, o, h, l, c, chg, vol, avgv, rvd, rv5, rv1, flt from bars order by ticker, day, tmin")
 key, run, prev_t = None, [], None
 while True:
     chunk = cur.fetchmany(200_000)
@@ -380,6 +391,44 @@ def signal_table(title, evs_all, pair):
 for pair in ((20.0, 10.0), (10.0, 5.0)):
     signal_table("12) The breakout indicator's buy signal next to a POP: every POP", POPS, pair)
 signal_table("13) …the POPs that alert (volume 10×+)", STRONG, (20.0, 10.0))
+
+def by_measure(title, evs_all, key, fmt, pair=(20.0, 10.0), cuts=None):
+    """Win rates by a reading at the POP, in four groups of equal size (quartiles over both halves)."""
+    vals = sorted(e[key] for e in evs_all if e[key] is not None)
+    if len(vals) < 40:
+        print(f"\n{title}: not in this export")
+        return
+    q = cuts or [vals[len(vals) // 4], vals[len(vals) // 2], vals[3 * len(vals) // 4]]
+    edges = [(-1e18, q[0]), (q[0], q[1]), (q[1], q[2]), (q[2], 1e18)]
+    names = [f"under {fmt(q[0])}", f"{fmt(q[0])} – {fmt(q[1])}", f"{fmt(q[1])} – {fmt(q[2])}", f"{fmt(q[2])} and over"]
+    print(f"\n{title} — take-profit +{pair[0]:g}%, stop −{pair[1]:g}%")
+    print(f"    {'':<22}{'POPs':>6} | at the alert: {'TP':>6} {'stop':>6} {'avg':>7} | buy stop +5%: {'fill':>5} {'TP':>6} {'stop':>6} {'avg':>7} {'trades':>6}")
+    for name, pick in (('in sample', lambda e: e['day'] < CUT), ('out of sample', lambda e: e['day'] >= CUT)):
+        print(f"  {name}")
+        for label, (lo, hi) in zip(names, edges):
+            evs = [e for e in evs_all if pick(e) and e[key] is not None and lo <= e[key] < hi]
+            if not evs:
+                print(f"    {label:<22}{0:>6}")
+                continue
+            a = [e['res'][0.0]['out'][pair] for e in evs]
+            s = [e['res'][5.0]['out'][pair] for e in evs if isinstance(e['res'][5.0], dict)]
+            tail = (f"{100 * len(s) / len(evs):>4.0f}% {100 * sum(o[1] == 'tp' for o in s) / len(s):>5.1f}% {100 * sum(o[1] == 'stop' for o in s) / len(s):>5.1f}% "
+                    f"{statistics.fmean(o[0] for o in s):>+6.2f}% {len(s):>6}") if s else "   —"
+            print(f"    {label:<22}{len(evs):>6} |               {100 * sum(o[1] == 'tp' for o in a) / len(a):>5.1f}% {100 * sum(o[1] == 'stop' for o in a) / len(a):>5.1f}% "
+                  f"{statistics.fmean(o[0] for o in a):>+6.2f}% |               {tail}")
+
+
+x1 = lambda v: f"{v:.1f}×"
+x0 = lambda v: f"{v:,.0f}"
+by_measure("14a) Every POP by the stock's day RVol at the POP (today's volume so far ÷ its average day)", POPS, 'dayrv', x1)
+by_measure("14b) …by Finviz's relative volume", POPS, 'rvd', x1)
+by_measure("14c) …by the dashboard's RVol 5m inside the POP candle", POPS, 'rv5', x0)
+by_measure("14d) …by the dashboard's RVol 1m inside the POP candle", POPS, 'rv1', x0)
+by_measure("14e) …by the script's volume reading (the POP's own candles against the 20 before)", POPS, 'rv', x1)
+by_measure("14f) …by float, millions", POPS, 'flt', x1)
+by_measure("15a) The POPs that alert (volume 10×+) by day RVol", STRONG, 'dayrv', x1)
+by_measure("15b) …by RVol 5m", STRONG, 'rv5', x0)
+by_measure("15c) …by RVol 1m", STRONG, 'rv1', x0)
 
 print("\n11) After the POP candle: how far the price got above the alert's price within the valid candles, and how fast")
 for name, pick in (('in sample', lambda e: e['day'] < CUT), ('out of sample', lambda e: e['day'] >= CUT)):
