@@ -381,6 +381,39 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-28 (Sat), later — THE POP AUTOMATION BUILT (`a4af920` bridge, `e691e83` server + dashboard).**
+- **The go.** Asked "do we have everything to start an automation tool?", I listed what worked on their paper TWS, what
+  had to be built and four defaults of mine (first come first served; five waiting or held at once with a slot back when
+  a waiting buy expires; five filled trades a day, so no separate loss limit; one trade per ticker a day). They answered
+  "yes, lets start". I took that as the go and as those four accepted (they did not go through them one by one).
+- **Found while checking readiness:** the bridge's log shows they had already clicked "Buy if ≥" twice on 11-27 at 08:31
+  ET (BENF cancelled cleanly; FFAI triggered 9 s later, filled at +5.04%, stopped out 45 s later 2.4% under the stop).
+  So the automation's entry order was already proven on the paper TWS. Read the log before saying what was tried.
+- **What was built.** Bridge: `src/auto.ts` (the decisions, Off / Watch only / On in `state.json`, `GET/POST /auto`),
+  `src/watch.ts` (the exit watch), `src/feed.ts` (the SSE client), `src/state.ts`, quote streams in `src/link.ts`, a
+  `Profile` through `prepare` / `send` so the automation's buy is a click's buy with its own settings, `source` and
+  `watch` on every order, `POST /auto/feed`. Server: `services/tv-feed.ts`, `GET /api/tv/feed`, `POST /api/tv/feed-token`
+  (a scoped JWT; `verifyToken` refuses scoped tokens), one call in `deliverTvSetup`, an nginx block, `verify-tv-feed.ts`
+  (39 checks). Dashboard: the Automation block in the TWS panel, the pairing, an "auto" tag and the watch's state on a card.
+- **How it was checked.** Four parallel builders (quote streams, feed client, server feed, dashboard) while I wrote the
+  decisions and the watch; then an independent reviewer and an independent test-writer on my part, both told to work from
+  the described behaviour, not the code. The reviewer found eight real defects, all fixed before the commit: (1) a buy
+  that filled while TWS was away kept a working status (TWS sends its fills, never its status), so every sell tried to
+  cancel it first and nothing was ever sold, for a clicked Sell too; (2) one `nothing_to_sell` ended the watch on an
+  order for good; (3) one print at the stop sold the position after the price had come back; (4) Halt and Off left the
+  waiting buys to fill; (5) a stop entry that expired while TWS was away read as waiting all day; (6) a restart loses
+  earlier days' positions (kept as a documented limit); (7) a buy could outlive 05:00 by the seconds a lookup took; (8)
+  the watch's re-prices used up the operator's own Sell clicks. The test-writer then found two more (a due stop was
+  cleared at a reconnect; `order.outsideRth: false` would have made every automation order regular-hours only). 491
+  bridge tests (was 327).
+- **Mine, not theirs, and told to them:** the take-profit watch never sells at or under cost (their words were "we
+  should sell them for now"; a single stray print at the take-profit would otherwise sell a position anywhere); the
+  stop watch asks the bid again at the end of its second before the first sell; an alert older than 60 s is not bought;
+  Off / Watch only / Halt cancel its waiting buys.
+- **Not exercised:** anything against a real TWS (quote streams on their paper login, what a `last` tick looks like in
+  the pre-market, how fast the account's position follows a fill, the moved take-profit beside a triggered stop). The
+  README's points 22–30 are the list for the first mornings.
+
 **2026-11-28 (Sat) — THE ENTRY MEASURED, THE AUTOMATION SPECIFIED (NOT STARTED), SCRIPT v50: THE STOCK'S RVol IN THE POP.**
 - **The automation the operator wants, specified and on hold** ("do not start the implementation for now, I'll tell when
   to start"): buy orders 04:00–05:00 New York only, exits left working after; only the yellow POPs, no price range; the
