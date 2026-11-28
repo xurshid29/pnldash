@@ -18,7 +18,7 @@ import { TickerLink } from '../common/TickerLink';
 import { TickerLinks } from '../common/TickerLinks';
 import { TvStageTag, crossTfText, fmtSignedPct, fmtTf, lineDistanceText, lineTokens, isWeakSetup, emaEventKey, popEventKey, tagNumber, isLineCross, isPopBack } from '../common/TvStageTag';
 import { GradeCell } from '../common/GradeCell';
-import { fmtPct, fmtPrice } from '../../utils/format';
+import { fmtBigPct, fmtPct, fmtPrice } from '../../utils/format';
 
 const { Text } = Typography;
 const LOCAL_TZ = 'Asia/Tashkent'; // the operator's clock, like the 📐 sidebar
@@ -83,6 +83,12 @@ function hhmm(ms: number, tz: string): string {
 // The "POP vol" column's sort value: a POP's or a BACK's reading; rows without one sort under them.
 function popVol(s: TvSetupInfo): number {
   return isPopBack(s.stage) && s.vol_x != null ? s.vol_x : -1;
+}
+
+// The "RVol 1m" column's (v50): the stock's RVol 1m as the TradingView script computes it, on a POP
+// and on its BACK (the POP's); rows without one sort under them.
+function popRv1(s: TvSetupInfo): number {
+  return isPopBack(s.stage) && s.tv_rv1 != null ? s.tv_rv1 : -1;
 }
 
 // "30S" < "1" < "2": seconds before minutes.
@@ -198,6 +204,15 @@ export function SetupsHistoryTable({ date }: { date: string }) {
       title: 'POP vol', key: 'popvol', width: 88, align: 'right',
       sorter: (a, b) => popVol(a.setup) - popVol(b.setup),
       render: (_v, e) => (isPopBack(e.setup.stage) && e.setup.vol_x != null ? `${e.setup.vol_x.toFixed(1)}×` : <Text type="secondary">—</Text>),
+    },
+    {
+      // v50: the stock's RVol 1m at the POP, as the TradingView script computes it — the last
+      // minute's volume against the stock's average day, in percent — on a POP's row and on its
+      // BACK's (the POP's). Not the Momentum table's RVol 1m (this table doesn't show that one).
+      // Rows from before v50, and a POP the script had no reading for, show none.
+      title: 'RVol 1m', key: 'rv1', width: 96, align: 'right',
+      sorter: (a, b) => popRv1(a.setup) - popRv1(b.setup),
+      render: (_v, e) => (isPopBack(e.setup.stage) && e.setup.tv_rv1 != null ? fmtBigPct(e.setup.tv_rv1) : <Text type="secondary">—</Text>),
     },
     { title: 'Grade', key: 'grade', width: 62, render: (_v, e) => <GradeCell grade={e.grade} /> },
     { title: 'Chg', key: 'chg', width: 64, align: 'right', render: (_v, e) => (e.chg == null ? '—' : fmtPct(e.chg)) },

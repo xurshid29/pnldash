@@ -51,6 +51,20 @@ export function fmtBigPct(n: number | string | null | undefined): string {
   return `${v.toLocaleString('en-US', { maximumFractionDigits: 0 })}%`;
 }
 
+// The same percent, short, for a line that is short of room (the 📐 sidebar's row lead, a toast):
+// under 10,000 the whole number ("8,450%", fmtBigPct); from 10,000 in thousands ("48K%"); from a
+// million in millions with one decimal ("1.3M%", "1M%"). Rounded first, so 9,999.6 reads "10K%"
+// and 999,600 "1M%", never "10,000%" or "1000K%".
+export function fmtBigPctShort(n: number | string | null | undefined): string {
+  const v = asNum(n);
+  if (v == null) return '—';
+  const r = Math.round(v);
+  if (Math.abs(r) < 10_000) return fmtBigPct(r);
+  const k = Math.round(r / 1000);
+  if (Math.abs(k) < 1000) return `${k}K%`;
+  return `${(r / 1e6).toFixed(1).replace(/\.0$/, '')}M%`;
+}
+
 export function num(n: number | string | null | undefined): number | null {
   return asNum(n);
 }

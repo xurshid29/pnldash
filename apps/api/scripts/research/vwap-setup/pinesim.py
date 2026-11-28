@@ -6,7 +6,8 @@ Further down, each with the rule stated a second time, independently, and a self
 the two against each other: the RSI cross with its DIP, LIFT and MACD (v32–v39) in simulate_rsi(),
 the EMA / band / basis cross over VWAP with its BOUNCE (v35–v42) in simulate_ema(), TURN, the
 bounce off a basis that fell and turned up (v47), in simulate_turn() / turn_rule_direct(), and POP
-and BACK, a pop off the basis and its first pullback (v48), in simulate_pop() / pop_rule_direct().
+and BACK, a pop off the basis and its first pullback (v48; v49's volume test, v50's RVol), in
+simulate_pop() / pop_rule_direct().
 
 Replays the 📐 VWAP-setup stage machine on Yahoo 1m/2m bars so a script change
 can be scored on past examples in seconds instead of by hand in bar replay.
@@ -2538,7 +2539,7 @@ def selftest_turn():
     return ok
 
 
-# ── POP and BACK: a pop off the basis and its first pullback (script v48, its section 9; v49's volume test) ─
+# ── POP and BACK: a pop off the basis and its first pullback (script v48, its section 9; v49's volume test; v50's RVol) ─
 # On the candles of the basis's own timeframe, like TURN (no request and no sampling: the bars given
 # here are the candles):
 #   run      starts at a close above the basis (the SMA of the last `len` closes) when the close before
@@ -2578,22 +2579,54 @@ def selftest_turn():
 #                           in its window is na
 # On a stock's candles TradingView's volume is never na, so the two assumptions only settle what bars
 # without 'v' give here (with none at all, every POP is weak while the test is on).
+# The stock's RVol (script v50: ppRvSess, ppRvRth, ppRvDays, ppRvAdv, ppRv1, ppRv5), a reading only: no
+# rule uses it. This replica assumes a 1-minute chart, as for the rest of the setup (the script's ppRvOk1
+# and ppRvOk5 true, its math.sum over 1 and 5 candles). In the script's order, on every candle:
+#   new day   on a day's first candle (newDay: never the tape's first candle, see below) the running
+#             regular-hours volume of the day before is added to the list of sessions when at least 2 days
+#             were counted before it and that volume is above 0, and the list keeps its last 20; then the
+#             day count goes up by one and the running volume is reset to 0. So the tape's first two days
+#             never count (whatever they traded), a day with no regular-hours volume (or no regular-hours
+#             candle) adds nothing and pushes nothing out, and a day's own volume is in none of its readings
+#   regular   then a candle opening from 09:30 to before 16:00, in the bars' own times (session.ismarket),
+#             adds its volume to the running volume (a day's first candle, after the reset)
+#   average   the mean of the list once it holds 3 or more; none before (the earliest is on the 6th day)
+#   rv1       the candle's volume ÷ (average ÷ 390) × 100
+#   rv5       the volume of the candle and the 4 before it ÷ (average ÷ 78) × 100: candles, not clock
+#             minutes (across a night too); none before the tape's 5th candle, which never shows next to a
+#             given rv1 (an average needs candles on 6 days)
+# Every alert carries its POP candle's two (`rv1` / `rv5`, % as floats: the script's message prints them
+# rounded to whole percent, `| rvol1 48210 | rvol5 11975`), None where the script prints none; a BACK its
+# POP's, sent or not, whatever the stock trades by then (its average cannot change: a run ends with its day).
+# A bar without 'v' (Pine's na):
+#   in regular hours   the day's running volume is na from there to the day's end, and that day is not
+#                      added at the next day's first candle. ASSUMED of Pine's arithmetic: `+=` with an na
+#                      operand gives na, and na > 0 is false. The next day starts again from 0
+#   the candle itself  no rv1, and no rv5. ASSUMED of math.sum: na while a value in its window is na (as of
+#                      ta.sma above), so also no rv5 where one of the 4 candles before it has none
+#   outside regular hours   nothing else: the sessions do not read it
+# The first two days: ASSUMED that timeframe.change("D") is false on the chart's first bar, as everywhere in
+# this file (the script's VWAP anchors add `or firstBar` because of it, docs/vwap-setup.md §5.2). Were it true
+# there, only the first day would be left out and every reading would come a day earlier.
 # The other built-ins are TURN's (ta.sma, ta.macd, timeframe.change("D")): see the list above TURN_DEFAULTS.
 POP_DEFAULTS = dict(len=15, up=10.0, tol=1.0, wait=20, macd_on=True, fast=12, slow=26, sig=9, vol_on=True, vol_min=10.0)
 POP_VOL_WIN, POP_VOL_TOP = 20, 3   # the script's literals: ta.sma(volume, 20)[3], and the three candles of ppVolTop
+POP_RV_SKIP, POP_RV_KEEP, POP_RV_MIN = 2, 20, 3   # v50's literals: ppRvDays >= 2, the last 20 sessions, 3 for a reading
+POP_RV_1M, POP_RV_5M = 390, 78                    # …and the regular day's 1-minute and 5-minute slices
 
 
 def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
-    """The script's POP and BACK section (v48, with v49's volume test), statement for statement, on the
-    bars of the setup's own timeframe (dicts with 't', 'o', 'h', 'l', 'c' and the volume 'v'; the
-    script's ppRun is taken as true).
+    """The script's POP and BACK section (v48, with v49's volume test and v50's RVol), statement for
+    statement, on the bars of the setup's own timeframe, a 1-minute chart (dicts with 't', 'o', 'h',
+    'l', 'c' and the volume 'v'; the script's ppRun is taken as true).
     `tick` = syminfo.mintick; gainer_of(bar) / in_window_of(bar) → bool stand for the script's
     `(not ppGainOn or gainer)` and `inWindow` (default: always true).
     → the alerts in order, the messages' fields:
-      {'kind': 'pop', 't', 'close', 'basis', 'ran_pct', 'vol_x', 'pop_n', 'weak'}
-      {'kind': 'back', 't', 'close', 'stop', 'basis', 'ran_pct', 'vol_x', 'back_n', 'since', 'green', 'weak'}
-    `vol_x` is None where the script's message has no `vol`; a weak alert's `pop_n` / `back_n` is the
-    count as it stood."""
+      {'kind': 'pop', 't', 'close', 'basis', 'ran_pct', 'vol_x', 'rv1', 'rv5', 'pop_n', 'weak'}
+      {'kind': 'back', 't', 'close', 'stop', 'basis', 'ran_pct', 'vol_x', 'rv1', 'rv5', 'back_n', 'since', 'green', 'weak'}
+    `vol_x` is None where the script's message has no `vol`, and `rv1` / `rv5` (the POP candle's RVol 1m
+    and 5m, %, not rounded) None where it has no `rvol1` / `rvol5`; a weak alert's `pop_n` / `back_n` is
+    the count as it stood."""
     p = dict(POP_DEFAULTS, **(p or {}))
     closes = [b['c'] for b in bars]
     basis = sma_series(closes, p['len'])                                    # ppB
@@ -2606,10 +2639,14 @@ def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
     in_run, ran, top, pb_low, popped = False, 0.0, None, None, False        # the script's `var`s
     waiting, pop_bar, touched, pop_n, back_n = False, None, False, 0, 0
     pop_vol, weak = None, False                                             # ppPopVol, ppWeak
+    rv_sess, rv_rth, rv_days = [], 0.0, 0                                   # ppRvSess, ppRvRth (None = na), ppRvDays
+    pop_rv1 = pop_rv5 = None                                                # ppPopRv1, ppPopRv5
     out, prev_day = [], None
     for i, b in enumerate(bars):
         o, h, low, c, pb = b['o'], b['h'], b['l'], b['c'], basis[i]
         green = hist[i] is not None and hist[i] > 0                         # ppGreen
+        new_day = prev_day is not None and b['t'].date() != prev_day        # newDay
+        prev_day = b['t'].date()
         # ppVolTop = math.max(volume, nz(volume[1]), nz(volume[2])): nz() takes an na volume, and one before the first bar,
         # as 0; with the candle's own volume na, math.max is na (ASSUMED, see above)
         vol_1 = (volume[i - 1] or 0) if i >= 1 else 0
@@ -2619,10 +2656,25 @@ def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
         vol_x = vol_top / vol_base if vol_base is not None and vol_base > 0 and vol_top is not None else None   # ppVolX
         # ppSurge = not na(ppVolBase) and (ppVolBase > 0 ? ppVolTop / ppVolBase >= ppVolMin : ppVolTop > 0); a comparison with na is false
         surge = vol_base is not None and vol_top is not None and (vol_top / vol_base >= p['vol_min'] if vol_base > 0 else vol_top > 0)
+        # v50, the stock's RVol: the day before's regular-hours volume joins the sessions at the new day's first candle,
+        # before that candle's own volume starts the new day's (ppRvRth na > 0 is false: a day with an na in it is not added)
+        if new_day:
+            if rv_days >= POP_RV_SKIP and rv_rth is not None and rv_rth > 0:
+                rv_sess.append(rv_rth)                                      # array.push
+                if len(rv_sess) > POP_RV_KEEP:
+                    rv_sess.pop(0)                                          # array.shift
+            rv_days += 1
+            rv_rth = 0.0
+        if is_market(b['t']):                                               # session.ismarket
+            rv_rth = None if rv_rth is None or volume[i] is None else rv_rth + volume[i]   # ppRvRth += volume (na + x = na, ASSUMED)
+        rv_adv = sum(rv_sess) / len(rv_sess) if len(rv_sess) >= POP_RV_MIN else None      # ppRvAdv = array.avg(ppRvSess)
+        rv_sum1 = volume[i]                                                 # ppRvSum1 = math.sum(volume, 1) on a 1m chart
+        w5 = volume[i - 4:i + 1] if i >= 4 else [None]                      # ppRvSum5 = math.sum(volume, 5): na until 5 bars
+        rv_sum5 = None if None in w5 else sum(w5)                           # exist, and with an na in them (ASSUMED)
+        rv1 = rv_sum1 / (rv_adv / POP_RV_1M) * 100 if rv_adv is not None and rv_adv > 0 and rv_sum1 is not None else None   # ppRv1
+        rv5 = rv_sum5 / (rv_adv / POP_RV_5M) * 100 if rv_adv is not None and rv_adv > 0 and rv_sum5 is not None else None   # ppRv5
         gainer = True if gainer_of is None else bool(gainer_of(b))
         in_window = True if in_window_of is None else bool(in_window_of(b))
-        new_day = prev_day is not None and b['t'].date() != prev_day        # newDay
-        prev_day = b['t'].date()
         if new_day:
             pop_n = 0
             back_n = 0
@@ -2644,6 +2696,7 @@ def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
                         # the POP: it uses up the run, whether or not the filters let it send
                         popped, waiting, touched, pop_bar = True, True, False, i
                         pop_vol = vol_x
+                        pop_rv1, pop_rv5 = rv1, rv5                         # ppPopRv1, ppPopRv5
                         weak = bool(p['vol_on']) and not surge
                         if in_window and gainer:
                             pop_fire = True
@@ -2670,10 +2723,10 @@ def simulate_pop(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
                     pb_low = low_now
         if pop_fire:
             out.append({'kind': 'pop', 't': b['t'], 'close': c, 'basis': pb, 'ran_pct': ran, 'vol_x': pop_vol,
-                        'pop_n': pop_n, 'weak': weak})
+                        'rv1': pop_rv1, 'rv5': pop_rv5, 'pop_n': pop_n, 'weak': weak})
         if back_fire:
             out.append({'kind': 'back', 't': b['t'], 'close': c, 'stop': stop, 'basis': pb, 'ran_pct': ran, 'vol_x': pop_vol,
-                        'back_n': back_n, 'since': age, 'green': green, 'weak': weak})
+                        'rv1': pop_rv1, 'rv5': pop_rv5, 'back_n': back_n, 'since': age, 'green': green, 'weak': weak})
     return out
 
 
@@ -2699,15 +2752,44 @@ def pop_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
                  that is unknown, or not there, counts as 0)
       a surge    a reading of `vol_min` or more, or volume on one of the three where the 20 all had none
       weak       (`vol_on`) a POP on a candle with no surge, and the BACK of that run
-    An alert is sent in the window, on a gainer, with its POP candle's reading. The ones sent that are
-    not weak are numbered per day; a weak one carries how many of its kind were numbered before it
-    that day.
+      a session  a calendar day's volume in the candles that open from 09:30 to before 16:00 (unknown
+                 when one of those has no volume); it counts from the third day of the tape on, when it
+                 is known and above 0
+      RVol       (a 1-minute chart) against the mean of the last 20 sessions that count among the days
+                 before the candle's own, when there are 3 or more: the candle's volume per 1/390 of it,
+                 and the volume of the candle and the 4 before it per 1/78, in %; none where one of
+                 those volumes is unknown or there are not 5 candles
+    An alert is sent in the window, on a gainer, with its POP candle's reading and RVol. The ones sent
+    that are not weak are numbered per day; a weak one carries how many of its kind were numbered
+    before it that day.
     → the same list as simulate_pop."""
     p = dict(POP_DEFAULTS, **(p or {}))
     n, length = len(bars), p['len']
     o, h, lows, c = [b['o'] for b in bars], [b['h'] for b in bars], [b['l'] for b in bars], [b['c'] for b in bars]
     traded = [b.get('v') for b in bars]
     day = [b['t'].date() for b in bars]
+
+    # the stock's RVol, day by day: the days' first candles, each day's session, then the average each day reads
+    firsts = [k for k in range(n) if k == 0 or day[k] != day[k - 1]]
+    day_no = []                                                            # per candle: its day, 0 = the tape's first
+    for d, (a, z) in enumerate(zip(firsts, firsts[1:] + [n])):
+        day_no += [d] * (z - a)
+    sessions = []
+    for a, z in zip(firsts, firsts[1:] + [n]):
+        regular = [traded[m] for m in range(a, z) if datetime.time(9, 30) <= bars[m]['t'].time() < datetime.time(16, 0)]
+        sessions.append(None if None in regular else sum(regular))
+    counted = [d >= POP_RV_SKIP and sessions[d] is not None and sessions[d] > 0 for d in range(len(firsts))]
+    avg_day = []
+    for d in range(len(firsts)):
+        kept = [sessions[e] for e in range(d) if counted[e]][-POP_RV_KEEP:]
+        avg_day.append(sum(kept) / len(kept) if len(kept) >= POP_RV_MIN else None)
+
+    def rvol(j):
+        """Candle j's RVol 1m and 5m, % (None where there is none)."""
+        a = avg_day[day_no[j]]
+        five = traded[j - 4:j + 1] if j >= 4 else [None]
+        return (None if a is None or traded[j] is None else traded[j] / (a / POP_RV_1M) * 100,
+                None if a is None or None in five else sum(five) / (a / POP_RV_5M) * 100)
     gain = [True if gainer_of is None else bool(gainer_of(b)) for b in bars]
     inw = [True if in_window_of is None else bool(in_window_of(b)) for b in bars]
     basis = [sum(c[i + 1 - length:i + 1]) / length if i + 1 >= length else None for i in range(n)]
@@ -2779,9 +2861,10 @@ def pop_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
         if pop is None:
             continue
         weak = bool(p['vol_on']) and not surge(pop)
+        rv1, rv5 = rvol(pop)
         if inw[pop] and gain[pop]:
             out.append({'kind': 'pop', 't': bars[pop]['t'], 'close': c[pop], 'basis': basis[pop], 'ran_pct': ran(pop),
-                        'vol_x': reading(pop), 'pop_n': number('pop', pop, weak), 'weak': weak})
+                        'vol_x': reading(pop), 'rv1': rv1, 'rv5': rv5, 'pop_n': number('pop', pop, weak), 'weak': weak})
         last = e if p['wait'] <= 0 else min(e, pop + p['wait'])
         touch = next((j for j in range(pop + 1, last + 1) if lows[j] <= basis[j] * (1 + p['tol'] / 100)), None)
         if touch is None:
@@ -2793,12 +2876,12 @@ def pop_rule_direct(bars, p=None, tick=0.01, gainer_of=None, in_window_of=None):
         highs = h[k:back]
         top = k + highs.index(max(highs))
         out.append({'kind': 'back', 't': bars[back]['t'], 'close': c[back], 'stop': min(lows[top + 1:back + 1]) - tick,
-                    'basis': basis[back], 'ran_pct': ran(back), 'vol_x': reading(pop), 'back_n': number('back', back, weak),
-                    'since': back - pop, 'green': green[back], 'weak': weak})
+                    'basis': basis[back], 'ran_pct': ran(back), 'vol_x': reading(pop), 'rv1': rv1, 'rv5': rv5,
+                    'back_n': number('back', back, weak), 'since': back - pop, 'green': green[back], 'weak': weak})
     return out
 
 
-def _pop_tape(seed, days, day_bars, grid=None, gap=True):
+def _pop_tape(seed, days, day_bars, grid=None, gap=True, start=240, dead=()):
     """A generated 1m tape for selftest_pop: quiet stretches and chop around the basis, fast pops (one
     to six candles), pullbacks after them that come down to the 15-close basis (to a little over it,
     or through it), second legs, and fades back under it, so runs come with and without a POP, and
@@ -2808,11 +2891,15 @@ def _pop_tape(seed, days, day_bars, grid=None, gap=True):
     prices are the tapes v48 was tested on): 'even' (1000 on every candle, so a burst reads exactly its
     multiple), 'busy' (500–3000), 'thin' (0–39) and 'none' (25–69 candles with no volume at all: a base
     of 0). A candle of a pop or a leg trades a burst, 1 to 250 times its stretch's volume; in a 'none'
-    stretch such a candle trades nothing, 300 or 5000."""
+    stretch such a candle trades nothing, 300 or 5000.
+    Each day's first candle opens `start` minutes after midnight (04:00 by default: the v48 and v49
+    tapes, which stay as they were), its `day_bars` candles one a minute; on the days in `dead` (0 = the
+    tape's first) the candles of the regular session (09:30 to 16:00) trade nothing, after the same draws
+    (v50: a session with no volume)."""
     import datetime as dt, math, random
     rnd = random.Random(seed)
     vrnd = random.Random(seed + 7919)
-    t0 = dt.datetime(2026, 11, 2, 4, 0, tzinfo=ET)
+    t0 = dt.datetime(2026, 11, 2, tzinfo=ET) + dt.timedelta(minutes=start)
     snap = (lambda x: max(grid, round(x / grid) * grid)) if grid else (lambda x: x)
     bars, px, phase, left, drift, vol, aim = [], snap(4.0), 'quiet', 0, 0.0, 0.0, 0.0
     trade, trade_left = 'even', 0
@@ -2861,61 +2948,76 @@ def _pop_tape(seed, days, day_bars, grid=None, gap=True):
                 shares = vrnd.choice([0, 0, 300, 5000]) if burst > 1 else 0
             else:
                 shares = burst * (1000 if trade == 'even' else vrnd.randrange(500, 3000) if trade == 'busy' else vrnd.randrange(0, 40))
-            bars.append({'t': t0 + dt.timedelta(days=day, minutes=m), 'o': o, 'h': h, 'l': low, 'c': c, 'v': shares})
+            t = t0 + dt.timedelta(days=day, minutes=m)
+            if day in dead and 570 <= t.hour * 60 + t.minute < 960:
+                shares = 0
+            bars.append({'t': t, 'o': o, 'h': h, 'l': low, 'c': c, 'v': shares})
             px = c
     return bars
 
 
 def selftest_pop():
-    """POP and BACK (v48) and its volume test (v49). First on hand-built candles, each case's alerts
-    worked out by hand in the comments: `lead` candles standing on 10.00 (the basis is 10.00 and every
-    close is on it), then the case's own rows (open, high, low, close); with the default 15-close
-    basis, m rows in it is (10 × (15 − m) + those m closes) / 15. v48's cases are about the prices:
-    in them every row trades 15 times its own base (the mean of the 20 candles that end three before
-    it) and no less than the row before, so whichever rows are POPs, each has a surge, reads 15 and
-    is numbered as in v48. v49's cases give every candle its volume. Then the script's state machine
-    (simulate_pop) against the rule from its definitions
-    (pop_rule_direct) — the same alerts, field for field — on generated tapes like selftest_turn's
-    (continuous prices and a 1/64 grid with its exact ties, tapes cut into many short days, short
-    tapes for the warm-up), under the script's defaults and with each dial moved, the volume test's
-    last."""
+    """POP and BACK (v48), its volume test (v49) and the stock's RVol in its messages (v50). First on
+    hand-built candles, each case's alerts worked out by hand in the comments: `lead` candles standing
+    on 10.00 (the basis is 10.00 and every close is on it), then the case's own rows (open, high, low,
+    close); with the default 15-close basis, m rows in it is (10 × (15 − m) + those m closes) / 15.
+    v48's cases are about the prices: in them every row trades 15 times its own base (the mean of the
+    20 candles that end three before it) and no less than the row before, so whichever rows are POPs,
+    each has a surge, reads 15 and is numbered as in v48. v49's cases give every candle its volume;
+    v50's put days of candles before the case's, for the sessions the RVol reads against (the cases
+    before have none, so no RVol). Then the script's state machine (simulate_pop) against the rule
+    from its definitions (pop_rule_direct) — the same alerts, field for field — on generated tapes
+    like selftest_turn's (continuous prices and a 1/64 grid with its exact ties, tapes cut into many
+    short days, short tapes for the warm-up), under the script's defaults and with each dial moved,
+    the volume test's last; then on tapes of up to 26 days for the RVol."""
     import datetime as dt
     t0 = dt.datetime(2026, 11, 2, 9, 30, tzinfo=ET)
-    near = {'basis': 1e-4, 'ran_pct': 1e-3, 'stop': 1e-9, 'vol_x': 1e-9}   # basis and ran_pct are written below to 4 and 3 decimals
+    near = {'basis': 1e-4, 'ran_pct': 1e-3, 'stop': 1e-9, 'vol_x': 1e-9, 'rv1': 1e-9, 'rv5': 1e-9}   # basis and ran_pct are written below to 4 and 3 decimals
 
-    def check(rows, want, q=None, lead=40, new_day_at=None, gain=None, window=None, vols=None, lead_vol=100, **cb):
+    def check(rows, want, q=None, lead=40, new_day_at=None, gain=None, window=None, vols=None, lead_vol=100, before=(),
+              start=(9, 30), **cb):
         """simulate_pop and pop_rule_direct on `lead` flat candles + rows, against the alerts worked
         out: ('pop', row, pop_n, basis, ran_pct) / ('back', row, back_n, since, stop, green, basis,
-        ran_pct), each followed by (vol_x, weak) where those are not (15, False). `new_day_at`: the row
-        that opens the next day; gain / window: row → bool (the gainer filter and the alert window);
-        `tick` is passed on.
+        ran_pct), each followed by (vol_x, weak) where those are not (15, False), and then by (rv1, rv5)
+        where those are not (None, None). `new_day_at`: the row that opens the next day; gain / window:
+        row → bool (the gainer filter and the alert window); `tick` is passed on.
         The volumes: a lead candle trades `lead_vol` (a figure, or candle → figure) and the rows trade
         `vols`, one figure each; None is a candle with no volume given. Without `vols`, each row trades
         15 times the mean of the 20 candles that end three before it (100 while those are not there):
-        as no row then trades less than the one before, a row's own volume is the largest of its three."""
+        as no row then trades less than the one before, a row's own volume is the largest of its three.
+        The days before the case's (v50): `before`, oldest first, the last one the day before the lead
+        candles', each a list of candles standing on 10.00, (hour, minute, volume); the first lead candle
+        opens at `start` (hour, minute)."""
         vol = [lead_vol(i) if callable(lead_vol) else lead_vol for i in range(lead)]
         for r in range(len(rows)):
             k = len(vol)
             vol.append(vols[r] if vols is not None else 15 * sum(vol[k - 22:k - 2]) / 20 if k >= 22 else 100)
+        first = t0.replace(hour=start[0], minute=start[1])
         bars = []
         for i, shares in enumerate(vol):
             r = i - lead
             o, h, low, c = rows[r] if r >= 0 else (10.0, 10.0, 10.0, 10.0)
-            t = t0 + dt.timedelta(minutes=i, days=1 if new_day_at is not None and r >= new_day_at else 0)
+            t = first + dt.timedelta(minutes=i, days=1 if new_day_at is not None and r >= new_day_at else 0)
             bars.append({'t': t, 'o': o, 'h': h, 'l': low, 'c': c})
             if shares is not None:
                 bars[-1]['v'] = shares
         row_of = {b['t']: i - lead for i, b in enumerate(bars)}
+        earlier = []
+        for ago, candles in zip(range(len(before), 0, -1), before):
+            for hh, mm, shares in candles:
+                earlier.append({'t': first.replace(hour=hh, minute=mm) - dt.timedelta(days=ago), 'o': 10.0, 'h': 10.0, 'l': 10.0,
+                                'c': 10.0, **({} if shares is None else {'v': shares})})
         if gain is not None:
-            cb['gainer_of'] = lambda b: gain(row_of[b['t']])
+            cb['gainer_of'] = lambda b: gain(row_of.get(b['t'], -10 ** 6))     # the days before: no row
         if window is not None:
-            cb['in_window_of'] = lambda b: window(row_of[b['t']])
+            cb['in_window_of'] = lambda b: window(row_of.get(b['t'], -10 ** 6))
         exp = []
         for kind, r, n, *more in want:
             own = 2 if kind == 'pop' else 5                      # the figures before (vol_x, weak)
-            vol_x, weak = more[own:] or (15.0, False)
+            vol_x, weak = more[own:own + 2] or (15.0, False)
+            rv1, rv5 = more[own + 2:own + 4] or (None, None)
             x = {'kind': kind, 't': bars[lead + r]['t'], 'close': rows[r][3], 'basis': more[own - 2], 'ran_pct': more[own - 1],
-                 'vol_x': vol_x, 'weak': weak}
+                 'vol_x': vol_x, 'rv1': rv1, 'rv5': rv5, 'weak': weak}
             x.update({'pop_n': n} if kind == 'pop' else {'back_n': n, 'since': more[0], 'stop': more[1], 'green': more[2]})
             exp.append(x)
 
@@ -2925,6 +3027,7 @@ def selftest_pop():
                 and all(abs(g[k] - x[k]) <= near[k] if k in near and None not in (g[k], x[k]) else g[k] == x[k] for k in x)
                 for g, x in zip(got, exp))
 
+        bars = earlier + bars
         return as_worked_out(simulate_pop(bars, q, **cb)) and as_worked_out(pop_rule_direct(bars, q, **cb))
 
     def reads(alert, vol_x, n=None):
@@ -3218,6 +3321,110 @@ def selftest_pop():
           f"POP not sent; candles with no volume given)"
           + (f" — NOT: {'; '.join(off)}" if off else ''), '→', 'OK' if not off else 'UNEXPECTED')
 
+    # The stock's RVol (v50). The days before the case's (`before`) have candles standing on 10.00 (no run, no alert); in
+    # `session(rth)` the regular session trades on its first and last minutes (09:30 and 15:59, half of `rth` each) and the
+    # pre-market's last minute (09:29) and the after-hours' first (16:00) a million each. `week` is five such days: the
+    # tape's first two are left out whatever they traded, so the sessions are the other three, 19,500, 39,000 and 58,500,
+    # an average day of 39,000: 100 a minute (÷ 390) and 500 a 5 minutes (÷ 78). The case's day is the sixth, the first
+    # with a reading. In `plain` with the volumes of v49's minimum case (`V`: the POP, row 1, candle 41, trades 1000 over a
+    # base of 100, 10 times) the POP candle reads 1000 / 100 × 100 = 1000%, and its five candles (lead candles 37–39 and
+    # rows 0–1: 100 + 100 + 100 + 100 + 1000) 1400 / 500 × 100 = 280%; the BACK (row 3) carries the two.
+    def session(rth, pm=10 ** 6, ah=10 ** 6):
+        return [(9, 29, pm), (9, 30, rth // 2), (15, 59, rth - rth // 2), (16, 0, ah)]
+
+    week = [session(3_900_000), session(3_900_000), session(19_500), session(39_000), session(58_500)]
+    V = [100, 1000, 100, 100]
+
+    def rv(alert, rv1, rv5):
+        """A worked-out alert with its POP candle's RVol 1m and 5m (after a (vol_x, weak) of (15, False) if it has none)."""
+        return (alert if len(alert) > (5 if alert[0] == 'pop' else 8) else alert + (15.0, False)) + (rv1, rv5)
+
+    def plain_at(rv1, rv5):
+        """`plain`'s POP and BACK under `V`, with those readings."""
+        return [rv(reads(plain_pop, 10.0), rv1, rv5), rv(reads(plain_back, 10.0), rv1, rv5)]
+
+    # the 20 sessions: the third day trades 819,000 and is the oldest session; after it, 39,000 a day. With 20 of those the
+    # oldest is out and the average 39,000 again; with 19 it is in: (819,000 + 19 × 39,000) / 20 = 78,000, 200 a minute and
+    # 1000 a 5 minutes, so 1000 / 200 × 100 = 500% and 1400 / 1000 × 100 = 140%
+    month = week[:2] + [session(819_000)] + [session(39_000)] * 20
+    # `two_days` with v49's volumes, after four days: the sessions are 50,000 and 61,800 (two: no reading on the case's
+    # day, so its POP 1 and BACK 1 have none). The case's day trades 5200 in the regular session (40 lead candles of 100
+    # from 09:30, rows 0–2: 1000 + 100 + 100), added at the next day's first candle, row 3, its POP: (50,000 + 61,800 +
+    # 5200) / 3 = 39,000, so its 1450 read 1450%, and its five candles (lead candle 39, rows 0–3: 100 + 1000 + 100 + 100 +
+    # 1450 = 2750, over the night) 550%
+    four = [session(3_900_000), session(3_900_000), session(50_000), session(61_800)]
+    # one candle a day (09:30), then the POP on the sixth day's first candle, with a 2-close basis (on_it's row 0): the
+    # tape's 6th candle. An average needs candles on six days, so this is the earliest reading there can be, and its five
+    # candles are already there (no tape gives an RVol 1m without an RVol 5m for want of candles): the POP candle's 1000
+    # and the four days before's, 1000 + 19,500 + 39,000 + 58,500. RVol 1m 1000%, 5m 119,000 / 500 × 100 = 23,800%
+    sparse = [[(9, 30, 1000)], [(9, 30, 1000)], [(9, 30, 19_500)], [(9, 30, 39_000)], [(9, 30, 58_500)]]
+    hand_rv = [
+        # with four days or three the first two are the skipped ones: sessions 39,000 and 58,500, or 58,500 alone. With
+        # five the first two can be anything: a session of 0 and a day with one pre-market candle, or 39 million and 1
+        ('no RVol before 3 sessions are counted; the tape\'s first two days never count',
+         check(plain[:4], plain_at(1000.0, 280.0), vols=V, before=week)
+         and check(plain[:4], plain_at(None, None), vols=V, before=week[1:])
+         and check(plain[:4], plain_at(None, None), vols=V, before=week[2:])
+         and check(plain[:4], plain_at(1000.0, 280.0), vols=V, before=[session(0), [(8, 0, 5)]] + week[2:])
+         and check(plain[:4], plain_at(1000.0, 280.0), vols=V, before=[session(39_000_000), session(1)] + week[2:])),
+        ("the first reading: the day before joins the sessions at the next day's first candle, before it is read",
+         check(two_days, [rv(reads(first, 10.0), None, None), rv(reads(at_once_back, 10.0), None, None),
+                          rv(reads(day2_pop, 10.0), 1450.0, 550.0), rv(reads(day2_back, 10.0), 1450.0, 550.0)],
+               new_day_at=3, vols=[1000, 100, 100, 1450, 100], before=four)),
+        # the same days without their millions at 09:29 and 16:00 give the same readings; a POP at 08:41 (the lead candles
+        # from 08:00) or at 17:41 reads its own candles all the same
+        ('pre-market and after-hours volume is in no session, and a POP there reads its own candles',
+         check(plain[:4], plain_at(1000.0, 280.0), vols=V, before=[session(x, 0, 0) for x in (3_900_000, 3_900_000, 19_500, 39_000, 58_500)])
+         and check(plain[:4], plain_at(1000.0, 280.0), vols=V, before=week, start=(8, 0))
+         and check(plain[:4], plain_at(1000.0, 280.0), vols=V, before=week, start=(17, 0))),
+        # the third day's session trades nothing: the sessions are 39,000 and 58,500. A session of 0 and a day with no
+        # regular-hours candle (a million at 08:00 and at 16:30) before the three add nothing
+        ('a regular session with no volume, or no regular-hours candle, is not added',
+         check(plain[:4], plain_at(None, None), vols=V, before=week[:2] + [session(0)] + week[3:])
+         and check(plain[:4], plain_at(1000.0, 280.0), vols=V,
+                   before=week[:2] + [session(0), [(8, 0, 10 ** 6), (16, 30, 10 ** 6)]] + week[2:])),
+        # …and pushes no older one out: the 20 sessions with the 819,000 still in, then a session of 0
+        ('the average is of the last 20 sessions; a session of 0 pushes none out',
+         check(plain[:4], plain_at(1000.0, 280.0), vols=V, before=month)
+         and check(plain[:4], plain_at(500.0, 140.0), vols=V, before=month[:-1])
+         and check(plain[:4], plain_at(500.0, 140.0), vols=V, before=month[:-1] + [session(0)])),
+        ('RVol 5m is the candle and the 4 candles before it, here over five days; the earliest reading',
+         check([on_it[0]], [rv(reads(on_it_pop, None), 1000.0, 23800.0)], dict(len2, vol_on=False), lead=0, vols=[1000], before=sparse)
+         and check([on_it[0]], [rv(reads(on_it_pop, None), None, None)], dict(len2, vol_on=False), lead=0, vols=[1000], before=sparse[1:])),
+        # the BACK candle trades 90,000: the stock's RVol 1m there is 90,000% and its 5m (100 + 100 + 1000 + 100 + 90,000) /
+        # 500 × 100 = 18,260%, and the BACK carries the POP's 1000% and 280% (a run ends with its day, so the average cannot
+        # have moved). With the gainer filter stopping the POP, the BACK carries the readings of the POP that was not sent
+        ("a BACK carries its POP's RVol, whatever the stock trades by then, and after a POP not sent",
+         check(plain[:4], plain_at(1000.0, 280.0), vols=[100, 1000, 100, 90000], before=week)
+         and check(plain, [rv(reads(plain_back, 10.0), 1000.0, 280.0)], gain=lambda r: r > 1, vols=[100, 1000, 100, 100, 100], before=week)),
+        # no volume on the POP candle: no reading of either (and v49's: no `vol`, weak). On the candle before it (row 0): RVol
+        # 5m none, RVol 1m 1000% (v49's top counts it as 0: 10 times). Four candles before it (lead candle 37) the same; five
+        # before (36) it is out of the five, 280% (both in v49's base: no `vol`, weak)
+        ('no volume given on a candle: on the POP candle no RVol, on one of the 4 before it no RVol 5m',
+         check(plain[:4], [rv(as_weak(plain_pop, None), None, None), rv(as_weak(plain_back, None), None, None)], vols=[100, None, 100, 100], before=week)
+         and check(plain[:4], plain_at(1000.0, None), vols=[None, 1000, 100, 100], before=week)
+         and check(plain[:4], [rv(as_weak(plain_pop, None), 1000.0, None), rv(as_weak(plain_back, None), 1000.0, None)], vols=V,
+                   lead_vol=lambda i: None if i == 37 else 100, before=week)
+         and check(plain[:4], [rv(as_weak(plain_pop, None), 1000.0, 280.0), rv(as_weak(plain_back, None), 1000.0, 280.0)], vols=V,
+                   lead_vol=lambda i: None if i == 36 else 100, before=week)),
+        # the fourth day's 09:30 has no volume: its session (with its 15:59's 39,000) is not added, the sessions are 19,500 and
+        # 58,500; with a sixth day of 39,000 they are 19,500, 58,500 and 39,000 again: the next day starts from 0. No volume
+        # on the fourth day's 09:29 and 16:00 instead: its session is 39,000, as in `week`
+        ('no volume given on a regular-hours candle: that session is not added; on a pre-market or after-hours one, it is',
+         check(plain[:4], plain_at(None, None), vols=V, before=week[:3] + [[(9, 29, 10 ** 6), (9, 30, None), (15, 59, 39_000), (16, 0, 10 ** 6)]] + week[4:])
+         and check(plain[:4], plain_at(1000.0, 280.0), vols=V,
+                   before=week[:3] + [[(9, 29, 10 ** 6), (9, 30, None), (15, 59, 39_000), (16, 0, 10 ** 6)]] + week[4:] + [session(39_000)])
+         and check(plain[:4], plain_at(1000.0, 280.0), vols=V, before=week[:3] + [[(9, 29, None), (9, 30, 19_500), (15, 59, 19_500), (16, 0, None)]] + week[4:])),
+    ]
+    off = [label for label, good in hand_rv if not good]
+    ok_hand = ok_hand and not off
+    print(f"…the stock's RVol (v50), on hand-built candles with days before them: {len(hand_rv) - len(off)} of {len(hand_rv)} cases give "
+          f"the readings worked out by hand, from both again (none before 3 sessions are counted, the tape's first two days never "
+          f"counted; the first reading, on the first candle after the third session's day; pre-market and after-hours volume in no "
+          f"session and in a POP's own candles; a regular session with no volume, or none, not added; the last 20 sessions; RVol 5m "
+          f"over five candles on five days; a BACK with its POP's readings, also after a POP not sent; candles with no volume given)"
+          + (f" — NOT: {'; '.join(off)}" if off else ''), '→', 'OK' if not off else 'UNEXPECTED')
+
     g = 1 / 64
     tapes = ([('two days', None, _pop_tape(s, 2, 600)) for s in (1, 2, 3, 4, 5, 6)]                # (kind, its grid, bars)
              + [('two days', g, _pop_tape(s, 2, 600, g)) for s in (11, 12, 13, 14, 15, 16)]
@@ -3279,12 +3486,13 @@ def selftest_pop():
     # (its BACK can be sent: `lone`, and it has that POP's reading and flag), and a bounce they stop still uses up its POP
     cb = dict(gainer_of=lambda b: b['t'].minute % 3 != 0, in_window_of=lambda b: b['t'].minute % 7 != 0)
 
-    def with_filters(q):
-        """Every tape under the settings with the filter and the window → (the two implementations agree and the numbers
-        hold; the alerts sent; the alerts without the two; the BACKs sent after a POP that was not; those of them that
-        are weak; every BACK has the reading and the flag of its POP, as the run without the two sent it)."""
+    def with_filters(q, on=None):
+        """Every tape (of `on`, or the tapes above) under the settings with the filter and the window → (the two
+        implementations agree and the numbers hold; the alerts sent; the alerts without the two; the BACKs sent after a
+        POP that was not; those of them that are weak; every BACK has the reading, the flag and the RVol (v50) of its POP,
+        as the run without the two sent it)."""
         agree, n_sent, n_free, alone, alone_weak, kept = True, 0, 0, 0, 0, True
-        for _, _, bars in tapes:
+        for _, _, bars in (tapes if on is None else on):
             a, free = simulate_pop(bars, q, **cb), simulate_pop(bars, q)
             agree = agree and a == pop_rule_direct(bars, q, **cb) and numbers(a)[0]
             n_sent += len(a)
@@ -3295,7 +3503,7 @@ def selftest_pop():
             for x in a:
                 if x['kind'] == 'back':
                     src = its_pop[at[x['t']] - x['since']]
-                    kept = kept and (x['vol_x'], x['weak']) == (src['vol_x'], src['weak'])
+                    kept = kept and all(x[k] == src[k] for k in ('vol_x', 'weak', 'rv1', 'rv5'))
                     if at[x['t']] - x['since'] not in sent:
                         alone += 1
                         alone_weak += x['weak']
@@ -3375,9 +3583,9 @@ def selftest_pop():
                 i = at[x['t']]
                 if x['weak']:
                     weak_at[label].add((n_tape, i, x['kind']))
-                if x['kind'] == 'back':             # a BACK has its POP's reading and flag
+                if x['kind'] == 'back':             # a BACK has its POP's reading and flag (and RVol, v50)
                     src = pop_of[i - x['since']]
-                    carried = carried and (x['vol_x'], x['weak']) == (src['vol_x'], src['weak'])
+                    carried = carried and all(x[k] == src[k] for k in ('vol_x', 'weak', 'rv1', 'rv5'))
                     s['backs'] += 1
                     s['weak_backs'] += x['weak']
                     continue
@@ -3418,7 +3626,7 @@ def selftest_pop():
         for q in ({}, dict(vol_min=2.0), dict(vol_on=False)):
             full, a, blank = simulate_pop(bars, q), simulate_pop(some, q), simulate_pop(none, q)
             same_v = same_v and a == pop_rule_direct(some, q) and blank == pop_rule_direct(none, q) and numbers(a)[0]
-            unchanged = unchanged and bare(a, ('vol_x',)) == bare(full, ('vol_x',)) == bare(blank, ('vol_x',))
+            unchanged = unchanged and bare(a, ('vol_x', 'rv1', 'rv5')) == bare(full, ('vol_x', 'rv1', 'rv5')) == bare(blank, ('vol_x', 'rv1', 'rv5'))
             holed += len(a)
             for x, y in zip(a, full):
                 i = at[x['t']] - (x['since'] if x['kind'] == 'back' else 0)     # the alert's POP candle
@@ -3429,7 +3637,7 @@ def selftest_pop():
                 lost += x['vol_x'] is None and y['vol_x'] is not None
                 zeroed += x['vol_x'] is not None and x['vol_x'] != y['vol_x']   # the top was the candle with no volume
             no_volume = no_volume and (
-                blank == [dict(x, vol_x=None) for x in full] if q.get('vol_on') is False
+                blank == [dict(x, vol_x=None, rv1=None, rv5=None) for x in full] if q.get('vol_on') is False
                 else all(x['weak'] and x['vol_x'] is None and x['pop_n' if x['kind'] == 'pop' else 'back_n'] == 0 for x in blank))
     d = seen['10 (the default)']
     held = {k: sum(s[k] for s in seen.values()) for k in d}
@@ -3453,7 +3661,116 @@ def selftest_pop():
           f"{d['at_zero']} weak POPs carrying 0 and {d['at_count']} a count; with a shorter basis or a smaller pop, {held['early']} "
           f"POPs with fewer than 23 candles ({early_on} with the test on: weak); in all {held['weak_pops']} of {held['pops']} POPs "
           f"and {held['weak_backs']} of {held['backs']} BACKs weak", '→', 'OK' if ok_vol else 'UNEXPECTED')
-    return ok_hand and ok and ok_vol
+
+    # The stock's RVol (v50) on tapes long enough for it (the tapes above have two days at most, or no regular hours, so
+    # none of their alerts has one): weeks of 04:00–20:00 days (pre-market, the regular session, after hours), 26 days of
+    # 09:15–10:15 mornings and of 15:30–16:30 closes (the list of 20 full; five candles over a night), some with a regular
+    # session that trades nothing (`dead`), and 5-day tapes, too short for any reading.
+    rv_tapes = ([('a week', None, _pop_tape(s, 7, 960, dead=(4,) if s % 2 else ())) for s in (71, 72)]
+                + [('a week', g, _pop_tape(s, 7, 960, g, dead=(5,) if s % 2 else ())) for s in (73, 74)]
+                + [('26 mornings', None, _pop_tape(81, 26, 60, start=555, dead=(8,))), ('26 mornings', g, _pop_tape(82, 26, 60, g, start=555))]
+                + [('26 closes', None, _pop_tape(83, 26, 60, start=930)), ('26 closes', g, _pop_tape(84, 26, 60, g, start=930, dead=(3, 11)))]
+                + [('5 days', None, _pop_tape(91, 5, 960)), ('5 days', g, _pop_tape(92, 5, 960, g))])
+    rv_cases = [{}, dict(up=5.0, macd_on=False), dict(vol_on=False, len=5, up=5.0, wait=0, macd_on=False)]
+
+    def stock_rvol(bars):
+        """The stock's RVol on every candle of a tape, worked out a third time (each day's session first, by date) → per
+        candle (RVol 1m, RVol 5m, the sessions counted before its day, the sessions of 0 passed over before it)."""
+        vols = [b.get('v') for b in bars]
+        dates = sorted({b['t'].date() for b in bars})
+        rth = dict.fromkeys(dates, 0)                       # each day's regular-hours volume; None = a candle without one
+        for b in bars:
+            d = b['t'].date()
+            if (b['t'].hour, b['t'].minute) >= (9, 30) and b['t'].hour < 16:
+                rth[d] = None if rth[d] is None or b.get('v') is None else rth[d] + b['v']
+        per_day = {}
+        for n_day, d in enumerate(dates):
+            good = [rth[e] for e in dates[2:n_day] if rth[e]]
+            kept = good[-20:]
+            per_day[d] = (sum(kept) / len(kept) if len(kept) >= 3 else None, len(good), sum(1 for e in dates[2:n_day] if rth[e] == 0))
+        rows = []
+        for i, b in enumerate(bars):
+            mean, counted, zeros = per_day[b['t'].date()]
+            five = vols[i - 4:i + 1] if i >= 4 else [None]
+            rows.append((None if mean is None or vols[i] is None else vols[i] / (mean / 390) * 100,
+                         None if mean is None or None in five else sum(five) / (mean / 78) * 100, counted, zeros))
+        return rows
+
+    same_r = told_r = carried_r = unchanged_r = True
+    short_none = all(x['rv1'] is None and x['rv5'] is None for runs in got.values() for a in runs for x in a)   # the tapes above
+    r_pops = r_backs = r_read = r_unread = r_pm = r_ah = r_night = r_full = r_zero = r_moved = 0
+    for kind, _, bars in rv_tapes:
+        table = stock_rvol(bars)
+        at = {b['t']: i for i, b in enumerate(bars)}
+        for q in rv_cases:
+            a = simulate_pop(bars, q)
+            same_r = same_r and a == pop_rule_direct(bars, q) and numbers(a)[0]
+            pop_of = {}
+            for x in a:
+                i = at[x['t']]
+                if kind == '5 days':
+                    short_none = short_none and x['rv1'] is None and x['rv5'] is None
+                if x['kind'] == 'back':             # its POP's two, whatever the stock reads at the BACK candle
+                    carried_r = carried_r and (x['rv1'], x['rv5']) == (pop_of[i - x['since']]['rv1'], pop_of[i - x['since']]['rv5'])
+                    r_backs += 1
+                    r_moved += x['rv1'] is not None and table[i][0] != x['rv1']
+                    continue
+                pop_of[i] = x
+                rv1, rv5, counted, zeros = table[i]
+                told_r = told_r and (x['rv1'], x['rv5']) == (rv1, rv5)
+                r_pops += 1
+                if x['rv1'] is None:
+                    r_unread += kind != '5 days'    # on a long tape: fewer than 3 sessions counted yet
+                    continue
+                r_read += 1
+                minute = x['t'].hour * 60 + x['t'].minute
+                r_pm += minute < 570
+                r_ah += minute >= 960
+                r_night += any(bars[k]['t'].date() != x['t'].date() for k in range(i - 4, i))   # its five candles over a night
+                r_full += counted > 20              # read against the last 20 of more than 20 sessions
+                r_zero += zeros > 0                 # …past a session of 0
+    # …with the gainer filter and the window: a BACK after a POP not sent has that POP's readings
+    agree, rv_sent, _, rv_alone, _, kept = with_filters({}, rv_tapes)
+    same_r, carried_r = same_r and agree, carried_r and kept
+    # …and with candles that have no volume: every 41st candle outside regular hours (a POP candle without one: no reading;
+    # one of the 4 before it: no RVol 5m) and the first regular-hours candle of each tape's fourth day (that session is not
+    # counted: a reading lost, or read against another average)
+    r_hole5 = r_lost = r_shifted = 0
+    for _, _, bars in rv_tapes:
+        fourth = sorted({b['t'].date() for b in bars})[3]
+        some, gone = [], False
+        for i, b in enumerate(bars):
+            regular = 570 <= b['t'].hour * 60 + b['t'].minute < 960
+            drop = (i % 41 == 0 and not regular) or (regular and not gone and b['t'].date() == fourth)
+            gone = gone or (regular and b['t'].date() == fourth)
+            some.append({k: v for k, v in b.items() if k != 'v'} if drop else b)
+        table = stock_rvol(some)
+        at = {b['t']: i for i, b in enumerate(bars)}
+        for q in rv_cases[:2]:
+            full, a = simulate_pop(bars, q), simulate_pop(some, q)
+            same_r = same_r and a == pop_rule_direct(some, q) and numbers(a)[0]
+            unchanged_r = unchanged_r and bare(a, ('vol_x', 'rv1', 'rv5')) == bare(full, ('vol_x', 'rv1', 'rv5'))
+            for x, y in zip(a, full):
+                i = at[x['t']] - (x['since'] if x['kind'] == 'back' else 0)     # the alert's POP candle
+                told_r = told_r and (x['rv1'], x['rv5']) == table[i][:2]
+                if x['kind'] == 'pop':
+                    r_hole5 += x['rv1'] is not None and x['rv5'] is None
+                    r_lost += x['rv1'] is None and y['rv1'] is not None and 'v' in some[i]
+                    r_shifted += None not in (x['rv1'], y['rv1']) and x['rv1'] != y['rv1']
+    ok_rv = (same_r and told_r and carried_r and unchanged_r and short_none and rv_alone > 0
+             and all(n > 0 for n in (r_read, r_unread, r_pm, r_ah, r_night, r_full, r_zero, r_moved, r_hole5, r_lost, r_shifted)))
+    print(f"…the stock's RVol (v50) on {len(rv_tapes)} generated tapes of 5 to 26 days (pre-market, regular and after-hours candles, "
+          f"some sessions with no volume) × {len(rv_cases)} settings: {r_pops} POPs + {r_backs} BACKs, {r_read} POPs with a reading; the "
+          f"two {'give the same ones, field for field, also' if same_r else 'DO NOT give the same ones, or not'} with the filter and the "
+          f"window ({rv_sent} alerts; {rv_alone} BACKs after a POP not sent) and with candles that have no volume ({r_hole5} POPs with "
+          f"an RVol 1m and no 5m, {r_lost} that lost the reading and {r_shifted} read against another average, for a session not "
+          f"counted); every POP's two are the tape's at its candle, worked out a third time, and every BACK has its POP's ({r_moved} "
+          f"where the stock's RVol 1m had changed by then); {r_unread} POPs with no reading yet on the longer tapes (under 3 sessions "
+          f"counted), {r_pm} read in the pre-market and {r_ah} after hours, {r_night} with their five candles over a night, {r_full} "
+          f"with over 20 sessions counted (read against the last 20), {r_zero} past a session of 0; none on the 5-day tapes or on "
+          f"the tapes above",
+          '→', 'OK' if ok_rv else 'UNEXPECTED')
+    return ok_hand and ok and ok_vol and ok_rv
 
 
 if __name__ == '__main__':

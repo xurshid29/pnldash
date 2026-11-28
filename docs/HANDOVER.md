@@ -327,6 +327,29 @@ Yahoo + SEC + halts).
 
 These are the detailed notes behind START HERE, kept verbatim.
 
+**2026-11-28 (Sat) — THE ENTRY MEASURED, THE AUTOMATION SPECIFIED (NOT STARTED), SCRIPT v50: THE STOCK'S RVol IN THE POP.**
+- **The automation the operator wants, specified and on hold** ("do not start the implementation for now, I'll tell when
+  to start"): buy orders 04:00–05:00 New York only, exits left working after; only the yellow POPs, no price range; the
+  bridge's stop entry 5% above the alert; take-profit +20%, stop −10%; a job that sells at the bid when the take-profit
+  is crossed unfilled and sells "as soon as possible" when the stop triggers unfilled; 5 positions of $400 a day; paper
+  first. What I said: possible (the bridge listens to our alert stream itself), build it on paper first, not real money
+  yet. Memory `pop_automation_plan.md` has the spec and the defaults still to confirm.
+- **`research/ema-vwap/pop_entry_study.py`** (rows re-exported 08-14 → 11-27, 76 days; README): a buy stop above the
+  alert moves the average trade from −0.7% … −3.2% (bought at the alert) to about zero; 3% and 5% about the same; about
+  break-even before costs, a loss after a 1%-a-side commission; the automation's own hour has 3 qualifying trades in
+  our bars. The public "Significant Breakout Levels (FVG)" indicator's signal as the entry (the operator's next idea):
+  no reliable gain, on 12–14% of POPs. **By the stock's RVol (their request): it sorts the POPs** (take-profits first
+  about 20% in the lowest quarter by RVol 5m, 32–34% in the highest; yellow POPs on RVol 1m ≥ ~12,000%: 37% / 45%,
+  +2.5% / +4.1% a trade before costs, 67 / 42 trades). The best lead so far; small groups.
+- **v50**: "yes, add rvol to the POP alert", then "just add it, not a setting". `| rvol1 N | rvol5 N` (percent) in the
+  POP's and the BACK's message, computed in the script as `rvol.pine` does; no input, no rule; two Data Window plots
+  (42). Server `tv_rv1` / `tv_rv5` (not the row's `rv1`, the dashboard's own); the dashboard shows `RVol 48K%` in the
+  POP's row. Checked through the MCP (compiles; all v49 plots equal on MNDR; the replica gives the same marks and the
+  same readings at 6 POPs). `verify-tv-setups.ts` 1,001 checks; `pinesim` 43 lines. Built with Opus subagents (the
+  account's Fable limit for subagents resets 12-03).
+- **For the operator:** paste v50, Save, recreate both alerts; no Reset settings. **To do with the first rows:** compare
+  `tv_rv1` with the dashboard's `rv1` on Momentum names before reading the study's 12,000% onto the script's number.
+
 **2026-11-27 (Fri, ~06:30 ET, pre-market) — THE FIRST LIVE MORNING OF POP / BACK AND THE BRIDGE; A STRONG POP NOW ALERTS OFF
 THE MOMENTUM LIST.** The operator at the open: "Pre-market started, and everything is working great what we built".
 - **The bridge on the paper TWS, from its log (four orders: TRUG, MNDR, BFLR, TGHL):** live-ask pricing and $400 sizing

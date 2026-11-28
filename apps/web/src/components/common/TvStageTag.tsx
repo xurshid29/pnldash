@@ -1,4 +1,5 @@
 import type { TvLine, TvLineName, TvSetupInfo, TvStage } from '../../api/types';
+import { fmtBigPct, fmtBigPctShort } from '../../utils/format';
 
 // 📐 VWAP setup stage pill (TradingView webhook, 2026-10-03). Blue → red/green for
 // the PULLBACK setup (script v10) and its outcome; teal for the VWAP + BB cross
@@ -199,17 +200,36 @@ export function retestStopText(s: TvSetupInfo, price: number | null | undefined)
   return `${s.stage === 'bounce' ? 'bounce' : s.stage === 'turn' ? 'turn' : s.stage === 'back' ? 'back' : 'retest'} · stop ${px(s.stop)}${pct}`;
 }
 
-// v48 POP: "pop · ran +12.6% · vol 212×" — how far a high of the run got above its basis, and
-// (v49) the POP's volume reading: the biggest volume among the POP candle and the two candles
-// before it, against the average of the 20 candles before those three (whole numbers from 10× up,
-// one decimal under it). A POP is a heads-up, so it has no stop; this stands where a RETEST's or
-// a BACK's stop does. No reading: a row from before v49, a POP whose 20 candles before had no
-// volume at all, or a chart with fewer than 23 candles.
+// v48 POP: "pop · ran +12.6% · RVol 48K% · vol 212×" — how far a high of the run got above its
+// basis, (v49) the POP's volume reading: the biggest volume among the POP candle and the two
+// candles before it, against the average of the 20 candles before those three (whole numbers from
+// 10× up, one decimal under it), and (v50) the stock's RVol 1m as the script computes it, short
+// (fmtBigPctShort: "8,450%", "48K%", "1.3M%"). A POP is a heads-up, so it has no stop; this stands
+// where a RETEST's or a BACK's stop does. No volume reading: a row from before v49, a POP whose 20
+// candles before had no volume at all, or a chart with fewer than 23 candles. No RVol: a row from
+// before v50, or a POP the script had no reading for. The row ellipsizes what doesn't fit.
 export function popRanText(s: TvSetupInfo): string | null {
   const parts: string[] = [];
   if (s.ran_pct != null) parts.push(`ran ${fmtSignedPct(s.ran_pct).replace('-', '−')}`);
+  // RVol before vol: the rail cuts a long lead, and the RVol is the reading the operator asked for.
+  if (s.tv_rv1 != null) parts.push(`RVol ${fmtBigPctShort(s.tv_rv1)}`);
   if (s.vol_x != null) parts.push(`vol ${s.vol_x >= 10 ? Math.round(s.vol_x) : s.vol_x.toFixed(1).replace(/\.0$/, '')}×`);
   return parts.length > 0 ? `pop · ${parts.join(' · ')}` : null;
+}
+
+// v50: "RVol 1m 48,210% · 5m 11,975%" — the stock's relative volume at the POP as the TradingView
+// script computes it: the last minute's volume (and the last 5 minutes') against the stock's
+// average day, in percent. Not the Momentum table's RVol (the alert's rel_vol_1min), which only
+// names on the Momentum screen have. On a BACK the readings are its POP's: "the pop's RVol 1m …".
+// `short` (a toast): the 1-minute reading alone, short — "RVol 1m 48K%". Null on other stages and
+// on a row without the reading (before v50, or none from the script). A reading only.
+export function popRvolText(s: TvSetupInfo, short = false): string | null {
+  if (!isPopBack(s.stage)) return null;
+  const parts: string[] = [];
+  if (s.tv_rv1 != null) parts.push(`1m ${short ? fmtBigPctShort(s.tv_rv1) : fmtBigPct(s.tv_rv1)}`);
+  if (!short && s.tv_rv5 != null) parts.push(`5m ${fmtBigPct(s.tv_rv5)}`);
+  if (parts.length === 0) return null;
+  return `${s.stage === 'back' ? "the pop's " : ''}RVol ${parts.join(' · ')}`;
 }
 
 // v49: "volume 212.4× the 20 candles before the pop" — the POP's volume reading: the biggest
@@ -257,15 +277,16 @@ export function turnText(s: TvSetupInfo, price?: number | null): string {
 }
 
 // v48 POP: "pop · ran +12.6% above the basis · volume 212.4× the 20 candles before the pop ·
-// basis 15 $1.66 (+11.4%) · at the 1m close · +14.2% vs sVWAP · +32.1% vs mVWAP · a heads-up, no
-// entry: wait for the BACK" — how far a high of the run got above the basis, (v49) the POP's
-// volume reading (popVolText), the basis and the price against it, then the VWAP lines (like
-// a TURN it has no line of its own). It has no stop: the entry is the BACK. A weak one (v49, under
-// the script's volume minimum) says so in the place of the heads-up: its BACK is weak with it.
+// RVol 1m 48,210% · 5m 11,975% · basis 15 $1.66 (+11.4%) · at the 1m close · +14.2% vs sVWAP ·
+// +32.1% vs mVWAP · a heads-up, no entry: wait for the BACK" — how far a high of the run got above
+// the basis, (v49) the POP's volume reading (popVolText), (v50) the stock's RVol (popRvolText), the
+// basis and the price against it, then the VWAP lines (like a TURN it has no line of its own). It
+// has no stop: the entry is the BACK. A weak one (v49, under the script's volume minimum) says so in
+// the place of the heads-up: its BACK is weak with it.
 function popText(s: TvSetupInfo): string {
   const parts: Array<string | null> = [
     s.ran_pct != null ? `pop · ran ${fmtSignedPct(s.ran_pct).replace('-', '−')} above the basis` : null,
-    popVolText(s), basisText(s),
+    popVolText(s), popRvolText(s), basisText(s),
   ];
   if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close`);
   parts.push(lineDistanceText(s, 'session'), lineDistanceText(s, 'month'),
@@ -274,15 +295,16 @@ function popText(s: TvSetupInfo): string {
 }
 
 // v48 BACK: "back · stop $1.84 (−4.2%) · ran +18.4% above the basis · the pop's volume 212.4× the
-// 20 candles before it · basis 15 $1.88 (+2.1%) · 6 candles after the pop · MACD green · at the
-// 1m close · +12.9% vs sVWAP · +36.2% vs mVWAP" — the stop (a tick under the pullback's lowest
-// low), how far the run's highs got above the basis, (v49) its POP's volume reading, the basis
-// and the price against it, how long after the POP candle, then the VWAP lines. A BACK after a
-// weak POP (v49) ends with "after a weak pop", like a BOUNCE after a weak cross.
+// 20 candles before it · the pop's RVol 1m 48,210% · 5m 11,975% · basis 15 $1.88 (+2.1%) · 6
+// candles after the pop · MACD green · at the 1m close · +12.9% vs sVWAP · +36.2% vs mVWAP" — the
+// stop (a tick under the pullback's lowest low), how far the run's highs got above the basis,
+// (v49) its POP's volume reading, (v50) its POP's RVol, the basis and the price against it, how
+// long after the POP candle, then the VWAP lines. A BACK after a weak POP (v49) ends with "after a
+// weak pop", like a BOUNCE after a weak cross.
 function backText(s: TvSetupInfo, price?: number | null): string {
   const parts: Array<string | null> = [retestStopText(s, price)];
   if (s.ran_pct != null) parts.push(`ran ${fmtSignedPct(s.ran_pct).replace('-', '−')} above the basis`);
-  parts.push(popVolText(s), basisText(s));
+  parts.push(popVolText(s), popRvolText(s), basisText(s));
   if (s.since_n != null) parts.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the pop`);
   if (s.macd_green != null) parts.push(s.macd_green ? 'MACD green' : 'MACD not green');
   if (s.candle_tf) parts.push(`at the ${fmtTf(s.candle_tf)} close`);

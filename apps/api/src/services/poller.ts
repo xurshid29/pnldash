@@ -3975,6 +3975,9 @@ class PollerService {
   // so, and a quiet 'offlist' one says what kept it under that floor. Its row needs no new field:
   // `on_screen: false`, `notified: true` and `vol_x` say it. On the phone it buzzes like an
   // on-list one: it is left out of the off-list silence (TV_SETUP.offscreen_silent).
+  // v50: a POP's and a BACK's row and alert also carry `tv_rv1` / `tv_rv5` (popFields), the stock's
+  // RVol at the POP as the script read it; the log line names them. A reading only. The row's `rv1`
+  // below is another number (the dashboard's RVol for the ticker now) and stays as it was.
   deliverTvSetup(sig: TvSetupSignal, mode: 'notify' | 'quiet' | 'log', why?: 'muted' | 'capped' | 'offlist' | 'weak', capExempt = false): OpportunityAlert {
     const nowSec = Math.floor(Date.now() / 1000);
     this.tvTickersToday.add(sig.ticker);
@@ -4062,10 +4065,13 @@ class PollerService {
     } else if (sig.stage === 'pop' || sig.stage === 'back') {
       const back = sig.stage === 'back';
       const n = back ? sig.back_n : sig.pop_n;
+      // v50: the stock's RVol at the POP, the readings the message carried ("1m 48210%, 5m 11975%")
+      const rvol = [sig.tv_rv1 != null ? `1m ${sig.tv_rv1}%` : '', sig.tv_rv5 != null ? `5m ${sig.tv_rv5}%` : ''].filter(Boolean).join(', ');
       console.log(`[tv-setup] ${TV_STAGE_LABEL[sig.stage]} ${sig.ticker} $${sig.price ?? '?'}` + (back ? ` · stop ${sig.stop ?? '?'}` : '') +
         ` · ${sig.candle_tf ?? '?'} candle · basis SMA ${sig.sma_len ?? '?'} ${sig.sma ?? '?'} (${sig.sma_pct ?? '?'}%)` +
         ` · the run's high ${sig.ran_pct ?? '?'}% above it` +
         (sig.vol_x != null ? ` · ${back ? 'POP vol' : 'vol'} ${sig.vol_x}x` : '') +   // v49: the POP's volume reading
+        (rvol ? ` · ${back ? 'POP RVol' : 'RVol'} ${rvol}` : '') +   // v50: the stock's RVol at the POP
         ` · sVWAP ${sig.svwap ?? '?'} (${sig.spx_pct ?? '?'}%)` +
         ` · ${back ? 'back' : 'pop'} ${n ?? '?'}` + (back ? ` · ${sig.since_n ?? '?'} candles after the POP` : '') +
         (back && sig.macd_green != null ? ` · MACD ${sig.macd_green ? 'green' : 'not green'}` : '') +

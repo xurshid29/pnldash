@@ -437,6 +437,15 @@ export interface TvSetupInfo {
   ran_pct?: number | null;    // how far the run's highs got above the basis so far, %
   pop_n?: number | null;      // POP: the day's POPs on the ticker, this one included (a weak one isn't counted: it carries the number as it stood)
   back_n?: number | null;     // BACK: the day's BACKs on the ticker, this one included (a weak one isn't counted)
+  // v50, the stock's relative volume, as the TradingView script computes it, sent with every POP
+  // and BACK (a BACK carries its POP's readings): the last minute's volume (tv_rv1) and the last
+  // 5 minutes' (tv_rv5) against the stock's average day, in percent (48210 = 48,210%; the units
+  // of the RVol script). Absent on rows from before v50 and on a POP the script had no reading
+  // for. A reading only: nothing is hidden, dimmed or sorted by it. Not the dashboard's own RVol:
+  // the alert's rel_vol_1min (stored in tier_events as `rv1`) is the Momentum row's RVol 1m from
+  // our Finviz snapshots, which only names on the Momentum screen have — a different number.
+  tv_rv1?: number | null;     // RVol 1m (TradingView), %
+  tv_rv5?: number | null;     // RVol 5m (TradingView), %
   on_screen: boolean;
   notified: boolean;          // false = same stage already announced from another timeframe
 }

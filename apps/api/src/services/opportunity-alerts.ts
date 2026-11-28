@@ -87,6 +87,11 @@ export interface TvSetupInfo {
   // volume reading failed the script's test and the BACK after it (popFields); then `pop_n` /
   // `back_n` is the day's count without this one, and `capped` is never true.
   weak?: boolean;
+  // v50 POP and BACK (popFields): the stock's RVol at the POP as the script read it, % (a BACK
+  // carries its POP's; null = the message had no such piece). Not the alert's `rel_vol_1min` (a
+  // stored row's `rv1`), which is the dashboard's own RVol for the ticker: another number.
+  tv_rv1?: number | null;     // over the last minute
+  tv_rv5?: number | null;     // over the last 5 minutes
   vwap_src?: '30s' | 'chart' | null; // v28: which bars the script built its VWAP lines from (null = before v28)
   on_screen: boolean;         // on our Momentum screen at the signal
   notified: boolean;          // false = same stage already announced from another timeframe

@@ -1,4 +1,4 @@
-import { isBandCross, isFreePop, isLineCross, isWeakSetup, lineTokens, popVolText } from '../components/common/TvStageTag';
+import { isBandCross, isFreePop, isLineCross, isWeakSetup, lineTokens, popRvolText, popVolText } from '../components/common/TvStageTag';
 import { useEffect, useRef } from 'react';
 import { useAlertsArmed } from './useAlertsArmed';
 import { useHiddenTickers } from './useHiddenTickers';
@@ -279,8 +279,10 @@ export function opportunityBody(a: OpportunityAlert): string {
     // long after the POP candle. A POP has no stop. v49: the POP's volume reading (the biggest of
     // the POP candle and the two before it against the 20 candles before those): "volume 212.4×
     // the 20 candles before the pop"; on a BACK "the pop's volume 212.4× the 20 candles before it".
+    // v50: the stock's RVol 1m as the TradingView script computes it, short: "RVol 1m 48K%"; on a
+    // BACK its POP's, "the pop's RVol 1m 48K%" (not the Momentum row's RVol, a.rel_vol_1min).
     if (s.stage === 'back' && s.ran_pct != null) bits.push(`ran ${fmtSignedPct(s.ran_pct)} above the basis`);
-    bits.push(popVolText(s) ?? '');   // null on other stages and on a row with no reading
+    bits.push(popVolText(s) ?? '', popRvolText(s, true) ?? '');   // null on other stages and on a row with no reading
     if ((s.stage === 'pop' || s.stage === 'back') && s.sma != null) bits.push(`basis ${fmtAlertPrice(s.sma)}`);
     if (s.stage === 'back' && s.since_n != null) bits.push(`${s.since_n} candle${s.since_n === 1 ? '' : 's'} after the pop`);
     // v47 TURN: how far the basis fell before it turned, the basis, how long after the close above it

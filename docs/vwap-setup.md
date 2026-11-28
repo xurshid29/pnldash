@@ -9,7 +9,7 @@ here; `docs/HANDOVER.md` carries the live status.
 | | |
 |---|---|
 | Shipped | 2026-10-03, commit `d50ebbe` (verified on prod the same day) |
-| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v49** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18), (v47) TURN, the bounce off a basis line that fell and turned up (§21), and (v48) POP with its BACK, a pop off the basis as a heads-up and its first pullback's bounce as the entry (§22). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
+| Detector | `apps/web/src/tv/mvwap-bb-setup.pine` — Pine v6, **script version v50** (history in §12). **Since v27 (2026-10-28) it carries two setups, the ones the operator kept after trying all four: the PULLBACK setup (§13) and the VWAP + BB cross (§16)**, the cross with its retest (§16.9, v28; the break it replaced is §16.8). Since v28 its VWAP lines come from 30s bars by default (§16.9). v29's three extra VB timeframes ("lanes", §16.10) were removed in v39. Later setups: the EMA cross over VWAP with its filter, its BOUNCE and the band as the line that crosses (§18), (v47) TURN, the bounce off a basis line that fell and turned up (§21), and (v48) POP with its BACK, a pop off the basis as a heads-up and its first pullback's bounce as the entry (§22). The RSI cross with its DIP and the MACD cross after a DIP (§17) and the BASIS cross (§18.6) were removed in v44 (§20); v38's LIFT above a DIP (§17.3) was removed in v39. Each has an on/off switch for the chart and the alerts. v27 removed the reclaim setup (§1–§11, FORMING / READY / GO, v1–v26) and the BB breakout (§14, v17–v26); their sections stay as the record, their code is in git at v26 (`e38c06b`), and their rows stay in `tier_events` |
 | Runs as | two TradingView **watchlist alerts**: 1m and **30s** since 2026-10-05 ~11:40 ET (1m and 2m before). The operator watches 30s charts and missed a 30s-only GO (SDEV 10:59 ET). Premium = 2 watchlist alerts |
 | Offline replay | `apps/api/scripts/research/vwap-setup/` — scores a script version on the examples in seconds |
 | Delivered by | `POST /api/tv/webhook?key=<TV_WEBHOOK_SECRET>` → 📐 setups sidebar (left rail), toast + sound, Telegram, `tier_events` |
@@ -1148,6 +1148,7 @@ Ordered roughly by expected value; most should wait for the first grading.
 | 2026-11-25 | v47 | `eaf4e33` | Operator, with v46's line at 1 minute / 15 closes and a MACD under a 1m chart, on moves of NIVF and APUS: "How can I catch such moves? … candle breaks the bb basis, the bb basis moving up, macd turned green, and price pulls back to bb basis line and bounces"; "The most important part is, bb basis goes down (usually big drop), and after that, it starts moving up"; after the measurement: "I want to experiment with it, let's build it. Make a seprate setup … with its own bb basis settings (macd usually standart)". **A fourth setup, TURN** (§21): on the basis's own candles (1m, SMA 15), after the basis fell at least 10% and turned up, a close above it, a low back at it within 10 candles, then a green close above it with the basis rising and the MACD green. Script section 8, thirteen inputs in their own group (last; 73), two plots (last; 35), one `alert()` (12), no request; message `TURN … | sma 15 … | fall …% | turn N | since N | green 1`. Server stage `turn` (own ⚙ switch, on by default; Momentum names; `tn_cap` 3), dashboard pill, `pinesim.simulate_turn`. Measured first (`research/ema-vwap/basis_bounce_study.py`): the fall is what counts, about 20 a day after a 10% fall, one in five reach +5%, about break-even — an experiment. **Paste, Save, recreate both alerts; no Reset settings.** |
 | 2026-11-26 | v48 | `116a91f` | Operator, with a basis line at 1 minute / 15 closes on 1m charts of SVRE, ZNB, APUS and WHLR: "these moves are initial pop, and their first pullback to bb basis row … how to catch such pullbacks?"; then "I'm thinking how to catch them up, while the initial pop is moveing too fast"; to a two-step proposal (a heads-up, then the pullback's bounce as the entry): "yes, lets do that". **A fifth setup in two steps, POP and BACK** (§22): on the basis's own candles (1m, SMA 15), POP is the first candle of a run above the basis by which a high has reached 10% above it (a heads-up, no entry); BACK is the first pullback after it: a low back at the basis, then a green close above it with the basis rising and the MACD green, within 20 candles, with a stop under the pullback's low. Script section 9, twelve inputs in their own group (last; 85), three plots (last; 38), two `alert()` calls (14), no request; messages `POP … | sma 15 … | ran …% | pop N` and `BACK … | stop … | sma 15 … | ran …% | back N | since N | green 1`. Server stages `pop` and `back` (each its own ⚙ switch, on by default; Momentum names; `pp_cap` 3 each), dashboard pills sharing one thread, `pinesim.simulate_pop`. Measured first (`research/ema-vwap/pop_study.py`, `pop_back_study.py`): buying the pop's candle loses; at 10% about 35 POPs and 10 BACKs a day, the BACK about break-even (at 5% over a hundred POPs a day and worse BACKs) — an experiment. **Paste, Save, recreate both alerts; no Reset settings.** |
 | 2026-11-26 | v49 | `9b13706` | Operator, with v48 on the chart and two POPs of RAYA (04:27 New York off a flat base with almost no volume: "suitable"; 11:10 at the end of a slow climb: "not"): "the rvol for that moment should be very high … the stocks which are almost without volume, suddenly started popping up. I think we should focus on only such moves". **The POP's volume test** (§22.8): the reading is the largest volume among the POP candle and the two candles before it ÷ the average of the 20 candles before those three; with the switch on a POP under the minimum (10) is weak (gray "pop", `| weak`, no `pop N`; stored, not announced) and so is its BACK ("bk"); both messages carry `| vol 34.5x` after `ran`. Two inputs (last; 87), two plots (last; 40), no new `alert()`, no request. Server: weak `pop` / `back` quiet and never capped, `vol_x` and `weak` on the rows; dashboard: no row, toast or sound for a weak one, the reading in the rows and a History column; `pinesim.simulate_pop` reads volume. Measured first (`pop_back_study.py` tables 3–6): among names already on the Momentum screen the reading does not sort the POPs; our bars have no pop out of a stock that was not yet moving, so the rows will say. **Paste, Save, recreate both alerts; no Reset settings.** |
+| 2026-11-28 | v50 | `tbd` | Operator, after the POPs' win rates were measured by the stock's RVol at their request (the highest RVol about 32–34% take-profits first against 20% for the lowest; yellow POPs on RVol 1m ≥ ~12,000% positive in both halves): "yes, add rvol to the POP alert", then "just add it, not a setting". **The stock's RVol in the POP's and the BACK's message** (§22.10): `| rvol1 48210 | rvol5 11975` after `vol`, in percent, computed in the script as `rvol.pine` does (the last minute's / 5 minutes' volume against the average regular-hours day of the chart's last 20 sessions). A reading only: no input (87), no rule, no request; two hidden plots (last; 42). Server fields `tv_rv1` / `tv_rv5`; the dashboard shows them. **Paste, Save, recreate both alerts; no Reset settings.** |
 
 ## 13. The PULLBACK setup (script v10, 2026-10-05)
 
@@ -3507,3 +3508,55 @@ script counts as a surge). It stays Momentum-only, because the rule needs a numb
 **To watch:** how many more alerts this is (12 strong POPs against 2 over those ninety minutes,
 most of them in the first minutes after the open) and whether the off-list ones do better or
 worse than the on-list ones (`on_screen` on each row).
+
+### 22.10 The stock's RVol in the message (script v50, 2026-11-28)
+
+The operator asked for the POPs' win rates "with the stocks which have high rvol". Measured
+(`research/ema-vwap/pop_entry_study.py`, tables 14–15, README): the stock's RVol at the POP, as
+the dashboard has it, sorts the POPs where the POP candle's own volume reading (§22.8) did not.
+With a buy stop 5% above the alert and +20% / −10%, the take-profit came first for about 20% of
+POPs in the lowest quarter by RVol 5m and 32–34% in the highest, in both halves; the POPs that
+alert on a stock with an RVol 1m of about 12,000% or more were the one group positive in both
+halves (37% / 45% take-profits first, +2.5% / +4.1% a trade before costs, on 67 and 42 trades).
+Small groups cut from the same data: a lead, not a rule.
+
+That RVol is the poller's, from Finviz's volume, and exists only for a name on the Momentum
+screen. So the operator: "yes, add rvol to the POP alert", then "just add it, not a setting".
+
+**v50** computes it in the script, the way the companion `rvol.pine` does (§15):
+
+    RVol 1m = the last minute's volume  ÷ (the average day's volume ÷ 390) × 100
+    RVol 5m = the last 5 minutes' volume ÷ (the average day's volume ÷ 78)  × 100
+
+where the average day is the regular-hours volume of the chart's own last 20 sessions (the
+first sessions loaded are left out; under 3 counted sessions there is no reading). Both
+messages carry the POP candle's readings after `vol`, rounded to whole percent, a BACK its POP's:
+
+    POP MNDR 0.84 | sVWAP 0.62 (+35.5%) | sma 15 0.59 (+42.4%) | ran 43.5% | vol 27.6x | rvol1 48210 | rvol5 11975 | candle 1 | pop 1 | day high +44% | vwap 30s | tf 1
+
+A reading only: no input (87 still), no rule in the script or on the server, no request. Two
+plots, the script's last (42), hidden: "RVol 1m, % (v50)" and "RVol 5m, % (v50)". Server fields
+`tv_rv1` / `tv_rv5` (the row's `rv1` is the dashboard's own figure, a different number); the
+dashboard shows the 1-minute reading in the POP's row and both in the expanded text.
+
+**It is not the dashboard's number.** The script divides by the average of the chart feed's own
+regular-hours volume over 20 sessions; the poller divides Finviz's volume by Finviz's 3-month
+average. The 12,000% of the measurement is on the poller's scale. Rows on Momentum names carry
+both (`tv_rv1` and `rv1`): compare them before any level is taken from the study for the
+script's number.
+
+Three more things about the reading: the average covers as many sessions as the alert's history
+holds, up to 20 (an alert may load less than a chart); "the last 5 minutes" is the last five
+candles, and TradingView prints no candle for a minute without a trade, so on a thin name or in
+the pre-market the five reach back further (in a day's first candles, into the evening before);
+and the plots show in the Data Window only.
+
+**Checked before the paste.** It compiles on TradingView (87 inputs, 42 plots, the same six
+cosmetic warnings). Against the operator's saved v49 on NASDAQ:MNDR's 1m chart all 40 plots v49
+has are equal on the 857 bars the two runs share. `pinesim.simulate_pop` on the same bars gives
+the same POPs and BACKs, strong and weak, on the same candles, and the same RVol 1m and 5m at
+each of the 6 POPs to the percent (for example 11-27 10:21: 73,209% and 24,982%).
+`selftest_pop`: 9 hand-built cases with days before them and 10 generated tapes of 5 to 26 days,
+the two implementations field for field, 22 of 22 one-line changes caught (43 self-test lines).
+`verify-tv-setups.ts` 1,001 checks. Not exercised: the readings in the pre-market (the MCP runs
+regular hours only) and how deep the alert's own history is.

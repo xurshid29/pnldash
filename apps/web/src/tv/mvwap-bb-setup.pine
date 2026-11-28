@@ -1,5 +1,5 @@
 //@version=6
-// mVWAP-BB — the operator's VWAP setups. Script version: v49 (2026-11-26). Since v30 the number
+// mVWAP-BB — the operator's VWAP setups. Script version: v50 (2026-11-28). Since v30 the number
 // follows TradingView's own version counter for the operator's saved script (their save 30 = v30).
 // Docs: docs/vwap-setup.md — the walkthrough, changelog, and the steps for shipping
 // a new version (bump the version above, recreate the alerts).
@@ -28,6 +28,8 @@
 // v49 gives the POP a volume test (section 9): a POP is weak (gray, `| weak`, not announced) when
 // the biggest of its candle and the two before it traded under 10 times the average of the 20
 // candles before them, and so is its BACK; every POP and BACK carries the reading (`| vol 34.5x`).
+// v50 puts the stock's RVol in the POP's and the BACK's message (`| rvol1 14250 | rvol5 9800`, in
+// percent, section 9): a reading only, with no input and no rule of its own (two hidden plots).
 // 1) PULLBACK (v10): a fast run stretches price well above a VWAP line — the
 // session, month or (v14) year VWAP — and it comes back down to it.
 //   PULLBACK  a close back within 5% above the line after a bar high ≥15% above it → be ready
@@ -1867,6 +1869,46 @@ ppVolTop  = math.max(volume, nz(volume[1]), nz(volume[2]))
 ppVolBase = ta.sma(volume, 20)[3]
 ppVolX    = ppVolBase > 0 ? ppVolTop / ppVolBase : na
 ppSurge   = not na(ppVolBase) and (ppVolBase > 0 ? ppVolTop / ppVolBase >= ppVolMin : ppVolTop > 0)
+// v50, the stock's RVol. Operator, 11-28, after the POPs were measured by it (research/ema-vwap/
+// pop_entry_study.py, tables 14–15: with a buy stop 5% above the alert the take-profit came first
+// for about 20% of POPs on the lowest RVol and 32–34% on the highest, and the POPs that alert on
+// a stock with an RVol 1m of about 12,000% or more were the one group positive in both halves):
+// "yes, add rvol to the POP alert", then "just add it, not a setting".
+// The dashboard's definitions, as the companion rvol.pine computes them:
+//   RVol 1m = the volume of the last minute  ÷ (the average day's volume ÷ 390) × 100
+//   RVol 5m = the volume of the last 5 minutes ÷ (the average day's volume ÷ 78)  × 100
+// where the average day is the regular-hours volume of the chart's own last 20 sessions (the same
+// feed on both sides of the division; the first sessions loaded are left out, and under 3 counted
+// sessions there is no reading). It is not the dashboard's own number: that one comes from
+// Finviz's volume and its 3-month average, and exists only for a name on the Momentum screen; this
+// one exists for every watchlist name. Compare the two on the rows before trusting a level.
+// A reading only: both messages carry `| rvol1 14250 | rvol5 9800` after `vol` (a BACK carries
+// its POP's), nothing is decided by it here. No input, no request; two plots, the script's last,
+// shown in the Data Window only. The average covers as many sessions as the chart's history
+// holds, up to 20. "The last 5 minutes" is the last five candles: TradingView prints no candle
+// for a minute without a trade, so on a thin name or in the pre-market the five reach back
+// further, and in a day's first candles into the evening before.
+//   POP MNDR 0.84 | sVWAP 0.62 (+35.5%) | sma 15 0.59 (+42.4%) | ran 43.5% | vol 27.6x | rvol1 48210 | rvol5 11975 | candle 1 | pop 1 | day high +44% | vwap 30s | tf 1
+//   BACK MNDR 0.97 | stop 0.93 | sVWAP 0.9 (+7.8%) | sma 15 0.96 (+1.0%) | ran 91.2% | vol 27.6x | rvol1 48210 | rvol5 11975 | candle 1 | back 1 | since 9 | green 1 | day high +88% | vwap 30s | tf 1
+var ppRvSess = array.new<float>()
+var float ppRvRth  = 0.0     // this session's regular-hours volume so far
+var int   ppRvDays = 0
+if newDay
+    if ppRvDays >= 2 and ppRvRth > 0
+        array.push(ppRvSess, ppRvRth)
+        if array.size(ppRvSess) > 20
+            array.shift(ppRvSess)
+    ppRvDays += 1
+    ppRvRth := 0.0
+if session.ismarket
+    ppRvRth += volume
+float ppRvAdv = array.size(ppRvSess) >= 3 ? array.avg(ppRvSess) : na
+ppRvOk1  = timeframe.isintraday and chartSec <= 60 and 60 % chartSec == 0
+ppRvOk5  = timeframe.isintraday and chartSec <= 300 and 300 % chartSec == 0
+ppRvSum1 = math.sum(volume, ppRvOk1 ? int(60 / chartSec) : 1)
+ppRvSum5 = math.sum(volume, ppRvOk5 ? int(300 / chartSec) : 1)
+float ppRv1 = ppRvOk1 and ppRvAdv > 0 ? ppRvSum1 / (ppRvAdv / 390) * 100 : na
+float ppRv5 = ppRvOk5 and ppRvAdv > 0 ? ppRvSum5 / (ppRvAdv / 78) * 100 : na
 ppB      = ta.sma(close, ppLen)
 [ppMacdLine, ppSignalLine, ppHist] = ta.macd(close, ppFast, ppSlow, ppSig)
 ppGreen  = ppHist > 0
@@ -1881,6 +1923,8 @@ var bool  ppTouched = false
 var int   ppPopN    = 0       // the day's POPs sent on this ticker (weak ones are not counted)
 var int   ppBackN   = 0       // the day's BACKs sent on this ticker (weak ones are not counted)
 var float ppPopVol  = na      // the POP's volume reading (ppVolX at the POP candle)
+var float ppPopRv1  = na      // the stock's RVol 1m at the POP candle, % (v50)
+var float ppPopRv5  = na      // the stock's RVol 5m at the POP candle, % (v50)
 var bool  ppWeak    = false   // the run's POP failed the volume test: it and its BACK are weak
 if newDay
     ppPopN    := 0
@@ -1914,6 +1958,8 @@ if ppRun and not na(ppB) and not na(ppB[1])
                 ppTouched := false
                 ppPopBar  := bar_index
                 ppPopVol  := ppVolX
+                ppPopRv1  := ppRv1
+                ppPopRv5  := ppRv5
                 ppWeak    := ppVolOn and not ppSurge
                 if inWindow and (not ppGainOn or gainer)
                     ppPopFire := true
@@ -1952,6 +1998,10 @@ ppMsg(bool isBack) =>
     msg += " | ran " + str.tostring(ppRan, "#.0") + "%"
     if not na(ppPopVol)
         msg += " | vol " + str.tostring(ppPopVol, "#.#") + "x"
+    if not na(ppPopRv1)
+        msg += " | rvol1 " + str.tostring(math.round(ppPopRv1))
+    if not na(ppPopRv5)
+        msg += " | rvol5 " + str.tostring(math.round(ppPopRv5))
     msg += " | candle " + ppTf
     if isBack
         msg += " | back " + str.tostring(ppBackN) + " | since " + str.tostring(ppAge) + " | green " + (ppGreen ? "1" : "0")
@@ -1974,3 +2024,6 @@ plotshape(ppShow and ppBackFire and not ppWeak, "BACK (v48)", shape.labelup, loc
 // v49 plots go last: the POPs the volume test calls weak, and their BACKs, in gray (sent with `| weak`, stored, not announced).
 plotshape(ppShow and ppPopFire and ppWeak, "POP, low volume (v49)", shape.labeldown, location.abovebar, color.gray, text = "pop", textcolor = color.white, size = size.tiny)
 plotshape(ppShow and ppBackFire and ppWeak, "BACK after a low-volume POP (v49)", shape.labelup, location.belowbar, color.gray, text = "bk", textcolor = color.white, size = size.tiny)
+// v50 plots go last: the stock's RVol 1m and 5m in percent, in the Data Window only (they are on another scale than the price, so they are not drawn).
+plot(ppOn ? ppRv1 : na, "RVol 1m, % (v50)", color.gray, display = display.data_window)
+plot(ppOn ? ppRv5 : na, "RVol 5m, % (v50)", color.gray, display = display.data_window)

@@ -29,7 +29,9 @@
 // comes back to the basis and bounces. Both from the 1m alert alone. Since script v49 both carry the
 // POP's volume reading (`vol_x`: the largest volume among the POP candle and the two before it
 // against the 20 candles before those three), and a POP that fails the script's volume test is
-// `weak`, with its BACK: stored, never announced.
+// `weak`, with its BACK: stored, never announced. Since script v50 both also carry the stock's RVol
+// over 1 and 5 minutes at the POP (`tv_rv1` / `tv_rv5`, in percent): a reading only, nothing is
+// decided by it.
 //
 // Why TradingView computes it and we don't: the lines are VWAPs anchored at the
 // session, month and year INCLUDING pre-market volume. Yahoo's extended-hours bars
@@ -155,6 +157,17 @@ export function emaLineStage(sig: { stage: TvStage; ema?: number | null; bb_tf?:
 // duplicate window, and weak is always quiet. One with no reading, or a reading under the floor, is
 // as before: Momentum names only, and with the rule unticked a day high of +30% too. The TURN and
 // every other stage are unchanged. This is the one thing the server reads `vol_x` for.
+// v50 (operator, 2026-11-28, after the POPs were measured by the stock's RVol: "yes, add rvol to the
+// POP alert", then "just add it, not a setting"): every POP and BACK can carry `| rvol1 48210 |
+// rvol5 11975` right after `| vol …x` — the stock's relative volume over the last 1 and 5 minutes at
+// the POP candle, in percent, as the script computes it from the chart's own volume (the last minute
+// against the average regular-hours day ÷ 390, the last 5 against it ÷ 78; a BACK carries its POP's).
+// Either piece is left out when the script has no reading. They are read into `tv_rv1` / `tv_rv5`,
+// stored on the row and passed to the dashboard with the POP's other fields (popFields), and named
+// in the Telegram text. They are NOT a row's `rv1`: that one is the dashboard's own RVol 1m for the
+// ticker at that moment (Finviz volume against its 3-month average, the Momentum row's
+// rel_vol_1min, attached by the poller), another feed and another average. A reading only: the
+// server holds no number for it, the gate, the cap and popFreeOfList never look at it.
 // The setups judged on the candles of a basis's own timeframe and sent from the alert on that
 // timeframe (1m) alone: no other timeframe's copy to merge, no VWAP line named. The TURN has no
 // weak filter; the POP and the BACK have one since v49 (POP_STAGES).
@@ -251,6 +264,11 @@ export interface TvSetupSignal {
   ran_pct?: number | null;    // the furthest a high of the run got above the basis so far, %
   pop_n?: number | null;      // POP: the day's POPs sent on this ticker, this one included (a weak one isn't counted: the count so far)
   back_n?: number | null;     // BACK: the day's BACKs sent on this ticker, this one included (a weak one isn't counted: the count so far)
+  // v50: the stock's RVol at the POP candle as the script read it (a BACK carries its POP's), % as
+  // sent: `| rvol1 48210` = 48,210%. Null = the message has no such piece. Not a row's `rv1` (the
+  // dashboard's own RVol 1m, attached by the poller): another number. A reading only.
+  tv_rv1?: number | null;     // over the last minute: its volume ÷ (the average regular-hours day ÷ 390) × 100
+  tv_rv5?: number | null;     // over the last 5 minutes: their volume ÷ (the average regular-hours day ÷ 78) × 100
 }
 export type TvBounceFrom = 'ema' | 'vwap' | 'ema+vwap';
 
@@ -444,16 +462,21 @@ export function turnFields(sig: TvSetupSignal): {
 // v49: both carry `weak` (the POP failed the script's volume test; false on a strong one and on a
 // v48 message), the way an EMA cross's row does. The reading itself, `vol_x`, is one of the fields
 // every stage's row and alert carry (the poller writes it beside these), so it is not repeated here.
+// v50: both carry the stock's RVol at the POP, `tv_rv1` and `tv_rv5` (null when the message has no
+// such piece, so a v50 row without a reading is told from an older row, which has neither key). They
+// are the POP's alone, so they are here and not beside `vol_x`; never named `rv1` (the poller's own
+// field on every row: the dashboard's RVol).
 export function popFields(sig: TvSetupSignal): {
   candle_tf?: string | null; sma_len?: number | null; sma?: number | null; sma_pct?: number | null;
   ran_pct?: number | null; pop_n?: number | null;
   stop?: number | null; since_n?: number | null; back_n?: number | null; macd_green?: boolean | null;
-  weak?: boolean;
+  weak?: boolean; tv_rv1?: number | null; tv_rv5?: number | null;
 } {
   if (sig.stage === 'pop') {
     return {
       candle_tf: sig.candle_tf ?? null, sma_len: sig.sma_len ?? null, sma: sig.sma ?? null, sma_pct: sig.sma_pct ?? null,
       ran_pct: sig.ran_pct ?? null, pop_n: sig.pop_n ?? null, weak: sig.weak === true,
+      tv_rv1: sig.tv_rv1 ?? null, tv_rv5: sig.tv_rv5 ?? null,
     };
   }
   if (sig.stage === 'back') {
@@ -461,7 +484,7 @@ export function popFields(sig: TvSetupSignal): {
       candle_tf: sig.candle_tf ?? null, stop: sig.stop ?? null, since_n: sig.since_n ?? null,
       sma_len: sig.sma_len ?? null, sma: sig.sma ?? null, sma_pct: sig.sma_pct ?? null,
       ran_pct: sig.ran_pct ?? null, back_n: sig.back_n ?? null, macd_green: sig.macd_green ?? null,
-      weak: sig.weak === true,
+      weak: sig.weak === true, tv_rv1: sig.tv_rv1 ?? null, tv_rv5: sig.tv_rv5 ?? null,
     };
   }
   return {};
@@ -476,7 +499,8 @@ export function popFields(sig: TvSetupSignal): {
 const STORED_NUM_FIELDS = ['upper', 'upper_pct', 'candle_open', 'cross_n', 'stop', 'retest_n',
   'since_n', 'ema_len', 'ema', 'under_n', 'flips_n', 'bounce_n', 'bb_mid', 'bb_mid_pct',
   'sma_len', 'sma', 'sma_pct', 'fall_pct', 'turn_n',   // these five: the TURN's (v47); the POP and the BACK share the three `sma` ones
-  'ran_pct', 'pop_n', 'back_n'] as const;              // the POP's and the BACK's (v48)
+  'ran_pct', 'pop_n', 'back_n',                        // the POP's and the BACK's (v48)
+  'tv_rv1', 'tv_rv5'] as const;                        // theirs too (v50): the stock's RVol at the POP, % (never a row's `rv1`, the dashboard's)
 const STORED_STR_FIELDS = ['candle_tf', 'bb_tf', 'bounce_from'] as const;
 // `weak`: the EMA family's, and since v49 a POP's and a BACK's (popFields). Their `vol_x` is not
 // here: GET /api/screener/alerts reads it for every stage, as it does a PULLBACK's and a CROSS's.
@@ -658,6 +682,9 @@ function fromJson(o: Record<string, unknown>): TvMessageAsSent | null {
     ran_pct: toNum(o.ran_pct ?? o.ran),
     pop_n: toNum(o.pop_n ?? o.pop),
     back_n: toNum(o.back_n ?? o.back),
+    // v50: the signal's names, or the message's short ones; never `rv1` (a stored row's dashboard RVol)
+    tv_rv1: toNum(o.tv_rv1 ?? o.rvol1),
+    tv_rv5: toNum(o.tv_rv5 ?? o.rvol5),
     basis: toNum(o.basis),
   };
 }
@@ -709,6 +736,8 @@ export function tfMinutes(tf: string | null | undefined): number | null {
 //   POP RAYA 0.58 | sVWAP 0.47 (+23.4%) | sma 15 0.46 (+26.1%) | ran 31.5% | vol 212.4x | candle 1 | pop 1 | day high +29% | vwap 30s | tf 1   (v49; `vol` after `ran`: the largest volume among the POP candle and the two before it ÷ the average of the 20 candles before those three, read into vol_x like a PULLBACK's; left out when the script has no reading)
 //   POP RAYA 0.73 | sVWAP 0.71 (+2.8%) | sma 15 0.68 (+7.4%) | ran 10.5% | vol 6.2x | candle 1 | pop 1 | weak | day high +120% | vwap 30s | tf 1   (v49; `| weak` after `pop N`: the POP failed the volume test, and `pop N` is the count so far, this one not in it; the flag is the script's, never read off `vol`)
 //   BACK RAYA 0.91 | stop 0.82 | sVWAP 0.88 (+3.4%) | sma 15 0.9 (+1.1%) | ran 150.2% | vol 212.4x | candle 1 | back 1 | since 11 | green 1 | day high +156% | vwap 30s | tf 1   (v49; `vol` is its POP's reading; `| weak` after `green N` when that POP was weak)
+//   POP MNDR 0.84 | sVWAP 0.62 (+35.5%) | sma 15 0.59 (+42.4%) | ran 43.5% | vol 27.6x | rvol1 48210 | rvol5 11975 | candle 1 | pop 1 | day high +44% | vwap 30s | tf 1   (v50; `rvol1` / `rvol5` after `vol`: the stock's RVol over 1 and 5 minutes at the POP, a whole number of percent, read into tv_rv1 / tv_rv5; either is left out when the script has no reading)
+//   BACK MNDR 0.97 | stop 0.93 | sVWAP 0.9 (+7.8%) | sma 15 0.96 (+1.0%) | ran 91.2% | vol 27.6x | rvol1 48210 | rvol5 11975 | candle 1 | back 1 | since 9 | green 1 | day high +88% | vwap 30s | tf 1   (v50; its POP's readings)
 // (v28 adds `vwap 30s|chart` to every message.)
 // (a negative day high is written "-2%"; scripts before v3 wrote "+-2%"), or a JSON
 // object with the TvSetupSignal field names. Express hands us the raw text for
@@ -787,6 +816,13 @@ function parseTvMessageAsSent(body: unknown): TvMessageAsSent | null {
   const ran = /\|\s*ran\s+([-+]?\d*\.?\d+)\s*%/i.exec(text);
   const popN = /\|\s*pop\s+(\d+)\b/i.exec(text);
   const backN = /\|\s*back\s+(\d+)\b/i.exec(text);
+  // v50 POP / BACK: "| rvol1 48210 | rvol5 11975" — the stock's RVol, % (Pine prints a whole number).
+  // Each is read after a "|", by its whole name followed by a space (so `rvol1` is never read off
+  // `rvol5`, `rvol10` or a ticker named RVOL1), and only when its number runs to the next "|" or the
+  // end ("48,210", "1e5", "48210%" or "-5" are no reading). `vol` (`\bvol`) can't be read off them:
+  // there is no word start before their "v".
+  const rvol1 = /\|\s*rvol1\s+(\d+(?:\.\d+)?)\s*(?=\||$)/i.exec(text);
+  const rvol5 = /\|\s*rvol5\s+(\d+(?:\.\d+)?)\s*(?=\||$)/i.exec(text);
   return {
     stage: STAGES[head[1].toLowerCase()],
     ticker,
@@ -835,6 +871,8 @@ function parseTvMessageAsSent(body: unknown): TvMessageAsSent | null {
     ran_pct: toNum(ran?.[1]),
     pop_n: toNum(popN?.[1]),
     back_n: toNum(backN?.[1]),
+    tv_rv1: toNum(rvol1?.[1]),
+    tv_rv5: toNum(rvol5?.[1]),
     basis: toNum(bsLine?.[1]),
   };
 }
@@ -1290,6 +1328,21 @@ function basisLevels(sig: TvSetupSignal): string[] {
   return lvl;
 }
 
+// v50: a whole number with thousands separators, as an RVol is read: 48210 → "48,210" (rounded
+// first: the script sends whole numbers, a JSON body may not).
+function fmtThousands(n: number): string {
+  return String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+// v50 POP / BACK: the stock's RVol at the POP, the readings the message carries — "RVol 1m 48,210% ·
+// 5m 11,975%", or one alone ("RVol 5m 11,975%"); null with neither. Not the dashboard's RVol (the
+// Momentum row's, a stored row's `rv1`): this one is the script's, from the chart's own volume.
+function rvolText(sig: TvSetupSignal): string | null {
+  const parts: string[] = [];
+  if (sig.tv_rv1 != null && Number.isFinite(sig.tv_rv1)) parts.push(`1m ${fmtThousands(sig.tv_rv1)}%`);
+  if (sig.tv_rv5 != null && Number.isFinite(sig.tv_rv5)) parts.push(`5m ${fmtThousands(sig.tv_rv5)}%`);
+  return parts.length > 0 ? `RVol ${parts.join(' · ')}` : null;
+}
+
 // v48 POP: "a pop: the run's high got 12.6% above its 1m basis (SMA 15) — a heads-up, no entry: the
 // entry is the BACK, the first pullback to the basis", then the day's number, the basis and the
 // VWAP lines. No stop: there is nothing to buy yet.
@@ -1298,6 +1351,8 @@ function basisLevels(sig: TvSetupSignal): string[] {
 // it, this the largest of three against the 20 before them. A weak POP is never announced; if one is
 // formatted, the line says it is not counted (its `pop N` is the day's count without it) and that it
 // was filtered as weak for low volume.
+// v50: right after the volume reading, on the same line, the stock's RVol ("RVol 1m 48,210% · 5m
+// 11,975%"; only the readings the message carries), before a weak one's "filtered as weak".
 function formatPop(
   sig: TvSetupSignal,
   tvSym: string,
@@ -1316,6 +1371,8 @@ function formatPop(
       : `pop ${sig.pop_n} today${sig.pop_n === 1 ? ' (first)' : ''}${pastCap(sig) ? ' — past the cap' : ''}`);
   }
   if (sig.vol_x != null) what.push(`volume ${sig.vol_x.toFixed(1)}× the 20 candles before the pop`);
+  const rvol = rvolText(sig);   // v50
+  if (rvol) what.push(rvol);
   if (weak) what.push('filtered as weak for low volume');
   if (what.length > 0) lines.push(what.join(' · '));
   const lvl = basisLevels(sig);
@@ -1335,6 +1392,7 @@ function formatPop(
 // 212.4× the 20 candles before it"). A weak BACK is never announced; if one is formatted, it is not
 // counted (its `back N` is the day's count without it) and the line ends "after a POP filtered as
 // weak for low volume".
+// v50: after its POP's volume reading, its POP's RVol ("its POP's RVol 1m 48,210% · 5m 11,975%").
 function formatBack(
   sig: TvSetupSignal,
   tvSym: string,
@@ -1357,6 +1415,8 @@ function formatBack(
   }
   if (sig.ran_pct != null) what.push(`the run's high got ${sig.ran_pct.toFixed(1)}% above the basis`);
   if (sig.vol_x != null) what.push(`its POP's volume ${sig.vol_x.toFixed(1)}× the 20 candles before it`);
+  const rvol = rvolText(sig);   // v50
+  if (rvol) what.push(`its POP's ${rvol}`);
   if (sig.since_n != null) what.push(`${sig.since_n} candle${sig.since_n === 1 ? '' : 's'} after the POP`);
   if (sig.macd_green != null) what.push(sig.macd_green ? 'MACD green' : 'MACD not green');
   if (weak) what.push('after a POP filtered as weak for low volume');

@@ -173,6 +173,8 @@ router.get('/alerts', authMiddleware, async (req, res) => {
         // explicit ones below keep their null defaults. A band cross stored as `ema` reads `band`.
         // v49: a POP's and a BACK's `weak` comes with these, as a weak EMA cross's does; their
         // `vol_x` (the POP's volume reading) is the explicit one below, as a PULLBACK's is.
+        // v50: so do a POP's and a BACK's `tv_rv1` / `tv_rv5` (the stock's RVol at the POP, the
+        // script's reading). The row's `rv1` is another number: `rel_vol_1min` above reads it.
         ...storedSetupFields(m),
         stage: storedStage(m)!, mvwap: num(m.mvwap), px_pct: num(m.px_pct),
         day_gain: num(m.day_gain), ah_gain: num(m.ah_gain), tf: str(m.tf),
